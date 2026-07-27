@@ -1,8 +1,15 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
-    <!-- Outbound TCP to the SSH server. -->
+    <!-- Outbound TCP to the SSH server. The only permission the app cannot
+         do its job without. -->
     <uses-permission android:name="android.permission.INTERNET"/>
-    <!-- Lets the app tell "no network" apart from "host unreachable" in errors. -->
-    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>
+    <!--
+      ACCESS_NETWORK_STATE was declared here to "tell no network apart from
+      host unreachable". It was never used: SshService._describeSocketError
+      reads the errno straight off the SocketException (ENETUNREACH 101,
+      EHOSTUNREACH 113, ECONNREFUSED 111) and asks no ConnectivityManager to
+      do it. A permission the code never exercises is one more line for a
+      reviewer to query and a user to distrust, so it is gone.
+    -->
     <!--
       Downloads land in the shared Downloads collection so they appear in the
       user's file manager. On API 29+ that needs no permission at all — scoped
@@ -33,10 +40,55 @@
     -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
 
+    <!--
+      Backup is off, on purpose, and the reasoning is worth writing down
+      because "allowBackup=false" reads like laziness and here it is the
+      opposite.
+
+      Everything this app persists is either a secret or is authenticated by
+      one that cannot leave the device:
+
+        * credentials.dart / CredentialStore — SSH passwords, private keys and
+          passphrases, held in EncryptedSharedPreferences under an Android
+          Keystore key. That key is hardware-bound and non-exportable, so it is
+          never in the backup set. Restoring the ciphertext onto a new phone
+          would restore something nothing on that phone can decrypt.
+        * known_hosts.json — sealed with an HMAC key that lives in the same
+          Keystore. Restore the file without the key and KnownHostsService
+          fails closed by design: every host reads as unknown and the host list
+          shows the "trust store could not be verified" banner. On a brand-new
+          device that is indistinguishable, to the user, from the app being
+          broken or the phone being attacked.
+        * hosts.json — the only genuinely restorable part, and on its own it
+          is a list of servers that all prompt for a password next to a trust
+          store that just alarmed at them.
+
+      So a partial restore is strictly worse than a clean start, and shipping
+      an SSH client's credential store to Google Drive is not a trade this app
+      should make on the user's behalf. New device means re-adding hosts and
+      re-verifying host keys — which is also what OpenSSH on a new laptop
+      means.
+
+      Two attributes are needed rather than one. allowBackup="false" stops
+      cloud backup on every API level, but from Android 12 it no longer covers
+      device-to-device transfer; @xml/data_extraction_rules is what closes
+      that, and it excludes both channels explicitly so neither depends on the
+      other's default.
+
+      usesCleartextTraffic="false" is already the platform default at this
+      target level and is spelled out because a reviewer will look for it: the
+      app makes no HTTP requests at all. It has no bearing on SSH, which is a
+      raw TCP socket through dart:io — NetworkSecurityPolicy is consulted by
+      HTTP stacks, not by Socket.connect — and the SSH transport is encrypted
+      by its own handshake in any case.
+    -->
     <application
         android:label="SecureShell Go"
         android:name="${applicationName}"
-        android:icon="@mipmap/ic_launcher">
+        android:icon="@mipmap/ic_launcher"
+        android:allowBackup="false"
+        android:dataExtractionRules="@xml/data_extraction_rules"
+        android:usesCleartextTraffic="false">
         <!--
           singleTask, not singleTop, and with the app's own task affinity
           rather than none.

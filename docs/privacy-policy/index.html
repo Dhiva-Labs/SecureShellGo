@@ -1,0 +1,323 @@
+<!DOCTYPE html>
+<!--
+  The hosted copy of ../privacy-policy.md. Kept as plain HTML in its own
+  directory so GitHub Pages serves it at exactly
+
+      https://dhiva-labs.github.io/SecureShellGo/privacy-policy
+
+  with no Jekyll build, no theme gem and nothing that can break between a
+  push and Google's reviewer opening the link. Google Play requires the URL
+  to resolve, so robustness beats elegance here.
+
+  If you edit this page, edit ../privacy-policy.md to match. The Markdown file
+  is the one people read on GitHub; this one is the one Play checks.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Privacy Policy — SecureShell Go</title>
+<meta name="description" content="SecureShell Go collects no data. Everything stays on your device; the only servers it contacts are the ones you configure.">
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg: #ffffff;
+    --fg: #1b1f23;
+    --muted: #5a636c;
+    --rule: #e3e7ea;
+    --accent: #1a7f45;
+    --card: #f6f8f9;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0f1419;
+      --fg: #e6e9ec;
+      --muted: #98a2ac;
+      --rule: #253038;
+      --accent: #6cd48f;
+      --card: #161d24;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    padding: 2.5rem 1.25rem 5rem;
+    background: var(--bg);
+    color: var(--fg);
+    font: 16px/1.65 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+          "Helvetica Neue", Arial, sans-serif;
+  }
+  main { max-width: 46rem; margin: 0 auto; }
+  h1 { font-size: 1.9rem; line-height: 1.2; margin: 0 0 .35rem; }
+  h2 {
+    font-size: 1.2rem;
+    margin: 2.5rem 0 .75rem;
+    padding-top: 1.25rem;
+    border-top: 1px solid var(--rule);
+  }
+  .meta { color: var(--muted); margin: 0 0 2rem; font-size: .95rem; }
+  .lede {
+    background: var(--card);
+    border-left: 3px solid var(--accent);
+    border-radius: 0 6px 6px 0;
+    padding: 1rem 1.15rem;
+    margin: 0 0 1.5rem;
+  }
+  .lede p:first-child { margin-top: 0; }
+  .lede p:last-child { margin-bottom: 0; }
+  a { color: var(--accent); }
+  code {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: .9em;
+    background: var(--card);
+    padding: .1em .35em;
+    border-radius: 4px;
+  }
+  .scroll { overflow-x: auto; margin: 1rem 0; }
+  table { border-collapse: collapse; width: 100%; min-width: 34rem; }
+  th, td {
+    text-align: left;
+    vertical-align: top;
+    padding: .6rem .75rem;
+    border-bottom: 1px solid var(--rule);
+    font-size: .95rem;
+  }
+  th { font-weight: 600; white-space: nowrap; }
+  strong { font-weight: 600; }
+  footer {
+    margin-top: 3rem;
+    padding-top: 1.25rem;
+    border-top: 1px solid var(--rule);
+    color: var(--muted);
+    font-size: .9rem;
+  }
+</style>
+</head>
+<body>
+<main>
+
+<h1>Privacy Policy — SecureShell Go</h1>
+<p class="meta">
+  Effective date: 28 July 2026<br>
+  Applies to SecureShell Go for Android (<code>com.dhivalabs.secure_shell_go</code>),
+  published by Dhiva Labs.
+</p>
+
+<div class="lede">
+<p><strong>The short version.</strong> SecureShell Go does not collect
+anything. There is no account to create, no analytics, no advertising, no
+crash reporting, and no Dhiva Labs server for your data to be sent to — we do
+not operate one. The only computers this app talks to are the SSH servers
+whose addresses you type in yourself.</p>
+<p>Everything the app remembers stays in its private storage on your phone,
+and your passwords and private keys are held in the Android Keystore.</p>
+</div>
+
+<h2>Who is responsible</h2>
+<p>Dhiva Labs — contact: <strong>dhivakar1010@gmail.com</strong><br>
+Source code: <a href="https://github.com/Dhiva-Labs/SecureShellGo">github.com/Dhiva-Labs/SecureShellGo</a></p>
+<p>The app is open source under the MIT licence. Every claim on this page can
+be checked against the code.</p>
+
+<h2>What the app is</h2>
+<p>An SSH terminal and SFTP file client. You give it the address, port,
+username and credentials of a server you already have access to; it opens an
+encrypted SSH connection to that server, gives you a shell, and lets you move
+files in both directions.</p>
+
+<h2>Information Dhiva Labs collects</h2>
+<p><strong>None.</strong></p>
+<ul>
+  <li>No personal information is collected.</li>
+  <li>No usage, diagnostic or performance data is collected.</li>
+  <li>No advertising or analytics SDK is included in the app. There is no
+      Firebase, no Google Analytics, no Crashlytics, no Sentry, no attribution
+      or tracking library of any kind.</li>
+  <li>No advertising identifier is read.</li>
+  <li>There are no ads.</li>
+  <li>There is no sign-up, sign-in or account.</li>
+  <li>Nothing is ever transmitted to Dhiva Labs, because there is nothing for
+      it to be transmitted to. Dhiva Labs runs no backend service for this
+      app.</li>
+</ul>
+
+<h2>Information stored on your device</h2>
+<p>All of the following is written only to storage that belongs to the app and
+that Android keeps private to it. None of it is transmitted anywhere.</p>
+<div class="scroll">
+<table>
+  <thead><tr><th>What</th><th>Where</th><th>Notes</th></tr></thead>
+  <tbody>
+  <tr>
+    <td>Saved hosts — the label you gave a server, its hostname, port,
+        username, which authentication method it uses, and when you last
+        connected</td>
+    <td><code>hosts.json</code> in the app's private files directory</td>
+    <td>Contains no secrets.</td>
+  </tr>
+  <tr>
+    <td>Passwords, private keys and key passphrases, for hosts you chose to
+        save</td>
+    <td>Android Keystore–backed encrypted storage</td>
+    <td>See below.</td>
+  </tr>
+  <tr>
+    <td>Trusted host keys — the SSH fingerprints of servers you have
+        accepted</td>
+    <td><code>known_hosts.json</code> in the app's private files directory</td>
+    <td>Fingerprints are public information, the same values
+        <code>ssh-keygen -lf</code> prints. The file is sealed with an HMAC
+        whose key is in the Keystore, so tampering with it is detected.</td>
+  </tr>
+  <tr>
+    <td>Preferences — terminal font size, colour scheme, keep-screen-awake,
+        show hidden files</td>
+    <td><code>settings.json</code> in the app's private files directory</td>
+    <td>Contains no secrets.</td>
+  </tr>
+  </tbody>
+</table>
+</div>
+
+<p><strong>About credentials.</strong> A password, private key or passphrase
+is written to storage only when you save a host with it filled in. If you use
+the "connect without saving" path, the credential is held in memory for that
+connection and never written to disk. Saved credentials go through Android's
+encrypted storage, which encrypts them with a key generated inside the Android
+Keystore — on most devices that key is held in dedicated security hardware and
+cannot be exported from the device at all.</p>
+
+<p><strong>Backups are turned off.</strong> The app sets
+<code>allowBackup="false"</code> and excludes itself from device-to-device
+transfer, so none of the above is copied into Google Drive backups or moved to
+a new phone. That is deliberate: an SSH credential store should not leave the
+device it was created on. Moving to a new phone means adding your hosts again
+and re-verifying their host keys.</p>
+
+<h2>Where your data goes</h2>
+<p>The app makes exactly one kind of outbound network connection: an SSH
+connection to a host you configured. There is no other network code in it.</p>
+<p>Over that connection, and only to that server:</p>
+<ul>
+  <li>what you type in the terminal, and what the server prints back;</li>
+  <li>files you upload, and the directory listings and files you
+      download.</li>
+</ul>
+<p>That is the ordinary operation of an SSH client, it goes to a machine you
+chose, and it is encrypted by the SSH protocol. Dhiva Labs has no visibility
+into it.</p>
+<p>Before the first connection to a new server, the app shows you that
+server's key fingerprint and asks you to accept it. If the fingerprint later
+changes, the connection is blocked and you are warned, because that is what a
+machine-in-the-middle attack looks like.</p>
+
+<h2>Files on your device</h2>
+<ul>
+  <li><strong>Downloads</strong> you pull from a server are written to your
+      device's shared Downloads folder, so they appear in your file manager
+      like any other download.</li>
+  <li><strong>Uploads</strong> read only the specific files you pick in the
+      system file picker, or that you send to the app through another app's
+      Share menu. The app has no general access to your storage and does not
+      browse or index it.</li>
+  <li>Files arriving through the Share menu are copied into the app's own
+      cache first so they can be streamed to the server; those copies are
+      deleted automatically as they age out.</li>
+</ul>
+
+<h2>Permissions the app requests, and why</h2>
+<div class="scroll">
+<table>
+  <thead><tr><th>Permission</th><th>Why</th></tr></thead>
+  <tbody>
+  <tr>
+    <td><code>INTERNET</code></td>
+    <td>To open the SSH connection. Without it the app cannot do
+        anything.</td>
+  </tr>
+  <tr>
+    <td><code>FOREGROUND_SERVICE</code> and
+        <code>FOREGROUND_SERVICE_DATA_SYNC</code></td>
+    <td>While a session is open, the app runs a foreground service with an
+        ongoing notification so Android does not shut the process down — which
+        would drop your connection and kill whatever was running in it — while
+        you are in another app.</td>
+  </tr>
+  <tr>
+    <td><code>POST_NOTIFICATIONS</code></td>
+    <td>To show that ongoing "connected" notification. Asked for the first
+        time you open a session, never at launch. Declining it is fine: the
+        notification is hidden and the session still works.</td>
+  </tr>
+  <tr>
+    <td><code>WRITE_EXTERNAL_STORAGE</code>, capped at Android 9</td>
+    <td>Only on Android 9 and older, and only to save downloads into the
+        public Downloads folder. On Android 10 and newer the app requests no
+        storage permission at all.</td>
+  </tr>
+  <tr>
+    <td><code>ACCESS_LOCAL_NETWORK</code></td>
+    <td>Granted automatically by Android 16 to apps that use the network, so
+        that connections to servers on your own home or office network keep
+        working. It is not declared by the app.</td>
+  </tr>
+  </tbody>
+</table>
+</div>
+
+<h2>Third-party software</h2>
+<p>The app is built with Flutter and uses these open-source libraries:
+<code>dartssh2</code> (the SSH protocol), <code>xterm</code> (terminal
+emulation), <code>flutter_secure_storage</code> (Keystore access),
+<code>path_provider</code>, and <code>crypto</code>.</p>
+<p>None of them collects data, contacts a remote service of its own, or is a
+tracking or advertising SDK.</p>
+
+<h2>Children</h2>
+<p>SecureShell Go is a system-administration tool. It is not directed at
+children and collects no data from anyone, including children.</p>
+
+<h2>Your control over your data</h2>
+<ul>
+  <li>Delete a saved host from the host list and its stored credentials are
+      deleted with it.</li>
+  <li>Forget a trusted host key from the host list menu or the Known Hosts
+      screen — the equivalent of <code>ssh-keygen -R</code>.</li>
+  <li>Uninstalling the app removes everything it stored, including the
+      Keystore key that protects your saved credentials.</li>
+</ul>
+<p>Since nothing is collected or transmitted, there is nothing held elsewhere
+for you to request, correct or have erased.</p>
+
+<h2>Security</h2>
+<ul>
+  <li>Credentials are stored using Android Keystore–backed encryption, never
+      in plain text.</li>
+  <li>Host keys are verified on the OpenSSH trust-on-first-use model, and a
+      changed key blocks the connection rather than warning and
+      continuing.</li>
+  <li>The trusted-key store is integrity-protected; if it cannot be verified
+      the app treats every host as unknown and tells you, rather than failing
+      silently.</li>
+  <li>The app makes no unencrypted HTTP requests. Cleartext traffic is
+      disabled.</li>
+</ul>
+<p>No system is perfect, and this policy does not promise otherwise. If you
+find a security problem, please report it at
+<a href="https://github.com/Dhiva-Labs/SecureShellGo/issues">github.com/Dhiva-Labs/SecureShellGo/issues</a>
+or by email to dhivakar1010@gmail.com.</p>
+
+<h2>Changes to this policy</h2>
+<p>If this policy changes, the new version will be published at this address
+and the effective date at the top will change. Because the app collects
+nothing, any change that made it collect something would be a significant one,
+and it would be described here.</p>
+
+<footer>
+  Contact: <strong>dhivakar1010@gmail.com</strong> —
+  <a href="https://github.com/Dhiva-Labs/SecureShellGo">github.com/Dhiva-Labs/SecureShellGo</a>
+</footer>
+
+</main>
+</body>
+</html>

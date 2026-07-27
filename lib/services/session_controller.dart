@@ -5,6 +5,7 @@ import 'package:dartssh2/dartssh2.dart';
 import '../models/host.dart';
 import '../models/remote_entry.dart';
 import 'device_storage.dart';
+import 'download_announcer.dart';
 import 'download_plan.dart';
 import 'remote_path.dart';
 import 'session_keepalive.dart';
@@ -63,6 +64,13 @@ class SessionController {
   /// The download/upload queue. Its executor is wired to this session, so a
   /// transfer cannot outlive the connection that is carrying it.
   late final TransferQueue transfers;
+
+  /// What has already been said about finished downloads.
+  ///
+  /// Here rather than in the screen that shows the announcement for the same
+  /// reason [pendingUpload] is: it is state about the session's transfers,
+  /// and a view is too short-lived a thing to be trusted with it.
+  final DownloadAnnouncer _announcer = DownloadAnnouncer();
 
   /// Keeps the socket from idling out while the app is in the background —
   /// the other half of Phase 7, alongside the foreground service that keeps
@@ -231,6 +239,15 @@ class SessionController {
       totalBytes: file.size,
     );
   }
+
+  /// The finished downloads that have not been announced to the user yet,
+  /// given the queue's latest [tasks]. Empty when there is nothing new to
+  /// say, or when the queue is still busy and the batch is not complete.
+  ///
+  /// Consuming: each task comes back from here exactly once, however many
+  /// views ask and however often the queue republishes the same list.
+  List<TransferTask> takeDownloadAnnouncement(List<TransferTask> tasks) =>
+      _announcer.take(tasks, queueBusy: transfers.hasActive);
 
   // ------------------------------------------------------- shared-in uploads
 

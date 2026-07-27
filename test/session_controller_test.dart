@@ -254,6 +254,35 @@ class HandCrankedTimer implements Timer {
   }
 }
 
+/// Stands in for `_SessionScreenState`, which subscribes to the queue and
+/// asks the session what to announce on every publication.
+///
+/// Disposable and recreatable on purpose: the real one is a widget `State`,
+/// and a fold, a window resize or any other reason to rebuild the route is
+/// free to replace it while the session — and the finished rows still in its
+/// queue — carry on unchanged.
+class AnnouncementView {
+  AnnouncementView(this.session) {
+    _subscription = session.transfers.changes.listen((tasks) {
+      final batch = session.takeDownloadAnnouncement(tasks);
+      if (batch.isNotEmpty) announcements.add(batch);
+    });
+  }
+
+  final SessionController session;
+  late final StreamSubscription<List<TransferTask>> _subscription;
+
+  /// One entry per snackbar this view would have shown.
+  final List<List<TransferTask>> announcements = [];
+
+  /// The names in each announcement, which is what the snackbar reads from.
+  List<List<String>> get announcedNames => announcements
+      .map((batch) => batch.map((t) => t.name).toList())
+      .toList();
+
+  Future<void> dispose() => _subscription.cancel();
+}
+
 void main() {
   late FakeTransport transport;
   late FakeStorage storage;
@@ -555,6 +584,177 @@ void main() {
       // afterwards fails fast. Either way it does not sit at 0% forever.
       expect(task.status.isFinished, isTrue);
       expect(task.status, isNot(TransferStatus.completed));
+    });
+  });
+
+  // The queue publishes through a broadcast controller, so a listener hears
+  // an event a turn of the event loop after it is added. Two turns is enough
+  // for a publication and anything it schedules in response.
+  Future<void> deliver() async {
+    await Future<void>.delayed(Duration.zero);
+    await Future<void>.delayed(Duration.zero);
+  }
+
+  group('announcing finished downloads', () {
+    test('a finished download is announced exactly once', () async {
+      final session = build();
+      addTearDown(session.dispose);
+      final view = AnnouncementView(session);
+      addTearDown(view.dispose);
+
+      session.queueDownload(file('notes.txt'));
+      await settle(session);
+      await deliver();
+
+      expect(view.announcedNames, [
+        ['notes.txt'],
+      ]);
+    });
+
+    test('a later publication of the same queue says nothing more', () async {
+      final session = build();
+      addTearDown(session.dispose);
+      final view = AnnouncementView(session);
+      addTearDown(view.dispose);
+
+      session.queueDownload(file('notes.txt'));
+      await settle(session);
+      await deliver();
+
+      // Anything at all that moves republishes the whole list, completed rows
+      // and all. An upload is the honest version of that: several more
+      // publications, none of them news about the download.
+      session.queueUpload(
+        const PickedLocalFile(
+          path: '/data/cache/uploads/a.md',
+          name: 'a.md',
+          size: 300,
+        ),
+        '/home/dev',
+      );
+      await settle(session);
+      await deliver();
+
+      expect(view.announcedNames, [
+        ['notes.txt'],
+      ]);
+    });
+
+    test('a recreated view does not repeat what the old one announced',
+        () async {
+      final session = build();
+      addTearDown(session.dispose);
+
+      final first = AnnouncementView(session);
+      session.queueDownload(file('notes.txt'));
+      await settle(session);
+      await deliver();
+      expect(first.announcedNames, [
+        ['notes.txt'],
+      ]);
+
+      // The compact ↔ expanded case: the widget `State` is thrown away and
+      // rebuilt, and subscribes to a queue that still holds the completed
+      // row. The memory of what was announced belongs to the session, so the
+      // new view starts knowing.
+      await first.dispose();
+      final second = AnnouncementView(session);
+      addTearDown(second.dispose);
+
+      session.queueUpload(
+        const PickedLocalFile(
+          path: '/data/cache/uploads/a.md',
+          name: 'a.md',
+          size: 300,
+        ),
+        '/home/dev',
+      );
+      await settle(session);
+      await deliver();
+
+      expect(second.announcements, isEmpty);
+    });
+
+    test('a keep-alive tick does not bring the announcement back', () async {
+      final session = build();
+      addTearDown(session.dispose);
+      final view = AnnouncementView(session);
+      addTearDown(view.dispose);
+
+      session.queueDownload(file('notes.txt'));
+      await settle(session);
+      await deliver();
+
+      // 30 s of an idle session, with the completed row still in the queue.
+      for (var i = 0; i < 3; i++) {
+        keepaliveTimers.single.fire();
+        await deliver();
+      }
+
+      expect(transport.pingCount, 3);
+      expect(view.announcedNames, [
+        ['notes.txt'],
+      ]);
+    });
+
+    test('a whole batch is announced once, when the queue goes quiet',
+        () async {
+      final session = build();
+      addTearDown(session.dispose);
+      final view = AnnouncementView(session);
+      addTearDown(view.dispose);
+
+      session.queueDownload(file('a.txt'));
+      session.queueDownload(file('b.txt'));
+      session.queueDownload(file('c.txt'));
+      await settle(session);
+      await deliver();
+
+      // One snackbar naming three files, not three snackbars — and nothing
+      // half-announced while the second and third were still running.
+      expect(view.announcedNames, [
+        ['a.txt', 'b.txt', 'c.txt'],
+      ]);
+    });
+
+    test('a second download later is its own announcement', () async {
+      final session = build();
+      addTearDown(session.dispose);
+      final view = AnnouncementView(session);
+      addTearDown(view.dispose);
+
+      session.queueDownload(file('a.txt'));
+      await settle(session);
+      await deliver();
+
+      session.queueDownload(file('b.txt'));
+      await settle(session);
+      await deliver();
+
+      expect(view.announcedNames, [
+        ['a.txt'],
+        ['b.txt'],
+      ]);
+    });
+
+    test('uploads are never announced as saved downloads', () async {
+      final session = build();
+      addTearDown(session.dispose);
+      final view = AnnouncementView(session);
+      addTearDown(view.dispose);
+
+      session.queueUpload(
+        const PickedLocalFile(
+          path: '/data/cache/uploads/a.md',
+          name: 'a.md',
+          size: 300,
+        ),
+        '/home/dev',
+      );
+      await settle(session);
+      await deliver();
+
+      expect(view.announcements, isEmpty);
     });
   });
 

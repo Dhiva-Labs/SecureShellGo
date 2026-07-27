@@ -67,7 +67,14 @@ host-key verification at the core.
 
 Download the latest APK from the
 [Releases](https://github.com/Dhiva-Labs/SecureShellGo/releases) page and
-install it (Android 6.0+).
+install it (Android 7.0+).
+
+## Privacy
+
+SecureShell Go collects nothing: no analytics, no ads, no account, and no
+Dhiva Labs server for anything to be sent to. Credentials stay on the device
+in the Android Keystore, and the only hosts the app connects to are the ones
+you configure. Full text: [Privacy policy](docs/privacy-policy.md).
 
 ## Build from source
 
@@ -75,6 +82,11 @@ install it (Android 6.0+).
 flutter pub get
 flutter build apk --release
 ```
+
+Release builds are signed with the upload key named in
+`android/key.properties`, which is gitignored along with the keystore itself.
+Without that file the build still succeeds, falling back to the debug key with
+a warning — runnable, but not uploadable to Google Play.
 
 Built with Flutter. No third-party platform plugins for storage, wakelock, or
 the foreground service — small, auditable Kotlin channels instead.

@@ -101,14 +101,6 @@ class _SessionScreenState extends State<SessionScreen> {
   final GlobalKey _terminalPaneKey = GlobalKey();
   final GlobalKey _fileBrowserPaneKey = GlobalKey();
 
-  /// Ids of the downloads already counted, so the "saved — Open" snackbar
-  /// sees each file once rather than on every later queue publication.
-  final Set<String> _announcedDownloads = {};
-
-  /// Downloads that finished but have not been announced yet, because the
-  /// queue was still busy.
-  final List<TransferTask> _finishedDownloads = [];
-
   StreamSubscription<List<TransferTask>>? _transferChanges;
 
   @override
@@ -180,49 +172,27 @@ class _SessionScreenState extends State<SessionScreen> {
   /// moment one finishes is the moment to offer "Open", rather than leaving
   /// the user to go and find a file manager.
   ///
-  /// Announced when the queue goes quiet rather than per file: a recursive
-  /// folder download finishes four hundred times, and four hundred queued
-  /// snackbars would take minutes to drain past a user who has moved on.
+  /// Which downloads are new, and whether the batch is finished, is decided
+  /// by [SessionController.takeDownloadAnnouncement] rather than here — that
+  /// memory has to outlive this `State`, which a fold, a window resize or any
+  /// other reason to rebuild the route is free to replace.
   void _handleTransfers(List<TransferTask> tasks) {
     if (!mounted) return;
 
-    for (final task in tasks) {
-      if (task.status != TransferStatus.completed) continue;
-      if (task.direction != TransferDirection.download) continue;
-      if (!_announcedDownloads.add(task.id)) continue;
-      _finishedDownloads.add(task);
-    }
-    if (_finishedDownloads.isEmpty || _session.transfers.hasActive) return;
+    final batch = _session.takeDownloadAnnouncement(tasks);
+    if (batch.isEmpty) return;
 
-    final batch = List<TransferTask>.of(_finishedDownloads);
-    _finishedDownloads.clear();
-
-    final single = batch.length == 1 ? batch.single : null;
-    final uri = single?.destinationUri;
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(
-          single != null
-              ? 'Saved ${single.destination ?? single.name}'
-              : '${batch.length} files saved to Downloads',
+      buildDownloadSavedSnackBar(
+        batch: batch,
+        onOpen: (task) => unawaited(_openDownload(task)),
+        onShowAll: () => unawaited(
+          showTransfersSheet(
+            context,
+            _session.transfers,
+            onOpen: _session.openDownload,
+          ),
         ),
-        action: single != null && uri != null && uri.isNotEmpty
-            ? SnackBarAction(
-                label: 'Open',
-                onPressed: () => unawaited(_openDownload(single)),
-              )
-            // A batch has no single file to open, so the useful action is the
-            // list of what landed — every row there has its own "Open".
-            : SnackBarAction(
-                label: 'Show',
-                onPressed: () => unawaited(
-                  showTransfersSheet(
-                    context,
-                    _session.transfers,
-                    onOpen: _session.openDownload,
-                  ),
-                ),
-              ),
       ),
     );
   }
@@ -455,6 +425,47 @@ class _SessionScreenState extends State<SessionScreen> {
       ],
     );
   }
+}
+
+/// The "saved" announcement for a batch of finished downloads.
+///
+/// Built by a free function, rather than inline where it is shown, so that a
+/// test can hold it and watch it go away — because the bug this shape exists
+/// to keep fixed was entirely about how long it stayed.
+///
+/// `persist: false` is the fix and is not optional. Flutter's [SnackBar]
+/// derives `persist` from whether an action was given — `persist ?? action !=
+/// null` — so any bar with a button on it defaults to staying up until
+/// something dismisses it. The dismissal timer still runs; it just returns
+/// without hiding anything. This announcement has carried an "Open" action
+/// since it was written, so it inherited that default and sat on screen
+/// through folder changes, Settings, the host list and reconnects, which
+/// read as the app being stuck rather than as a considered choice. Four
+/// seconds and gone is right here: "Open" is a convenience, not the only way
+/// to the file — the same action lives permanently on the row in the
+/// transfers sheet behind the app bar's button.
+@visibleForTesting
+SnackBar buildDownloadSavedSnackBar({
+  required List<TransferTask> batch,
+  required void Function(TransferTask task) onOpen,
+  required VoidCallback onShowAll,
+}) {
+  final single = batch.length == 1 ? batch.single : null;
+  final uri = single?.destinationUri;
+
+  return SnackBar(
+    persist: false,
+    content: Text(
+      single != null
+          ? 'Saved ${single.destination ?? single.name}'
+          : '${batch.length} files saved to Downloads',
+    ),
+    action: single != null && uri != null && uri.isNotEmpty
+        ? SnackBarAction(label: 'Open', onPressed: () => onOpen(single))
+        // A batch has no single file to open, so the useful action is the
+        // list of what landed — every row there has its own "Open".
+        : SnackBarAction(label: 'Show', onPressed: onShowAll),
+  );
 }
 
 /// App-bar transfer button, with a count badge while anything is moving.

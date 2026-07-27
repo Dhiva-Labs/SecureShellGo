@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Nothing this app stores leaves the device — not to Google Drive, not over a
+  device-to-device transfer cable. See the comment above <application> in
+  AndroidManifest.xml for why a partial restore of a Keystore-sealed
+  credential and known-hosts store is worse for the user than no restore at
+  all.
+
+  android:allowBackup="false" already covers the cloud side on every API
+  level; <cloud-backup> is restated here so the two do not depend on each
+  other. <device-transfer> is the half that allowBackup no longer covers from
+  Android 12 onwards, and is the reason this file exists.
+
+  path="." means the whole domain.
+-->
+<data-extraction-rules>
+    <cloud-backup>
+        <exclude domain="root" path="."/>
+        <exclude domain="file" path="."/>
+        <exclude domain="database" path="."/>
+        <exclude domain="sharedpref" path="."/>
+        <exclude domain="external" path="."/>
+        <exclude domain="device_root" path="."/>
+        <exclude domain="device_file" path="."/>
+        <exclude domain="device_database" path="."/>
+        <exclude domain="device_sharedpref" path="."/>
+    </cloud-backup>
+    <device-transfer>
+        <exclude domain="root" path="."/>
+        <exclude domain="file" path="."/>
+        <exclude domain="database" path="."/>
+        <exclude domain="sharedpref" path="."/>
+        <exclude domain="external" path="."/>
+        <exclude domain="device_root" path="."/>
+        <exclude domain="device_file" path="."/>
+        <exclude domain="device_database" path="."/>
+        <exclude domain="device_sharedpref" path="."/>
+    </device-transfer>
+</data-extraction-rules>
