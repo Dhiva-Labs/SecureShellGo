@@ -1,0 +1,409 @@
+import 'dart:async';
+import 'dart:io';
+import 'dart:typed_data';
+
+import 'package:dartssh2/dartssh2.dart';
+
+import '../models/remote_entry.dart';
+import 'remote_path.dart';
+
+/// A remote filesystem failure with a message written for a human.
+class SftpFailure implements Exception {
+  const SftpFailure(this.message, {this.details, this.isPermissionDenied = false});
+
+  final String message;
+  final String? details;
+
+  /// Set when the server said "permission denied", which the browser shows as
+  /// an explanation rather than an error — an unreadable directory is a normal
+  /// thing to walk into on a shared machine, not a malfunction.
+  final bool isPermissionDenied;
+
+  @override
+  String toString() => message;
+}
+
+/// Reports cumulative bytes moved.
+typedef TransferProgress = void Function(int bytes);
+
+/// Asked between chunks; returning true aborts the transfer.
+typedef CancelCheck = bool Function();
+
+/// What the browser and the transfer queue need from a remote filesystem.
+///
+/// An interface rather than just [SftpService] so the session's transfer logic
+/// — collisions, cancellation, cleanup after a failure — can be tested against
+/// a fake instead of a real server.
+abstract class RemoteFileSystem {
+  /// The user's home directory.
+  Future<String> home();
+
+  /// Server-side resolution of [path] (expands `..`, applies the CWD rules).
+  Future<String> resolve(String path);
+
+  /// Lists [path], directories first.
+  Future<List<RemoteEntry>> list(String path);
+
+  /// Size of a remote file, or null when the server does not report one.
+  Future<int?> sizeOf(String path);
+
+  /// Streams [remotePath] into [write], reporting cumulative bytes.
+  Future<int> download(
+    String remotePath, {
+    required Future<void> Function(Uint8List chunk) write,
+    TransferProgress? onProgress,
+    CancelCheck? isCancelled,
+  });
+
+  /// Uploads [localPath] to [remotePath], reporting cumulative bytes.
+  Future<int> upload(
+    String localPath,
+    String remotePath, {
+    TransferProgress? onProgress,
+    CancelCheck? isCancelled,
+  });
+
+  /// Whether [path] already exists on the remote side.
+  Future<bool> exists(String path);
+
+  Future<void> close();
+}
+
+/// The remote filesystem, in terms this app understands.
+///
+/// Wraps dartssh2's [SftpClient] so nothing above this layer sees `SftpName`,
+/// `SftpFileAttrs` or `SftpStatusError`. The client itself runs on the same
+/// authenticated SSH connection as the shell — `SSHClient.sftp()` opens a
+/// second channel, not a second login — which is the whole reason the file
+/// browser costs the user no extra password or host-key prompt.
+class SftpService implements RemoteFileSystem {
+  SftpService(this._client);
+
+  final SftpClient _client;
+
+  /// Chunks big enough to keep the SSH window full without making a cancel
+  /// feel unresponsive.
+  static const int chunkSize = 64 * 1024;
+  static const int _maxPendingReads = 32;
+
+  /// How many symlinks in one listing get their target resolved. Each costs a
+  /// round trip, and a directory full of them (`/etc/alternatives`) would
+  /// otherwise take seconds to open.
+  static const int _symlinkResolveLimit = 64;
+
+  /// The user's home directory, via SFTP realpath of ".".
+  @override
+  Future<String> home() async {
+    try {
+      return RemotePath.normalize(await _client.absolute('.'));
+    } catch (e) {
+      // Not fatal: "/" is always listable enough to get started.
+      return RemotePath.root;
+    }
+  }
+
+  /// Resolves [path] against the server (expands `..`, follows the CWD rules).
+  @override
+  Future<String> resolve(String path) async {
+    try {
+      return RemotePath.normalize(await _client.absolute(path));
+    } catch (_) {
+      return RemotePath.normalize(path);
+    }
+  }
+
+  /// Lists [path], sorted directories-first.
+  @override
+  Future<List<RemoteEntry>> list(String path) async {
+    final directory = RemotePath.normalize(path);
+    final List<SftpName> names;
+    try {
+      names = await _client.listdir(directory);
+    } catch (e) {
+      throw _describe(e, directory);
+    }
+
+    final entries = <RemoteEntry>[];
+    for (final name in names) {
+      if (name.filename == '.' || name.filename == '..') continue;
+      entries.add(
+        RemoteEntry(
+          name: name.filename,
+          path: RemotePath.join(directory, name.filename),
+          kind: _kindOf(name.attr),
+          size: name.attr.size,
+          modified: _timeOf(name.attr.modifyTime),
+          permissions: name.attr.mode?.value,
+        ),
+      );
+    }
+
+    await _resolveSymlinks(entries);
+    entries.sort(RemoteEntry.compare);
+    return entries;
+  }
+
+  /// Fills in [RemoteEntry.linkTargetIsDirectory] so a symlink to a directory
+  /// navigates instead of trying to download.
+  Future<void> _resolveSymlinks(List<RemoteEntry> entries) async {
+    final indexes = <int>[];
+    for (var i = 0; i < entries.length; i++) {
+      if (entries[i].kind == RemoteEntryKind.symlink) indexes.add(i);
+      if (indexes.length >= _symlinkResolveLimit) break;
+    }
+    if (indexes.isEmpty) return;
+
+    await Future.wait(
+      indexes.map((i) async {
+        try {
+          final stat = await _client.stat(entries[i].path);
+          entries[i] = entries[i].copyWith(
+            linkTargetIsDirectory: stat.isDirectory,
+          );
+        } catch (_) {
+          // Dangling link, or no permission on the target. Leaving it null is
+          // right: the row shows as a link and does nothing surprising.
+        }
+      }),
+    );
+  }
+
+  /// Size of a remote file, or null when the server does not report one.
+  @override
+  Future<int?> sizeOf(String path) async {
+    try {
+      return (await _client.stat(path)).size;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// Streams [remotePath] into [write], reporting cumulative bytes.
+  ///
+  /// [write] is awaited per chunk on purpose: that is what propagates
+  /// backpressure from the (slow) MediaStore write back through the SFTP read
+  /// pipeline, so a large download does not grow the heap.
+  @override
+  Future<int> download(
+    String remotePath, {
+    required Future<void> Function(Uint8List chunk) write,
+    TransferProgress? onProgress,
+    CancelCheck? isCancelled,
+  }) async {
+    final SftpFile file;
+    try {
+      file = await _client.open(remotePath, mode: SftpFileOpenMode.read);
+    } catch (e) {
+      throw _describe(e, remotePath);
+    }
+
+    var moved = 0;
+    try {
+      final stream = file.read(
+        chunkSize: chunkSize,
+        maxPendingRequests: _maxPendingReads,
+      );
+      await for (final chunk in stream) {
+        if (isCancelled?.call() ?? false) break;
+        await write(chunk);
+        moved += chunk.length;
+        onProgress?.call(moved);
+      }
+      return moved;
+    } catch (e) {
+      throw _describe(e, remotePath);
+    } finally {
+      try {
+        await file.close();
+      } catch (_) {
+        // Channel already gone.
+      }
+    }
+  }
+
+  /// Uploads [localPath] to [remotePath], reporting cumulative bytes.
+  @override
+  Future<int> upload(
+    String localPath,
+    String remotePath, {
+    TransferProgress? onProgress,
+    CancelCheck? isCancelled,
+  }) async {
+    final source = File(localPath);
+    final SftpFile file;
+    try {
+      file = await _client.open(
+        remotePath,
+        mode: SftpFileOpenMode.create |
+            SftpFileOpenMode.write |
+            SftpFileOpenMode.truncate,
+      );
+    } catch (e) {
+      throw _describe(e, remotePath);
+    }
+
+    var moved = 0;
+    var cancelled = false;
+    try {
+      await for (final chunk in source.openRead()) {
+        if (isCancelled?.call() ?? false) {
+          cancelled = true;
+          break;
+        }
+        final bytes = chunk is Uint8List ? chunk : Uint8List.fromList(chunk);
+        await file.writeBytes(bytes, offset: moved);
+        moved += bytes.length;
+        onProgress?.call(moved);
+      }
+      return moved;
+    } on FileSystemException catch (e) {
+      throw SftpFailure(
+        'Could not read the file you picked.',
+        details: e.toString(),
+      );
+    } catch (e) {
+      throw _describe(e, remotePath);
+    } finally {
+      try {
+        await file.close();
+      } catch (_) {
+        // Channel already gone.
+      }
+      if (cancelled) {
+        // A half-written upload on the server is worse than no upload: it
+        // looks like a complete file to everything else on that machine.
+        try {
+          await _client.remove(remotePath);
+        } catch (_) {
+          // Best effort.
+        }
+      }
+    }
+  }
+
+  /// Whether [path] already exists on the remote side.
+  @override
+  Future<bool> exists(String path) async {
+    try {
+      await _client.stat(path);
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  @override
+  Future<void> close() async {
+    try {
+      await _client.close();
+    } catch (_) {
+      // Already gone.
+    }
+  }
+
+  static RemoteEntryKind _kindOf(SftpFileAttrs attrs) {
+    if (attrs.isDirectory) return RemoteEntryKind.directory;
+    if (attrs.isSymbolicLink) return RemoteEntryKind.symlink;
+    if (attrs.isFile) return RemoteEntryKind.file;
+    if (attrs.mode == null) {
+      // Some servers omit permissions in a directory listing. A size but no
+      // mode is overwhelmingly a regular file.
+      return attrs.size != null ? RemoteEntryKind.file : RemoteEntryKind.other;
+    }
+    return RemoteEntryKind.other;
+  }
+
+  static DateTime? _timeOf(int? epochSeconds) {
+    if (epochSeconds == null || epochSeconds <= 0) return null;
+    return DateTime.fromMillisecondsSinceEpoch(epochSeconds * 1000);
+  }
+
+  /// Turns an SFTP status code into something worth reading.
+  static SftpFailure _describe(Object error, String path) {
+    if (error is SftpFailure) return error;
+    if (error is SftpStatusError) {
+      switch (error.code) {
+        case 2:
+          return SftpFailure(
+            '"${RemotePath.basename(path)}" is not there any more.',
+            details: error.toString(),
+          );
+        case 3:
+          return SftpFailure(
+            'Permission denied. Your account cannot read '
+            '"${RemotePath.basename(path)}" on this server.',
+            details: error.toString(),
+            isPermissionDenied: true,
+          );
+        case 4:
+          return SftpFailure(
+            'The server refused: ${error.message}',
+            details: error.toString(),
+          );
+        case 8:
+          return SftpFailure(
+            'The server does not support that operation.',
+            details: error.toString(),
+          );
+      }
+      return SftpFailure(error.message, details: error.toString());
+    }
+    if (error is SftpAbortError) {
+      return SftpFailure(
+        'The connection dropped during the transfer.',
+        details: error.toString(),
+      );
+    }
+    if (error is SftpError) {
+      return SftpFailure(error.message, details: error.toString());
+    }
+    return SftpFailure(
+      'Could not read "${RemotePath.basename(path)}" from the server.',
+      details: error.toString(),
+    );
+  }
+
+  /// Best-effort MIME type from the file name, so Android files the download
+  /// under a sensible type instead of `application/octet-stream` for
+  /// everything.
+  static String mimeTypeFor(String fileName) {
+    final ext = RemotePath.extension(fileName).toLowerCase();
+    return const <String, String>{
+          '.txt': 'text/plain',
+          '.log': 'text/plain',
+          '.md': 'text/markdown',
+          '.csv': 'text/csv',
+          '.json': 'application/json',
+          '.xml': 'text/xml',
+          '.yaml': 'text/yaml',
+          '.yml': 'text/yaml',
+          '.conf': 'text/plain',
+          '.sh': 'text/x-shellscript',
+          '.pdf': 'application/pdf',
+          '.zip': 'application/zip',
+          '.gz': 'application/gzip',
+          '.tgz': 'application/gzip',
+          '.bz2': 'application/x-bzip2',
+          '.xz': 'application/x-xz',
+          '.tar': 'application/x-tar',
+          '.7z': 'application/x-7z-compressed',
+          '.png': 'image/png',
+          '.jpg': 'image/jpeg',
+          '.jpeg': 'image/jpeg',
+          '.gif': 'image/gif',
+          '.webp': 'image/webp',
+          '.svg': 'image/svg+xml',
+          '.mp3': 'audio/mpeg',
+          '.wav': 'audio/wav',
+          '.flac': 'audio/flac',
+          '.mp4': 'video/mp4',
+          '.mkv': 'video/x-matroska',
+          '.webm': 'video/webm',
+          '.apk': 'application/vnd.android.package-archive',
+          '.deb': 'application/vnd.debian.binary-package',
+          '.html': 'text/html',
+          '.htm': 'text/html',
+        }[ext] ??
+        'application/octet-stream';
+  }
+}

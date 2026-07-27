@@ -1,0 +1,360 @@
+import 'dart:async';
+
+/// Which way the bytes are moving.
+enum TransferDirection { download, upload }
+
+enum TransferStatus {
+  queued,
+  running,
+  completed,
+  failed,
+  cancelled;
+
+  bool get isFinished =>
+      this == TransferStatus.completed ||
+      this == TransferStatus.failed ||
+      this == TransferStatus.cancelled;
+
+  bool get isActive =>
+      this == TransferStatus.queued || this == TransferStatus.running;
+}
+
+/// One queued file transfer, and its live progress.
+///
+/// Mutable on purpose: the queue owns it and publishes a snapshot after every
+/// change, so the UI reads a single object instead of reconciling a stream of
+/// deltas against a list.
+class TransferTask {
+  TransferTask({
+    required this.id,
+    required this.name,
+    required this.remotePath,
+    required this.direction,
+    this.totalBytes,
+    this.localPath,
+    this.saveAsName,
+    this.overwrite = false,
+  });
+
+  final String id;
+
+  /// What to show as the transfer's title.
+  final String name;
+
+  final String remotePath;
+  final TransferDirection direction;
+
+  /// For uploads, the local source. Null for downloads until [destination] is
+  /// known.
+  final String? localPath;
+
+  /// For downloads, the device-side file name to ask for. Already sanitised
+  /// and collision-resolved by the caller.
+  final String? saveAsName;
+
+  /// For downloads, whether an existing file of that name should be replaced
+  /// rather than de-duplicated.
+  final bool overwrite;
+
+  /// Bytes, when known up front. Downloads learn it from `stat`, uploads from
+  /// the picked file.
+  int? totalBytes;
+
+  int transferredBytes = 0;
+  TransferStatus status = TransferStatus.queued;
+
+  /// Human-readable failure reason, set when [status] is
+  /// [TransferStatus.failed].
+  String? error;
+
+  /// Where the bytes ended up — the MediaStore display name for a download,
+  /// the remote path for an upload. Set on completion.
+  String? destination;
+
+  DateTime? startedAt;
+  DateTime? finishedAt;
+
+  /// 0..1, or null while the total is unknown (indeterminate bar).
+  double? get progress {
+    final total = totalBytes;
+    if (total == null || total <= 0) return null;
+    final ratio = transferredBytes / total;
+    return ratio.clamp(0.0, 1.0);
+  }
+
+  /// Whole percent, or null while indeterminate.
+  int? get percent {
+    final value = progress;
+    return value == null ? null : (value * 100).round();
+  }
+
+  /// Bytes per second over the life of the transfer, or null if it has not
+  /// run long enough to mean anything.
+  double? get bytesPerSecond {
+    final started = startedAt;
+    if (started == null || transferredBytes == 0) return null;
+    final end = finishedAt ?? DateTime.now();
+    final seconds = end.difference(started).inMilliseconds / 1000;
+    if (seconds < 0.25) return null;
+    return transferredBytes / seconds;
+  }
+}
+
+/// Handed to the executor so it can publish progress and notice cancellation.
+class TransferHandle {
+  TransferHandle._(this._task, this._onChanged);
+
+  final TransferTask _task;
+  final void Function() _onChanged;
+
+  var _cancelled = false;
+
+  /// True once the user asked for this transfer to stop. Executors must check
+  /// it between chunks and return (or throw [TransferCancelled]) promptly.
+  bool get isCancelled => _cancelled;
+
+  void _cancel() => _cancelled = true;
+
+  /// Declares the total size once it is known (e.g. after a remote `stat`).
+  void setTotal(int? total) {
+    if (_task.totalBytes == total) return;
+    _task.totalBytes = total;
+    _onChanged();
+  }
+
+  /// Reports cumulative bytes moved so far.
+  void report(int transferredBytes) {
+    if (_task.transferredBytes == transferredBytes) return;
+    _task.transferredBytes = transferredBytes;
+    _onChanged();
+  }
+
+  /// Records where the bytes landed, for the completed row's subtitle.
+  void setDestination(String destination) {
+    if (_task.destination == destination) return;
+    _task.destination = destination;
+    _onChanged();
+  }
+
+  /// Throws if the user cancelled. A convenience for executors that would
+  /// otherwise litter their loops with early returns.
+  void throwIfCancelled() {
+    if (_cancelled) throw const TransferCancelled();
+  }
+}
+
+/// Thrown by an executor that noticed [TransferHandle.isCancelled].
+class TransferCancelled implements Exception {
+  const TransferCancelled();
+
+  @override
+  String toString() => 'Transfer cancelled';
+}
+
+/// Moves the bytes for one task. Injected so the queue's sequencing,
+/// progress and cancellation logic can be tested without an SSH server.
+typedef TransferExecutor = Future<void> Function(
+  TransferTask task,
+  TransferHandle handle,
+);
+
+/// Runs transfers one at a time and publishes a snapshot after every change.
+///
+/// Sequential on purpose. Two concurrent SFTP reads over one SSH connection
+/// share the same TCP window, so they finish no sooner in aggregate but make
+/// both progress bars crawl — and a queue the user can reason about ("this
+/// one, then that one") is worth more than an illusion of parallelism.
+class TransferQueue {
+  // ignore: prefer_initializing_formals — the field is private, the param is not.
+  TransferQueue({required TransferExecutor executor}) : _executor = executor;
+
+  final TransferExecutor _executor;
+  final List<TransferTask> _tasks = [];
+  final _controller = StreamController<List<TransferTask>>.broadcast();
+  final Map<String, TransferHandle> _handles = {};
+
+  var _pumping = false;
+  var _closed = false;
+  var _idCounter = 0;
+
+  /// Emits the full task list whenever anything changes.
+  Stream<List<TransferTask>> get changes => _controller.stream;
+
+  /// Snapshot of every task, newest last.
+  List<TransferTask> get tasks => List.unmodifiable(_tasks);
+
+  List<TransferTask> get active =>
+      _tasks.where((t) => t.status.isActive).toList(growable: false);
+
+  bool get hasActive => _tasks.any((t) => t.status.isActive);
+
+  int get activeCount => _tasks.where((t) => t.status.isActive).length;
+
+  /// Combined progress across all unfinished transfers, or null when none of
+  /// them has a known size.
+  double? get aggregateProgress {
+    final unfinished = active.where((t) => t.totalBytes != null).toList();
+    if (unfinished.isEmpty) return null;
+    final total = unfinished.fold<int>(0, (sum, t) => sum + t.totalBytes!);
+    if (total <= 0) return null;
+    final moved = unfinished.fold<int>(0, (sum, t) => sum + t.transferredBytes);
+    return (moved / total).clamp(0.0, 1.0);
+  }
+
+  String _nextId() => 'transfer-${_idCounter++}';
+
+  /// Queues a download of [remotePath] and starts the pump.
+  TransferTask enqueueDownload({
+    required String remotePath,
+    required String name,
+    String? saveAsName,
+    bool overwrite = false,
+    int? totalBytes,
+  }) {
+    return _enqueue(
+      TransferTask(
+        id: _nextId(),
+        name: name,
+        remotePath: remotePath,
+        direction: TransferDirection.download,
+        totalBytes: totalBytes,
+        saveAsName: saveAsName ?? name,
+        overwrite: overwrite,
+      ),
+    );
+  }
+
+  /// Queues an upload of [localPath] to [remotePath].
+  TransferTask enqueueUpload({
+    required String localPath,
+    required String remotePath,
+    required String name,
+    int? totalBytes,
+  }) {
+    return _enqueue(
+      TransferTask(
+        id: _nextId(),
+        name: name,
+        remotePath: remotePath,
+        direction: TransferDirection.upload,
+        totalBytes: totalBytes,
+        localPath: localPath,
+      ),
+    );
+  }
+
+  TransferTask _enqueue(TransferTask task) {
+    if (_closed) return task;
+    _tasks.add(task);
+    _publish();
+    unawaited(_pump());
+    return task;
+  }
+
+  /// Cancels a queued or running transfer. A finished one is left alone.
+  void cancel(String id) {
+    final task = _find(id);
+    if (task == null || task.status.isFinished) return;
+
+    if (task.status == TransferStatus.queued) {
+      task.status = TransferStatus.cancelled;
+      task.finishedAt = DateTime.now();
+      _publish();
+      return;
+    }
+
+    // Running: flag the handle and let the executor unwind. Marking the task
+    // cancelled here as well means the UI reacts immediately even if the
+    // executor is blocked on a slow chunk.
+    _handles[id]?._cancel();
+    task.status = TransferStatus.cancelled;
+    task.finishedAt = DateTime.now();
+    _publish();
+  }
+
+  /// Cancels everything still queued or running.
+  void cancelAll() {
+    for (final task in _tasks.where((t) => t.status.isActive).toList()) {
+      cancel(task.id);
+    }
+  }
+
+  /// Drops finished rows from the panel.
+  void clearFinished() {
+    _tasks.removeWhere((t) => t.status.isFinished);
+    _publish();
+  }
+
+  TransferTask? _find(String id) {
+    for (final task in _tasks) {
+      if (task.id == id) return task;
+    }
+    return null;
+  }
+
+  Future<void> _pump() async {
+    if (_pumping) return;
+    _pumping = true;
+    try {
+      while (true) {
+        final next = _tasks.cast<TransferTask?>().firstWhere(
+              (t) => t!.status == TransferStatus.queued,
+              orElse: () => null,
+            );
+        if (next == null) break;
+        await _run(next);
+      }
+    } finally {
+      _pumping = false;
+    }
+  }
+
+  Future<void> _run(TransferTask task) async {
+    task.status = TransferStatus.running;
+    task.startedAt = DateTime.now();
+    _publish();
+
+    final handle = TransferHandle._(task, _publish);
+    _handles[task.id] = handle;
+
+    try {
+      await _executor(task, handle);
+      // A cancel that landed mid-flight has already set the status; do not
+      // overwrite it with "completed" just because the executor returned
+      // normally after noticing the flag.
+      if (task.status == TransferStatus.running) {
+        task.status = handle.isCancelled
+            ? TransferStatus.cancelled
+            : TransferStatus.completed;
+        if (task.status == TransferStatus.completed && task.totalBytes == null) {
+          task.totalBytes = task.transferredBytes;
+        }
+      }
+    } on TransferCancelled {
+      task.status = TransferStatus.cancelled;
+    } catch (e) {
+      if (handle.isCancelled) {
+        task.status = TransferStatus.cancelled;
+      } else {
+        task.status = TransferStatus.failed;
+        task.error = e.toString();
+      }
+    } finally {
+      _handles.remove(task.id);
+      task.finishedAt = DateTime.now();
+      _publish();
+    }
+  }
+
+  void _publish() {
+    if (_closed || _controller.isClosed) return;
+    _controller.add(List.unmodifiable(_tasks));
+  }
+
+  /// Cancels outstanding work and closes the change stream.
+  Future<void> dispose() async {
+    cancelAll();
+    _closed = true;
+    await _controller.close();
+  }
+}
