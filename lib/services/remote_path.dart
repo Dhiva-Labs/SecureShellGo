@@ -122,6 +122,55 @@ class RemotePath {
     return cleaned;
   }
 
+  /// A *relative* device-side directory path that is safe to hand to
+  /// MediaStore's `RELATIVE_PATH` (under `Download/`) or to append to the
+  /// public Downloads directory.
+  ///
+  /// Every segment of a recursive download's path comes from a remote
+  /// listing, so all of it is attacker-controlled: `..` segments, absolute
+  /// paths and separators-in-a-name are dropped rather than escaped, which is
+  /// what stops a hostile tree from writing outside `Download/<dirname>/`.
+  /// The depth and length caps exist because MediaStore silently rejects the
+  /// insert on an over-long relative path, which would look to the user like
+  /// a download that failed for no reason.
+  ///
+  /// Returns `''` when nothing usable is left, meaning "straight into
+  /// Downloads".
+  static String sanitiseRelativeDirectory(
+    String path, {
+    int maxSegments = 16,
+    int maxLength = 180,
+  }) {
+    final segments = <String>[];
+    for (final raw in path.split(separator)) {
+      if (segments.length >= maxSegments) break;
+      final part = raw.trim();
+      if (part.isEmpty || part == '.' || part == '..') continue;
+      var cleaned = part
+          .replaceAll(RegExp(r'[\\/:*?"<>|\x00-\x1f]'), '_')
+          .trim();
+      while (cleaned.startsWith('.')) {
+        cleaned = cleaned.substring(1);
+      }
+      cleaned = cleaned.trim();
+      // Windows-era MediaStore trims trailing dots itself; do it here so the
+      // name we report matches the name on disk.
+      while (cleaned.endsWith('.')) {
+        cleaned = cleaned.substring(0, cleaned.length - 1).trim();
+      }
+      if (cleaned.isEmpty) continue;
+      if (cleaned.length > 80) cleaned = cleaned.substring(0, 80);
+      segments.add(cleaned);
+    }
+
+    var joined = segments.join(separator);
+    while (joined.length > maxLength && segments.isNotEmpty) {
+      segments.removeLast();
+      joined = segments.join(separator);
+    }
+    return joined;
+  }
+
   /// `report.pdf` → `report (1).pdf` → `report (2).pdf`, skipping anything
   /// [taken] already reports.
   ///

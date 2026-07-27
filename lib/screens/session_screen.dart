@@ -2,10 +2,12 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
+import '../services/device_storage.dart';
 import '../services/keep_awake.dart';
 import '../services/layout_breakpoints.dart';
 import '../services/session_controller.dart';
 import '../services/session_foreground.dart';
+import '../services/session_registry.dart';
 import '../services/settings_store.dart';
 import '../services/ssh_service.dart';
 import '../services/transfer_queue.dart';
@@ -33,14 +35,26 @@ class SessionScreen extends StatefulWidget {
     required this.connection,
     required this.settingsStore,
     this.initialView = SessionView.terminal,
+    this.initialUploads = const [],
     KeepAwakeController? keepAwake,
     SessionForegroundController? foreground,
+    SessionRegistry? registry,
   })  : keepAwake = keepAwake ?? const MethodChannelKeepAwake(),
-        foreground = foreground ?? SessionForegroundController.instance;
+        foreground = foreground ?? SessionForegroundController.instance,
+        registry = registry ?? SessionRegistry.instance;
 
   final SshConnection connection;
   final SessionView initialView;
   final SettingsStore settingsStore;
+
+  /// Files that came in from the share sheet and are waiting for a directory
+  /// — set when this session was opened *by* a share. Non-empty implies the
+  /// file browser, since that is where the user picks where they go.
+  final List<PickedLocalFile> initialUploads;
+
+  /// Where this session announces itself, so a later share can reuse the
+  /// connection instead of authenticating a second time.
+  final SessionRegistry registry;
 
   /// Test seam; production leaves this to the default channel-backed one.
   final KeepAwakeController keepAwake;
@@ -87,13 +101,33 @@ class _SessionScreenState extends State<SessionScreen> {
   final GlobalKey _terminalPaneKey = GlobalKey();
   final GlobalKey _fileBrowserPaneKey = GlobalKey();
 
+  /// Ids of the downloads already counted, so the "saved — Open" snackbar
+  /// sees each file once rather than on every later queue publication.
+  final Set<String> _announcedDownloads = {};
+
+  /// Downloads that finished but have not been announced yet, because the
+  /// queue was still busy.
+  final List<TransferTask> _finishedDownloads = [];
+
+  StreamSubscription<List<TransferTask>>? _transferChanges;
+
   @override
   void initState() {
     super.initState();
     _session = SessionController(connection: widget.connection);
     _view = widget.initialView;
+    if (widget.initialUploads.isNotEmpty) {
+      _view = SessionView.files;
+      _session.requestUpload(widget.initialUploads);
+    }
     _filesBuilt = _view == SessionView.files;
     _sessionChanges = _session.changes.listen(_handleSessionChange);
+    _transferChanges = _session.transfers.changes.listen(_handleTransfers);
+
+    widget.registry.register(
+      _session.host.id,
+      LiveSession(session: _session, bringToFront: _bringToFront),
+    );
 
     _holdsForeground = true;
     unawaited(widget.foreground.acquire(_session.host.displayName));
@@ -103,19 +137,103 @@ class _SessionScreenState extends State<SessionScreen> {
     }
   }
 
+  /// Pops whatever the share flow stacked on top of this session, so a file
+  /// shared into a host that is already open lands on the session the user
+  /// already had.
+  bool _bringToFront() {
+    if (!mounted) return false;
+    final route = ModalRoute.of(context);
+    if (route == null) return false;
+    Navigator.of(context).popUntil((candidate) => candidate == route);
+    return true;
+  }
+
   void _handleSessionChange(void _) {
     // The transport can drop while this route is off-screen or already gone;
     // the service must still be released, so that happens before the
     // mounted-only UI work below.
     if (_session.isClosed) _releaseForeground();
     if (!mounted) return;
-    setState(() {});
+    setState(() {
+      // A share can arrive on a session showing the terminal; the file
+      // browser is where the destination gets chosen, so go there.
+      if (_session.pendingUpload != null) {
+        _view = SessionView.files;
+        _filesBuilt = true;
+      }
+    });
     if (_session.isClosed && !_announcedDisconnect) {
       _announcedDisconnect = true;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(_session.closeReason ?? 'Connection closed.'),
           backgroundColor: AppTheme.danger,
+        ),
+      );
+    }
+  }
+
+  /// Announces finished downloads, with a way straight to the file.
+  ///
+  /// Downloads land in the shared Downloads collection, which is the right
+  /// default and also completely invisible from inside this app — so the
+  /// moment one finishes is the moment to offer "Open", rather than leaving
+  /// the user to go and find a file manager.
+  ///
+  /// Announced when the queue goes quiet rather than per file: a recursive
+  /// folder download finishes four hundred times, and four hundred queued
+  /// snackbars would take minutes to drain past a user who has moved on.
+  void _handleTransfers(List<TransferTask> tasks) {
+    if (!mounted) return;
+
+    for (final task in tasks) {
+      if (task.status != TransferStatus.completed) continue;
+      if (task.direction != TransferDirection.download) continue;
+      if (!_announcedDownloads.add(task.id)) continue;
+      _finishedDownloads.add(task);
+    }
+    if (_finishedDownloads.isEmpty || _session.transfers.hasActive) return;
+
+    final batch = List<TransferTask>.of(_finishedDownloads);
+    _finishedDownloads.clear();
+
+    final single = batch.length == 1 ? batch.single : null;
+    final uri = single?.destinationUri;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          single != null
+              ? 'Saved ${single.destination ?? single.name}'
+              : '${batch.length} files saved to Downloads',
+        ),
+        action: single != null && uri != null && uri.isNotEmpty
+            ? SnackBarAction(
+                label: 'Open',
+                onPressed: () => unawaited(_openDownload(single)),
+              )
+            // A batch has no single file to open, so the useful action is the
+            // list of what landed — every row there has its own "Open".
+            : SnackBarAction(
+                label: 'Show',
+                onPressed: () => unawaited(
+                  showTransfersSheet(
+                    context,
+                    _session.transfers,
+                    onOpen: _session.openDownload,
+                  ),
+                ),
+              ),
+      ),
+    );
+  }
+
+  Future<void> _openDownload(TransferTask task) async {
+    final messenger = ScaffoldMessenger.of(context);
+    final opened = await _session.openDownload(task);
+    if (!opened) {
+      messenger.showSnackBar(
+        const SnackBar(
+          content: Text('No app on this device can open that file.'),
         ),
       );
     }
@@ -131,7 +249,9 @@ class _SessionScreenState extends State<SessionScreen> {
 
   @override
   void dispose() {
+    widget.registry.unregister(_session.host.id, _session);
     _sessionChanges?.cancel();
+    _transferChanges?.cancel();
     _releaseForeground();
     unawaited(widget.keepAwake.setEnabled(false));
     unawaited(_session.dispose());
@@ -244,7 +364,11 @@ class _SessionScreenState extends State<SessionScreen> {
           actions: [
             _TransferAction(
               queue: _session.transfers,
-              onTap: () => showTransfersSheet(context, _session.transfers),
+              onTap: () => showTransfersSheet(
+                context,
+                _session.transfers,
+                onOpen: _session.openDownload,
+              ),
             ),
             // Both panes are already on screen side by side in the wide
             // layout, so a toggle between them means nothing there.

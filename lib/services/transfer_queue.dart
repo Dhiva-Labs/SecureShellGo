@@ -34,6 +34,7 @@ class TransferTask {
     this.localPath,
     this.saveAsName,
     this.overwrite = false,
+    this.relativeDirectory = '',
   });
 
   final String id;
@@ -56,6 +57,11 @@ class TransferTask {
   /// rather than de-duplicated.
   final bool overwrite;
 
+  /// For downloads, the directory under `Download/` to save into — set by a
+  /// recursive directory download so the tree's shape survives the trip.
+  /// Empty means straight into Downloads, which is every single-file case.
+  final String relativeDirectory;
+
   /// Bytes, when known up front. Downloads learn it from `stat`, uploads from
   /// the picked file.
   int? totalBytes;
@@ -70,6 +76,11 @@ class TransferTask {
   /// Where the bytes ended up — the MediaStore display name for a download,
   /// the remote path for an upload. Set on completion.
   String? destination;
+
+  /// For a finished download, the `content://` URI it landed on, so the panel
+  /// can offer "Open" rather than leaving the user to go hunting for the file
+  /// in a file manager.
+  String? destinationUri;
 
   DateTime? startedAt;
   DateTime? finishedAt;
@@ -129,10 +140,12 @@ class TransferHandle {
     _onChanged();
   }
 
-  /// Records where the bytes landed, for the completed row's subtitle.
-  void setDestination(String destination) {
-    if (_task.destination == destination) return;
+  /// Records where the bytes landed, for the completed row's subtitle and its
+  /// "Open" action.
+  void setDestination(String destination, {String? uri}) {
+    if (_task.destination == destination && _task.destinationUri == uri) return;
     _task.destination = destination;
+    _task.destinationUri = uri;
     _onChanged();
   }
 
@@ -210,6 +223,7 @@ class TransferQueue {
     String? saveAsName,
     bool overwrite = false,
     int? totalBytes,
+    String relativeDirectory = '',
   }) {
     return _enqueue(
       TransferTask(
@@ -220,6 +234,7 @@ class TransferQueue {
         totalBytes: totalBytes,
         saveAsName: saveAsName ?? name,
         overwrite: overwrite,
+        relativeDirectory: relativeDirectory,
       ),
     );
   }
@@ -277,6 +292,40 @@ class TransferQueue {
     for (final task in _tasks.where((t) => t.status.isActive).toList()) {
       cancel(task.id);
     }
+  }
+
+  /// Queues a failed transfer again, and drops the row it failed on.
+  ///
+  /// A fresh task rather than a reset of the old one: progress, timings and
+  /// the error belong to the attempt that failed, and a row that silently
+  /// goes from "failed" back to "waiting" reads as the app losing track of
+  /// itself. Only failures can be retried — a cancelled transfer is a
+  /// decision the user made, not something to offer to undo behind a button
+  /// that says "retry".
+  ///
+  /// Returns null when the id is unknown or the task is not in [failed].
+  TransferTask? retry(String id) {
+    final task = _find(id);
+    if (task == null || task.status != TransferStatus.failed) return null;
+    _tasks.remove(task);
+
+    return _enqueue(
+      TransferTask(
+        id: _nextId(),
+        name: task.name,
+        remotePath: task.remotePath,
+        direction: task.direction,
+        // Downloads re-learn their size from the server if it was never
+        // known; uploads knew it from the picked file all along.
+        totalBytes: task.direction == TransferDirection.upload
+            ? task.totalBytes
+            : null,
+        localPath: task.localPath,
+        saveAsName: task.saveAsName,
+        overwrite: task.overwrite,
+        relativeDirectory: task.relativeDirectory,
+      ),
+    );
   }
 
   /// Drops finished rows from the panel.

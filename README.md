@@ -43,8 +43,17 @@ host-key verification at the core.
 - Remote file browser sharing the live SSH session with the terminal —
   switching views never drops your shell
 - Downloads stream straight into the device's Downloads collection with flat
-  memory usage (multi-gigabyte safe), progress, cancel, and multi-select
-- Uploads via the system file picker
+  memory usage (multi-gigabyte safe), progress, cancel, and multi-select —
+  with "Open" the moment one lands
+- Download a whole folder: the tree is walked, counted and sized before
+  anything moves, then saved under `Download/<folder>/` with its structure
+  intact
+- **Upload here**: pick any number of files and they land in the directory
+  you are looking at, with per-file progress, cancel and retry, and a
+  replace / keep both / skip prompt when a name is already taken
+- **Share to SecureShell Go**: send files from any app's Share menu, pick a
+  saved host and a folder, and they upload — reusing a session you already
+  have open instead of asking you to sign in again
 - Hidden-files toggle, dirs-first sorting, breadcrumbs, pull-to-refresh
 
 ### Every screen size

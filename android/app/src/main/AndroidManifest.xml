@@ -37,11 +37,29 @@
         android:label="SecureShell Go"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher">
+        <!--
+          singleTask, not singleTop, and with the app's own task affinity
+          rather than none.
+
+          A share arrives with FLAG_ACTIVITY_NEW_TASK. Under the Flutter
+          template's singleTop + taskAffinity="" that started a *second*
+          MainActivity in a second task: two Flutter engines, two Dart
+          isolates, and so two of everything the app treats as
+          process-wide — the live-session registry a share needs to look in,
+          and the foreground-service reference count. The user would be
+          asked to authenticate again for a host they already had open, and
+          be left with two sessions on one server.
+
+          singleTask routes every launch — launcher, share, notification —
+          into the one instance through onNewIntent, which is exactly what
+          the share intake is written against. Verified on the emulator:
+          before this, sharing into a running session produced task t94
+          alongside the session's t92.
+        -->
         <activity
             android:name=".MainActivity"
             android:exported="true"
-            android:launchMode="singleTop"
-            android:taskAffinity=""
+            android:launchMode="singleTask"
             android:theme="@style/LaunchTheme"
             android:configChanges="orientation|keyboardHidden|keyboard|screenSize|smallestScreenSize|locale|layoutDirection|fontScale|screenLayout|density|uiMode"
             android:hardwareAccelerated="true"
@@ -58,6 +76,30 @@
             <intent-filter>
                 <action android:name="android.intent.action.MAIN"/>
                 <category android:name="android.intent.category.LAUNCHER"/>
+            </intent-filter>
+            <!--
+              Puts SecureShell Go in every other app's Share menu for files,
+              which is the shortest path there is from "this file" to "on my
+              server": share from Files, Photos or a downloads notification,
+              pick a saved host and a directory, and the ordinary upload queue
+              takes it from there.
+
+              */* rather than a list of types on purpose — the thing being
+              uploaded is a file, and an SSH client has no opinion about
+              whether it is a photo or a config. The activity is singleTop, so
+              a share arriving while a session is open reaches the running
+              instance through onNewIntent and can reuse that connection
+              instead of authenticating again.
+            -->
+            <intent-filter>
+                <action android:name="android.intent.action.SEND"/>
+                <category android:name="android.intent.category.DEFAULT"/>
+                <data android:mimeType="*/*"/>
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.SEND_MULTIPLE"/>
+                <category android:name="android.intent.category.DEFAULT"/>
+                <data android:mimeType="*/*"/>
             </intent-filter>
         </activity>
         <!--

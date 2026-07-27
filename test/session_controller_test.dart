@@ -6,6 +6,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:secure_shell_go/models/host.dart';
 import 'package:secure_shell_go/models/remote_entry.dart';
 import 'package:secure_shell_go/services/device_storage.dart';
+import 'package:secure_shell_go/services/download_plan.dart';
 import 'package:secure_shell_go/services/session_controller.dart';
 import 'package:secure_shell_go/services/sftp_service.dart';
 import 'package:secure_shell_go/services/ssh_service.dart';
@@ -140,9 +141,10 @@ class FakeRemoteFs implements RemoteFileSystem {
 }
 
 class FakeWriter implements DownloadWriter {
-  FakeWriter(this.name);
+  FakeWriter(this.name, {this.uri});
 
   final String name;
+  final String? uri;
   var written = 0;
   var finished = false;
   var aborted = false;
@@ -155,7 +157,7 @@ class FakeWriter implements DownloadWriter {
   @override
   Future<SavedDownload> finish() async {
     finished = true;
-    return SavedDownload(displayName: name);
+    return SavedDownload(displayName: name, uri: uri);
   }
 
   @override
@@ -173,13 +175,20 @@ class FakeStorage implements DeviceStorage {
   final List<FakeWriter> writers = [];
   final List<String> requestedNames = [];
   final List<bool> overwriteFlags = [];
+  final List<String> relativeDirectories = [];
+  final List<String> opened = [];
   PickedLocalFile? pickResult;
+  List<PickedLocalFile> pickManyResult = const [];
+  var canOpen = true;
 
   @override
   Future<bool> ensurePermission() async => permitted;
 
   @override
-  Future<bool> downloadExists(String fileName) async =>
+  Future<bool> downloadExists(
+    String fileName, {
+    String relativeDirectory = '',
+  }) async =>
       existing.contains(fileName);
 
   @override
@@ -187,16 +196,30 @@ class FakeStorage implements DeviceStorage {
     String fileName, {
     String? mimeType,
     bool overwrite = false,
+    String relativeDirectory = '',
   }) async {
     requestedNames.add(fileName);
     overwriteFlags.add(overwrite);
-    final writer = FakeWriter(fileName);
+    relativeDirectories.add(relativeDirectory);
+    final writer = FakeWriter(
+      fileName,
+      uri: 'content://downloads/${writers.length}',
+    );
     writers.add(writer);
     return writer;
   }
 
   @override
+  Future<bool> openDownload(String uri, {String? mimeType}) async {
+    opened.add(uri);
+    return canOpen;
+  }
+
+  @override
   Future<PickedLocalFile?> pickFile() async => pickResult;
+
+  @override
+  Future<List<PickedLocalFile>> pickFiles() async => pickManyResult;
 
   @override
   Future<PickedTextFile?> pickTextFile({
@@ -554,6 +577,141 @@ void main() {
       expect(task.remotePath, '/home/dev/src/notes.md');
       expect(fs.uploaded, ['/home/dev/src/notes.md']);
       expect(task.destination, '/home/dev/src/notes.md');
+    });
+
+    test('a "keep both" name is what lands on the server', () async {
+      final session = build();
+      addTearDown(session.dispose);
+
+      final task = session.queueUpload(
+        const PickedLocalFile(
+          path: '/data/cache/uploads/b1/0/notes.md',
+          name: 'notes.md',
+          size: 300,
+        ),
+        '/home/dev/src',
+        asName: 'notes (1).md',
+      );
+      await settle(session);
+
+      expect(task.name, 'notes (1).md');
+      expect(fs.uploaded, ['/home/dev/src/notes (1).md']);
+    });
+
+    test('the multi-file picker is passed straight through', () async {
+      final session = build(
+        store: FakeStorage()
+          ..pickManyResult = const [
+            PickedLocalFile(path: '/c/0/a.txt', name: 'a.txt', size: 1),
+            PickedLocalFile(path: '/c/1/b.txt', name: 'b.txt', size: 2),
+          ],
+      );
+      addTearDown(session.dispose);
+
+      final picked = await session.pickLocalFiles();
+      expect(picked.map((f) => f.name), ['a.txt', 'b.txt']);
+    });
+  });
+
+  group('shared-in uploads', () {
+    test('a request is held for a pane that may not exist yet', () async {
+      final session = build();
+      addTearDown(session.dispose);
+
+      expect(session.pendingUpload, isNull);
+
+      final notified = session.changes.first;
+      session.requestUpload(const [
+        PickedLocalFile(path: '/c/0/a.txt', name: 'a.txt', size: 10),
+        PickedLocalFile(path: '/c/1/b.txt', name: 'b.txt', size: 20),
+      ]);
+      await notified;
+
+      expect(session.pendingUpload!.count, 2);
+      expect(session.pendingUpload!.totalBytes, 30);
+    });
+
+    test('an empty request is not a request', () async {
+      final session = build();
+      addTearDown(session.dispose);
+
+      session.requestUpload(const []);
+      expect(session.pendingUpload, isNull);
+    });
+
+    test('clearing it tells the panes to stop showing the banner', () async {
+      final session = build();
+      addTearDown(session.dispose);
+
+      session.requestUpload(const [
+        PickedLocalFile(path: '/c/0/a.txt', name: 'a.txt', size: 10),
+      ]);
+      final notified = session.changes.first;
+      session.clearPendingUpload();
+      await notified;
+
+      expect(session.pendingUpload, isNull);
+    });
+  });
+
+  group('directory downloads', () {
+    test('each planned file keeps its subdirectory under Downloads', () async {
+      final session = build();
+      addTearDown(session.dispose);
+
+      final task = session.queuePlannedDownload(
+        const PlannedDownload(
+          remotePath: '/home/dev/project/src/main.dart',
+          fileName: 'main.dart',
+          relativeDirectory: 'project/src',
+          size: 300,
+        ),
+      );
+      await settle(session);
+
+      expect(task.status, TransferStatus.completed);
+      expect(storage.relativeDirectories, ['project/src']);
+      expect(task.destination, 'Downloads/project/src/main.dart');
+    });
+
+    test('a single-file download still goes straight into Downloads',
+        () async {
+      final session = build();
+      addTearDown(session.dispose);
+
+      session.queueDownload(file('notes.txt'));
+      await settle(session);
+
+      expect(storage.relativeDirectories, ['']);
+    });
+  });
+
+  group('opening a finished download', () {
+    test('hands the saved URI to the platform', () async {
+      final session = build();
+      addTearDown(session.dispose);
+
+      final task = session.queueDownload(file('notes.txt'));
+      await settle(session);
+
+      expect(task.destinationUri, 'content://downloads/0');
+      expect(await session.openDownload(task), isTrue);
+      expect(storage.opened, ['content://downloads/0']);
+    });
+
+    test('a transfer with nowhere to point reports false without a call',
+        () async {
+      final session = build();
+      addTearDown(session.dispose);
+
+      final task = session.queueUpload(
+        const PickedLocalFile(path: '/c/0/a.txt', name: 'a.txt', size: 1),
+        '/home/dev',
+      );
+      await settle(session);
+
+      expect(await session.openDownload(task), isFalse);
+      expect(storage.opened, isEmpty);
     });
   });
 }

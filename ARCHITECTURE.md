@@ -35,21 +35,26 @@ lib/
     credential_store.dart       saved passwords/keys, per host
     host_store.dart             hosts.json
     session_controller.dart     one live session, shared by terminal + browser
+    session_registry.dart       the live sessions, by host, for share reuse
     session_keepalive.dart      the 30 s keep-alive schedule for a live session
     session_foreground.dart     refcount + channel for the foreground service
     sftp_service.dart           RemoteFileSystem over dartssh2's SftpClient
     transfer_queue.dart         the download/upload queue and its progress model
+    upload_plan.dart            remote name collisions: the decision, not the UI
+    download_plan.dart          walks a remote directory into a download plan
     remote_path.dart            POSIX path arithmetic, name sanitising, sizes
     device_storage.dart         Dart half of the MediaStore / picker channel
+    share_intake.dart           files arriving from other apps' Share menus
     private_key_import.dart     classify a picked key file, no socket needed
 
   screens/
     host_list_screen.dart       home: saved hosts, connect, "browse files"
     host_edit_screen.dart       add/edit a host
     known_hosts_screen.dart     manage trusted host keys
+    share_target_screen.dart    "upload to…" host picker for an incoming share
     session_screen.dart         owns the session; hosts the two panes
     terminal_pane.dart          xterm view wired to the SSH shell channel
-    file_browser_pane.dart      SFTP directory browser + downloads
+    file_browser_pane.dart      SFTP browser, uploads and downloads
 
   widgets/
     host_key_dialog.dart        the accept/reject host key UI
@@ -356,6 +361,104 @@ resulting display name is read back rather than assumed.
 
 ---
 
+## Moving files in both directions (Phase 10)
+
+Phase 3 could upload. Nobody could find it: one `upload_file` icon in a row of
+icons, one file at a time. Phase 10 is mostly about making the *other*
+direction as obvious as tapping a file is, and the shape of the work follows
+from that — every piece below is a discoverability fix with a small amount of
+capability behind it.
+
+**"Upload here" is the browser's primary action.** An extended FAB inside
+`FileBrowserPane`, labelled rather than iconic, naming the destination in its
+tooltip and in the snackbar it produces ("Uploading 3 files to /srv/www").
+The FAB lives on a `Scaffold` *inside the pane*, not around the whole screen:
+in the side-by-side tablet layout the browser is one half of a `Row`, and a
+button anchored to the window would float over the terminal. The transfer
+summary bar is that Scaffold's `bottomNavigationBar`, so the FAB sits above it
+by construction and can never cover it, and the list carries 88 px of bottom
+padding so the last row is never the one hiding underneath. The icon in the
+action bar stays for the muscle memory of anyone who found it.
+
+**Uploads are multi-file.** `pickFiles` adds `EXTRA_ALLOW_MULTIPLE` to the
+same `ACTION_OPEN_DOCUMENT` intent and stages the lot; the single-file
+`pickFile` is untouched, because private-key import and other callers have no
+use for a list.
+
+**Collisions are decided, then executed.** `upload_plan.dart` holds the
+decision as a pure function: given the names being uploaded, the names already
+in the directory (one listing, not one `stat` per file) and a prompt callback,
+it returns what each file should be called and whether it replaces anything.
+Keeping it out of the widget is what makes "apply to all", "keep both" and
+"skip" testable, and it lets `RemotePath.deduplicate` — written for downloads
+in Phase 3 — serve the upload side unchanged rather than growing a second,
+subtly different implementation. Names claimed earlier in a batch join the
+taken set as they are assigned, so two files called `photo.jpg` cannot
+silently collapse into one. A dismissed prompt cancels the batch: it is never
+read as consent to overwrite someone's file on a server.
+
+**The share sheet is the discoverability win.** `ACTION_SEND` and
+`ACTION_SEND_MULTIPLE` for `*/*` put SecureShell Go in every other app's Share
+menu, which is the shortest path from "this file" to "on my server". The
+platform side records the intent's URIs and stages them only when Dart asks
+(`takePendingShare`), so sharing a 2 GB video does not stall a cold start.
+Cold start and warm arrival are the same code path — the app pulls, rather
+than being pushed a payload — with `onNewIntent` merely nudging it to pull.
+
+`ShareTargetScreen` then asks *where*: a saved host, then the ordinary file
+browser to choose the directory, with the files held on the
+`SessionController` (`pendingUpload`) rather than published as an event, since
+the browser pane may not exist yet when the share lands. A host that is
+already connected is reused through `SessionRegistry` — same credentials, same
+host-key check, same foreground service — and `bringToFront` pops the picker
+off rather than stacking a second session on the same machine. A host that is
+not connected gets the normal connect path, host-key verification included: a
+share is not a reason to trust a key that has not been verified.
+
+This is why `MainActivity` is `singleTask` with the app's own task affinity.
+Under the template's `singleTop` + `taskAffinity=""`, a share (which always
+carries `FLAG_ACTIVITY_NEW_TASK`) started a *second* activity in a second
+task: two Flutter engines, two isolates, and so two of everything the app
+treats as process-wide — including the registry a share looks in and the
+foreground-service reference count. Observed on the emulator before the fix.
+
+**Downloads say where they went.** A finished download's `content://` URI now
+rides along on the task, so both the completion snackbar and the transfer
+panel can offer "Open" — an `ACTION_VIEW` chooser, with the read grant riding
+on the intent because this app inserted the MediaStore row and can pass access
+to whatever the user picks. The Downloads folder is still the only
+destination; there is no picker to get wrong.
+
+**Directories download whole.** `download_plan.dart` walks the tree first and
+hands back a plan — file count, total size, what it skipped — so the confirm
+dialog can say "412 files, 1.8 GB" about the one thing in this browser whose
+size is invisible from the row that was tapped, and so the walk can be
+cancelled while it is still only round trips. Symlinks are not followed in
+either direction: a link to a directory can point back up its own tree
+(`ln -s .. loop`) and turn the walk into an infinite one, and a link to a file
+would fetch the same bytes twice; they are counted so the dialog can say what
+was left out. A directory that will not list is recorded and stepped over
+rather than failing the whole download. Each planned file carries the
+subdirectory it belongs in, which `StorageBridge.beginDownload` turns into
+MediaStore's `RELATIVE_PATH` — sanitised on both sides, since every segment of
+it came out of a remote listing.
+
+**Failures are retryable.** `TransferQueue.retry` re-queues a failed transfer
+as a fresh task and drops the row it failed on. Only failures: a cancelled
+transfer is a decision the user made, not something to offer to undo behind a
+button marked "retry".
+
+Two smaller things the emulator caught, both worth keeping in mind when
+touching this area: the summary bar used to call every finished transfer
+"saved to Downloads", which is the opposite of what an upload did; and
+completion snackbars are now raised when the queue goes quiet rather than per
+file, because a recursive folder download finishes hundreds of times and
+hundreds of queued snackbars take minutes to drain past a user who has moved
+on. The browser refreshes its listing on the same "queue is quiet" signal, so
+an upload appears where it landed without costing a listing per file.
+
+---
+
 ## What later phases plug into
 
 Nothing below requires changing the service layer.
@@ -414,7 +517,7 @@ point is the per-entry bottom sheet that already exists in `file_browser_pane`.
 
 ## Testing
 
-`flutter test` — 193 tests, no device or network server required.
+`flutter test` — 246 tests, no device or network server required.
 
 - `test/known_hosts_service_test.dart` — persistence, case-insensitive host
   matching, per-port and per-key-type scoping, replacement, fail-closed on a
@@ -457,10 +560,30 @@ point is the per-entry bottom sheet that already exists in `file_browser_pane`.
   clears a ping which never answers.
 - `test/transfer_queue_test.dart` — sequencing, progress publication,
   cancellation of queued and running tasks, failure isolation, aggregate
-  progress, `clearFinished`.
+  progress, `clearFinished`, and retry (a failed download re-queued with its
+  save name, overwrite flag and relative directory intact, an upload retry
+  keeping its staged source, and completed/cancelled/unknown tasks refusing).
+- `test/upload_plan_test.dart` — the remote-collision decision: no collision
+  asking nothing, replace/keep both/skip, a dismissed prompt cancelling the
+  batch rather than overwriting, "apply to all" for each of the three
+  choices, and collisions *within* a batch (two picked `photo.jpg`, and a
+  name freed by "keep both" not being handed out twice).
+- `test/download_plan_test.dart` — the recursive walk against a scripted
+  tree: every file found and totalled, the subdirectory structure mirrored
+  under the folder name, a symlink loop (`ln -s ..`) not followed and never
+  even listed, a link to a file skipped rather than fetched twice,
+  cancellation throwing instead of returning a partial plan, an unreadable
+  subdirectory recorded rather than fatal, hostile names unable to steer a
+  file out of its folder, and the file/depth caps.
+- `test/share_intake_test.dart` — the share payload: a batch of staged files,
+  a bare list, null and malformed shapes, one unusable entry costing only
+  itself, name and size fallbacks, and the channel round trip for both the
+  cold-start pull and the warm `shareAvailable` nudge.
 - `test/remote_path_test.dart` — path arithmetic (including that an absolute
   path cannot climb above `/`), breadcrumbs, name sanitising and
-  de-duplication, size formatting, and `RemoteEntry` sorting/classification.
+  de-duplication, relative-directory sanitising for a recursive download's
+  MediaStore path (no `..`, no absolute paths, depth and length caps), size
+  formatting, and `RemoteEntry` sorting/classification.
 
 `session_controller_test` fakes `SessionTransport` and `RemoteFileSystem`,
 which is why those interfaces exist: dartssh2's `SSHClient`, `SSHSession` and
@@ -489,13 +612,28 @@ see "Known gaps" in the handover notes.
   `stopWithTask="true"` — the session lives in the Flutter engine attached to
   `MainActivity`, so a service surviving a task swipe would be an ongoing
   notification with no connection behind it.
-- `MainActivity` registers three channels: `StorageBridge` on
-  `…/storage`, the `FLAG_KEEP_SCREEN_ON` toggle on `…/keep_awake`, and
-  start/stop for the session service on `…/session_service`. It forwards
-  `onActivityResult` / `onRequestPermissionsResult` to `StorageBridge`, and
-  handles the `POST_NOTIFICATIONS` result itself. Platform I/O for storage runs
-  on a single-thread executor and replies on the main looper, so a slow write
-  never blocks the UI thread and chunk ordering is preserved.
+- `MainActivity` registers four channels: `StorageBridge` on `…/storage`, the
+  share intake on `…/share`, the `FLAG_KEEP_SCREEN_ON` toggle on
+  `…/keep_awake`, and start/stop for the session service on
+  `…/session_service`. It forwards `onActivityResult` /
+  `onRequestPermissionsResult` to `StorageBridge`, hands `onNewIntent` to it
+  so a share arriving at a running app is recorded (then nudges Dart), and
+  handles the `POST_NOTIFICATIONS` result itself. Platform I/O for storage
+  runs on a single-thread executor and replies on the main looper, so a slow
+  write never blocks the UI thread and chunk ordering is preserved.
+- `launchMode="singleTask"` with the app's own task affinity, so a share and
+  the launcher land in the same activity — see Phase 10 above for what the
+  template's `singleTop` + `taskAffinity=""` did instead.
+- Two `<intent-filter>`s for `ACTION_SEND` and `ACTION_SEND_MULTIPLE` on
+  `*/*`, which is what puts the app in other apps' Share menus.
+- `StorageBridge`'s method surface: `ensurePermission`, `downloadExists`,
+  `beginDownload` / `writeChunk` / `finishDownload` / `abortDownload`,
+  `openDownload`, `pickFile`, `pickFiles`, `pickFileContent`, and
+  `takePendingShare` on the share channel. `downloadExists` and
+  `beginDownload` take a `relativePath` under `Download/`; picks and shares
+  stage into a per-batch cache directory (`uploads/b<timestamp>-<n>/<i>/`),
+  swept by age rather than cleared wholesale, since clearing would delete the
+  file an upload queued a minute ago is still streaming.
 - `android:label="SecureShell Go"`.
 - `windowSoftInputMode="adjustResize"` (Flutter default) is what lets the
   terminal shrink when the soft keyboard opens, which in turn fires the resize

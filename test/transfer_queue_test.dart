@@ -267,6 +267,88 @@ void main() {
     expect(task.totalBytes, 12);
   });
 
+  group('retry', () {
+    test('re-queues a failed transfer with everything it needs to run again',
+        () async {
+      var attempts = 0;
+      final queue = TransferQueue(
+        executor: (task, handle) async {
+          attempts++;
+          if (attempts == 1) throw StateError('link went down');
+        },
+      );
+      addTearDown(queue.dispose);
+
+      final failed = queue.enqueueDownload(
+        remotePath: '/srv/logs/app.log',
+        name: 'app.log',
+        saveAsName: 'app.log',
+        overwrite: true,
+        relativeDirectory: 'logs/app',
+      );
+      await queue.changes.firstWhere(
+        (tasks) => tasks.any((t) => t.status == TransferStatus.failed),
+      );
+      expect(failed.error, contains('link went down'));
+
+      final again = queue.retry(failed.id)!;
+      await queue.changes.firstWhere(
+        (tasks) => tasks.every((t) => t.status.isFinished),
+      );
+
+      expect(again.status, TransferStatus.completed);
+      expect(again.remotePath, '/srv/logs/app.log');
+      expect(again.saveAsName, 'app.log');
+      expect(again.overwrite, isTrue);
+      expect(again.relativeDirectory, 'logs/app');
+      // The failed row goes with the retry: one file, one row, no history of
+      // an attempt the user has already replaced.
+      expect(queue.tasks.map((t) => t.id), [again.id]);
+    });
+
+    test('an upload retry keeps its staged source and size', () async {
+      var attempts = 0;
+      final queue = TransferQueue(
+        executor: (task, handle) async {
+          attempts++;
+          if (attempts == 1) throw StateError('connection reset');
+        },
+      );
+      addTearDown(queue.dispose);
+
+      final failed = queue.enqueueUpload(
+        localPath: '/data/cache/uploads/b1/0/notes.md',
+        remotePath: '/home/dev/notes.md',
+        name: 'notes.md',
+        totalBytes: 42,
+      );
+      await queue.changes.firstWhere(
+        (tasks) => tasks.any((t) => t.status == TransferStatus.failed),
+      );
+
+      final again = queue.retry(failed.id)!;
+      expect(again.direction, TransferDirection.upload);
+      expect(again.localPath, '/data/cache/uploads/b1/0/notes.md');
+      expect(again.totalBytes, 42);
+    });
+
+    test('only failures can be retried', () async {
+      final queue = TransferQueue(executor: (task, handle) async {});
+      addTearDown(queue.dispose);
+
+      final done = queue.enqueueDownload(remotePath: '/a', name: 'a');
+      await queue.changes.firstWhere(
+        (tasks) => tasks.every((t) => t.status.isFinished),
+      );
+
+      // A cancelled transfer is a decision the user made, not something to
+      // quietly offer to undo; a completed one has nothing to redo.
+      expect(queue.retry(done.id), isNull);
+      expect(queue.retry('no-such-id'), isNull);
+      expect(queue.tasks, hasLength(1));
+    });
+  });
+
   test('progress is indeterminate until a total is known', () {
     final task = TransferTask(
       id: 't',

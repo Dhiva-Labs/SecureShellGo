@@ -5,11 +5,24 @@ import 'package:dartssh2/dartssh2.dart';
 import '../models/host.dart';
 import '../models/remote_entry.dart';
 import 'device_storage.dart';
+import 'download_plan.dart';
 import 'remote_path.dart';
 import 'session_keepalive.dart';
 import 'sftp_service.dart';
 import 'ssh_service.dart';
 import 'transfer_queue.dart';
+
+/// Files waiting for a destination directory on this session.
+class PendingUpload {
+  const PendingUpload(this.files);
+
+  final List<PickedLocalFile> files;
+
+  int get count => files.length;
+
+  int get totalBytes =>
+      files.fold<int>(0, (sum, file) => sum + file.size);
+}
 
 /// One live authenticated session, shared by every view of it.
 ///
@@ -190,14 +203,57 @@ class SessionController {
     );
   }
 
-  /// Queues an upload of a locally staged file into [remoteDirectory].
-  TransferTask queueUpload(PickedLocalFile file, String remoteDirectory) {
+  /// Queues one file of a recursive directory download, which unlike a
+  /// single-file download carries the subdirectory it belongs in.
+  TransferTask queuePlannedDownload(PlannedDownload planned) {
+    return transfers.enqueueDownload(
+      remotePath: planned.remotePath,
+      name: planned.fileName,
+      saveAsName: planned.fileName,
+      totalBytes: planned.size,
+      relativeDirectory: planned.relativeDirectory,
+    );
+  }
+
+  /// Queues an upload of a locally staged file into [remoteDirectory],
+  /// optionally under a different name — which is how "keep both" lands a
+  /// second `notes.md` as `notes (1).md` instead of over the first.
+  TransferTask queueUpload(
+    PickedLocalFile file,
+    String remoteDirectory, {
+    String? asName,
+  }) {
+    final name = asName ?? file.name;
     return transfers.enqueueUpload(
       localPath: file.path,
-      remotePath: RemotePath.join(remoteDirectory, file.name),
-      name: file.name,
+      remotePath: RemotePath.join(remoteDirectory, name),
+      name: name,
       totalBytes: file.size,
     );
+  }
+
+  // ------------------------------------------------------- shared-in uploads
+
+  /// Files handed to this session from outside the browser — the share sheet,
+  /// so far — waiting for the user to pick a destination directory.
+  ///
+  /// Held as state rather than published as an event because the file browser
+  /// may not exist yet when the request arrives (a share can land on a
+  /// session showing the terminal, or on one that is still connecting); a
+  /// pane that builds later has to be able to find the request, not miss it.
+  PendingUpload? get pendingUpload => _pendingUpload;
+  PendingUpload? _pendingUpload;
+
+  void requestUpload(List<PickedLocalFile> files) {
+    if (files.isEmpty) return;
+    _pendingUpload = PendingUpload(files);
+    _notify();
+  }
+
+  void clearPendingUpload() {
+    if (_pendingUpload == null) return;
+    _pendingUpload = null;
+    _notify();
   }
 
   Future<void> _runTransfer(TransferTask task, TransferHandle handle) async {
@@ -225,10 +281,12 @@ class SessionController {
     handle.throwIfCancelled();
 
     final fileName = task.saveAsName ?? RemotePath.sanitiseFileName(task.name);
+    final directory = task.relativeDirectory;
     final writer = await _storage.beginDownload(
       fileName,
       mimeType: SftpService.mimeTypeFor(fileName),
       overwrite: task.overwrite,
+      relativeDirectory: directory,
     );
 
     var completed = false;
@@ -242,7 +300,12 @@ class SessionController {
       handle.throwIfCancelled();
       final saved = await writer.finish();
       completed = true;
-      handle.setDestination('Downloads/${saved.displayName}');
+      handle.setDestination(
+        directory.isEmpty
+            ? 'Downloads/${saved.displayName}'
+            : 'Downloads/$directory/${saved.displayName}',
+        uri: saved.uri,
+      );
     } finally {
       if (!completed) {
         await writer.abort();
@@ -267,6 +330,21 @@ class SessionController {
 
   /// Opens the system picker and stages the chosen file locally.
   Future<PickedLocalFile?> pickLocalFile() => _storage.pickFile();
+
+  /// Opens the system picker for any number of files, staging each one.
+  Future<List<PickedLocalFile>> pickLocalFiles() => _storage.pickFiles();
+
+  /// Hands a finished download to whatever app can display it. False when
+  /// nothing on the device can, or when the transfer has no URI to open —
+  /// an upload, or a download that never finished.
+  Future<bool> openDownload(TransferTask task) async {
+    final uri = task.destinationUri;
+    if (uri == null || uri.isEmpty) return false;
+    return _storage.openDownload(
+      uri,
+      mimeType: SftpService.mimeTypeFor(task.saveAsName ?? task.name),
+    );
+  }
 
   // ----------------------------------------------------------------- teardown
 

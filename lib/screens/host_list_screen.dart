@@ -5,16 +5,19 @@ import 'package:flutter/services.dart';
 
 import '../models/host.dart';
 import '../services/credential_store.dart';
+import '../services/device_storage.dart';
 import '../services/host_store.dart';
 import '../services/known_hosts_service.dart';
 import '../services/layout_breakpoints.dart';
 import '../services/settings_store.dart';
+import '../services/share_intake.dart';
 import '../services/ssh_service.dart';
 import '../theme.dart';
 import '../widgets/host_key_dialog.dart';
 import 'host_edit_screen.dart';
 import 'session_screen.dart';
 import 'settings_screen.dart';
+import 'share_target_screen.dart';
 
 /// The app's home screen: the list of saved hosts.
 ///
@@ -29,6 +32,7 @@ class HostListScreen extends StatefulWidget {
     required this.knownHosts,
     required this.sshService,
     required this.settingsStore,
+    this.shareIntake,
   });
 
   final HostStore hostStore;
@@ -36,6 +40,12 @@ class HostListScreen extends StatefulWidget {
   final KnownHostsService knownHosts;
   final SshService sshService;
   final SettingsStore settingsStore;
+
+  /// Where files shared from other apps arrive. The home screen owns this
+  /// because it is the one route that is always on the stack — a share can
+  /// land while any screen is in front, or with the app not running at all.
+  /// Test seam; production builds the channel-backed default.
+  final ShareIntake? shareIntake;
 
   @override
   State<HostListScreen> createState() => _HostListScreenState();
@@ -53,11 +63,53 @@ class _HostListScreenState extends State<HostListScreen> {
   /// like a bug; this says what actually happened.
   bool _trustStoreReset = false;
 
+  late final ShareIntake _shareIntake = widget.shareIntake ?? ShareIntake();
+
+  /// So a second `shareAvailable` — or a cold-start share the warm listener
+  /// also hears — cannot stack two pickers for the same files.
+  bool _shareTargetOpen = false;
+
   @override
   void initState() {
     super.initState();
     _future = widget.hostStore.all();
     unawaited(_checkTrustStore());
+
+    _shareIntake.listen(_openShareTarget);
+    // The cold-start case: the app was launched *by* a share, so the payload
+    // is already waiting on the platform side. Asked for after the first
+    // frame, because the answer is a route push.
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      final files = await _shareIntake.takePending();
+      if (files.isNotEmpty) _openShareTarget(files);
+    });
+  }
+
+  @override
+  void dispose() {
+    _shareIntake.stop();
+    super.dispose();
+  }
+
+  Future<void> _openShareTarget(List<PickedLocalFile> files) async {
+    if (!mounted || files.isEmpty || _shareTargetOpen) return;
+    _shareTargetOpen = true;
+    try {
+      await Navigator.of(context).push<void>(
+        MaterialPageRoute<void>(
+          builder: (_) => ShareTargetScreen(
+            files: files,
+            hostStore: widget.hostStore,
+            credentialStore: widget.credentialStore,
+            sshService: widget.sshService,
+            settingsStore: widget.settingsStore,
+          ),
+        ),
+      );
+    } finally {
+      _shareTargetOpen = false;
+      if (mounted) _refresh();
+    }
   }
 
   Future<void> _checkTrustStore() async {

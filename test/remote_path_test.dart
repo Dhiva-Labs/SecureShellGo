@@ -81,6 +81,56 @@ void main() {
     });
   });
 
+  group('sanitiseRelativeDirectory', () {
+    test('keeps an ordinary nested path intact', () {
+      expect(
+        RemotePath.sanitiseRelativeDirectory('project/src/util'),
+        'project/src/util',
+      );
+      expect(RemotePath.sanitiseRelativeDirectory('project'), 'project');
+    });
+
+    test('a recursive download cannot climb out of its own folder', () {
+      // Every segment of this comes from a remote listing, so all of it is
+      // the server's to choose.
+      expect(RemotePath.sanitiseRelativeDirectory('../../etc'), 'etc');
+      expect(RemotePath.sanitiseRelativeDirectory('a/../../b'), 'a/b');
+      expect(
+        RemotePath.sanitiseRelativeDirectory('/etc/cron.d'),
+        'etc/cron.d',
+      );
+    });
+
+    test('leading slashes, doubles and dot segments collapse', () {
+      expect(RemotePath.sanitiseRelativeDirectory('/a//b/./c'), 'a/b/c');
+      expect(RemotePath.sanitiseRelativeDirectory('   '), '');
+      expect(RemotePath.sanitiseRelativeDirectory(''), '');
+      expect(RemotePath.sanitiseRelativeDirectory('.'), '');
+      expect(RemotePath.sanitiseRelativeDirectory('...'), '');
+    });
+
+    test('separators and control characters inside a name are neutralised', () {
+      expect(RemotePath.sanitiseRelativeDirectory('a\\b'), 'a_b');
+      expect(RemotePath.sanitiseRelativeDirectory('a\u0001b'), 'a_b');
+      expect(RemotePath.sanitiseRelativeDirectory('.hidden/sub'), 'hidden/sub');
+    });
+
+    test('depth and length are capped, because MediaStore refuses the insert',
+        () {
+      final deep = List.filled(40, 'x').join('/');
+      expect(
+        RemotePath.sanitiseRelativeDirectory(deep).split('/'),
+        hasLength(16),
+      );
+
+      final long = List.filled(10, 'y' * 60).join('/');
+      expect(
+        RemotePath.sanitiseRelativeDirectory(long).length,
+        lessThanOrEqualTo(180),
+      );
+    });
+  });
+
   group('deduplicate', () {
     test('leaves a free name alone', () {
       expect(RemotePath.deduplicate('report.pdf', (_) => false), 'report.pdf');

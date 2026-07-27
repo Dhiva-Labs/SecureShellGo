@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../services/remote_path.dart';
@@ -70,9 +72,26 @@ class TransferSummaryBar extends StatelessWidget {
           icon = Icons.error_outline;
           color = AppTheme.danger;
         } else {
-          label = done.length == 1
-              ? 'Saved ${done.first.destination ?? done.first.name}'
-              : '${done.length} files saved to Downloads';
+          // Direction matters in the wording now that uploading is a
+          // first-class flow: three files pushed to a server being reported
+          // as "saved to Downloads" is not a rounding error, it is the app
+          // telling the user the opposite of what happened.
+          final uploads =
+              done.where((t) => t.direction == TransferDirection.upload);
+          final downloads =
+              done.where((t) => t.direction == TransferDirection.download);
+          if (done.length == 1) {
+            label = done.first.direction == TransferDirection.upload
+                ? 'Uploaded ${done.first.destination ?? done.first.name}'
+                : 'Saved ${done.first.destination ?? done.first.name}';
+          } else if (uploads.isEmpty) {
+            label = '${done.length} files saved to Downloads';
+          } else if (downloads.isEmpty) {
+            label = '${done.length} files uploaded';
+          } else {
+            label = '${downloads.length} downloaded · '
+                '${uploads.length} uploaded';
+          }
           icon = Icons.check_circle_outline;
           color = AppTheme.accent;
         }
@@ -126,7 +145,15 @@ class TransferSummaryBar extends StatelessWidget {
 }
 
 /// The full transfer list, as a bottom sheet.
-Future<void> showTransfersSheet(BuildContext context, TransferQueue queue) {
+///
+/// [onOpen] hands a finished download to whatever app can display it, and
+/// returns false if nothing on the device can. Omitted (in a context with no
+/// device storage behind it) the "Open" action simply does not appear.
+Future<void> showTransfersSheet(
+  BuildContext context,
+  TransferQueue queue, {
+  Future<bool> Function(TransferTask task)? onOpen,
+}) {
   return showModalBottomSheet<void>(
     context: context,
     backgroundColor: AppTheme.surface,
@@ -181,6 +208,8 @@ Future<void> showTransfersSheet(BuildContext context, TransferQueue queue) {
                       itemBuilder: (context, index) => _TransferTile(
                         task: tasks[tasks.length - 1 - index],
                         onCancel: queue.cancel,
+                        onRetry: queue.retry,
+                        onOpen: onOpen,
                       ),
                     ),
                   ),
@@ -194,10 +223,35 @@ Future<void> showTransfersSheet(BuildContext context, TransferQueue queue) {
 }
 
 class _TransferTile extends StatelessWidget {
-  const _TransferTile({required this.task, required this.onCancel});
+  const _TransferTile({
+    required this.task,
+    required this.onCancel,
+    required this.onRetry,
+    this.onOpen,
+  });
 
   final TransferTask task;
   final void Function(String id) onCancel;
+  final TransferTask? Function(String id) onRetry;
+  final Future<bool> Function(TransferTask task)? onOpen;
+
+  bool get _canOpen =>
+      onOpen != null &&
+      task.status == TransferStatus.completed &&
+      task.direction == TransferDirection.download &&
+      (task.destinationUri?.isNotEmpty ?? false);
+
+  Future<void> _open(BuildContext context) async {
+    final messenger = ScaffoldMessenger.of(context);
+    final opened = await onOpen!(task);
+    if (!opened) {
+      messenger.showSnackBar(
+        const SnackBar(
+          content: Text('No app on this device can open that file.'),
+        ),
+      );
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -238,14 +292,34 @@ class _TransferTile extends StatelessWidget {
           ],
         ],
       ),
-      trailing: task.status.isActive
-          ? IconButton(
-              tooltip: 'Cancel',
-              icon: const Icon(Icons.close, size: 20),
-              onPressed: () => onCancel(task.id),
-            )
-          : null,
+      trailing: _buildAction(context),
     );
+  }
+
+  Widget? _buildAction(BuildContext context) {
+    if (task.status.isActive) {
+      return IconButton(
+        tooltip: 'Cancel',
+        icon: const Icon(Icons.close, size: 20),
+        onPressed: () => onCancel(task.id),
+      );
+    }
+    // A failed transfer is the one row where the user has something better to
+    // do than read the error: try it again, without hunting for the file or
+    // the folder a second time.
+    if (task.status == TransferStatus.failed) {
+      return TextButton(
+        onPressed: () => onRetry(task.id),
+        child: const Text('Retry'),
+      );
+    }
+    if (_canOpen) {
+      return TextButton(
+        onPressed: () => unawaited(_open(context)),
+        child: const Text('Open'),
+      );
+    }
+    return null;
   }
 
   String _subtitle() {

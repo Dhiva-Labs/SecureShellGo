@@ -22,6 +22,14 @@ class MainActivity : FlutterActivity() {
     private var storage: StorageBridge? = null
 
     /**
+     * Kept so a share arriving while the app is already running can tell Dart
+     * to come and get it. The cold-start case needs no push — Dart asks once
+     * on startup, and the intent that launched the activity is already
+     * recorded by then.
+     */
+    private var shareChannel: MethodChannel? = null
+
+    /**
      * Asked at most once per process. A user who said no to notifications is
      * not going to enjoy being asked again every time they connect, and the
      * service runs either way — on Android 13+ a denied POST_NOTIFICATIONS
@@ -47,6 +55,28 @@ class MainActivity : FlutterActivity() {
             flutterEngine.dartExecutor.binaryMessenger,
             StorageBridge.CHANNEL,
         ).setMethodCallHandler(bridge)
+
+        // Files another app sent us through its Share menu. Dart pulls rather
+        // than being pushed the payload, so staging a large file happens when
+        // the app is ready for it instead of during a cold start.
+        shareChannel = MethodChannel(
+            flutterEngine.dartExecutor.binaryMessenger,
+            StorageBridge.SHARE_CHANNEL,
+        ).apply {
+            setMethodCallHandler { call, result ->
+                when (call.method) {
+                    "takePendingShare" -> {
+                        val bridge = storage
+                        if (bridge == null) result.success(null)
+                        else bridge.takePendingShare(result)
+                    }
+                    else -> result.notImplemented()
+                }
+            }
+        }
+        // The cold-start case: the activity was launched by the share itself,
+        // so the intent is sitting there before Dart has drawn a frame.
+        bridge.recordSharedIntent(intent)
 
         // A single FLAG_KEEP_SCREEN_ON toggle for Settings' "keep screen
         // awake" option — see keep_awake.dart for why this is a channel
@@ -116,6 +146,20 @@ class MainActivity : FlutterActivity() {
         }
     }
 
+    /**
+     * The warm case: the app is already running (singleTop, so no second
+     * activity) and the user shares something into it. Record the files and
+     * nudge Dart, which then asks for them the same way it does on a cold
+     * start.
+     */
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        if (storage?.recordSharedIntent(intent) == true) {
+            runCatching { shareChannel?.invokeMethod("shareAvailable", null) }
+        }
+    }
+
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         if (storage?.onActivityResult(requestCode, resultCode, data) == true) return
         super.onActivityResult(requestCode, resultCode, data)
@@ -152,6 +196,8 @@ class MainActivity : FlutterActivity() {
     override fun onDestroy() {
         storage?.dispose()
         storage = null
+        shareChannel?.setMethodCallHandler(null)
+        shareChannel = null
         // The engine goes with the activity, and the session with the engine,
         // so a notification outliving this point would be advertising a
         // connection that no longer exists.

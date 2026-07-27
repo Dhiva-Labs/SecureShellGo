@@ -40,18 +40,30 @@ class StorageBridge(private val activity: Activity) : MethodChannel.MethodCallHa
 
     companion object {
         const val CHANNEL = "com.dhivalabs.secure_shell_go/storage"
+        const val SHARE_CHANNEL = "com.dhivalabs.secure_shell_go/share"
         const val REQUEST_PICK_FILE = 0x5347
         const val REQUEST_WRITE_PERMISSION = 0x5348
 
         /** Default cap for [pickFileContent] when Dart does not send one. */
         const val DEFAULT_CONTENT_PICK_MAX_BYTES = 64L * 1024L
 
+        /**
+         * How long a staged upload batch is kept before a later staging
+         * sweeps it away. Long enough that a slow upload of a big file is
+         * never pulled out from under itself, short enough that the cache
+         * does not accumulate every video the user ever shared.
+         */
+        private const val STAGING_TTL_MS = 6L * 60L * 60L * 1000L
+
+        /** Depth cap on a download's relative path — see [sanitiseRelativePath]. */
+        private const val MAX_RELATIVE_SEGMENTS = 16
+
         private const val LEGACY_WRITE = android.Manifest.permission.WRITE_EXTERNAL_STORAGE
         private val usesMediaStore = Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q
     }
 
-    /** What to do with the document once [pickFile]/[pickFileContent] gets a result. */
-    private enum class PickMode { STAGE, CONTENT }
+    /** What to do with the document once the picker returns. */
+    private enum class PickMode { STAGE, STAGE_MULTIPLE, CONTENT }
 
     /** Thrown by [readFileContent] when the picked document exceeds its cap. */
     private class FileTooLargeException(message: String) : Exception(message)
@@ -74,6 +86,14 @@ class StorageBridge(private val activity: Activity) : MethodChannel.MethodCallHa
     private var pendingMaxBytes: Long = DEFAULT_CONTENT_PICK_MAX_BYTES
     private var pendingPermission: MethodChannel.Result? = null
 
+    /**
+     * URIs handed to us by another app's Share menu, waiting for Dart to ask
+     * for them. Held as URIs rather than staged copies because a share can
+     * arrive during a cold start — staging a 2 GB video before the first
+     * frame would look like the app failing to launch.
+     */
+    private val pendingShare = ArrayList<Uri>()
+
     fun dispose() {
         io.execute {
             for (sink in sinks.values) {
@@ -89,14 +109,22 @@ class StorageBridge(private val activity: Activity) : MethodChannel.MethodCallHa
             "ensurePermission" -> ensurePermission(result)
             "downloadExists" -> {
                 val name = call.argument<String>("fileName") ?: ""
-                onIo(result) { downloadExists(name) }
+                val relative = sanitiseRelativePath(call.argument<String>("relativePath"))
+                onIo(result) { downloadExists(name, relative) }
             }
             "beginDownload" -> {
                 val name = call.argument<String>("fileName") ?: "download"
                 val mime = call.argument<String>("mimeType")
                 val overwrite = call.argument<Boolean>("overwrite") ?: false
-                onIo(result) { beginDownload(name, mime, overwrite) }
+                val relative = sanitiseRelativePath(call.argument<String>("relativePath"))
+                onIo(result) { beginDownload(name, mime, overwrite, relative) }
             }
+            "openDownload" -> result.success(
+                openDownload(
+                    call.argument<String>("uri").orEmpty(),
+                    call.argument<String>("mimeType"),
+                ),
+            )
             "writeChunk" -> {
                 val id = call.argument<Int>("id") ?: -1
                 val bytes = call.argument<ByteArray>("bytes") ?: ByteArray(0)
@@ -111,6 +139,11 @@ class StorageBridge(private val activity: Activity) : MethodChannel.MethodCallHa
                 onIo(result) { abortDownload(id) }
             }
             "pickFile" -> pickFile(result)
+            "pickFiles" -> launchPicker(
+                result,
+                PickMode.STAGE_MULTIPLE,
+                DEFAULT_CONTENT_PICK_MAX_BYTES,
+            )
             "pickFileContent" -> {
                 val maxBytes = call.argument<Number>("maxBytes")?.toLong()
                     ?: DEFAULT_CONTENT_PICK_MAX_BYTES
@@ -168,13 +201,56 @@ class StorageBridge(private val activity: Activity) : MethodChannel.MethodCallHa
 
     // ----------------------------------------------------------------- downloads
 
-    private fun legacyDownloadDir(): File {
-        val dir = Environment.getExternalStoragePublicDirectory(
+    /**
+     * Reduces a caller-supplied relative path to something that cannot
+     * escape `Download/`.
+     *
+     * Every segment of a recursive download's path came out of a remote
+     * directory listing, which is to say out of the server's hands: `..`,
+     * absolute paths, separators smuggled inside a name and control
+     * characters are all dropped rather than escaped. Dart sanitises this too
+     * (`RemotePath.sanitiseRelativeDirectory`) — twice on purpose, since this
+     * is the side where getting it wrong writes outside the folder the user
+     * agreed to.
+     *
+     * Returns "" for "straight into Downloads".
+     */
+    private fun sanitiseRelativePath(raw: String?): String {
+        if (raw.isNullOrEmpty()) return ""
+        val segments = ArrayList<String>()
+        for (part in raw.split('/')) {
+            if (segments.size >= MAX_RELATIVE_SEGMENTS) break
+            val trimmed = part.trim()
+            if (trimmed.isEmpty() || trimmed == "." || trimmed == "..") continue
+            var cleaned = trimmed
+                .map { c -> if (c.isISOControl() || c in "\\/:*?\"<>|") '_' else c }
+                .joinToString("")
+                .trim()
+                .trimStart('.')
+                .trimEnd('.', ' ')
+            if (cleaned.isEmpty()) continue
+            if (cleaned.length > 80) cleaned = cleaned.substring(0, 80)
+            segments.add(cleaned)
+        }
+        return segments.joinToString("/")
+    }
+
+    private fun legacyDownloadDir(relativePath: String = ""): File {
+        var dir = Environment.getExternalStoragePublicDirectory(
             Environment.DIRECTORY_DOWNLOADS,
         )
+        if (relativePath.isNotEmpty()) dir = File(dir, relativePath)
         if (!dir.exists()) dir.mkdirs()
         return dir
     }
+
+    /** MediaStore stores RELATIVE_PATH with a trailing separator. */
+    private fun mediaStoreRelativePath(relativePath: String): String =
+        if (relativePath.isEmpty()) {
+            "${Environment.DIRECTORY_DOWNLOADS}/"
+        } else {
+            "${Environment.DIRECTORY_DOWNLOADS}/$relativePath/"
+        }
 
     /**
      * Whether a download of this name is already there.
@@ -185,16 +261,17 @@ class StorageBridge(private val activity: Activity) : MethodChannel.MethodCallHa
      * twice — and being wrong the other way just means MediaStore does its own
      * de-duplication, which the caller reads back anyway.
      */
-    private fun downloadExists(fileName: String): Boolean {
+    private fun downloadExists(fileName: String, relativePath: String): Boolean {
         if (!usesMediaStore) {
-            return File(legacyDownloadDir(), fileName).exists()
+            return File(legacyDownloadDir(relativePath), fileName).exists()
         }
         val projection = arrayOf(MediaStore.Downloads._ID)
         activity.contentResolver.query(
             MediaStore.Downloads.EXTERNAL_CONTENT_URI,
             projection,
-            "${MediaStore.Downloads.DISPLAY_NAME} = ?",
-            arrayOf(fileName),
+            "${MediaStore.Downloads.DISPLAY_NAME} = ? AND " +
+                "${MediaStore.Downloads.RELATIVE_PATH} = ?",
+            arrayOf(fileName, mediaStoreRelativePath(relativePath)),
             null,
         )?.use { cursor ->
             return cursor.count > 0
@@ -202,15 +279,16 @@ class StorageBridge(private val activity: Activity) : MethodChannel.MethodCallHa
         return false
     }
 
-    private fun deleteExistingDownload(fileName: String) {
+    private fun deleteExistingDownload(fileName: String, relativePath: String) {
         if (!usesMediaStore) {
-            File(legacyDownloadDir(), fileName).delete()
+            File(legacyDownloadDir(relativePath), fileName).delete()
             return
         }
         activity.contentResolver.delete(
             MediaStore.Downloads.EXTERNAL_CONTENT_URI,
-            "${MediaStore.Downloads.DISPLAY_NAME} = ?",
-            arrayOf(fileName),
+            "${MediaStore.Downloads.DISPLAY_NAME} = ? AND " +
+                "${MediaStore.Downloads.RELATIVE_PATH} = ?",
+            arrayOf(fileName, mediaStoreRelativePath(relativePath)),
         )
     }
 
@@ -218,13 +296,14 @@ class StorageBridge(private val activity: Activity) : MethodChannel.MethodCallHa
         fileName: String,
         mimeType: String?,
         overwrite: Boolean,
+        relativePath: String,
     ): Map<String, Any?> {
-        if (overwrite) deleteExistingDownload(fileName)
+        if (overwrite) deleteExistingDownload(fileName, relativePath)
 
         val id = nextId.getAndIncrement()
 
         if (!usesMediaStore) {
-            var target = File(legacyDownloadDir(), fileName)
+            var target = File(legacyDownloadDir(relativePath), fileName)
             if (!overwrite) target = uniqueLegacyFile(target)
             val out = FileOutputStream(target)
             sinks[id] = Sink(out, null, target, target.name)
@@ -236,7 +315,9 @@ class StorageBridge(private val activity: Activity) : MethodChannel.MethodCallHa
             if (!mimeType.isNullOrEmpty()) {
                 put(MediaStore.Downloads.MIME_TYPE, mimeType)
             }
-            put(MediaStore.Downloads.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS)
+            // RELATIVE_PATH is what creates Download/<dirname>/<subdir>/ for a
+            // recursive download; MediaStore makes the directories itself.
+            put(MediaStore.Downloads.RELATIVE_PATH, mediaStoreRelativePath(relativePath))
             put(MediaStore.Downloads.IS_PENDING, 1)
         }
 
@@ -323,6 +404,93 @@ class StorageBridge(private val activity: Activity) : MethodChannel.MethodCallHa
         return null
     }
 
+    /**
+     * Hands a finished download to whatever app can show it, through the
+     * system chooser.
+     *
+     * The read grant rides on the intent: this app inserted the MediaStore
+     * row, so it owns it and can pass access to the app the user picks
+     * without either side needing a storage permission. Pre-Q downloads land
+     * as `file://`, which cannot be handed to another app without a
+     * FileProvider — rather than add one for a path that only exists on API
+     * 23–28, this reports false and the caller keeps quiet about "Open".
+     */
+    private fun openDownload(uriString: String, mimeType: String?): Boolean {
+        if (uriString.isEmpty()) return false
+        val uri = runCatching { Uri.parse(uriString) }.getOrNull() ?: return false
+        if (uri.scheme != "content") return false
+
+        val type = mimeType?.takeIf { it.isNotEmpty() }
+            ?: activity.contentResolver.getType(uri)
+            ?: "*/*"
+        val view = Intent(Intent.ACTION_VIEW).apply {
+            setDataAndType(uri, type)
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+        val chooser = Intent.createChooser(view, "Open with").apply {
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+        return runCatching { activity.startActivity(chooser) }.isSuccess
+    }
+
+    // --------------------------------------------------------------- share sheet
+
+    /**
+     * Records the files behind an `ACTION_SEND`/`ACTION_SEND_MULTIPLE`
+     * intent, if this is one. Returns whether it was.
+     */
+    fun recordSharedIntent(intent: Intent?): Boolean {
+        val uris = sharedUris(intent)
+        if (uris.isEmpty()) return false
+        synchronized(pendingShare) {
+            pendingShare.clear()
+            pendingShare.addAll(uris)
+        }
+        return true
+    }
+
+    /** Stages and hands over whatever share is waiting. Null if none is. */
+    fun takePendingShare(result: MethodChannel.Result) {
+        val uris = synchronized(pendingShare) {
+            val copy = ArrayList(pendingShare)
+            pendingShare.clear()
+            copy
+        }
+        if (uris.isEmpty()) {
+            result.success(null)
+            return
+        }
+        onIo(result) { stageBatch(uris) }
+    }
+
+    @Suppress("DEPRECATION")
+    private fun sharedUris(intent: Intent?): List<Uri> {
+        if (intent == null) return emptyList()
+        val tiramisu = Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU
+        return when (intent.action) {
+            Intent.ACTION_SEND -> {
+                val uri = if (tiramisu) {
+                    intent.getParcelableExtra(Intent.EXTRA_STREAM, Uri::class.java)
+                } else {
+                    intent.getParcelableExtra<Uri>(Intent.EXTRA_STREAM)
+                }
+                listOfNotNull(uri)
+            }
+            Intent.ACTION_SEND_MULTIPLE -> {
+                val uris = if (tiramisu) {
+                    intent.getParcelableArrayListExtra(
+                        Intent.EXTRA_STREAM,
+                        Uri::class.java,
+                    )
+                } else {
+                    intent.getParcelableArrayListExtra<Uri>(Intent.EXTRA_STREAM)
+                }
+                uris.orEmpty().filterNotNull()
+            }
+            else -> emptyList()
+        }
+    }
+
     // ------------------------------------------------------------------- picking
 
     private fun pickFile(result: MethodChannel.Result) {
@@ -351,6 +519,9 @@ class StorageBridge(private val activity: Activity) : MethodChannel.MethodCallHa
         val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
             addCategory(Intent.CATEGORY_OPENABLE)
             type = "*/*"
+            if (mode == PickMode.STAGE_MULTIPLE) {
+                putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true)
+            }
         }
         try {
             activity.startActivityForResult(intent, REQUEST_PICK_FILE)
@@ -367,14 +538,17 @@ class StorageBridge(private val activity: Activity) : MethodChannel.MethodCallHa
         val maxBytes = pendingMaxBytes
         pendingPick = null
 
-        val uri = if (resultCode == Activity.RESULT_OK) data?.data else null
-        if (uri == null) {
-            pending.success(null)
+        val uris = if (resultCode == Activity.RESULT_OK) pickedUris(data) else emptyList()
+        if (uris.isEmpty()) {
+            // A cancelled multi-pick is an empty batch rather than null, so
+            // Dart's "the user backed out" branch is the same shape as its
+            // "nothing selected" one.
+            pending.success(if (mode == PickMode.STAGE_MULTIPLE) mapOf("files" to emptyList<Any>()) else null)
             return true
         }
 
-        // Note: we never call takePersistableUriPermission on this URI, in
-        // either mode. The grant that comes with ACTION_OPEN_DOCUMENT's
+        // Note: we never call takePersistableUriPermission on these URIs, in
+        // any mode. The grant that comes with ACTION_OPEN_DOCUMENT's
         // result lives only as long as this activity result is being
         // handled — read it now (staged to cache, or straight into memory
         // below) and let it lapse rather than holding onto SAF access the
@@ -382,8 +556,9 @@ class StorageBridge(private val activity: Activity) : MethodChannel.MethodCallHa
         io.execute {
             try {
                 val payload = when (mode) {
-                    PickMode.STAGE -> stageForUpload(uri)
-                    PickMode.CONTENT -> readFileContent(uri, maxBytes)
+                    PickMode.STAGE -> stageForUpload(uris.first())
+                    PickMode.STAGE_MULTIPLE -> stageBatch(uris)
+                    PickMode.CONTENT -> readFileContent(uris.first(), maxBytes)
                 }
                 main.post { pending.success(payload) }
             } catch (e: FileTooLargeException) {
@@ -395,6 +570,24 @@ class StorageBridge(private val activity: Activity) : MethodChannel.MethodCallHa
             }
         }
         return true
+    }
+
+    /**
+     * The documents an `ACTION_OPEN_DOCUMENT` result carries. A multi-select
+     * arrives in `clipData`; a single pick — including one made in a picker
+     * that was *asked* for multiple — arrives in `data`, so both are read.
+     */
+    private fun pickedUris(data: Intent?): List<Uri> {
+        if (data == null) return emptyList()
+        val clip = data.clipData
+        if (clip != null) {
+            val uris = ArrayList<Uri>(clip.itemCount)
+            for (i in 0 until clip.itemCount) {
+                clip.getItemAt(i).uri?.let { uris.add(it) }
+            }
+            if (uris.isNotEmpty()) return uris
+        }
+        return listOfNotNull(data.data)
     }
 
     /**
@@ -464,19 +657,43 @@ class StorageBridge(private val activity: Activity) : MethodChannel.MethodCallHa
      * permission grant does not survive the process, so staging is the only
      * honest option.
      */
-    private fun stageForUpload(uri: Uri): Map<String, Any?> {
+    private fun stageForUpload(uri: Uri): Map<String, Any?> =
+        stageOne(uri, File(newBatchDir(), "0"))
+
+    /**
+     * Stages a whole multi-select or share into one batch directory.
+     *
+     * A document that will not open costs itself and nothing else: a share of
+     * twelve photos where one provider has already gone away should upload
+     * the other eleven rather than fail as a unit.
+     */
+    private fun stageBatch(uris: List<Uri>): Map<String, Any?> {
+        val batch = newBatchDir()
+        val files = ArrayList<Map<String, Any?>>(uris.size)
+        for ((index, uri) in uris.withIndex()) {
+            // One subdirectory per file, so two documents that genuinely share
+            // a display name ("photo.jpg" from two folders) keep both their
+            // real names — the remote-collision prompt is the right place for
+            // that clash to surface, not a silent rename during staging.
+            val staged = runCatching { stageOne(uri, File(batch, index.toString())) }
+            staged.getOrNull()?.let { files.add(it) }
+        }
+        if (files.isEmpty() && uris.isNotEmpty()) {
+            throw IllegalStateException("None of the selected files could be read.")
+        }
+        return mapOf("files" to files)
+    }
+
+    private fun stageOne(uri: Uri, directory: File): Map<String, Any?> {
         val resolver = activity.contentResolver
         var name = "upload"
         resolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { c ->
             if (c.moveToFirst() && !c.isNull(0)) name = c.getString(0)
         }
+        name = stagedFileName(name)
 
-        val dir = File(activity.cacheDir, "uploads")
-        if (!dir.exists()) dir.mkdirs()
-        // Clear stale stagings so the cache does not grow without bound.
-        dir.listFiles()?.forEach { runCatching { it.delete() } }
-
-        val target = File(dir, name)
+        if (!directory.exists()) directory.mkdirs()
+        val target = File(directory, name)
         resolver.openInputStream(uri)?.use { input ->
             FileOutputStream(target).use { output ->
                 input.copyTo(output, 64 * 1024)
@@ -488,5 +705,44 @@ class StorageBridge(private val activity: Activity) : MethodChannel.MethodCallHa
             "name" to name,
             "size" to target.length(),
         )
+    }
+
+    /**
+     * A display name from another app's provider is not a file name: it can
+     * carry separators, or be `..`. Reduce it to a single safe segment before
+     * it becomes a path in our cache — and, later, a name on the user's
+     * server.
+     */
+    private fun stagedFileName(raw: String): String {
+        val segment = raw.substringAfterLast('/').substringAfterLast('\\')
+        var cleaned = segment
+            .map { c -> if (c.isISOControl() || c in "\\/:*?\"<>|") '_' else c }
+            .joinToString("")
+            .trim()
+            .trimStart('.')
+        if (cleaned.isEmpty()) cleaned = "upload"
+        if (cleaned.length > 180) cleaned = cleaned.substring(0, 180)
+        return cleaned
+    }
+
+    /**
+     * A fresh directory for one pick or share, and a sweep of the ones that
+     * have aged out.
+     *
+     * Batch directories rather than the old "clear everything each time":
+     * clearing wholesale would delete the file an upload queued a minute ago
+     * was still streaming. Age is the only safe signal here — the platform
+     * side has no view of the queue.
+     */
+    private fun newBatchDir(): File {
+        val root = File(activity.cacheDir, "uploads")
+        if (!root.exists()) root.mkdirs()
+        val cutoff = System.currentTimeMillis() - STAGING_TTL_MS
+        root.listFiles()?.forEach { entry ->
+            if (entry.lastModified() < cutoff) runCatching { entry.deleteRecursively() }
+        }
+        val batch = File(root, "b${System.currentTimeMillis()}-${nextId.getAndIncrement()}")
+        batch.mkdirs()
+        return batch
     }
 }
