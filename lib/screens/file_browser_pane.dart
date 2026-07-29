@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../models/host.dart';
 import '../models/remote_entry.dart';
 import '../services/device_storage.dart';
 import '../services/download_plan.dart';
@@ -19,6 +20,16 @@ import 'remote_directory_picker.dart';
 
 /// What to do when a download would land on an existing file name.
 enum _CollisionChoice { keepBoth, overwrite, cancel }
+
+/// Whether the direct route is offered for this destination, and — when it
+/// is not — a plain-English reason we can put under the disabled toggle so
+/// the user is not left wondering.
+class _DirectRouteOffer {
+  const _DirectRouteOffer({required this.eligible, this.reason});
+
+  final bool eligible;
+  final String? reason;
+}
 
 /// The remote file browser: the other view on a live session.
 ///
@@ -549,6 +560,19 @@ class _FileBrowserPaneState extends State<FileBrowserPane>
         : await _pickDestinationSession(destinations, move: move);
     if (!mounted || target == null) return;
 
+    // The bytes-bypass-this-device switch lives here rather than on the
+    // destination-picker sheet because the eligibility rule needs both
+    // ends: a password-auth destination cannot be forwarded via agent
+    // (see `direct_remote_copy.dart`), so we grey the switch and note
+    // the reason so the user is not left wondering why it is off.
+    final directOffer = _directRouteFor(target.host);
+    final chosenRoute = await _pickRoute(
+      target: target,
+      offer: directOffer,
+      move: move,
+    );
+    if (!mounted || chosenRoute == null) return;
+
     final directory = await pickRemoteDirectory(
       context,
       session: target,
@@ -605,11 +629,90 @@ class _FileBrowserPaneState extends State<FileBrowserPane>
         overwrite: transfer.overwrite,
         moveSource: move,
         totalBytes: entry.size,
+        route: chosenRoute,
       );
     }
 
     _clearSelection();
-    _snack(_sentMessage(plan, target, directory, move: move));
+    _snack(_sentMessage(plan, target, directory, move: move, route: chosenRoute));
+  }
+
+  /// Whether the direct path is eligible for [destination], and — when it
+  /// is not — a short reason to show under the disabled toggle.
+  _DirectRouteOffer _directRouteFor(Host destination) {
+    if (destination.authMethod != SshAuthMethod.privateKey) {
+      return const _DirectRouteOffer(
+        eligible: false,
+        reason: 'Password-auth destinations cannot be forwarded via agent.',
+      );
+    }
+    return const _DirectRouteOffer(eligible: true);
+  }
+
+  /// Ask the user which route to take. The direct-transfer toggle is
+  /// shown either way — when ineligible it is greyed out and captioned
+  /// with why, so a password-auth destination does not silently pick
+  /// relay under a name the user never saw.
+  Future<TransferRoute?> _pickRoute({
+    required ManagedSession target,
+    required _DirectRouteOffer offer,
+    required bool move,
+  }) async {
+    var useDirect = offer.eligible;
+    final go = await showDialog<bool>(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: Text(move ? 'Move to server' : 'Copy to server'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'Destination: ${target.host.displayName}',
+                style: const TextStyle(height: 1.4),
+              ),
+              const SizedBox(height: 12),
+              CheckboxListTile(
+                value: useDirect,
+                onChanged: offer.eligible
+                    ? (v) => setDialogState(() => useDirect = v ?? false)
+                    : null,
+                contentPadding: EdgeInsets.zero,
+                controlAffinity: ListTileControlAffinity.leading,
+                title: const Text(
+                  'Use direct transfer',
+                  style: TextStyle(fontSize: 14),
+                ),
+                subtitle: Text(
+                  offer.eligible
+                      ? 'Bytes go from source server to destination server '
+                          'on the network between them, bypassing this '
+                          'device. Falls back to the relay path if the '
+                          'servers cannot reach each other.'
+                      : offer.reason ??
+                          'Direct transfer is not available for this '
+                              'destination.',
+                  style: const TextStyle(fontSize: 12, height: 1.35),
+                ),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(false),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(context).pop(true),
+              child: Text(move ? 'Move' : 'Copy'),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (go != true) return null;
+    return useDirect ? TransferRoute.direct : TransferRoute.relay;
   }
 
   String _nothingSentMessage(RemoteTransferPlan plan) {
@@ -628,6 +731,7 @@ class _FileBrowserPaneState extends State<FileBrowserPane>
     ManagedSession target,
     String directory, {
     required bool move,
+    required TransferRoute route,
   }) {
     final verb = move ? 'Moving' : 'Copying';
     final count = plan.transfers.length;
@@ -636,6 +740,7 @@ class _FileBrowserPaneState extends State<FileBrowserPane>
             '${target.host.displayName}:$directory'
         : '$verb $count files to ${target.host.displayName}:$directory';
     final notes = <String>[
+      if (route == TransferRoute.direct) 'direct',
       if (plan.skipped.isNotEmpty) '${plan.skipped.length} skipped',
       if (plan.unsupported.isNotEmpty)
         '${plan.unsupported.length} folder'

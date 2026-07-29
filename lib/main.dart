@@ -53,7 +53,16 @@ class _SecureShellGoAppState extends State<SecureShellGoApp> {
   // outlive the screen showing it: going back to this host list is how a
   // *second* session gets started, and it must not cost the first one. See
   // `session_manager.dart`.
-  late final SessionManager _sessions = SessionManager();
+  //
+  // The direct server-to-server path needs the *destination* host's saved
+  // credential at the moment a transfer runs; the manager is the one place
+  // above every session's controller with the credential store in scope.
+  // The lookup is scoped to the one host id at the point of use — no
+  // credential is ever exposed to the source server beyond the single
+  // signing session an [SSHAgentHandler] hands out on request.
+  late final SessionManager _sessions = SessionManager(
+    resolveDestinationCredentials: _credentialStore.load,
+  );
 
   @override
   void initState() {

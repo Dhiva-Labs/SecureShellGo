@@ -6,9 +6,16 @@ import 'package:dartssh2/dartssh2.dart';
 import '../models/host.dart';
 import 'host_key_policy.dart';
 import 'known_hosts_service.dart';
+import 'ssh_agent_backend.dart';
 
 export 'host_key_policy.dart'
     show HostKeyPolicy, HostKeyPrompt, HostKeyPromptKind, HostKeyVerifier;
+export 'ssh_agent_backend.dart'
+    show
+        CredentialSSHAgent,
+        MutableSSHAgentHandler,
+        SSHAgentUnavailable,
+        SSHAgentUnavailableReason;
 
 /// A connection failure with a message that is safe to show to a human.
 class SshConnectionException implements Exception {
@@ -53,6 +60,26 @@ abstract class SessionTransport {
   /// Opens the SFTP subsystem on this same authenticated connection.
   Future<SftpClient> openSftp();
 
+  /// Runs [command] on the remote side over a fresh exec channel.
+  ///
+  /// Used by the direct server-to-server copy path (see
+  /// `direct_remote_copy.dart`) to invoke `sftp` or `scp` on the *source*
+  /// server, with agent forwarding enabled so the destination server can
+  /// sign challenges against a key held on this device — never one written
+  /// to the source. Because [SSHClient.agentHandler] is `final`, the client
+  /// has to be born with one; that is what [agentSlot] is for.
+  Future<SSHSession> execute(String command) =>
+      throw UnimplementedError('This transport does not support exec.');
+
+  /// The swappable agent handler wired into this connection's SSH client.
+  ///
+  /// Empty on a freshly connected transport; per-transfer code plugs in a
+  /// [CredentialSSHAgent] with [MutableSSHAgentHandler.install], runs its
+  /// exec, and calls the returned release. Nothing else on the connection
+  /// sees any identity, and no state persists between transfers.
+  MutableSSHAgentHandler get agentSlot =>
+      throw UnimplementedError('This transport has no agent slot.');
+
   /// Sends one keep-alive and waits for the server's reply.
   ///
   /// Driven by `SessionKeepalive` rather than by dartssh2's own timer — see
@@ -68,6 +95,7 @@ class SshConnection implements SessionTransport {
     required this.client,
     required this.host,
     required this.socket,
+    required this.agentSlot,
   });
 
   final SSHClient client;
@@ -76,6 +104,12 @@ class SshConnection implements SessionTransport {
   final Host host;
 
   final SSHSocket socket;
+
+  /// The agent slot handed to [SSHClient.agentHandler] at construction. The
+  /// direct copy path installs a per-transfer [CredentialSSHAgent] into it
+  /// and clears it again when the exec ends.
+  @override
+  final MutableSSHAgentHandler agentSlot;
 
   @override
   bool get isClosed => client.isClosed;
@@ -93,6 +127,14 @@ class SshConnection implements SessionTransport {
   /// local socket has not noticed yet.
   @override
   Future<void> ping() => client.ping();
+
+  /// Runs [command] on the source server. Because the client was constructed
+  /// with [agentSlot] as its `agentHandler`, dartssh2 automatically sends an
+  /// `auth-agent-req@openssh.com` request on the channel — the destination
+  /// server's `scp`/`sftp` can then reach back to sign against whatever key
+  /// the caller installed just before this call.
+  @override
+  Future<SSHSession> execute(String command) => client.execute(command);
 
   @override
   Future<SSHSession> startShell({
@@ -196,10 +238,20 @@ class SshService {
     // genuine handshake failure once the client surfaces the error.
     var userRejectedKey = false;
 
+    // Every session is born with an empty agent slot so a later direct
+    // server-to-server transfer can plug a scoped [CredentialSSHAgent] into
+    // it without a second authentication. Empty replies to sign requests
+    // with SSH_AGENT_FAILURE, which is what OpenSSH reads as "no key here"
+    // — so an accidental forward with no destination key installed simply
+    // gets refused instead of ever exposing something we did not mean to
+    // hand out.
+    final agentSlot = MutableSSHAgentHandler();
+
     final client = SSHClient(
       socket,
       username: host.username,
       identities: identities,
+      agentHandler: agentSlot,
       onPasswordRequest: host.authMethod == SshAuthMethod.password
           ? () => credentials.password
           : null,
@@ -242,7 +294,12 @@ class SshService {
       );
     }
 
-    return SshConnection(client: client, host: host, socket: socket);
+    return SshConnection(
+      client: client,
+      host: host,
+      socket: socket,
+      agentSlot: agentSlot,
+    );
   }
 
   List<SSHKeyPair> _parseIdentities(SshCredentials credentials) {

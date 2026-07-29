@@ -66,6 +66,14 @@ class FakeTransport implements SessionTransport {
   }
 
   @override
+  Future<SSHSession> execute(String command) =>
+      throw UnimplementedError('exec needs a real SSH channel');
+
+  @override
+  MutableSSHAgentHandler get agentSlot => _agentSlot;
+  final _agentSlot = MutableSSHAgentHandler();
+
+  @override
   Future<void> ping() async => pingCount++;
 
   @override

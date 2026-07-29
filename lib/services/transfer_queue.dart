@@ -9,6 +9,25 @@ import 'dart:async';
 /// what stops the panel from calling it "saved to Downloads".
 enum TransferDirection { download, upload, serverToServer }
 
+/// How a [TransferDirection.serverToServer] transfer physically moves the
+/// bytes between the two servers.
+///
+/// [relay] streams the file through this app — the source's SFTP read feeds
+/// the destination's SFTP write on this device, with backpressure the whole
+/// way (see `remote_copy.dart`). Works whenever the app can talk to both
+/// servers, which is the guaranteed case since it *did* — that is how each
+/// session got opened.
+///
+/// [direct] opens an exec channel on the source and runs `sftp` there,
+/// pointing at the destination. Bytes flow source → destination on the
+/// network between them; agent forwarding sends signing challenges back
+/// through the exec channel to a [MutableSSHAgentHandler] here, so the
+/// destination's private key never touches the source. Faster when the two
+/// servers are on the same LAN; falls back to [relay] when the source
+/// cannot reach the destination or the destination auth cannot be
+/// forwarded.
+enum TransferRoute { relay, direct }
+
 enum TransferStatus {
   queued,
   running,
@@ -45,6 +64,7 @@ class TransferTask {
     this.destinationPath,
     this.destinationLabel,
     this.moveSource = false,
+    this.route = TransferRoute.relay,
   });
 
   final String id;
@@ -91,6 +111,25 @@ class TransferTask {
   /// For a server-to-server copy, whether the source is deleted once the
   /// destination write has been verified. This is what makes it a "move".
   final bool moveSource;
+
+  /// For a server-to-server copy, which physical path the bytes take. See
+  /// [TransferRoute]. Ignored for downloads and uploads.
+  ///
+  /// [TransferRoute.direct] can be requested by the UI but is silently
+  /// downgraded to [TransferRoute.relay] when the source cannot reach the
+  /// destination — the panel surfaces which route actually ran through
+  /// [routeUsed] once the transfer starts.
+  final TransferRoute route;
+
+  /// The route that actually ran, once the executor has picked one. Null
+  /// until the transfer starts. Set to [TransferRoute.relay] when a direct
+  /// attempt fell back so the UI can name it explicitly.
+  TransferRoute? routeUsed;
+
+  /// Why the direct route was skipped or abandoned, for the panel's
+  /// subtitle on a fallen-back transfer. Null when direct was not
+  /// attempted or succeeded.
+  String? routeFallbackReason;
 
   /// For downloads, the directory under `Download/` to save into — set by a
   /// recursive directory download so the tree's shape survives the trip.
@@ -181,6 +220,19 @@ class TransferHandle {
     if (_task.destination == destination && _task.destinationUri == uri) return;
     _task.destination = destination;
     _task.destinationUri = uri;
+    _onChanged();
+  }
+
+  /// Records the route the executor actually took. Set once the executor
+  /// has committed to a path — direct on entry, or relay after a
+  /// [SSHDirectCopyUnavailable] fallback.
+  void setRouteUsed(TransferRoute route, {String? fallbackReason}) {
+    if (_task.routeUsed == route &&
+        _task.routeFallbackReason == fallbackReason) {
+      return;
+    }
+    _task.routeUsed = route;
+    _task.routeFallbackReason = fallbackReason;
     _onChanged();
   }
 
@@ -310,6 +362,7 @@ class TransferQueue {
     bool overwrite = false,
     bool moveSource = false,
     int? totalBytes,
+    TransferRoute route = TransferRoute.relay,
   }) {
     return _enqueue(
       TransferTask(
@@ -323,6 +376,7 @@ class TransferQueue {
         destinationPath: destinationPath,
         destinationLabel: destinationLabel,
         moveSource: moveSource,
+        route: route,
       ),
     );
   }
@@ -401,6 +455,9 @@ class TransferQueue {
         destinationPath: task.destinationPath,
         destinationLabel: task.destinationLabel,
         moveSource: task.moveSource,
+        // A retry keeps the route the user asked for the first time. The
+        // fallback record is *this* attempt's, not something to carry over.
+        route: task.route,
       ),
     );
   }

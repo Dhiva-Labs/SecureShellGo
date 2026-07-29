@@ -7,6 +7,8 @@ import 'session_foreground.dart';
 import 'sftp_service.dart';
 import 'ssh_service.dart';
 
+export 'session_controller.dart' show DestinationCredentialResolver;
+
 /// Which view of a session is in front.
 ///
 /// Lives here rather than on the screen because it is per-*session* state: with
@@ -22,6 +24,7 @@ enum SessionView { terminal, files }
 typedef SessionControllerFactory = SessionController Function(
   SessionTransport connection,
   RemoteTargetResolver resolveRemoteTarget,
+  DestinationCredentialResolver? resolveDestinationCredentials,
 );
 
 /// One open session, and the small amount of state that belongs to it rather
@@ -80,20 +83,30 @@ class SessionManager {
   SessionManager({
     SessionForegroundController? foreground,
     SessionControllerFactory? createController,
+    DestinationCredentialResolver? resolveDestinationCredentials,
   })  : _foreground = foreground ?? SessionForegroundController.instance,
-        _createController = createController ?? _defaultController;
+        _createController = createController ?? _defaultController,
+        // ignore: prefer_initializing_formals
+        _resolveDestinationCredentials = resolveDestinationCredentials;
 
   static SessionController _defaultController(
     SessionTransport connection,
     RemoteTargetResolver resolveRemoteTarget,
+    DestinationCredentialResolver? resolveDestinationCredentials,
   ) =>
       SessionController(
         connection: connection,
         resolveRemoteTarget: resolveRemoteTarget,
+        resolveDestinationCredentials: resolveDestinationCredentials,
       );
 
   final SessionForegroundController _foreground;
   final SessionControllerFactory _createController;
+
+  /// The direct-copy path needs the destination host's key at the moment
+  /// the transfer runs; the manager is the one thing above the sessions
+  /// that has (or, in tests, does not have) the credential store wired in.
+  final DestinationCredentialResolver? _resolveDestinationCredentials;
 
   final List<ManagedSession> _sessions = [];
   final Map<String, StreamSubscription<void>> _watchers = {};
@@ -160,7 +173,11 @@ class SessionManager {
     List<PickedLocalFile> uploads = const [],
   }) {
     final id = 'session-${_idCounter++}';
-    final controller = _createController(connection, _resolverFor(id));
+    final controller = _createController(
+      connection,
+      _resolverFor(id),
+      _resolveDestinationCredentials,
+    );
     final entry = ManagedSession._(
       id: id,
       controller: controller,

@@ -11,6 +11,7 @@ import 'package:xterm/core.dart';
 import '../models/host.dart';
 import '../models/remote_entry.dart';
 import 'device_storage.dart';
+import 'direct_remote_copy.dart';
 import 'download_announcer.dart';
 import 'download_plan.dart';
 import 'remote_copy.dart';
@@ -19,6 +20,12 @@ import 'session_keepalive.dart';
 import 'sftp_service.dart';
 import 'ssh_service.dart';
 import 'transfer_queue.dart';
+
+export 'direct_remote_copy.dart'
+    show
+        DirectCopyUnavailableReason,
+        DirectCopyWarning,
+        SSHDirectCopyUnavailable;
 
 /// Files waiting for a destination directory on this session.
 class PendingUpload {
@@ -50,6 +57,18 @@ typedef RemoteTargetResolver = Future<SessionController> Function(
   String sessionId,
 );
 
+/// Loads the [SshCredentials] saved for [hostId], or null when nothing is
+/// saved (or the store cannot be read).
+///
+/// Injected as a callback so `SessionController` — and every service below
+/// it — stays free of the credential store's dependency chain. The direct
+/// copy path calls it once per transfer to pull *just the destination's*
+/// key, hand it to a [CredentialSSHAgent] scoped to that transfer, and let
+/// it fall out of scope when the exec ends.
+typedef DestinationCredentialResolver = Future<SshCredentials?> Function(
+  String hostId,
+);
+
 /// One live authenticated session, shared by every view of it.
 ///
 /// Phase 1 let `TerminalScreen` own the [SshConnection] and close it in
@@ -69,12 +88,15 @@ class SessionController {
     DeviceStorage? storage,
     Future<RemoteFileSystem> Function()? openFileSystem,
     RemoteTargetResolver? resolveRemoteTarget,
+    DestinationCredentialResolver? resolveDestinationCredentials,
     PeriodicScheduler keepaliveScheduler = Timer.periodic,
   })  : _storage = storage ?? createDefaultDeviceStorage(),
         // ignore: prefer_initializing_formals
         _openFileSystem = openFileSystem,
         // ignore: prefer_initializing_formals
-        _resolveRemoteTarget = resolveRemoteTarget {
+        _resolveRemoteTarget = resolveRemoteTarget,
+        // ignore: prefer_initializing_formals
+        _resolveDestinationCredentials = resolveDestinationCredentials {
     transfers = TransferQueue(executor: _runTransfer);
     _keepalive = SessionKeepalive(
       ping: connection.ping,
@@ -93,6 +115,12 @@ class SessionController {
   /// transfers. Null when nothing else is open — or in the tests that do not
   /// exercise them — and a copy queued without one fails rather than hangs.
   final RemoteTargetResolver? _resolveRemoteTarget;
+
+  /// How this session pulls the destination host's [SshCredentials] for a
+  /// direct transfer. Null when the app has no credential store wired in
+  /// (unit tests), and a direct transfer requested without one falls back
+  /// to the relay path.
+  final DestinationCredentialResolver? _resolveDestinationCredentials;
 
   /// Whether this session can copy files straight to another server.
   bool get canTransferToOtherSessions => _resolveRemoteTarget != null;
@@ -461,6 +489,11 @@ class SessionController {
   ///
   /// [moveSource] makes it a move: the file here is deleted, but only once the
   /// write over there has been verified — see [copyRemoteFile].
+  ///
+  /// [route] picks between the relay path (bytes through this app; always
+  /// available) and the direct path (bytes source→destination on the
+  /// network between them). Direct silently falls back to relay when the
+  /// direct path is unavailable — see [_runRemoteCopy].
   TransferTask queueRemoteCopy({
     required String remotePath,
     required String name,
@@ -471,6 +504,7 @@ class SessionController {
     bool overwrite = false,
     bool moveSource = false,
     int? totalBytes,
+    TransferRoute route = TransferRoute.relay,
   }) {
     final landingName = asName ?? name;
     return transfers.enqueueRemoteCopy(
@@ -482,6 +516,7 @@ class SessionController {
       overwrite: overwrite,
       moveSource: moveSource,
       totalBytes: totalBytes,
+      route: route,
     );
   }
 
@@ -600,6 +635,19 @@ class SessionController {
   /// queued: the user may have closed that session while this one sat in the
   /// queue behind three other files, and a retry rebuilds the task from its
   /// fields with no live object to hold on to.
+  ///
+  /// **Route selection.** [TransferTask.route] is the user's request. Relay
+  /// runs the copy through this device (see [copyRemoteFile]) and always
+  /// works between two sessions we already have live channels on. Direct
+  /// opens an exec on the source and runs `sftp` there, forwarding the
+  /// destination's key through the source's agent slot (see
+  /// [copyRemoteFileDirect]); on any recoverable failure — the destination
+  /// is unreachable from the source, the source has no `sftp`, agent
+  /// forwarding was refused, no cached passphrase — we fall back to relay
+  /// and record why. An unrecoverable failure — the destination's host key
+  /// on the wire is not the one we trust — refuses without falling back,
+  /// because a relay from *this* device would not reproduce the anomaly and
+  /// so cannot be a valid answer to it.
   Future<void> _runRemoteCopy(
     RemoteFileSystem sftp,
     TransferTask task,
@@ -623,16 +671,63 @@ class SessionController {
       handle.throwIfCancelled();
     }
 
-    final outcome = await copyRemoteFile(
-      source: sftp,
-      destination: destination,
-      sourcePath: task.remotePath,
-      destinationPath: destinationPath,
-      overwrite: task.overwrite,
-      deleteSourceAfterVerify: task.moveSource,
-      onProgress: handle.report,
-      isCancelled: () => handle.isCancelled,
-    );
+    RemoteCopyOutcome? outcome;
+    String? fallbackReason;
+
+    if (task.route == TransferRoute.direct) {
+      final resolveCreds = _resolveDestinationCredentials;
+      if (resolveCreds == null) {
+        fallbackReason =
+            'no destination-credential resolver on this session';
+      } else {
+        final destCreds = await resolveCreds(target.host.id);
+        handle.throwIfCancelled();
+        if (destCreds == null) {
+          fallbackReason = 'no saved credentials for the destination host';
+        } else {
+          try {
+            handle.setRouteUsed(TransferRoute.direct);
+            outcome = await copyRemoteFileDirect(
+              source: this,
+              destHost: target.host,
+              destCredentials: destCreds,
+              destinationFs: destination,
+              sourcePath: task.remotePath,
+              destinationPath: destinationPath,
+              overwrite: task.overwrite,
+              deleteSourceAfterVerify: task.moveSource,
+              onProgress: handle.report,
+              isCancelled: () => handle.isCancelled,
+            );
+          } on SSHDirectCopyUnavailable catch (e) {
+            if (e.reason == DirectCopyUnavailableReason.hostKeyMismatch) {
+              // Refuse: a relay from this device cannot honestly answer a
+              // MITM-shaped signal seen on A→B, so surface it instead of
+              // silently paving over it.
+              rethrow;
+            }
+            fallbackReason = e.message ?? e.reason.name;
+          }
+        }
+      }
+    }
+
+    outcome ??= await () async {
+      handle.setRouteUsed(
+        TransferRoute.relay,
+        fallbackReason: fallbackReason,
+      );
+      return copyRemoteFile(
+        source: sftp,
+        destination: destination,
+        sourcePath: task.remotePath,
+        destinationPath: destinationPath,
+        overwrite: task.overwrite,
+        deleteSourceAfterVerify: task.moveSource,
+        onProgress: handle.report,
+        isCancelled: () => handle.isCancelled,
+      );
+    }();
     handle.throwIfCancelled();
 
     // The file is over there now, and the browser over there has no way of

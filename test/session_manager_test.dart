@@ -55,6 +55,14 @@ class FakeTransport implements SessionTransport {
       throw UnimplementedError('tests inject a RemoteFileSystem instead');
 
   @override
+  Future<SSHSession> execute(String command) =>
+      throw UnimplementedError('exec needs a real SSH channel');
+
+  @override
+  MutableSSHAgentHandler get agentSlot => _agentSlot;
+  final _agentSlot = MutableSSHAgentHandler();
+
+  @override
   Future<void> ping() async => pingCount++;
 
   @override
@@ -226,7 +234,7 @@ void main() {
   SessionManager buildManager() {
     return SessionManager(
       foreground: foreground,
-      createController: (connection, resolve) {
+      createController: (connection, resolve, resolveCreds) {
         final fs = StubFs();
         late final SessionController controller;
         controller = SessionController(
@@ -234,6 +242,7 @@ void main() {
           storage: StubStorage(),
           openFileSystem: () async => fs,
           resolveRemoteTarget: resolve,
+          resolveDestinationCredentials: resolveCreds,
           keepaliveScheduler: (_, tick) {
             final timer = HandCrankedTimer(tick);
             timers.add(timer);
