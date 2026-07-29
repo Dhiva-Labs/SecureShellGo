@@ -9,6 +9,7 @@ import '../services/device_storage.dart';
 import '../services/host_store.dart';
 import '../services/known_hosts_service.dart';
 import '../services/layout_breakpoints.dart';
+import '../services/session_manager.dart';
 import '../services/settings_store.dart';
 import '../services/share_intake.dart';
 import '../services/ssh_service.dart';
@@ -32,6 +33,7 @@ class HostListScreen extends StatefulWidget {
     required this.knownHosts,
     required this.sshService,
     required this.settingsStore,
+    required this.sessions,
     this.shareIntake,
   });
 
@@ -40,6 +42,11 @@ class HostListScreen extends StatefulWidget {
   final KnownHostsService knownHosts;
   final SshService sshService;
   final SettingsStore settingsStore;
+
+  /// Every open session. Built in `main.dart` and passed down, because a
+  /// session outlives the route showing it: leaving the sessions screen for
+  /// this list is how a second one gets started.
+  final SessionManager sessions;
 
   /// Where files shared from other apps arrive. The home screen owns this
   /// because it is the one route that is always on the stack — a share can
@@ -69,11 +76,23 @@ class _HostListScreenState extends State<HostListScreen> {
   /// also hears — cannot stack two pickers for the same files.
   bool _shareTargetOpen = false;
 
+  /// Whether the sessions screen is already on the navigator above this route,
+  /// so a second connect adds a tab to it rather than stacking a second copy.
+  bool _sessionsOpen = false;
+
+  StreamSubscription<void>? _sessionChanges;
+
   @override
   void initState() {
     super.initState();
     _future = widget.hostStore.all();
     unawaited(_checkTrustStore());
+
+    // The "still connected" bar has to follow sessions opening, closing and
+    // dropping while this list is in front.
+    _sessionChanges = widget.sessions.changes.listen((_) {
+      if (mounted) setState(() {});
+    });
 
     _shareIntake.listen(_openShareTarget);
     // The cold-start case: the app was launched *by* a share, so the payload
@@ -87,6 +106,7 @@ class _HostListScreenState extends State<HostListScreen> {
 
   @override
   void dispose() {
+    _sessionChanges?.cancel();
     _shareIntake.stop();
     super.dispose();
   }
@@ -95,19 +115,49 @@ class _HostListScreenState extends State<HostListScreen> {
     if (!mounted || files.isEmpty || _shareTargetOpen) return;
     _shareTargetOpen = true;
     try {
-      await Navigator.of(context).push<void>(
-        MaterialPageRoute<void>(
+      final opened = await Navigator.of(context).push<bool>(
+        MaterialPageRoute<bool>(
           builder: (_) => ShareTargetScreen(
             files: files,
             hostStore: widget.hostStore,
             credentialStore: widget.credentialStore,
             sshService: widget.sshService,
             settingsStore: widget.settingsStore,
+            sessions: widget.sessions,
+          ),
+        ),
+      );
+      // The picker only opens (or reuses) the session; showing it is this
+      // route's job, since this is the route the sessions screen sits on.
+      if (opened == true && mounted) await _showSessions();
+    } finally {
+      _shareTargetOpen = false;
+      if (mounted) _refresh();
+    }
+  }
+
+  /// Brings the sessions screen up, or does nothing if it is already there.
+  ///
+  /// Pushed from here rather than owned here: popping it comes back to this
+  /// list with every session still connected, which is what makes "open a
+  /// second server" possible at all.
+  Future<void> _showSessions() async {
+    if (_sessionsOpen || widget.sessions.isEmpty) return;
+    _sessionsOpen = true;
+    try {
+      await Navigator.of(context).push<void>(
+        MaterialPageRoute<void>(
+          builder: (_) => SessionsScreen(
+            sessions: widget.sessions,
+            settingsStore: widget.settingsStore,
+            // "New session" is a trip back to this list. Popping is exactly
+            // that, and it keeps the sessions behind it alive.
+            onAddSession: () => Navigator.of(context).pop(),
           ),
         ),
       );
     } finally {
-      _shareTargetOpen = false;
+      _sessionsOpen = false;
       if (mounted) _refresh();
     }
   }
@@ -141,28 +191,17 @@ class _HostListScreenState extends State<HostListScreen> {
     await future;
   }
 
-  Future<void> _addHost() async {
-    await Navigator.of(context).push<bool>(
-      MaterialPageRoute<bool>(
-        builder: (_) => HostEditScreen(
-          hostStore: widget.hostStore,
-          credentialStore: widget.credentialStore,
-          sshService: widget.sshService,
-          settingsStore: widget.settingsStore,
-        ),
-      ),
-    );
-    // Refresh unconditionally, the same way _connect() does on return from
-    // SessionScreen: HostEditScreen already persisted the host itself before
-    // popping (see _HostEditScreenState._save), so the list only has to
-    // catch up with disk. Gating this on the popped result is what left the
-    // list stale — anything that pops the route without echoing `true`
-    // (a system back gesture, a future control that calls a bare
-    // Navigator.pop()) skipped the refresh even though the host was saved.
-    if (mounted) _refresh();
-  }
+  Future<void> _addHost() => _editForm();
 
-  Future<void> _editHost(Host host) async {
+  Future<void> _editHost(Host host) => _editForm(host: host);
+
+  Future<void> _editForm({Host? host}) async {
+    // "Connect without saving" opens a session from inside that form and pops
+    // back here; comparing the count is how this route knows to show it,
+    // without the form having to reach past itself to a navigator it does not
+    // own.
+    final before = widget.sessions.length;
+
     await Navigator.of(context).push<bool>(
       MaterialPageRoute<bool>(
         builder: (_) => HostEditScreen(
@@ -170,13 +209,22 @@ class _HostListScreenState extends State<HostListScreen> {
           credentialStore: widget.credentialStore,
           sshService: widget.sshService,
           settingsStore: widget.settingsStore,
+          sessions: widget.sessions,
           host: host,
         ),
       ),
     );
-    // See _addHost: refresh unconditionally rather than gating on the
-    // popped result.
-    if (mounted) _refresh();
+    if (!mounted) return;
+
+    // Refresh unconditionally, the same way _connect() does: HostEditScreen
+    // already persisted the host itself before popping (see
+    // _HostEditScreenState._save), so the list only has to catch up with
+    // disk. Gating this on the popped result is what left the list stale —
+    // anything that pops the route without echoing `true` (a system back
+    // gesture, a future control that calls a bare Navigator.pop()) skipped
+    // the refresh even though the host was saved.
+    _refresh();
+    if (widget.sessions.length > before) await _showSessions();
   }
 
   Future<void> _connect(
@@ -184,6 +232,24 @@ class _HostListScreenState extends State<HostListScreen> {
     SessionView view = SessionView.terminal,
   }) async {
     if (_connectingHostId != null) return;
+
+    // A second session to the same machine is a legitimate thing to want — a
+    // build in one shell and a tail in another is the ordinary case — but it
+    // is never what a user means by accident, and it costs a second
+    // authentication. So it is asked about rather than assumed either way.
+    final existing = widget.sessions.liveForHost(host.id);
+    if (existing.isNotEmpty) {
+      final choice = await _askAboutExistingSession(host, existing.length);
+      if (!mounted || choice == null) return;
+      if (choice == _ExistingSession.switchToIt) {
+        widget.sessions.select(existing.first.id);
+        if (view == SessionView.files) {
+          widget.sessions.showView(existing.first.id, view);
+        }
+        await _showSessions();
+        return;
+      }
+    }
 
     setState(() => _connectingHostId = host.id);
 
@@ -224,18 +290,11 @@ class _HostListScreenState extends State<HostListScreen> {
       );
 
       setState(() => _connectingHostId = null);
-      // From here the connection belongs to SessionScreen's SessionController,
-      // which closes it when the route is popped.
-      await Navigator.of(context).push(
-        MaterialPageRoute<void>(
-          builder: (_) => SessionScreen(
-            connection: connection,
-            initialView: view,
-            settingsStore: widget.settingsStore,
-          ),
-        ),
-      );
-      if (mounted) _refresh();
+      // From here the connection belongs to the session manager, which closes
+      // it when the user closes that session — not when this route, or the
+      // sessions screen, goes away.
+      widget.sessions.open(connection, initialView: view);
+      await _showSessions();
     } on SshConnectionException catch (e) {
       if (!mounted) return;
       setState(() => _connectingHostId = null);
@@ -248,6 +307,43 @@ class _HostListScreenState extends State<HostListScreen> {
         details: e.toString(),
       );
     }
+  }
+
+  /// Asks what "connect" means when this host is already open.
+  ///
+  /// Null is a cancel, and cancel is the barrier-dismiss default: opening a
+  /// second authenticated connection to someone's server is not something a
+  /// stray tap outside a dialog should do.
+  Future<_ExistingSession?> _askAboutExistingSession(Host host, int count) {
+    return showDialog<_ExistingSession>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Already connected'),
+        content: Text(
+          count == 1
+              ? 'There is already a session open on ${host.displayName}.'
+              : 'There are already $count sessions open on '
+                  '${host.displayName}.',
+          style: const TextStyle(height: 1.35),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () =>
+                Navigator.of(context).pop(_ExistingSession.openAnother),
+            child: const Text('New session'),
+          ),
+          FilledButton(
+            onPressed: () =>
+                Navigator.of(context).pop(_ExistingSession.switchToIt),
+            child: const Text('Switch to it'),
+          ),
+        ],
+      ),
+    );
   }
 
   Future<void> _showConnectError(
@@ -479,6 +575,15 @@ class _HostListScreenState extends State<HostListScreen> {
             if (_trustStoreReset)
               _TrustStoreResetBanner(
                 onDismiss: () => setState(() => _trustStoreReset = false),
+              ),
+            // Leaving the sessions screen keeps the connections up, which is
+            // what makes opening a second server possible — and would be an
+            // invisible state if this bar did not say so.
+            if (widget.sessions.isNotEmpty)
+              _OpenSessionsBar(
+                total: widget.sessions.length,
+                live: widget.sessions.liveCount,
+                onResume: () => unawaited(_showSessions()),
               ),
             Expanded(child: _buildHostList()),
           ],
@@ -719,6 +824,64 @@ class _HostCard extends StatelessWidget {
                       onPressed: onMore,
                       visualDensity: VisualDensity.compact,
                     ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// What "connect" should mean when the host is already open.
+enum _ExistingSession { switchToIt, openAnother }
+
+/// The way back to sessions that are still connected behind this list.
+class _OpenSessionsBar extends StatelessWidget {
+  const _OpenSessionsBar({
+    required this.total,
+    required this.live,
+    required this.onResume,
+  });
+
+  final int total;
+  final int live;
+  final VoidCallback onResume;
+
+  @override
+  Widget build(BuildContext context) {
+    // A tab whose transport has dropped is still a tab, and saying "2
+    // connected" when one of them is dead would be the sort of small lie that
+    // costs a user a command.
+    final dropped = total - live;
+    final label = live == 0
+        ? '$total session${total == 1 ? '' : 's'} · disconnected'
+        : '$live session${live == 1 ? '' : 's'} connected'
+            '${dropped > 0 ? ' · $dropped dropped' : ''}';
+
+    return Material(
+      color: AppTheme.accent.withValues(alpha: 0.12),
+      child: InkWell(
+        onTap: onResume,
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(14, 10, 8, 10),
+          child: Row(
+            children: [
+              Icon(
+                Icons.terminal,
+                size: 18,
+                color: live == 0 ? AppTheme.danger : AppTheme.accent,
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  label,
+                  style: const TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+              TextButton(onPressed: onResume, child: const Text('Resume')),
             ],
           ),
         ),

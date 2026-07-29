@@ -3,16 +3,15 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
 
-import 'package:path_provider/path_provider.dart';
-
 import '../models/host.dart';
+import 'app_data_paths.dart';
 
 /// Persistent store of saved hosts.
 ///
 /// Mirrors [KnownHostsService]'s approach: a plain JSON file in the app's
-/// documents directory, next to `known_hosts.json`. That is fine for [Host]
-/// specifically, because it is deliberately free of secrets — see
-/// `models/host.dart`. Passwords, keys and passphrases live in
+/// private data directory ([AppDataPaths]), next to `known_hosts.json`. That
+/// is fine for [Host] specifically, because it is deliberately free of
+/// secrets — see `models/host.dart`. Passwords, keys and passphrases live in
 /// [CredentialStore] instead.
 class HostStore {
   /// [file] overrides the on-disk location; tests use it so they do not need
@@ -44,7 +43,7 @@ class HostStore {
   Future<File> _resolveFile() async {
     final existing = _file;
     if (existing != null) return existing;
-    final dir = await getApplicationDocumentsDirectory();
+    final dir = await AppDataPaths.resolveDirectory();
     return _file = File('${dir.path}/$fileName');
   }
 

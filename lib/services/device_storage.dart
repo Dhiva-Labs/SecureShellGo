@@ -1,5 +1,11 @@
 
+import 'dart:io';
+
+import 'package:file_selector/file_selector.dart' as file_selector;
 import 'package:flutter/services.dart';
+import 'package:path_provider/path_provider.dart';
+
+import 'remote_path.dart';
 
 /// A file the user picked through the system document UI, staged into
 /// app-private cache so it can be read with plain file I/O.
@@ -149,6 +155,21 @@ class DeviceStorageException implements Exception {
 
   @override
   String toString() => message;
+}
+
+/// The right [DeviceStorage] for the platform this build is running on.
+///
+/// Android keeps talking to `StorageBridge.kt` over
+/// [MethodChannelDeviceStorage]. Linux, Windows and macOS have no such
+/// channel — there is no Kotlin side listening on it — so this hands back
+/// [DesktopDeviceStorage] instead, which writes straight into the real
+/// filesystem: the desktop equivalent of scoped storage's "no permission
+/// needed, no destination picker for a download" on Android 29+.
+DeviceStorage createDefaultDeviceStorage() {
+  if (Platform.isLinux || Platform.isWindows || Platform.isMacOS) {
+    return DesktopDeviceStorage();
+  }
+  return const MethodChannelDeviceStorage();
 }
 
 /// Talks to `StorageBridge.kt` over a method channel.
@@ -375,6 +396,261 @@ class _ChannelDownloadWriter implements DownloadWriter {
       );
     } catch (_) {
       // Already cleaning up after a failure; nothing useful to add.
+    }
+  }
+}
+
+/// Desktop implementation of [DeviceStorage].
+///
+/// Downloads go straight into the user's real Downloads folder
+/// (`path_provider`'s `getDownloadsDirectory()`) with plain `dart:io` file
+/// writes — there is no scoped-storage layer to ask, so this *is* the
+/// desktop equivalent of MediaStore. Uploads and the private-key file picker
+/// go through the system file picker via `file_selector`: a genuine plugin
+/// rather than hand-rolled platform code, which for this one case is the
+/// right side of the trade `StorageBridge.kt`'s doc argues for elsewhere in
+/// this project — a native Open dialog would otherwise need writing three
+/// times over (GTK, IFileDialog, NSOpenPanel) for something the Flutter team
+/// already maintains.
+///
+/// There is no permission step ([ensurePermission] is a no-op returning
+/// true — nothing to grant) and no MediaStore-style de-duplication service
+/// to ask, so a same-name collision is decided here with the same
+/// [RemotePath.deduplicate] the Android/MediaStore path already uses, and
+/// reported back the same way: through [SavedDownload.displayName].
+class DesktopDeviceStorage implements DeviceStorage {
+  /// [downloadsDirectoryResolver] overrides where downloads are written;
+  /// tests use a temp directory so they do not need the path_provider
+  /// plugin (which needs a platform channel and does not run under plain
+  /// `flutter test`) — the same reason `HostStore`/`SettingsStore` take an
+  /// injectable `File` instead of resolving one themselves.
+  DesktopDeviceStorage({
+    Future<Directory?> Function()? downloadsDirectoryResolver,
+  }) : _downloadsDirectoryResolver =
+            downloadsDirectoryResolver ?? getDownloadsDirectory;
+
+  final Future<Directory?> Function() _downloadsDirectoryResolver;
+
+  @override
+  Future<bool> ensurePermission() async => true;
+
+  @override
+  Future<bool> downloadExists(
+    String fileName, {
+    String relativeDirectory = '',
+  }) async {
+    final file = await _targetFile(fileName, relativeDirectory);
+    return file.exists();
+  }
+
+  @override
+  Future<DownloadWriter> beginDownload(
+    String fileName, {
+    String? mimeType,
+    bool overwrite = false,
+    String relativeDirectory = '',
+  }) async {
+    final Directory dir;
+    try {
+      dir = await _resolveDirectory(relativeDirectory);
+      await dir.create(recursive: true);
+    } on FileSystemException catch (e) {
+      throw DeviceStorageException(
+        'Could not create the Downloads folder.',
+        details: e.message,
+      );
+    }
+
+    final safeName = RemotePath.sanitiseFileName(fileName);
+    final displayName = overwrite
+        ? safeName
+        : RemotePath.deduplicate(
+            safeName,
+            (candidate) => File('${dir.path}/$candidate').existsSync(),
+          );
+
+    final file = File('${dir.path}/$displayName');
+    try {
+      final raf = await file.open(mode: FileMode.write);
+      return _FileDownloadWriter(
+        file: file,
+        raf: raf,
+        displayName: displayName,
+      );
+    } on FileSystemException catch (e) {
+      throw DeviceStorageException(
+        'Could not save to Downloads.',
+        details: e.message,
+      );
+    }
+  }
+
+  @override
+  Future<bool> openDownload(String uri, {String? mimeType}) async {
+    final path = filePathFromUri(uri);
+    if (path == null) return false;
+    try {
+      final ProcessResult result;
+      if (Platform.isLinux) {
+        result = await Process.run('xdg-open', <String>[path]);
+      } else if (Platform.isMacOS) {
+        result = await Process.run('open', <String>[path]);
+      } else if (Platform.isWindows) {
+        // Empty title argument: `start`'s first quoted argument is a window
+        // title, not the target, when more than one argument follows it.
+        result = await Process.run(
+          'cmd',
+          <String>['/c', 'start', '', path],
+        );
+      } else {
+        return false;
+      }
+      return result.exitCode == 0;
+    } on ProcessException {
+      return false;
+    }
+  }
+
+  @override
+  Future<PickedLocalFile?> pickFile() async {
+    final picked = await file_selector.openFile();
+    if (picked == null) return null;
+    return _toPickedLocalFile(picked);
+  }
+
+  @override
+  Future<List<PickedLocalFile>> pickFiles() async {
+    final picked = await file_selector.openFiles();
+    final files = <PickedLocalFile>[];
+    for (final file in picked) {
+      files.add(await _toPickedLocalFile(file));
+    }
+    return files;
+  }
+
+  @override
+  Future<PickedTextFile?> pickTextFile({
+    int maxBytes = kDefaultPickedTextFileMaxBytes,
+  }) async {
+    final picked = await file_selector.openFile();
+    if (picked == null) return null;
+
+    final size = await picked.length();
+    if (size > maxBytes) {
+      throw const DeviceStorageException(
+        'That file is too large to be a private key.',
+      );
+    }
+    final content = await picked.readAsString();
+    return PickedTextFile(name: picked.name, content: content);
+  }
+
+  Future<PickedLocalFile> _toPickedLocalFile(file_selector.XFile file) async {
+    var size = 0;
+    try {
+      size = await file.length();
+    } catch (_) {
+      // Only used for progress display on the upload path; a file whose
+      // length cannot be reported still uploads, just without a percentage.
+    }
+    return PickedLocalFile(path: file.path, name: file.name, size: size);
+  }
+
+  Future<Directory> _resolveDirectory(String relativeDirectory) async {
+    final downloads = await _downloadsDirectoryResolver();
+    if (downloads == null) {
+      throw const DeviceStorageException(
+        'Could not find a Downloads folder on this system.',
+      );
+    }
+    final safeRelative =
+        RemotePath.sanitiseRelativeDirectory(relativeDirectory);
+    if (safeRelative.isEmpty) return downloads;
+    return Directory('${downloads.path}/$safeRelative');
+  }
+
+  Future<File> _targetFile(String fileName, String relativeDirectory) async {
+    final dir = await _resolveDirectory(relativeDirectory);
+    return File('${dir.path}/${RemotePath.sanitiseFileName(fileName)}');
+  }
+}
+
+/// `file://...` → a plain filesystem path; anything else (an unrecognised or
+/// missing scheme) → null, since [DesktopDeviceStorage.openDownload] has
+/// nothing sensible to hand to `xdg-open`/`open`/`start` in that case.
+String? filePathFromUri(String uri) {
+  final parsed = Uri.tryParse(uri);
+  if (parsed == null) return null;
+  if (parsed.scheme == 'file') return parsed.toFilePath();
+  return null;
+}
+
+/// Writes a download straight to disk with `dart:io`.
+///
+/// Uses a [RandomAccessFile] rather than [File.openWrite]'s [IOSink] so that
+/// [add] can `await` each chunk's actual write — an [IOSink] would instead
+/// buffer internally and return immediately, which would let a fast SFTP
+/// stream race ahead of a slow disk and hold the whole file in memory. That
+/// awaited backpressure is the same reason `StorageBridge.kt` awaits every
+/// MediaStore chunk write on the Android side of this interface.
+class _FileDownloadWriter implements DownloadWriter {
+  _FileDownloadWriter({
+    required this.file,
+    required RandomAccessFile this._raf,
+    required this.displayName,
+  });
+
+  final File file;
+  final String displayName;
+  RandomAccessFile? _raf;
+  var _closed = false;
+
+  @override
+  Future<void> add(Uint8List chunk) async {
+    if (_closed) return;
+    final raf = _raf;
+    if (raf == null) return;
+    try {
+      _raf = await raf.writeFrom(chunk);
+    } on FileSystemException catch (e) {
+      throw DeviceStorageException(
+        'Writing to Downloads failed. The device may be out of space.',
+        details: e.message,
+      );
+    }
+  }
+
+  @override
+  Future<SavedDownload> finish() async {
+    if (_closed) return SavedDownload(displayName: displayName);
+    _closed = true;
+    final raf = _raf;
+    _raf = null;
+    try {
+      await raf?.close();
+    } on FileSystemException {
+      // Nothing left to do if the close itself fails; the file is as
+      // complete as it is ever going to get.
+    }
+    return SavedDownload(displayName: displayName, uri: file.uri.toString());
+  }
+
+  @override
+  Future<void> abort() async {
+    if (_closed) return;
+    _closed = true;
+    final raf = _raf;
+    _raf = null;
+    try {
+      await raf?.close();
+    } catch (_) {
+      // Already cleaning up after a failure; nothing useful to add below.
+    }
+    try {
+      if (await file.exists()) await file.delete();
+    } catch (_) {
+      // Best-effort: a cancelled download must not look complete, but if
+      // even the delete fails there is nothing more this can do.
     }
   }
 }

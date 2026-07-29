@@ -7,12 +7,15 @@ import '../models/remote_entry.dart';
 import '../services/device_storage.dart';
 import '../services/download_plan.dart';
 import '../services/remote_path.dart';
+import '../services/remote_transfer_plan.dart';
 import '../services/session_controller.dart';
+import '../services/session_manager.dart';
 import '../services/sftp_service.dart';
 import '../services/transfer_queue.dart';
 import '../services/upload_plan.dart';
 import '../theme.dart';
 import '../widgets/transfer_panel.dart';
+import 'remote_directory_picker.dart';
 
 /// What to do when a download would land on an existing file name.
 enum _CollisionChoice { keepBoth, overwrite, cancel }
@@ -26,10 +29,21 @@ class FileBrowserPane extends StatefulWidget {
   const FileBrowserPane({
     super.key,
     required this.session,
+    this.sessions,
+    this.sessionId,
     this.initialShowHidden = false,
   });
 
   final SessionController session;
+
+  /// The other open sessions, so a file can be sent straight to one of them.
+  /// Null in a context with no manager behind it, which simply hides the
+  /// server-to-server actions.
+  final SessionManager? sessions;
+
+  /// Which entry in [sessions] this pane is showing — the *source* of a
+  /// server-to-server transfer, and the one destination it must not offer.
+  final String? sessionId;
 
   /// Seeds the per-session "show hidden files" toggle from Settings. The
   /// toggle itself stays per-session after that — this only sets where it
@@ -59,10 +73,14 @@ class _FileBrowserPaneState extends State<FileBrowserPane>
 
   StreamSubscription<List<TransferTask>>? _transferChanges;
 
-  /// Uploads already counted, so each finishing is noticed exactly once.
+  /// Files arriving from *another* session's transfer queue, which this pane
+  /// cannot see from its own.
+  StreamSubscription<String>? _arrivals;
+
+  /// Transfers already counted, so each finishing is noticed exactly once.
   final Set<String> _refreshedFor = {};
 
-  /// Set when an upload landed in the directory on screen, cleared by the
+  /// Set when a transfer changed the directory on screen, cleared by the
   /// refresh it triggers once the queue is quiet.
   bool _uploadLanded = false;
 
@@ -78,6 +96,7 @@ class _FileBrowserPaneState extends State<FileBrowserPane>
     });
     _transferChanges =
         widget.session.transfers.changes.listen(_handleTransfers);
+    _arrivals = widget.session.arrivals.listen(_handleArrival);
     unawaited(_openHome());
   }
 
@@ -85,18 +104,33 @@ class _FileBrowserPaneState extends State<FileBrowserPane>
   void dispose() {
     _sessionChanges?.cancel();
     _transferChanges?.cancel();
+    _arrivals?.cancel();
     super.dispose();
   }
 
-  /// Shows an upload in the listing the moment it lands.
+  /// A file copied in from another server landed here.
+  void _handleArrival(String directory) {
+    if (!mounted || _loading || directory != _path) return;
+    unawaited(_refresh());
+  }
+
+  /// Shows a finished transfer in the listing the moment it changes it.
   ///
-  /// The file went into the directory on screen, so leaving the user looking
-  /// at a listing that does not contain it — until they think to pull to
-  /// refresh — makes a successful upload look like a failed one.
+  /// The file went into (or out of) the directory on screen, so leaving the
+  /// user looking at a listing that does not reflect that — until they think
+  /// to pull to refresh — makes a successful transfer look like a failed one.
   void _handleTransfers(List<TransferTask> tasks) {
     for (final task in tasks) {
-      if (task.direction != TransferDirection.upload) continue;
       if (task.status != TransferStatus.completed) continue;
+      // An upload lands here; a *move* to another server takes a file away
+      // from here. Both change what this listing should say. A plain copy to
+      // another server changes nothing on this side.
+      final changesThisDirectory = switch (task.direction) {
+        TransferDirection.upload => true,
+        TransferDirection.serverToServer => task.moveSource,
+        TransferDirection.download => false,
+      };
+      if (!changesThisDirectory) continue;
       if (!_refreshedFor.add(task.id)) continue;
       if (RemotePath.parent(task.remotePath) == _path) _uploadLanded = true;
     }
@@ -361,7 +395,11 @@ class _FileBrowserPaneState extends State<FileBrowserPane>
 
     try {
       final sftp = await _client();
-      final existing = await _existingNames(sftp, directory, files);
+      final existing = await remoteNamesIn(
+        sftp,
+        directory,
+        files.map((f) => f.name),
+      );
       if (!mounted) return;
 
       final plan = await resolveUploadPlan(
@@ -401,35 +439,11 @@ class _FileBrowserPaneState extends State<FileBrowserPane>
     return '$head · ${plan.skipped.length} skipped';
   }
 
-  /// The names already in [directory], for the collision plan.
-  ///
-  /// One listing rather than a `stat` per file, because "keep both" needs to
-  /// know what `name (1).ext` would hit as well. A directory that will not
-  /// list — writable but not readable is a real Unix permission — falls back
-  /// to probing exactly the names about to be created.
-  Future<Set<String>> _existingNames(
-    RemoteFileSystem sftp,
-    String directory,
-    List<PickedLocalFile> files,
-  ) async {
-    try {
-      final entries = await sftp.list(directory);
-      return entries.map((e) => e.name).toSet();
-    } catch (_) {
-      final names = <String>{};
-      for (final file in files) {
-        if (await sftp.exists(RemotePath.join(directory, file.name))) {
-          names.add(file.name);
-        }
-      }
-      return names;
-    }
-  }
-
   Future<UploadCollisionResponse?> _askAboutRemoteCollision(
     String fileName,
     String directory, {
     required bool offerApplyToAll,
+    String? hostLabel,
   }) async {
     var applyToAll = false;
     final action = await showDialog<UploadCollisionAction>(
@@ -442,7 +456,10 @@ class _FileBrowserPaneState extends State<FileBrowserPane>
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(
-                '"$fileName" already exists in $directory.',
+                hostLabel == null
+                    ? '"$fileName" already exists in $directory.'
+                    : '"$fileName" already exists in $directory on '
+                        '$hostLabel.',
                 style: const TextStyle(height: 1.35),
               ),
               if (offerApplyToAll)
@@ -493,6 +510,168 @@ class _FileBrowserPaneState extends State<FileBrowserPane>
   Future<void> _uploadShared(PendingUpload pending) async {
     widget.session.clearPendingUpload();
     await _uploadFiles(pending.files);
+  }
+
+  // ---------------------------------------------------- server to server
+
+  /// The other sessions this pane could send files to, or an empty list when
+  /// there is no manager behind it.
+  List<ManagedSession> get _destinations {
+    final manager = widget.sessions;
+    final id = widget.sessionId;
+    if (manager == null || id == null) return const [];
+    return manager.destinationsFor(id);
+  }
+
+  /// Copies (or moves) [entries] straight to another connected server.
+  ///
+  /// The bytes go source → this app → destination, chunk by chunk, and never
+  /// touch the device's storage: see `remote_copy.dart` for how the read side
+  /// is held back by the write side. Nothing here waits for that — the plan is
+  /// made, the transfers are queued on this session, and both sessions stay
+  /// usable while they run.
+  Future<void> _sendToServer(
+    List<RemoteEntry> entries, {
+    required bool move,
+  }) async {
+    if (entries.isEmpty) return;
+    final destinations = _destinations;
+    if (destinations.isEmpty) {
+      _snack(
+        'Open a second server in another session first — then files can go '
+        'straight from one to the other.',
+      );
+      return;
+    }
+
+    final target = destinations.length == 1
+        ? destinations.single
+        : await _pickDestinationSession(destinations, move: move);
+    if (!mounted || target == null) return;
+
+    final directory = await pickRemoteDirectory(
+      context,
+      session: target,
+      confirmLabel: move ? 'Move here' : 'Copy here',
+      subtitle: entries.length == 1
+          ? '${move ? 'Move' : 'Copy'} ${entries.single.name} to…'
+          : '${move ? 'Move' : 'Copy'} ${entries.length} files to…',
+    );
+    if (!mounted || directory == null) return;
+
+    final RemoteFileSystem destinationFs;
+    try {
+      destinationFs = await target.controller.sftp();
+    } on SftpFailure catch (e) {
+      if (mounted) _snack(e.message, isError: true);
+      return;
+    }
+    if (!mounted) return;
+
+    final RemoteTransferPlan plan;
+    try {
+      plan = await planRemoteTransfer(
+        entries: entries,
+        destination: destinationFs,
+        destinationDirectory: directory,
+        ask: (fileName, {required offerApplyToAll}) =>
+            _askAboutRemoteCollision(
+          fileName,
+          directory,
+          offerApplyToAll: offerApplyToAll,
+          hostLabel: target.host.displayName,
+        ),
+      );
+    } on SftpFailure catch (e) {
+      if (mounted) _snack(e.message, isError: true);
+      return;
+    }
+    if (!mounted || plan.cancelled) return;
+
+    if (plan.isEmpty) {
+      _snack(_nothingSentMessage(plan), isError: plan.unsupported.isNotEmpty);
+      return;
+    }
+
+    for (final transfer in plan.transfers) {
+      final entry = plan.files[transfer.sourceIndex];
+      widget.session.queueRemoteCopy(
+        remotePath: entry.path,
+        name: entry.name,
+        destinationSessionId: target.id,
+        destinationLabel: target.host.displayName,
+        remoteDirectory: directory,
+        asName: transfer.remoteName,
+        overwrite: transfer.overwrite,
+        moveSource: move,
+        totalBytes: entry.size,
+      );
+    }
+
+    _clearSelection();
+    _snack(_sentMessage(plan, target, directory, move: move));
+  }
+
+  String _nothingSentMessage(RemoteTransferPlan plan) {
+    if (plan.unsupported.isNotEmpty && plan.files.isEmpty) {
+      return plan.unsupported.length == 1
+          ? '"${plan.unsupported.single}" is a folder or a link. Only files '
+              'can go straight between servers for now.'
+          : 'Folders and links cannot go straight between servers yet — only '
+              'files.';
+    }
+    return 'Nothing sent — every file was skipped.';
+  }
+
+  String _sentMessage(
+    RemoteTransferPlan plan,
+    ManagedSession target,
+    String directory, {
+    required bool move,
+  }) {
+    final verb = move ? 'Moving' : 'Copying';
+    final count = plan.transfers.length;
+    final head = count == 1
+        ? '$verb ${plan.transfers.single.remoteName} to '
+            '${target.host.displayName}:$directory'
+        : '$verb $count files to ${target.host.displayName}:$directory';
+    final notes = <String>[
+      if (plan.skipped.isNotEmpty) '${plan.skipped.length} skipped',
+      if (plan.unsupported.isNotEmpty)
+        '${plan.unsupported.length} folder'
+            '${plan.unsupported.length == 1 ? '' : 's'} left out',
+    ];
+    return notes.isEmpty ? head : '$head · ${notes.join(' · ')}';
+  }
+
+  /// Which of several open servers the files are going to.
+  Future<ManagedSession?> _pickDestinationSession(
+    List<ManagedSession> destinations, {
+    required bool move,
+  }) {
+    return showModalBottomSheet<ManagedSession>(
+      context: context,
+      backgroundColor: AppTheme.surface,
+      builder: (context) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              title: Text(move ? 'Move to which server?' : 'Copy to which server?'),
+              subtitle: const Text('The files never touch this device'),
+            ),
+            const Divider(height: 1),
+            for (final destination in destinations)
+              ListTile(
+                leading: const Icon(Icons.dns_outlined, color: AppTheme.accent),
+                title: Text(destination.host.displayName),
+                subtitle: Text(destination.host.target),
+                onTap: () => Navigator.of(context).pop(destination),
+              ),
+          ],
+        ),
+      ),
+    );
   }
 
   // ------------------------------------------------ recursive folder download
@@ -643,7 +822,19 @@ class _FileBrowserPaneState extends State<FileBrowserPane>
     );
   }
 
+  Future<void> _sendSelected({required bool move}) async {
+    final chosen = _visible
+        .where((e) => _selected.contains(e.path))
+        .toList(growable: false);
+    await _sendToServer(chosen, move: move);
+  }
+
   Future<void> _showEntryActions(RemoteEntry entry) async {
+    // Read before the sheet is built, so the "another server" rows appear only
+    // when there is in fact another server open right now.
+    final canSend =
+        entry.kind == RemoteEntryKind.file && _destinations.isNotEmpty;
+
     await showModalBottomSheet<void>(
       context: context,
       backgroundColor: AppTheme.surface,
@@ -681,6 +872,27 @@ class _FileBrowserPaneState extends State<FileBrowserPane>
                   unawaited(_downloadDirectory(entry));
                 },
               ),
+            if (canSend) ...[
+              ListTile(
+                leading: const Icon(Icons.drive_file_move_outlined),
+                title: const Text('Copy to another server…'),
+                subtitle: const Text('Straight across, without downloading'),
+                onTap: () {
+                  Navigator.of(context).pop();
+                  unawaited(_sendToServer([entry], move: false));
+                },
+              ),
+              ListTile(
+                leading: const Icon(Icons.drive_file_move_rtl_outlined),
+                title: const Text('Move to another server…'),
+                subtitle: const Text('Deletes this copy once the other is '
+                    'verified'),
+                onTap: () {
+                  Navigator.of(context).pop();
+                  unawaited(_sendToServer([entry], move: true));
+                },
+              ),
+            ],
             if (entry.isDownloadable)
               ListTile(
                 leading: const Icon(Icons.checklist),
@@ -740,6 +952,9 @@ class _FileBrowserPaneState extends State<FileBrowserPane>
               onSelectAll: _selectAll,
               onClear: _clearSelection,
               onDownload: () => unawaited(_downloadSelected()),
+              onSendToServer: _destinations.isEmpty
+                  ? null
+                  : (move) => unawaited(_sendSelected(move: move)),
             )
           else
             _BrowserActions(
@@ -1132,6 +1347,7 @@ class _SelectionBar extends StatelessWidget {
     required this.onSelectAll,
     required this.onClear,
     required this.onDownload,
+    this.onSendToServer,
   });
 
   final int count;
@@ -1139,8 +1355,17 @@ class _SelectionBar extends StatelessWidget {
   final VoidCallback onClear;
   final VoidCallback onDownload;
 
+  /// Sends the selection to another open session — `true` for a move. Null
+  /// when nothing else is connected, which is the only reason the button is
+  /// not there at all rather than there and disabled: "copy to another server"
+  /// with no other server is not a state worth explaining in a tooltip on a
+  /// bar this narrow.
+  final void Function(bool move)? onSendToServer;
+
   @override
   Widget build(BuildContext context) {
+    final sendTo = onSendToServer;
+
     return Material(
       color: AppTheme.accent.withValues(alpha: 0.12),
       child: SizedBox(
@@ -1155,6 +1380,22 @@ class _SelectionBar extends StatelessWidget {
             Text('$count selected', style: const TextStyle(fontSize: 13)),
             const Spacer(),
             TextButton(onPressed: onSelectAll, child: const Text('All')),
+            if (sendTo != null)
+              PopupMenuButton<bool>(
+                tooltip: 'Send to another server',
+                icon: const Icon(Icons.drive_file_move_outlined, size: 20),
+                onSelected: sendTo,
+                itemBuilder: (context) => const [
+                  PopupMenuItem<bool>(
+                    value: false,
+                    child: Text('Copy to another server…'),
+                  ),
+                  PopupMenuItem<bool>(
+                    value: true,
+                    child: Text('Move to another server…'),
+                  ),
+                ],
+              ),
             FilledButton.icon(
               onPressed: onDownload,
               icon: const Icon(Icons.download, size: 18),

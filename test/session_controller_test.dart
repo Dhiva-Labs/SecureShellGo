@@ -23,6 +23,7 @@ class FakeTransport implements SessionTransport {
   var closeCount = 0;
   var openSftpCount = 0;
   var pingCount = 0;
+  var startShellCount = 0;
 
   @override
   final Host host = const Host(
@@ -40,13 +41,23 @@ class FakeTransport implements SessionTransport {
   @override
   bool get isClosed => closeCount > 0;
 
+  /// The one thing about a shell that can be tested without a real SSH
+  /// channel is *how many times it is opened*, which is the whole question
+  /// once several views can come and go over one session.
   @override
   Future<SSHSession> startShell({
     required int columns,
     required int rows,
     String terminalType = 'xterm-256color',
-  }) =>
-      throw UnimplementedError('the shell needs a real SSH channel');
+  }) {
+    startShellCount++;
+    columnsAsked = columns;
+    rowsAsked = rows;
+    throw UnimplementedError('the shell needs a real SSH channel');
+  }
+
+  int? columnsAsked;
+  int? rowsAsked;
 
   @override
   Future<SftpClient> openSftp() {
@@ -83,6 +94,15 @@ class FakeRemoteFs implements RemoteFileSystem {
   final List<String> downloaded = [];
   final List<String> uploaded = [];
 
+  /// Files that exist here, by path, with the size the server would report.
+  /// Empty to start: the download tests script their bytes through [bytes]
+  /// instead, and only the server-to-server ones care what is on disk.
+  final Map<String, int> files = {};
+
+  final List<FakeRemoteWriter> writers = [];
+  final List<String> removed = [];
+  final List<String> renamed = [];
+
   @override
   Future<String> home() async => '/home/dev';
 
@@ -93,7 +113,28 @@ class FakeRemoteFs implements RemoteFileSystem {
   Future<List<RemoteEntry>> list(String path) async => const [];
 
   @override
-  Future<int?> sizeOf(String path) async => bytes;
+  Future<int?> sizeOf(String path) async => files[path] ?? bytes;
+
+  @override
+  Future<RemoteFileWriter> openWrite(String remotePath) async {
+    if (failWith != null) throw failWith!;
+    final writer = FakeRemoteWriter(this, remotePath);
+    writers.add(writer);
+    return writer;
+  }
+
+  @override
+  Future<void> remove(String path) async {
+    removed.add(path);
+    files.remove(path);
+  }
+
+  @override
+  Future<void> rename(String from, String to) async {
+    renamed.add('$from -> $to');
+    final size = files.remove(from);
+    if (size != null) files[to] = size;
+  }
 
   @override
   Future<int> download(
@@ -132,11 +173,41 @@ class FakeRemoteFs implements RemoteFileSystem {
   }
 
   @override
-  Future<bool> exists(String path) async => false;
+  Future<bool> exists(String path) async => files.containsKey(path);
 
   @override
   Future<void> close() async {
     closed = true;
+  }
+}
+
+/// One file being written into a [FakeRemoteFs]. Nothing is visible under the
+/// path until [close], which is the property the copy logic depends on.
+class FakeRemoteWriter implements RemoteFileWriter {
+  FakeRemoteWriter(this._fs, this.path);
+
+  final FakeRemoteFs _fs;
+  final String path;
+
+  var written = 0;
+  var closed = false;
+  var aborted = false;
+
+  @override
+  Future<void> add(Uint8List chunk) async {
+    written += chunk.length;
+  }
+
+  @override
+  Future<void> close() async {
+    closed = true;
+    _fs.files[path] = written;
+  }
+
+  @override
+  Future<void> abort() async {
+    aborted = true;
+    _fs.files.remove(path);
   }
 }
 
@@ -289,7 +360,11 @@ void main() {
   late FakeRemoteFs fs;
   late List<HandCrankedTimer> keepaliveTimers;
 
-  SessionController build({FakeRemoteFs? filesystem, FakeStorage? store}) {
+  SessionController build({
+    FakeRemoteFs? filesystem,
+    FakeStorage? store,
+    RemoteTargetResolver? resolveRemoteTarget,
+  }) {
     fs = filesystem ?? FakeRemoteFs();
     storage = store ?? FakeStorage();
     return SessionController(
@@ -299,6 +374,7 @@ void main() {
         fs.openCount++;
         return fs;
       },
+      resolveRemoteTarget: resolveRemoteTarget,
       keepaliveScheduler: (_, tick) {
         final timer = HandCrankedTimer(tick);
         keepaliveTimers.add(timer);
@@ -883,6 +959,287 @@ void main() {
       await settle(session);
 
       expect(storage.relativeDirectories, ['']);
+    });
+  });
+
+  group('server-to-server transfers', () {
+    late FakeTransport destinationTransport;
+    late FakeRemoteFs destinationFs;
+    late SessionController destination;
+
+    /// A source session wired to a second, live session as its destination —
+    /// the shape `SessionManager` builds in production.
+    SessionController buildWithDestination({FakeRemoteFs? sourceFs}) {
+      destinationTransport = FakeTransport();
+      destinationFs = FakeRemoteFs(bytes: 0);
+      destination = SessionController(
+        connection: destinationTransport,
+        storage: FakeStorage(),
+        openFileSystem: () async => destinationFs,
+        keepaliveScheduler: (_, tick) {
+          final timer = HandCrankedTimer(tick);
+          keepaliveTimers.add(timer);
+          return timer;
+        },
+      );
+      addTearDown(destination.dispose);
+      return build(
+        filesystem: sourceFs,
+        resolveRemoteTarget: (_) async => destination,
+      );
+    }
+
+    TransferTask queueCopy(
+      SessionController session, {
+      bool move = false,
+      int? totalBytes = 300,
+    }) {
+      return session.queueRemoteCopy(
+        remotePath: '/srv/a/report.pdf',
+        name: 'report.pdf',
+        destinationSessionId: 'session-1',
+        destinationLabel: 'build-box',
+        remoteDirectory: '/srv/b',
+        moveSource: move,
+        totalBytes: totalBytes,
+      );
+    }
+
+    test('streams to the other session and says where it landed', () async {
+      final session = buildWithDestination();
+      addTearDown(session.dispose);
+
+      final task = queueCopy(session);
+      await settle(session);
+
+      expect(task.status, TransferStatus.completed);
+      expect(task.direction, TransferDirection.serverToServer);
+      expect(task.transferredBytes, 300);
+      expect(destinationFs.files['/srv/b/report.pdf'], 300);
+      // Named with the host, because a bare path is ambiguous the moment
+      // there are two servers in play.
+      expect(task.destination, 'build-box:/srv/b/report.pdf');
+    });
+
+    test('the destination path is built from the directory and the name',
+        () async {
+      final session = buildWithDestination();
+      addTearDown(session.dispose);
+
+      final task = session.queueRemoteCopy(
+        remotePath: '/srv/a/report.pdf',
+        name: 'report.pdf',
+        destinationSessionId: 'session-1',
+        destinationLabel: 'build-box',
+        remoteDirectory: '/srv/b',
+        // "Keep both" resolved the collision to a different name over there.
+        asName: 'report (1).pdf',
+      );
+
+      expect(task.destinationPath, '/srv/b/report (1).pdf');
+      expect(task.name, 'report (1).pdf');
+      await settle(session);
+      expect(destinationFs.files.keys, ['/srv/b/report (1).pdf']);
+    });
+
+    test('nothing is published under the final name until it is complete',
+        () async {
+      final session = buildWithDestination();
+      addTearDown(session.dispose);
+
+      queueCopy(session);
+      await settle(session);
+
+      // One temporary file, renamed into place exactly once.
+      expect(destinationFs.renamed, hasLength(1));
+      expect(
+        destinationFs.renamed.single,
+        endsWith('-> /srv/b/report.pdf'),
+      );
+    });
+
+    test('a move deletes the source only after the copy is verified',
+        () async {
+      final session = buildWithDestination();
+      addTearDown(session.dispose);
+
+      final task = queueCopy(session, move: true);
+      await settle(session);
+
+      expect(task.status, TransferStatus.completed);
+      expect(fs.removed, ['/srv/a/report.pdf']);
+      expect(destinationFs.files['/srv/b/report.pdf'], 300);
+    });
+
+    test('a copy leaves the source alone', () async {
+      final session = buildWithDestination();
+      addTearDown(session.dispose);
+
+      queueCopy(session);
+      await settle(session);
+
+      expect(fs.removed, isEmpty);
+    });
+
+    test('the destination session is told something landed on it', () async {
+      final session = buildWithDestination();
+      addTearDown(session.dispose);
+
+      // The destination's file browser is a different pane on a different
+      // session with no sight of this queue, so it is told directly.
+      final arrival = destination.arrivals.first;
+      queueCopy(session);
+      await settle(session);
+
+      expect(await arrival, '/srv/b');
+    });
+
+    test('a cancel mid-copy leaves nothing on the destination', () async {
+      final session = buildWithDestination(
+        sourceFs: FakeRemoteFs(bytes: 100000),
+      );
+      addTearDown(session.dispose);
+
+      final task = queueCopy(session, totalBytes: 100000);
+      await session.transfers.changes.firstWhere(
+        (tasks) => tasks.first.transferredBytes > 0,
+      );
+      session.transfers.cancel(task.id);
+      await settle(session);
+
+      expect(task.status, TransferStatus.cancelled);
+      expect(destinationFs.files, isEmpty);
+      expect(destinationFs.writers.single.aborted, isTrue);
+      // A cancelled move is not a move.
+      expect(fs.removed, isEmpty);
+    });
+
+    test('a session with nowhere to send fails the transfer rather than '
+        'hanging', () async {
+      // No resolver at all: the manager only supplies one, so this is a
+      // session built outside it.
+      final session = build();
+      addTearDown(session.dispose);
+
+      final task = queueCopy(session);
+      await settle(session);
+
+      expect(session.canTransferToOtherSessions, isFalse);
+      expect(task.status, TransferStatus.failed);
+      expect(task.error, contains('no destination server'));
+    });
+
+    test('a destination that refuses to open the file fails the transfer',
+        () async {
+      final session = build(
+        resolveRemoteTarget: (_) async {
+          final broken = SessionController(
+            connection: FakeTransport(),
+            storage: FakeStorage(),
+            openFileSystem: () async =>
+                FakeRemoteFs(failWith: const SftpFailure('Permission denied.')),
+            keepaliveScheduler: (_, tick) {
+              final timer = HandCrankedTimer(tick);
+              keepaliveTimers.add(timer);
+              return timer;
+            },
+          );
+          addTearDown(broken.dispose);
+          return broken;
+        },
+      );
+      addTearDown(session.dispose);
+
+      final task = queueCopy(session);
+      await settle(session);
+
+      expect(task.status, TransferStatus.failed);
+      expect(task.error, contains('Permission denied'));
+    });
+  });
+
+  group('the shell and its buffer', () {
+    test('the terminal belongs to the session, so a new view finds it filled',
+        () async {
+      final session = build();
+      addTearDown(session.dispose);
+
+      // A view is free to be destroyed and rebuilt — a fold, a window resize,
+      // or leaving the sessions screen for the host list to open a second
+      // server. Whatever it reattaches to has to be the same buffer.
+      final terminal = session.terminal;
+      terminal.write('hello from the shell');
+
+      expect(identical(session.terminal, terminal), isTrue);
+      expect(
+        session.terminal.buffer.getText().contains('hello from the shell'),
+        isTrue,
+      );
+    });
+
+    test('the shell is opened once, however many views ask for it', () async {
+      final session = build();
+      addTearDown(session.dispose);
+
+      // The size a view reports is what the PTY is created at.
+      session.terminal.resize(120, 40);
+
+      await session.ensureShell();
+      await session.ensureShell();
+
+      // Two opens would mean two subscriptions to one `SSHSession.stdout`,
+      // which throws "Stream has already been listened to" and leaves the
+      // user looking at an error instead of their shell. Observed on the
+      // emulator before the buffer moved onto the session.
+      expect(transport.startShellCount, 1);
+      expect(transport.columnsAsked, 120);
+      expect(transport.rowsAsked, 40);
+    });
+
+    test('a shell that will not open is reported without ending the session',
+        () async {
+      final session = build();
+      addTearDown(session.dispose);
+      session.terminal.resize(80, 24);
+
+      await session.ensureShell();
+
+      expect(session.isShellReady, isTrue);
+      expect(session.shellError, contains('real SSH channel'));
+      expect(
+        session.terminal.buffer.getText().contains('Failed to open a shell'),
+        isTrue,
+      );
+      // The transport is fine; the file browser must still work.
+      expect(session.isClosed, isFalse);
+    });
+  });
+
+  group('announcing a disconnect', () {
+    test('a live session has nothing to announce', () async {
+      final session = build();
+      addTearDown(session.dispose);
+
+      expect(session.takeDisconnectAnnouncement(), isNull);
+    });
+
+    test('a drop is announced exactly once, however often it is asked',
+        () async {
+      final session = build();
+      addTearDown(session.dispose);
+
+      final closed = session.changes.first;
+      transport.dropConnection();
+      await closed;
+
+      expect(
+        session.takeDisconnectAnnouncement(),
+        contains('closed by the remote host'),
+      );
+      // The banner stays up and the view rebuilds many times behind it; the
+      // snackbar must not come back with every one of them, and a `State`
+      // replaced by a fold must not start over with an empty memory.
+      expect(session.takeDisconnectAnnouncement(), isNull);
     });
   });
 

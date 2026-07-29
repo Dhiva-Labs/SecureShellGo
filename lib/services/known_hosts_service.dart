@@ -2,9 +2,8 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
-import 'package:path_provider/path_provider.dart';
-
 import '../models/known_host.dart';
+import 'app_data_paths.dart';
 import 'known_hosts_integrity.dart';
 
 /// Persistent store of host keys the user has trusted.
@@ -56,7 +55,7 @@ class KnownHostsService {
   Future<File> _resolveFile() async {
     final existing = _file;
     if (existing != null) return existing;
-    final dir = await getApplicationDocumentsDirectory();
+    final dir = await AppDataPaths.resolveDirectory();
     return _file = File('${dir.path}/$fileName');
   }
 

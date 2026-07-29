@@ -332,6 +332,48 @@ void main() {
       expect(again.totalBytes, 42);
     });
 
+    test('a server-to-server retry keeps its destination, and its move',
+        () async {
+      var attempts = 0;
+      final queue = TransferQueue(
+        executor: (task, handle) async {
+          attempts++;
+          if (attempts == 1) throw StateError('destination went away');
+        },
+      );
+      addTearDown(queue.dispose);
+
+      final failed = queue.enqueueRemoteCopy(
+        remotePath: '/srv/a/report.pdf',
+        destinationSessionId: 'session-3',
+        destinationPath: '/srv/b/archive/report.pdf',
+        destinationLabel: 'build-box',
+        name: 'report.pdf',
+        overwrite: true,
+        moveSource: true,
+        totalBytes: 900,
+      );
+      await queue.changes.firstWhere(
+        (tasks) => tasks.any((t) => t.status == TransferStatus.failed),
+      );
+
+      final again = queue.retry(failed.id)!;
+      await queue.changes.firstWhere(
+        (tasks) => tasks.every((t) => t.status.isFinished),
+      );
+
+      expect(again.status, TransferStatus.completed);
+      expect(again.direction, TransferDirection.serverToServer);
+      expect(again.remotePath, '/srv/a/report.pdf');
+      expect(again.destinationSessionId, 'session-3');
+      expect(again.destinationPath, '/srv/b/archive/report.pdf');
+      expect(again.destinationLabel, 'build-box');
+      // A retried move is still a move, and the "Replace" the user already
+      // agreed to must not come back as a question they never see.
+      expect(again.moveSource, isTrue);
+      expect(again.overwrite, isTrue);
+    });
+
     test('only failures can be retried', () async {
       final queue = TransferQueue(executor: (task, handle) async {});
       addTearDown(queue.dispose);
@@ -346,6 +388,60 @@ void main() {
       expect(queue.retry(done.id), isNull);
       expect(queue.retry('no-such-id'), isNull);
       expect(queue.tasks, hasLength(1));
+    });
+  });
+
+  group('server-to-server tasks', () {
+    test('carry both ends, and take their turn on the source queue', () async {
+      final order = <String>[];
+      final queue = TransferQueue(
+        executor: (task, handle) async {
+          order.add(task.name);
+          await Future<void>.delayed(Duration.zero);
+        },
+      );
+      addTearDown(queue.dispose);
+
+      queue.enqueueDownload(remotePath: '/srv/a/first', name: 'first');
+      final sent = queue.enqueueRemoteCopy(
+        remotePath: '/srv/a/report.pdf',
+        destinationSessionId: 'session-2',
+        destinationPath: '/srv/b/report.pdf',
+        destinationLabel: 'build-box',
+        name: 'report.pdf',
+        totalBytes: 900,
+      );
+      await queue.changes.firstWhere(
+        (tasks) => tasks.every((t) => t.status.isFinished),
+      );
+
+      // Sequential, like everything else on this queue: the source session's
+      // SFTP channel is doing the reading either way.
+      expect(order, ['first', 'report.pdf']);
+      expect(sent.direction, TransferDirection.serverToServer);
+      expect(sent.remotePath, '/srv/a/report.pdf');
+      expect(sent.destinationPath, '/srv/b/report.pdf');
+      expect(sent.moveSource, isFalse);
+      expect(sent.totalBytes, 900);
+    });
+
+    test('can be cancelled while queued, like any other transfer', () async {
+      final queue = TransferQueue(
+        executor: (task, handle) async =>
+            Future<void>.delayed(const Duration(milliseconds: 50)),
+      );
+      addTearDown(queue.dispose);
+
+      queue.enqueueDownload(remotePath: '/srv/a/first', name: 'first');
+      final sent = queue.enqueueRemoteCopy(
+        remotePath: '/srv/a/report.pdf',
+        destinationSessionId: 'session-2',
+        destinationPath: '/srv/b/report.pdf',
+        name: 'report.pdf',
+      );
+      queue.cancel(sent.id);
+
+      expect(sent.status, TransferStatus.cancelled);
     });
   });
 

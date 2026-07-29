@@ -6,12 +6,12 @@ import '../services/credential_store.dart';
 import '../services/device_storage.dart';
 import '../services/host_store.dart';
 import '../services/private_key_import.dart';
+import '../services/session_manager.dart';
 import '../services/settings_store.dart';
 import '../services/ssh_service.dart';
 import '../theme.dart';
 import '../widgets/error_banner.dart';
 import '../widgets/host_key_dialog.dart';
-import 'session_screen.dart';
 
 /// Add or edit a saved host.
 ///
@@ -31,6 +31,7 @@ class HostEditScreen extends StatefulWidget {
     required this.credentialStore,
     required this.sshService,
     required this.settingsStore,
+    required this.sessions,
     this.deviceStorage,
     this.host,
   });
@@ -39,6 +40,10 @@ class HostEditScreen extends StatefulWidget {
   final CredentialStore credentialStore;
   final SshService sshService;
   final SettingsStore settingsStore;
+
+  /// Where "Connect without saving" hands its connection. The session shows up
+  /// as another tab on the sessions screen like any other.
+  final SessionManager sessions;
 
   /// Backs the "Import key file" picker. Defaults to the real platform
   /// channel; overridable so this screen stays testable without a device.
@@ -65,7 +70,16 @@ class _HostEditScreenState extends State<HostEditScreen> {
   final _passphraseFocusNode = FocusNode();
 
   late final DeviceStorage _deviceStorage =
-      widget.deviceStorage ?? const MethodChannelDeviceStorage();
+      widget.deviceStorage ?? createDefaultDeviceStorage();
+
+  /// The id of the host row this screen has already written, when adding.
+  ///
+  /// [_save] is retryable: saving the host succeeds, then the credential
+  /// write can still fail (a locked keyring). Without remembering what was
+  /// created, [_buildHost] would mint a fresh id on the next attempt and
+  /// `add` a *second* copy of the same server — which is exactly what
+  /// happened before this existed.
+  String? _savedHostId;
 
   SshAuthMethod _authMethod = SshAuthMethod.password;
   bool _obscurePassword = true;
@@ -120,7 +134,7 @@ class _HostEditScreenState extends State<HostEditScreen> {
   Host _buildHost() {
     final existing = widget.host;
     return Host(
-      id: existing?.id ?? widget.hostStore.newId(),
+      id: existing?.id ?? _savedHostId ?? widget.hostStore.newId(),
       label: _labelController.text.trim(),
       hostname: _hostController.text.trim(),
       port: int.tryParse(_portController.text.trim()) ?? 22,
@@ -155,14 +169,26 @@ class _HostEditScreenState extends State<HostEditScreen> {
 
     final host = _buildHost();
     try {
-      if (widget.isEditing) {
+      if (widget.isEditing || _savedHostId != null) {
         await widget.hostStore.update(host);
       } else {
         await widget.hostStore.add(host);
       }
+      _savedHostId = host.id;
       await widget.credentialStore.save(host.id, _buildCredentials());
       if (!mounted) return;
       Navigator.of(context).pop(true);
+    } on SecureStorageUnavailableException catch (e) {
+      // The host itself is already saved by this point — only the secret
+      // could not be protected. "Could not save this host" would send the
+      // user looking for a host that is in fact sitting in the list, and
+      // there is deliberately no plaintext fallback to have used instead.
+      if (!mounted) return;
+      setState(() {
+        _saving = false;
+        _error = 'Saved the host, but not the password or key.';
+        _errorDetails = e.message;
+      });
     } catch (e) {
       if (!mounted) return;
       setState(() {
@@ -203,14 +229,11 @@ class _HostEditScreenState extends State<HostEditScreen> {
       }
 
       setState(() => _connecting = false);
-      await Navigator.of(context).push(
-        MaterialPageRoute<void>(
-          builder: (_) => SessionScreen(
-            connection: connection,
-            settingsStore: widget.settingsStore,
-          ),
-        ),
-      );
+      widget.sessions.open(connection);
+      // Popping rather than pushing the sessions screen from here: the host
+      // list below owns that route, and stacking a second copy of it over this
+      // form is how a back gesture ends up somewhere nobody expects.
+      if (mounted) Navigator.of(context).pop();
     } on SshConnectionException catch (e) {
       if (!mounted) return;
       setState(() {
@@ -532,8 +555,8 @@ class _HostEditScreenState extends State<HostEditScreen> {
             const SizedBox(width: 8),
             Expanded(
               child: Text(
-                'Saved credentials are encrypted on-device with the '
-                'Android Keystore, not stored in plain text.',
+                'Saved credentials are encrypted on-device by your '
+                "system's secure storage, not stored in plain text.",
                 style: theme.textTheme.bodySmall,
               ),
             ),

@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -6,6 +8,7 @@ import 'services/credential_store.dart';
 import 'services/host_store.dart';
 import 'services/known_hosts_integrity.dart';
 import 'services/known_hosts_service.dart';
+import 'services/session_manager.dart';
 import 'services/settings_store.dart';
 import 'services/ssh_service.dart';
 import 'theme.dart';
@@ -46,6 +49,12 @@ class _SecureShellGoAppState extends State<SecureShellGoApp> {
       CredentialStore(backend: _secureStorage);
   late final SettingsStore _settingsStore = SettingsStore();
 
+  // The open sessions. Built here, not by a route, because a session has to
+  // outlive the screen showing it: going back to this host list is how a
+  // *second* session gets started, and it must not cost the first one. See
+  // `session_manager.dart`.
+  late final SessionManager _sessions = SessionManager();
+
   @override
   void initState() {
     super.initState();
@@ -59,6 +68,10 @@ class _SecureShellGoAppState extends State<SecureShellGoApp> {
 
   @override
   void dispose() {
+    // Closes every live connection and releases the foreground service. The
+    // app going away is the one thing that ends a session the user did not
+    // close themselves.
+    unawaited(_sessions.dispose());
     _settingsStore.dispose();
     super.dispose();
   }
@@ -77,6 +90,7 @@ class _SecureShellGoAppState extends State<SecureShellGoApp> {
         knownHosts: _knownHosts,
         sshService: _sshService,
         settingsStore: _settingsStore,
+        sessions: _sessions,
       ),
     );
   }

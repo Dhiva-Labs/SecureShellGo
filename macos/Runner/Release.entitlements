@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>com.apple.security.app-sandbox</key>
+	<true/>
+	<!-- Outbound SSH/SFTP sockets (dartssh2's TCP connect). Without this the
+	     sandbox blocks every connection attempt at the kernel level before
+	     the app ever sees an error. -->
+	<key>com.apple.security.network.client</key>
+	<true/>
+	<!-- Lets DeviceStorage's desktop download writer create files directly
+	     under ~/Downloads (path_provider's getDownloadsDirectory()) without
+	     a save panel per file, mirroring the Android build's write straight
+	     into the shared Downloads collection. -->
+	<key>com.apple.security.files.downloads.read-write</key>
+	<true/>
+	<!-- Grants read access to whatever the user picks in the upload file
+	     picker's NSOpenPanel (file_selector); the panel itself is what grants
+	     the choice, this is what makes the sandbox honour it. -->
+	<key>com.apple.security.files.user-selected.read-only</key>
+	<true/>
+</dict>
+</plist>

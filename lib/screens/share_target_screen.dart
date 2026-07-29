@@ -7,13 +7,12 @@ import '../services/credential_store.dart';
 import '../services/device_storage.dart';
 import '../services/host_store.dart';
 import '../services/remote_path.dart';
-import '../services/session_registry.dart';
+import '../services/session_manager.dart';
 import '../services/settings_store.dart';
 import '../services/ssh_service.dart';
 import '../theme.dart';
 import '../widgets/host_key_dialog.dart';
 import 'host_edit_screen.dart';
-import 'session_screen.dart';
 
 /// Where a file shared from another app is going.
 ///
@@ -35,7 +34,7 @@ class ShareTargetScreen extends StatefulWidget {
     required this.credentialStore,
     required this.sshService,
     required this.settingsStore,
-    this.registry,
+    required this.sessions,
   });
 
   final List<PickedLocalFile> files;
@@ -44,16 +43,15 @@ class ShareTargetScreen extends StatefulWidget {
   final SshService sshService;
   final SettingsStore settingsStore;
 
-  /// Test seam; production uses the process-wide registry.
-  final SessionRegistry? registry;
+  /// The open sessions, so a host that is already connected is reused rather
+  /// than dialled a second time.
+  final SessionManager sessions;
 
   @override
   State<ShareTargetScreen> createState() => _ShareTargetScreenState();
 }
 
 class _ShareTargetScreenState extends State<ShareTargetScreen> {
-  late final SessionRegistry _registry =
-      widget.registry ?? SessionRegistry.instance;
   late Future<List<Host>> _hosts;
 
   String? _connectingHostId;
@@ -70,13 +68,17 @@ class _ShareTargetScreenState extends State<ShareTargetScreen> {
   Future<void> _sendTo(Host host) async {
     if (_connectingHostId != null) return;
 
-    final live = _registry.forHost(host.id);
-    if (live != null) {
-      // The session is already open somewhere below this route: hand it the
-      // files and take the user back to it, rather than opening a second
-      // connection to the same machine.
-      live.session.requestUpload(widget.files);
-      if (live.bringToFront()) return;
+    final live = widget.sessions.liveForHost(host.id);
+    if (live.isNotEmpty) {
+      // The session is already open: hand it the files and take the user to
+      // it, rather than opening a second connection to the same machine.
+      // The first one, when there are several — a share is not a good moment
+      // to ask which of two shells on the same box it meant.
+      final target = live.first;
+      target.controller.requestUpload(widget.files);
+      widget.sessions.select(target.id);
+      Navigator.of(context).pop(true);
+      return;
     }
 
     setState(() {
@@ -118,18 +120,16 @@ class _ShareTargetScreenState extends State<ShareTargetScreen> {
         _connectingHostId = null;
       });
 
-      // pushReplacement: once the session is up, this picker has done its job
-      // and should not be sitting behind it for a back gesture to land on.
-      await Navigator.of(context).pushReplacement(
-        MaterialPageRoute<void>(
-          builder: (_) => SessionScreen(
-            connection: connection,
-            settingsStore: widget.settingsStore,
-            initialView: SessionView.files,
-            initialUploads: widget.files,
-          ),
-        ),
+      widget.sessions.open(
+        connection,
+        initialView: SessionView.files,
+        uploads: widget.files,
       );
+      // Popping with `true` rather than pushing the sessions screen: once the
+      // session is up this picker has done its job and should not be sitting
+      // behind it for a back gesture to land on, and the host list below is
+      // the route that owns the sessions screen.
+      if (mounted) Navigator.of(context).pop(true);
     } on SshConnectionException catch (e) {
       if (!mounted) return;
       setState(() {
@@ -156,6 +156,7 @@ class _ShareTargetScreenState extends State<ShareTargetScreen> {
           credentialStore: widget.credentialStore,
           sshService: widget.sshService,
           settingsStore: widget.settingsStore,
+          sessions: widget.sessions,
           host: host,
         ),
       ),
@@ -248,7 +249,7 @@ class _ShareTargetScreenState extends State<ShareTargetScreen> {
           itemBuilder: (context, index) {
             final host = hosts[index];
             final connecting = _connectingHostId == host.id;
-            final live = _registry.forHost(host.id) != null;
+            final live = widget.sessions.liveForHost(host.id).isNotEmpty;
 
             return ListTile(
               contentPadding: const EdgeInsets.symmetric(

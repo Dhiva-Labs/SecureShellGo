@@ -1,0 +1,176 @@
+name: Desktop builds
+
+# Manual runs build and test on all three desktop platforms without
+# publishing anything. Pushing a `v*` tag does the same and then attaches
+# the packaged artifacts to the matching GitHub Release. Regular pushes to
+# main do NOT trigger this — desktop runners (especially macOS) are slow
+# and expensive, and every commit doesn't need one.
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - 'v*'
+
+env:
+  # Keep in sync with the Flutter used to develop this project locally
+  # (`flutter --version`) and the `sdk:` constraint in pubspec.yaml.
+  FLUTTER_VERSION: '3.44.6'
+
+jobs:
+  analyze:
+    name: Analyze & test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          cache: true
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Analyze
+        run: flutter analyze
+
+      - name: Test
+        run: flutter test
+
+  build-linux:
+    name: Build Linux
+    needs: analyze
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      # libsecret-1-dev is required: the app's credential storage links
+      # against libsecret and the build fails without it.
+      - name: Install Linux build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            clang cmake ninja-build pkg-config \
+            libgtk-3-dev liblzma-dev libsecret-1-dev libjsoncpp-dev
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          cache: true
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Build Linux release
+        run: flutter build linux --release
+
+      - name: Package bundle
+        run: |
+          cd build/linux/x64/release
+          mv bundle SecureShellGo-linux-x64
+          tar -czf "$GITHUB_WORKSPACE/SecureShellGo-linux-x64.tar.gz" SecureShellGo-linux-x64
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: SecureShellGo-linux-x64
+          path: SecureShellGo-linux-x64.tar.gz
+          if-no-files-found: error
+
+  build-windows:
+    name: Build Windows
+    needs: analyze
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          cache: true
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Build Windows release
+        run: flutter build windows --release
+
+      # Explicit shell rather than relying on the runner default: these are
+      # PowerShell cmdlets and a cmd default would fail the whole job.
+      - name: Package bundle
+        shell: pwsh
+        run: |
+          Rename-Item -Path build\windows\x64\runner\Release -NewName SecureShellGo-windows-x64
+          Compress-Archive -Path build\windows\x64\runner\SecureShellGo-windows-x64 -DestinationPath SecureShellGo-windows-x64.zip
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: SecureShellGo-windows-x64
+          path: SecureShellGo-windows-x64.zip
+          if-no-files-found: error
+
+  build-macos:
+    name: Build macOS
+    needs: analyze
+    runs-on: macos-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          cache: true
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Build macOS release
+        run: flutter build macos --release
+
+      # We have no Apple Developer ID, so this .app is unsigned and
+      # unnotarized. `ditto` (not `zip -r`) is required here because plain
+      # zip destroys the bundle's internal symlinks and the .app will not
+      # launch.
+      - name: Package bundle
+        run: |
+          cd build/macos/Build/Products/Release
+          ditto -c -k --keepParent "SecureShell Go.app" "$GITHUB_WORKSPACE/SecureShellGo-macos.zip"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: SecureShellGo-macos
+          path: SecureShellGo-macos.zip
+          if-no-files-found: error
+
+  release:
+    name: Attach release assets
+    needs: [build-linux, build-windows, build-macos]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v3
+        with:
+          files: dist/*

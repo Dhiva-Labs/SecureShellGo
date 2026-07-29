@@ -2,9 +2,8 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
-import 'package:path_provider/path_provider.dart';
-
 import '../models/app_settings.dart';
+import 'app_data_paths.dart';
 
 /// Persistent store for user-editable preferences.
 ///
@@ -54,7 +53,7 @@ class SettingsStore {
   Future<File> _resolveFile() async {
     final existing = _file;
     if (existing != null) return existing;
-    final dir = await getApplicationDocumentsDirectory();
+    final dir = await AppDataPaths.resolveDirectory();
     return _file = File('${dir.path}/$fileName');
   }
 

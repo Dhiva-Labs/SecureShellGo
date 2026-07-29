@@ -69,6 +69,19 @@ Download the latest APK from the
 [Releases](https://github.com/Dhiva-Labs/SecureShellGo/releases) page and
 install it (Android 7.0+).
 
+### Desktop (Linux, Windows, macOS)
+
+Tagged releases also attach desktop builds on the same
+[Releases](https://github.com/Dhiva-Labs/SecureShellGo/releases) page:
+`.tar.gz` for Linux, `.zip` for Windows, and `.zip` for macOS (containing
+the `.app`). They're built by GitHub Actions and haven't seen the testing
+the Android app has.
+
+macOS builds are unsigned — there's no Apple Developer ID behind this
+project — so Gatekeeper will refuse to open the app and call it an
+"unidentified developer." Right-click the `.app`, choose **Open**, and
+confirm once; after that it launches normally.
+
 ## Privacy
 
 SecureShell Go collects nothing: no analytics, no ads, no account, and no

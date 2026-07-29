@@ -94,6 +94,22 @@ class SessionForegroundController {
     return _enqueue(() => _channel.start(label));
   }
 
+  /// Re-labels a service that is already running, without touching the count.
+  ///
+  /// [acquire] deliberately only labels on the 0 → 1 edge — a second session
+  /// must not be able to rename a notification out from under the first as a
+  /// side effect of opening. But once several sessions *are* open, "MyLinuxPC"
+  /// is no longer what the notification is about, so the session manager says
+  /// so explicitly through here ("2 sessions connected"), and says it again
+  /// when closing one takes the count back to a single named host.
+  ///
+  /// A no-op when nothing holds the service: there is no notification to
+  /// rename, and starting one here would strand it.
+  Future<void> relabel(String label) {
+    if (_holders == 0) return _pending;
+    return _enqueue(() => _channel.start(label));
+  }
+
   /// Releases one session. Stops the service on the 1 → 0 edge. A release
   /// without a matching acquire is ignored rather than driving the count
   /// negative, so a double `dispose` cannot stop a service another route owns.

@@ -1,7 +1,13 @@
 import 'dart:async';
 
 /// Which way the bytes are moving.
-enum TransferDirection { download, upload }
+///
+/// [serverToServer] is a third direction rather than an upload with an unusual
+/// source, because almost everything a view wants to know differs: it has two
+/// remote ends instead of one, nothing on the device to open afterwards, and a
+/// "move" variant that deletes what it read. Making it a case of its own is
+/// what stops the panel from calling it "saved to Downloads".
+enum TransferDirection { download, upload, serverToServer }
 
 enum TransferStatus {
   queued,
@@ -35,6 +41,10 @@ class TransferTask {
     this.saveAsName,
     this.overwrite = false,
     this.relativeDirectory = '',
+    this.destinationSessionId,
+    this.destinationPath,
+    this.destinationLabel,
+    this.moveSource = false,
   });
 
   final String id;
@@ -42,7 +52,11 @@ class TransferTask {
   /// What to show as the transfer's title.
   final String name;
 
+  /// The remote file this transfer reads or writes. For a
+  /// [TransferDirection.serverToServer] copy it is the **source** path, on the
+  /// session that owns this queue; the far end is [destinationPath].
   final String remotePath;
+
   final TransferDirection direction;
 
   /// For uploads, the local source. Null for downloads until [destination] is
@@ -53,9 +67,30 @@ class TransferTask {
   /// and collision-resolved by the caller.
   final String? saveAsName;
 
-  /// For downloads, whether an existing file of that name should be replaced
-  /// rather than de-duplicated.
+  /// Whether an existing file of that name should be replaced rather than
+  /// de-duplicated — the device side for a download, the destination server
+  /// for a server-to-server copy.
   final bool overwrite;
+
+  /// For a server-to-server copy, which open session receives the bytes.
+  ///
+  /// An id rather than a session object so a retry, which builds a fresh task
+  /// from these fields alone, resolves the destination again at the moment it
+  /// runs. A destination that has been closed in the meantime fails the
+  /// transfer with something worth reading instead of writing into a dead
+  /// channel.
+  final String? destinationSessionId;
+
+  /// For a server-to-server copy, the absolute path on the destination.
+  final String? destinationPath;
+
+  /// For a server-to-server copy, the destination host's display name — for
+  /// the panel, which otherwise cannot say which of two servers a path is on.
+  final String? destinationLabel;
+
+  /// For a server-to-server copy, whether the source is deleted once the
+  /// destination write has been verified. This is what makes it a "move".
+  final bool moveSource;
 
   /// For downloads, the directory under `Download/` to save into — set by a
   /// recursive directory download so the tree's shape survives the trip.
@@ -258,6 +293,40 @@ class TransferQueue {
     );
   }
 
+  /// Queues a copy of [remotePath] on this session straight into
+  /// [destinationPath] on another open session, without the bytes touching
+  /// the device.
+  ///
+  /// It goes on the *source* session's queue: that is the session the user
+  /// started it from, and the one whose SFTP channel does the reading, so it
+  /// takes its turn behind that session's other transfers rather than
+  /// competing with them for the same window.
+  TransferTask enqueueRemoteCopy({
+    required String remotePath,
+    required String destinationSessionId,
+    required String destinationPath,
+    required String name,
+    String? destinationLabel,
+    bool overwrite = false,
+    bool moveSource = false,
+    int? totalBytes,
+  }) {
+    return _enqueue(
+      TransferTask(
+        id: _nextId(),
+        name: name,
+        remotePath: remotePath,
+        direction: TransferDirection.serverToServer,
+        totalBytes: totalBytes,
+        overwrite: overwrite,
+        destinationSessionId: destinationSessionId,
+        destinationPath: destinationPath,
+        destinationLabel: destinationLabel,
+        moveSource: moveSource,
+      ),
+    );
+  }
+
   TransferTask _enqueue(TransferTask task) {
     if (_closed) return task;
     _tasks.add(task);
@@ -316,7 +385,8 @@ class TransferQueue {
         remotePath: task.remotePath,
         direction: task.direction,
         // Downloads re-learn their size from the server if it was never
-        // known; uploads knew it from the picked file all along.
+        // known; uploads knew it from the picked file all along, and a
+        // server-to-server copy learns it the same way a download does.
         totalBytes: task.direction == TransferDirection.upload
             ? task.totalBytes
             : null,
@@ -324,6 +394,13 @@ class TransferQueue {
         saveAsName: task.saveAsName,
         overwrite: task.overwrite,
         relativeDirectory: task.relativeDirectory,
+        // A retried move is still a move, and still lands where the user
+        // said — including the "replace" they agreed to at the prompt, which
+        // must not quietly come back as a question they never see.
+        destinationSessionId: task.destinationSessionId,
+        destinationPath: task.destinationPath,
+        destinationLabel: task.destinationLabel,
+        moveSource: task.moveSource,
       ),
     );
   }

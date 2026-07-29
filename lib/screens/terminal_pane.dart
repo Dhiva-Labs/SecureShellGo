@@ -1,7 +1,5 @@
 import 'dart:async';
-import 'dart:convert';
 
-import 'package:dartssh2/dartssh2.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:xterm/xterm.dart';
@@ -16,15 +14,18 @@ import '../widgets/terminal_key_bar.dart';
 /// The interactive shell, as a *view on* a session rather than an owner of one.
 ///
 /// Phase 1's `TerminalScreen` owned the connection and closed it in
-/// `dispose()`. It no longer does: [SessionController] owns the transport, and
-/// this pane owns only the xterm buffer and its subscriptions. That is what
-/// lets the user flip to the file browser and back without their shell — and
-/// whatever is running in it — being torn down.
+/// `dispose()`. Phase 3 moved the transport to [SessionController]; Phase 12
+/// moved the `Terminal` — the scrollback and cursor themselves — there too,
+/// because a session now outlives the screen showing it and a buffer owned by
+/// a `State` does not. What is left here is genuinely a view: the font, the
+/// theme, selection, the extra-key bar, pinch-zoom and the clipboard.
 class TerminalPane extends StatefulWidget {
   const TerminalPane({
     super.key,
     required this.session,
     required this.settingsStore,
+    this.focusNode,
+    this.autofocus = true,
   });
 
   final SessionController session;
@@ -33,26 +34,29 @@ class TerminalPane extends StatefulWidget {
   /// is persisted back to.
   final SettingsStore settingsStore;
 
+  /// The terminal's keyboard focus, supplied from outside when several
+  /// sessions are open at once.
+  ///
+  /// All of them are in the widget tree together (that is what keeps a
+  /// background `htop` running), so their `TerminalView`s are all live and all
+  /// focusable. The session screen owns the node so that bringing a tab to the
+  /// front can put the caret back in *that* terminal — otherwise the keystroke
+  /// after a tab switch goes wherever the focus happened to be left.
+  final FocusNode? focusNode;
+
+  /// Whether to take focus on first build. False for a session opened behind
+  /// another, which must not steal the keyboard from the one in front.
+  final bool autofocus;
+
   @override
   State<TerminalPane> createState() => _TerminalPaneState();
 }
 
 class _TerminalPaneState extends State<TerminalPane>
     with AutomaticKeepAliveClientMixin {
-  late final Terminal _terminal;
   final TerminalController _terminalController = TerminalController();
 
-  SSHSession? _shell;
-
-  /// Completes when the [TerminalView] has laid out and told us the real
-  /// column/row count, so the PTY is opened at the right size instead of 80x24
-  /// followed by an immediate resize.
-  final Completer<void> _initialSizeReady = Completer<void>();
-
-  final List<StreamSubscription<void>> _subscriptions = [];
-
-  bool _shellStarted = false;
-  bool _shellFailed = false;
+  Terminal get _terminal => widget.session.terminal;
 
   /// Live text style, seeded from Settings and updated by pinch-zoom. Kept
   /// local (rather than re-reading `settingsStore.current` on every build) so
@@ -93,19 +97,16 @@ class _TerminalPaneState extends State<TerminalPane>
     _fontSize = settings.terminalFontSize;
     _colorScheme = settings.colorScheme;
 
-    _terminal = Terminal(
-      maxLines: 10000,
-      platform: TerminalTargetPlatform.linux,
-      onOutput: _sendToShell,
-      onResize: _handleResize,
-      onBell: () {
-        if (mounted) Feedback.forLongPress(context);
-      },
-    );
-
     _terminalController.addListener(_handleSelectionChange);
+    // The buffer belongs to the session and may already be full of a shell
+    // this pane never opened; asking for it again is a no-op.
+    widget.session.onBell = _handleBell;
+    widget.session.transformInput = _applySticky;
+    unawaited(widget.session.ensureShell());
+  }
 
-    unawaited(_startShell());
+  void _handleBell() {
+    if (mounted) Feedback.forLongPress(context);
   }
 
   void _handleSelectionChange() {
@@ -113,102 +114,17 @@ class _TerminalPaneState extends State<TerminalPane>
     if (selected != _hasSelection) setState(() => _hasSelection = selected);
   }
 
-  Future<void> _startShell() async {
-    // Give layout a moment to report the real size; fall back to the default
-    // 80x24 if the view somehow never reports (never observed, but a hung
-    // terminal would be worse than a slightly wrong PTY size).
-    await _initialSizeReady.future.timeout(
-      const Duration(milliseconds: 1500),
-      onTimeout: () {},
-    );
-
-    if (!mounted) return;
-
-    try {
-      final shell = await widget.session.shell(
-        columns: _terminal.viewWidth,
-        rows: _terminal.viewHeight,
-      );
-
-      if (!mounted) return;
-
-      _shell = shell;
-      setState(() => _shellStarted = true);
-
-      const decoder = Utf8Decoder(allowMalformed: true);
-      // Decoding through the chunked converter (rather than utf8.decode per
-      // chunk) keeps multi-byte characters intact when they straddle a packet
-      // boundary — otherwise box-drawing and emoji output corrupts.
-      _subscriptions.add(
-        shell.stdout.cast<List<int>>().transform(decoder).listen(
-              _terminal.write,
-              onError: (Object _) {},
-            ),
-      );
-      _subscriptions.add(
-        shell.stderr.cast<List<int>>().transform(decoder).listen(
-              _terminal.write,
-              onError: (Object _) {},
-            ),
-      );
-
-      // `widget` is read now rather than inside the callback: `shell.done` can
-      // land long after this pane is gone (the user pops the route while the
-      // remote command is still finishing), and reaching through a disposed
-      // State for it is exactly the kind of after-dispose access this audit
-      // was looking for. The controller itself tolerates a late report.
-      final session = widget.session;
-      unawaited(
-        shell.done.then((_) {
-          final code = shell.exitCode;
-          _handleShellEnded(
-            session,
-            code == null
-                ? 'Shell session ended.'
-                : 'Shell exited with status $code.',
-          );
-        }).catchError((Object error) {
-          _handleShellEnded(session, 'Shell session ended: $error');
-        }),
-      );
-    } catch (e) {
-      if (!mounted) return;
-      _terminal.write('\r\n\x1b[31mFailed to open a shell: $e\x1b[0m\r\n');
-      setState(() {
-        _shellStarted = true;
-        _shellFailed = true;
-      });
-    }
-  }
-
-  /// Drops the local handle on a shell channel that has ended, so every later
-  /// write and resize is a plain no-op instead of something that throws and
-  /// relies on being caught. A `readOnly` terminal still routes the extra-key
-  /// bar and a hardware keyboard through [_sendToShell], so this is the guard
-  /// that actually holds.
-  void _handleShellEnded(SessionController session, String reason) {
-    _shell = null;
-    session.reportShellEnded(reason);
-  }
-
-  void _sendToShell(String data) {
-    final shell = _shell;
-    if (shell == null || widget.session.isClosed) return;
-
-    var payload = data;
-    if (_ctrlSticky) {
-      payload = _asCtrlCode(data) ?? data;
-      // Sticky-once: armed by one tap on "Ctrl", consumed by the very next
-      // keystroke, exactly like a physical sticky-modifier key.
-      if (mounted) setState(() => _ctrlSticky = false);
-    }
-
-    try {
-      shell.write(Uint8List.fromList(utf8.encode(payload)));
-    } catch (_) {
-      // Keystroke arrived after the channel closed; the disconnect banner is
-      // already on its way.
-    }
+  /// Applies a sticky Ctrl to what the key bar or the soft keyboard produced.
+  ///
+  /// The session writes to the shell; this only decides what the keystroke
+  /// *is*, which is a property of the on-screen modifier and so belongs here.
+  String _applySticky(String data) {
+    if (!_ctrlSticky) return data;
+    final payload = _asCtrlCode(data) ?? data;
+    // Sticky-once: armed by one tap on "Ctrl", consumed by the very next
+    // keystroke, exactly like a physical sticky-modifier key.
+    if (mounted) setState(() => _ctrlSticky = false);
+    return payload;
   }
 
   /// Maps a single typed character to its control code (`a`-`z` → 1-26,
@@ -427,27 +343,16 @@ class _TerminalPaneState extends State<TerminalPane>
     }
   }
 
-  void _handleResize(int width, int height, int pixelWidth, int pixelHeight) {
-    if (!_initialSizeReady.isCompleted) _initialSizeReady.complete();
-    if (widget.session.isClosed) return;
-    try {
-      // Propagate SIGWINCH so full-screen programs (vim, htop, less) reflow.
-      _shell?.resizeTerminal(width, height, pixelWidth, pixelHeight);
-    } catch (_) {
-      // The channel can close between the layout pass and this call; a resize
-      // on a dead session is not worth surfacing.
-    }
-  }
-
   @override
   void dispose() {
-    for (final subscription in _subscriptions) {
-      subscription.cancel();
-    }
-    _subscriptions.clear();
     _terminalController.removeListener(_handleSelectionChange);
-    // The shell and the connection belong to the SessionController; closing
-    // them here is exactly the bug this refactor removes.
+    // Hand the hooks back. The shell, the connection and the buffer belong to
+    // the SessionController — closing or clearing any of them here is exactly
+    // the bug this pane keeps being refactored away from.
+    if (widget.session.onBell == _handleBell) widget.session.onBell = null;
+    if (widget.session.transformInput == _applySticky) {
+      widget.session.transformInput = null;
+    }
     _terminalController.dispose();
     super.dispose();
   }
@@ -455,7 +360,8 @@ class _TerminalPaneState extends State<TerminalPane>
   @override
   Widget build(BuildContext context) {
     super.build(context);
-    final closed = widget.session.isClosed || _shellFailed;
+    final ready = widget.session.isShellReady;
+    final closed = widget.session.isClosed || widget.session.shellError != null;
 
     return Column(
       children: [
@@ -466,18 +372,16 @@ class _TerminalPaneState extends State<TerminalPane>
             onPointerMove: _onPointerMove,
             onPointerUp: _onPointerEnd,
             onPointerCancel: _onPointerEnd,
-            child: !_shellStarted && !closed
-                ? const Center(
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        CircularProgressIndicator(),
-                        SizedBox(height: 16),
-                        Text('Opening shell…'),
-                      ],
-                    ),
-                  )
-                : TerminalView(
+            child: Stack(
+              children: [
+                // Built from the first frame, even before the shell is open:
+                // laying it out is what reports the real column/row count, and
+                // that is what the session waits for before creating the PTY.
+                // Behind a placeholder it could not report anything, so every
+                // shell opened at 80×24 and was resized a moment later — which
+                // is one redraw of the first prompt at the wrong width.
+                Positioned.fill(
+                  child: TerminalView(
                     _terminal,
                     controller: _terminalController,
                     theme: AppTheme.terminalThemeFor(_colorScheme),
@@ -487,16 +391,36 @@ class _TerminalPaneState extends State<TerminalPane>
                       fontFamilyFallback: AppTheme.monoFontFamilyFallback,
                     ),
                     padding: const EdgeInsets.symmetric(horizontal: 6),
-                    autofocus: true,
+                    focusNode: widget.focusNode,
+                    autofocus: widget.autofocus,
                     readOnly: closed,
                     backgroundOpacity: 0,
                     keyboardType: TextInputType.multiline,
                     shortcuts: _shortcuts,
                     onKeyEvent: _handleHardwareKeyEvent,
                   ),
+                ),
+                if (!ready && !closed)
+                  const Positioned.fill(
+                    child: ColoredBox(
+                      color: AppTheme.terminalBackground,
+                      child: Center(
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            CircularProgressIndicator(),
+                            SizedBox(height: 16),
+                            Text('Opening shell…'),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+              ],
+            ),
           ),
         ),
-        if (!closed && _shellStarted) ...[
+        if (!closed && ready) ...[
           // Slides in above the key bar while a selection is active. A fixed
           // slim bar rather than one anchored to the selection's on-screen
           // rectangle: xterm 4.x exposes the selected *range* (as buffer

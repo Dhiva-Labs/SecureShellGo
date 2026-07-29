@@ -29,6 +29,27 @@ typedef TransferProgress = void Function(int bytes);
 /// Asked between chunks; returning true aborts the transfer.
 typedef CancelCheck = bool Function();
 
+/// A remote file being written, chunk by chunk.
+///
+/// The mirror image of [DownloadWriter] on the device side, and it exists for
+/// the same reason: a server-to-server copy must be able to feed the bytes it
+/// is reading straight into a second server without ever holding the file.
+/// [add] completes only once the destination has acknowledged the write, which
+/// is what lets the read side's `await` on it push backpressure all the way
+/// back to the source's SSH channel.
+abstract class RemoteFileWriter {
+  /// Appends [chunk] at the current offset.
+  Future<void> add(Uint8List chunk);
+
+  /// Closes the handle. The bytes are on the server once this returns.
+  Future<void> close();
+
+  /// Closes the handle and removes the partial file. A half-written file
+  /// looks complete to everything else on that machine, which is worse than
+  /// no file at all.
+  Future<void> abort();
+}
+
 /// What the browser and the transfer queue need from a remote filesystem.
 ///
 /// An interface rather than just [SftpService] so the session's transfer logic
@@ -65,6 +86,22 @@ abstract class RemoteFileSystem {
 
   /// Whether [path] already exists on the remote side.
   Future<bool> exists(String path);
+
+  /// Opens [remotePath] for writing, creating or truncating it.
+  ///
+  /// The write half of a server-to-server copy: the source's [download] feeds
+  /// [RemoteFileWriter.add] directly, so the bytes are never all in memory at
+  /// once.
+  Future<RemoteFileWriter> openWrite(String remotePath);
+
+  /// Deletes a remote **file**. Not directories — a server-to-server "move"
+  /// only ever has a file to clean up, and a recursive remote delete is not
+  /// something to grow by accident.
+  Future<void> remove(String path);
+
+  /// Renames [from] to [to] on the server. Used to publish a completed copy
+  /// under its final name, so a cancelled one never appears there at all.
+  Future<void> rename(String from, String to);
 
   Future<void> close();
 }
@@ -292,6 +329,40 @@ class SftpService implements RemoteFileSystem {
     }
   }
 
+  /// Opens [remotePath] for writing. See [RemoteFileWriter].
+  @override
+  Future<RemoteFileWriter> openWrite(String remotePath) async {
+    try {
+      final file = await _client.open(
+        remotePath,
+        mode: SftpFileOpenMode.create |
+            SftpFileOpenMode.write |
+            SftpFileOpenMode.truncate,
+      );
+      return _SftpFileWriter(_client, file, remotePath);
+    } catch (e) {
+      throw _describe(e, remotePath);
+    }
+  }
+
+  @override
+  Future<void> remove(String path) async {
+    try {
+      await _client.remove(path);
+    } catch (e) {
+      throw _describe(e, path);
+    }
+  }
+
+  @override
+  Future<void> rename(String from, String to) async {
+    try {
+      await _client.rename(from, to);
+    } catch (e) {
+      throw _describe(e, to);
+    }
+  }
+
   @override
   Future<void> close() async {
     try {
@@ -300,6 +371,11 @@ class SftpService implements RemoteFileSystem {
       // Already gone.
     }
   }
+
+  /// Turns an SFTP status code into something worth reading. Shared with
+  /// [_SftpFileWriter], which is why it is not private to the instance.
+  static SftpFailure describeError(Object error, String path) =>
+      _describe(error, path);
 
   static RemoteEntryKind _kindOf(SftpFileAttrs attrs) {
     if (attrs.isDirectory) return RemoteEntryKind.directory;
@@ -405,5 +481,62 @@ class SftpService implements RemoteFileSystem {
           '.htm': 'text/html',
         }[ext] ??
         'application/octet-stream';
+  }
+}
+
+/// One open [SftpFile] being appended to.
+///
+/// Tracks the offset itself rather than relying on a server-side file pointer:
+/// SFTP writes carry an explicit offset, and the source stream hands over
+/// chunks whose sizes we do not choose.
+class _SftpFileWriter implements RemoteFileWriter {
+  _SftpFileWriter(this._client, this._file, this._path);
+
+  final SftpClient _client;
+  final SftpFile _file;
+  final String _path;
+
+  var _offset = 0;
+  var _closed = false;
+
+  @override
+  Future<void> add(Uint8List chunk) async {
+    if (chunk.isEmpty) return;
+    try {
+      await _file.writeBytes(chunk, offset: _offset);
+    } catch (e) {
+      throw SftpService.describeError(e, _path);
+    }
+    _offset += chunk.length;
+  }
+
+  @override
+  Future<void> close() async {
+    if (_closed) return;
+    _closed = true;
+    try {
+      await _file.close();
+    } catch (e) {
+      throw SftpService.describeError(e, _path);
+    }
+  }
+
+  @override
+  Future<void> abort() async {
+    if (!_closed) {
+      _closed = true;
+      try {
+        await _file.close();
+      } catch (_) {
+        // Channel already gone; the remove below is what matters.
+      }
+    }
+    try {
+      await _client.remove(_path);
+    } catch (_) {
+      // Best effort. The file is written under a temporary name (see
+      // `remote_copy.dart`), so what is left behind is at worst identifiable
+      // clutter, never something masquerading as the user's file.
+    }
   }
 }

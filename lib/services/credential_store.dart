@@ -4,7 +4,10 @@ import '../models/host.dart';
 import 'secure_storage_backend.dart';
 
 export 'secure_storage_backend.dart'
-    show SecureStorageBackend, FlutterSecureStorageBackend;
+    show
+        SecureStorageBackend,
+        FlutterSecureStorageBackend,
+        SecureStorageUnavailableException;
 
 /// Saves and loads [SshCredentials] for a saved host, keyed by [Host.id].
 ///
@@ -63,4 +66,15 @@ class CredentialStore {
 
   /// Deletes the saved credentials for [hostId]. A no-op if there were none.
   Future<void> delete(String hostId) => _backend.delete(_keyFor(hostId));
+
+  /// Best-effort check for whether saving would currently succeed — see
+  /// [FlutterSecureStorageBackend.isAvailable]. Always true for a backend
+  /// this class cannot introspect (a test fake, or a future backend with no
+  /// such failure mode); [save] remains the authoritative check either way,
+  /// since availability can change between this call and the next [save].
+  Future<bool> isAvailable() async {
+    final backend = _backend;
+    if (backend is FlutterSecureStorageBackend) return backend.isAvailable();
+    return true;
+  }
 }

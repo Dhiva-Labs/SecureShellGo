@@ -59,6 +59,21 @@ class TreeFs implements RemoteFileSystem {
   @override
   Future<bool> exists(String path) async => tree.containsKey(path);
 
+  // The write half of the interface. A directory *walk* never uses it — this
+  // fake exists to describe a shape, not to move bytes — so reaching any of
+  // these from a plan test is a bug in the test, and says so.
+  @override
+  Future<RemoteFileWriter> openWrite(String remotePath) async =>
+      throw UnimplementedError('a walk never writes');
+
+  @override
+  Future<void> remove(String path) async =>
+      throw UnimplementedError('a walk never deletes');
+
+  @override
+  Future<void> rename(String from, String to) async =>
+      throw UnimplementedError('a walk never renames');
+
   @override
   Future<void> close() async {}
 }

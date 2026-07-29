@@ -35,13 +35,15 @@ lib/
     credential_store.dart       saved passwords/keys, per host
     host_store.dart             hosts.json
     session_controller.dart     one live session, shared by terminal + browser
-    session_registry.dart       the live sessions, by host, for share reuse
+    session_manager.dart        every open session, and which one is in front
     session_keepalive.dart      the 30 s keep-alive schedule for a live session
     session_foreground.dart     refcount + channel for the foreground service
     sftp_service.dart           RemoteFileSystem over dartssh2's SftpClient
-    transfer_queue.dart         the download/upload queue and its progress model
+    transfer_queue.dart         the download/upload/across queue + progress model
     upload_plan.dart            remote name collisions: the decision, not the UI
     download_plan.dart          walks a remote directory into a download plan
+    remote_copy.dart            streams a file from one server to another
+    remote_transfer_plan.dart   what a batch is called on the destination server
     remote_path.dart            POSIX path arithmetic, name sanitising, sizes
     device_storage.dart         Dart half of the MediaStore / picker channel
     share_intake.dart           files arriving from other apps' Share menus
@@ -94,9 +96,9 @@ HostListScreen._connect()  /  HostEditScreen._connectWithoutSaving()
   │    ├─ authenticate (publickey or password)
   │    └─ returns SshConnection { client, socket, host }
   │
-  └─ Navigator.push(SessionScreen(connection, initialView))
+  └─ SessionManager.open(connection, initialView)   ← Phase 12: not a route
        │
-       ├─ SessionForegroundController.acquire(host)   ← process stays alive
+       ├─ SessionForegroundController.acquire(label)  ← process stays alive
        │
        ├─ SessionController(connection)         ← owns the transport from here
        │    ├─ shell(columns, rows)  → opened once, cached
@@ -105,12 +107,14 @@ HostListScreen._connect()  /  HostEditScreen._connectWithoutSaving()
        │    ├─ SessionKeepalive      → connection.ping() every 30 s
        │    └─ connection.done ─────► isClosed / closeReason → banner
        │
-       ├─ IndexedStack
-       │    ├─ TerminalPane(session)      xterm ⇄ shell channel
-       │    └─ FileBrowserPane(session)   SFTP listing + downloads
-       │
-       └─ dispose: release the service, stop keep-alives, cancel transfers,
-                   close sftp, close shell, close connection
+       └─ SessionsScreen (pushed once, shows them all)
+            └─ IndexedStack, one page per session
+                 ├─ TerminalPane(session)      xterm ⇄ shell channel
+                 └─ FileBrowserPane(session)   SFTP listing + transfers
+
+SessionManager.close(id): release the service, stop keep-alives, cancel
+transfers, close sftp, close shell, close connection. Popping the screen does
+none of that — see Phase 12.
 ```
 
 Notes on the parts that are easy to get wrong:
@@ -118,12 +122,13 @@ Notes on the parts that are easy to get wrong:
 **Ownership.** Phase 1 let `TerminalScreen` own the `SshConnection` and close it
 in `dispose()`, which was right while the terminal was the only thing on the
 connection and wrong the moment a file browser wanted the *same* authenticated
-transport. Ownership now sits in `SessionController`, held by `SessionScreen`:
-the session outlives either pane and ends only when the route is popped or the
-transport dies. Switching between the shell and the file browser does neither —
-`IndexedStack` keeps both panes alive, so a running `htop` survives a trip to
-the file list and back. The connect call sites still only have to close the
-connection if the widget unmounted before the push happened.
+transport. Ownership sits in `SessionController`, and since Phase 12 that
+controller is held by `SessionManager` rather than by a route: the session
+outlives either pane *and* the screen showing it, and ends only when the user
+closes that session or the transport dies. Switching between the shell and the
+file browser does neither, and nor does switching between sessions —
+`IndexedStack` keeps every pane of every session alive, so a running `htop`
+survives a trip to the file list, to another server, and back.
 
 **One connection, two channels.** `SSHClient.sftp()` opens another channel on
 the connection that is already authenticated. There is no second login and no
@@ -448,6 +453,15 @@ as a fresh task and drops the row it failed on. Only failures: a cancelled
 transfer is a decision the user made, not something to offer to undo behind a
 button marked "retry".
 
+One trap this theme sets, caught on the emulator twice now: `AppTheme.dark`
+gives `FilledButton` a `minimumSize` of `Size.fromHeight(48)`, whose width is
+`double.infinity`, so that a button on its own in a column fills it. Put one of
+those in a `Row` without overriding `minimumSize` and it demands infinite
+width — layout throws, and because the failure is inside a `Scaffold` slot the
+*whole* screen renders as an app bar over a blank page with nothing on the
+device to say why. Every `FilledButton` in a `Row` in this app passes its own
+`minimumSize` for that reason.
+
 Two smaller things the emulator caught, both worth keeping in mind when
 touching this area: the summary bar used to call every finished transfer
 "saved to Downloads", which is the opposite of what an upload did; and
@@ -459,24 +473,177 @@ an upload appears where it landed without costing a listing per file.
 
 ---
 
+## Several sessions at once, and files between them (Phase 12)
+
+### Where a session lives
+
+Phase 3 lifted ownership of the connection out of the terminal and into a
+`SessionController` held by `SessionScreen`. Phase 12 lifts it once more, out
+of the widget tree entirely and into `SessionManager`, built in `main.dart` and
+passed down like every other service.
+
+The reason is the same shape as last time. As long as a route owned the
+session, the only way to reach the host list — which is where a *second*
+session comes from — was to tear the first one down. So:
+
+```
+main.dart
+  └─ SessionManager                    the sessions, in the order they opened
+       ├─ ManagedSession               id, SessionController, view, filesBuilt
+       ├─ ManagedSession
+       └─ …
+            each: shell, SFTP channel, TransferQueue, keep-alive,
+                  one foreground-service hold
+
+HostListScreen  ──push──►  SessionsScreen        (pop leaves them all running)
+       ▲                        │
+       └────── "New session" ───┘
+```
+
+`SessionsScreen` owns nothing but the view. Popping it returns to the host
+list with every session still connected; the list says so in a bar that leads
+back. Closing a *tab* is what ends a session, and closing the last one releases
+the foreground hold and pops the screen. This is the one behavioural change to
+an existing flow: the back gesture used to disconnect and now does not. The
+app-bar power button still does, which is the control that always meant it.
+
+**Every session is in the widget tree at once**, inside an `IndexedStack`. That
+is not an optimisation, it is the requirement: a `htop` in the session behind
+this one keeps running and keeps redrawing into its own `Terminal`, because its
+`TerminalPane` was never disposed. Each child is a `_SessionPage` keyed by
+session id, which is where that session's pane `GlobalKey`s, terminal focus
+node and announcement subscriptions live — a widget per session rather than a
+map of per-session state on the screen.
+
+Two consequences of "all of them are live" that had to be handled explicitly:
+
+- **Focus.** Every `TerminalView` is focusable, so without care the keystroke
+  after a tab switch goes to a terminal the user cannot see. Inactive pages are
+  wrapped in `ExcludeFocus`, `TerminalPane` takes its `FocusNode` from the page
+  above it, and `autofocus` is true only for the session in front. Coming to
+  the front re-requests focus in a post-frame callback, because `ExcludeFocus`
+  only stops excluding as part of the build that is already running.
+- **Per-session state.** `view`, `filesBuilt` and the "have we announced this
+  drop yet" flag were fields on `_SessionScreenState`. With one session that
+  was the same thing; with several it is not — a screen-held copy means
+  switching tabs reshuffles the *other* session's panes. `view` and
+  `filesBuilt` moved to `ManagedSession`; the disconnect announcement moved to
+  `SessionController.takeDisconnectAnnouncement`, alongside the download
+  announcer and for the same reason.
+
+**The foreground service** already reference-counted, which is what made this
+cheap: the manager acquires per session and releases per close, so the 0 → 1
+and 1 → 0 edges land exactly once. What it could not do was *say* how many —
+`acquire` only labels on the 0 → 1 edge, deliberately, so a second session
+cannot rename a notification out from under the first. `relabel` is the
+explicit version, and the manager calls it when the count changes: one session
+is named, several are counted ("2 sessions connected"), and closing back down
+to one names the survivor. A session whose transport has dropped keeps its hold
+until its tab is closed — it is still a tab with a banner on it, and the
+process has to live long enough for the user to see that.
+
+**Connecting to a host that is already open asks.** A second session to the
+same machine is legitimate (a build in one shell, a `tail -f` in another) but
+never accidental, and it costs a second authentication, so the host list offers
+*Switch to it* / *New session* / *Cancel* — with cancel as the dismiss default.
+Sessions are identified per open, not per host, so two on one machine are two
+independent entries everywhere.
+
+`SessionRegistry` is gone. It existed to answer "is this host already open, and
+how do I get back to it" for the share sheet; the manager answers that and more
+(`liveForHost`, `select`), so keeping a second, partial list of the same thing
+would only be somewhere for the two to disagree.
+
+### Server to server
+
+Moving a file between two connected machines used to mean downloading it and
+uploading it again, which needs device storage for something the device has no
+use for. `remote_copy.dart` streams it instead:
+
+```
+source SFTP read stream ──chunk──► RemoteFileWriter.add ──► destination SFTP
+        ▲                                                        │
+        └──────────── await, so the read pauses ◄────────────────┘
+```
+
+**Backpressure** is the same chain the MediaStore download path uses.
+`RemoteFileSystem.download` awaits its `write` callback before pulling the next
+chunk; that callback is the destination's `RemoteFileWriter.add`, which
+completes when the destination acknowledges. A slow destination pauses the
+source's stream, which stops draining the SSH window, which stops the source
+sending. The high-water mark is the source's read-ahead (`chunkSize` ×
+`maxPendingRequests`) plus one chunk in flight — flat, whatever the file size.
+Reusing `download` rather than writing a second read loop is deliberate: there
+is one chunked-read implementation in this app and it is the one that has been
+run against real servers.
+
+**Nothing appears under the final name until it is complete.** The bytes go to
+`.<name>.ssg-part-<millis>` in the destination directory and are renamed into
+place at the end. That gives three things at once: a cancelled copy cannot
+leave a truncated file looking real, a cancelled *replace* cannot destroy the
+file it was replacing (a straight truncating write would have), and "is it
+finished" has a single answer to check.
+
+**A move is a copy, then a delete, and the delete waits.** Deleting the only
+remaining copy of something is the one operation here that cannot be walked
+back, so `deleteSourceAfterVerify` removes nothing until all four hold: every
+chunk write was acknowledged; the destination handle closed cleanly; a fresh
+`stat` of the destination *under its final name* reports exactly the bytes that
+were streamed; and a fresh `stat` of the source still reports that same number,
+so a file that grew underneath the copy is not deleted on a stale read. Any of
+those failing leaves both files and says why — two files and a message beats
+none and a message. A content hash of both ends would be stronger and is not
+done: it needs a second full read of both files, and hashing remotely means
+running a command on the shell channel, which a file transfer should not
+quietly do on someone's server.
+
+**Which queue.** The transfer goes on the *source* session's `TransferQueue`,
+as a third `TransferDirection.serverToServer`. That is the session the user
+started it from and the one whose channel does the reading, so it takes its
+turn behind that session's other transfers instead of competing with them. The
+destination is carried as a *session id*, not an object, and resolved when the
+transfer runs: a retry rebuilds the task from its fields, and a destination
+closed in the meantime fails the transfer with something worth reading rather
+than writing into a dead channel. Both sessions stay usable throughout — SFTP
+requests multiplex, so browsing either end while bytes move is ordinary.
+
+The destination's file browser has no sight of the source's queue, so it is
+told: `SessionController.reportArrival` emits the directory that was written
+into, and a browser showing that directory re-lists. Same idea as the "queue
+went quiet" refresh uploads use, from the one angle that signal cannot reach.
+
+**Collisions reuse `upload_plan.dart` whole.** "These names are about to be
+created in that directory; which collide and what happens to each" is exactly
+the question the upload side already answers, including apply-to-all, keep-both
+through `RemotePath.deduplicate`, and a dismissed prompt cancelling rather than
+overwriting. `remote_transfer_plan.dart` is a thin wrapper that filters the
+selection and hands the names over.
+
+**Directories are not copied across, and that is on purpose.**
+`download_plan.dart`'s walker looks close to reusable and is not: its
+`relativeDirectory` is sanitised for MediaStore, which replaces `:*?"<>|`,
+strips leading dots and caps segments at 80 characters — all correct for
+Android and all wrong for a POSIX destination, where it would silently rename
+`.git` to `git`. A real recursive copy also needs `mkdir` on the far side and a
+collision decision per directory as well as per file. Files only, for now;
+directories in a selection are named in the snackbar and left alone rather than
+half-copied.
+
+---
+
 ## What later phases plug into
 
 Nothing below requires changing the service layer.
 
 ### Phase 8 — clipboard and adaptive layouts
 
-`session_screen.dart` is the file Phase 8 will touch most: it is where the
-two panes are laid out, and it now also owns the foreground-service hold
-(`_holdsForeground`, released exactly once from either the drop listener or
-`dispose`). Splitting the `IndexedStack` into a side-by-side layout on a
-tablet, DeX or an unfolded foldable must keep that hold on the *screen*, not
-on a pane — two panes of one session are still one session, and the reference
-count is there to make a second concurrent `SessionScreen` safe if one ever
-appears.
-
-`SessionScreen` is no longer a `const` constructor (its foreground-controller
-default is a process-wide instance), which matters only if Phase 8 wants to
-build it in a const context.
+`session_screen.dart` is the file Phase 8 touched most: it is where the two
+panes are laid out. Splitting the `IndexedStack` into a side-by-side layout on
+a tablet, DeX or an unfolded foldable had to keep the foreground hold on the
+*session*, not on a pane — two panes of one session are still one session, and
+the reference count was there to make several concurrent sessions safe if they
+ever appeared. Phase 12 is when they did, and the hold moved off the screen
+entirely and onto `SessionManager`.
 
 `terminal_pane.dart` holds the pinch-zoom pointer handling and the extra-key
 bar, both of which are size-sensitive; the key bar is the obvious thing to hide
@@ -509,15 +676,19 @@ Reconnect after a drop, port forwarding (`client.forwardLocal` /
 constructor parameter on `SSHClient`).
 
 Remote-side file operations (rename, delete, mkdir, chmod) are the obvious next
-thing in the browser. `SftpClient` already exposes `rename`, `remove`, `rmdir`,
-`mkdir` and `setStat`; `SftpService` is where to surface them, and the entry
-point is the per-entry bottom sheet that already exists in `file_browser_pane`.
+thing in the browser. `RemoteFileSystem` gained `remove` and `rename` in Phase
+12 for the server-to-server path, so half of it is already there and tested;
+`SftpClient` also exposes `rmdir`, `mkdir` and `setStat`, and the entry point is
+the per-entry bottom sheet that already exists in `file_browser_pane`. Adding
+`mkdir` is also the first half of recursive server-to-server copying — the
+other half being a POSIX-side variant of `download_plan`'s relative paths, see
+Phase 12 for why the MediaStore one cannot be reused.
 
 ---
 
 ## Testing
 
-`flutter test` — 246 tests, no device or network server required.
+`flutter test` — no device or network server required.
 
 - `test/known_hosts_service_test.dart` — persistence, case-insensitive host
   matching, per-port and per-key-type scoping, replacement, fail-closed on a
@@ -548,6 +719,29 @@ point is the per-entry bottom sheet that already exists in `file_browser_pane`.
   the download/upload executor:
   progress, hostile-name sanitising, deferred size lookup, the overwrite flag,
   and `abort()` on both failure and cancellation.
+- `test/session_manager_test.dart` — the multi-session lifecycle: opening,
+  switching, closing, and what each of those must *not* touch. A second
+  session to the same host being its own thing; the view each session is
+  showing staying its own; the foreground count and the notification label
+  across open/close, including a dropped session keeping its hold until its
+  tab closes and the last close stopping the service; transfer queues being
+  per session; and the destination resolver refusing a session that is
+  closed, dropped, unknown, or itself.
+- `test/remote_copy_test.dart` — the server-to-server stream against a fake
+  source and sink: bytes across, progress, and the read side never getting
+  more than one chunk ahead of the write side (the whole flat-memory story in
+  one assertion). Then everything about not lying: nothing under the final
+  name until the rename, a cancel mid-stream leaving no file and no deleted
+  original, a cancelled *replace* leaving the file it was replacing intact, a
+  refused write taking its partial with it, and a short write caught by the
+  size check before any rename. Then move-after-verify: deleted only on a
+  confirmed size, and kept when the destination reports the wrong size,
+  reports nothing at all, or the source changed underneath the copy.
+- `test/remote_transfer_plan_test.dart` — that the destination's collisions
+  are the upload decision and not a second one: replace, keep both (through
+  the same de-duplication), skip, apply-to-all, a dismissed prompt cancelling
+  the batch, two files of one name in a batch, a directory that will not list
+  falling back to probing, and directories/links being named and left out.
 - `test/session_foreground_test.dart` — the start/stop decision: the 0 → 1 and
   1 → 0 edges, a second session not starting a second service, a route pushed
   over another not stopping the live one, an extra release not driving the

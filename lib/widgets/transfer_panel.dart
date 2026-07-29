@@ -6,6 +6,19 @@ import '../services/remote_path.dart';
 import '../services/transfer_queue.dart';
 import '../theme.dart';
 
+/// The icon for a direction, in one place so the summary bar and the row in
+/// the sheet cannot drift apart.
+///
+/// A server-to-server transfer gets a sideways arrow rather than an up or a
+/// down one: neither end of it is this device, and calling it an upload is
+/// what made the summary bar tell users the opposite of what happened last
+/// time a direction was added without looking here.
+IconData iconForDirection(TransferDirection direction) => switch (direction) {
+      TransferDirection.download => Icons.download,
+      TransferDirection.upload => Icons.upload,
+      TransferDirection.serverToServer => Icons.swap_horiz,
+    };
+
 /// Rebuilds [builder] whenever anything in [queue] changes.
 class TransferQueueBuilder extends StatelessWidget {
   const TransferQueueBuilder({
@@ -62,9 +75,7 @@ class TransferSummaryBar extends StatelessWidget {
           label = queued > 0
               ? '${running.name}  ·  $queued more queued'
               : running.name;
-          icon = running.direction == TransferDirection.download
-              ? Icons.download
-              : Icons.upload;
+          icon = iconForDirection(running.direction);
         } else if (failed.isNotEmpty) {
           label = failed.length == 1
               ? '${failed.first.name} failed'
@@ -80,17 +91,31 @@ class TransferSummaryBar extends StatelessWidget {
               done.where((t) => t.direction == TransferDirection.upload);
           final downloads =
               done.where((t) => t.direction == TransferDirection.download);
+          final sent = done
+              .where((t) => t.direction == TransferDirection.serverToServer);
           if (done.length == 1) {
-            label = done.first.direction == TransferDirection.upload
-                ? 'Uploaded ${done.first.destination ?? done.first.name}'
-                : 'Saved ${done.first.destination ?? done.first.name}';
-          } else if (uploads.isEmpty) {
+            final only = done.first;
+            final where = only.destination ?? only.name;
+            label = switch (only.direction) {
+              TransferDirection.upload => 'Uploaded $where',
+              TransferDirection.download => 'Saved $where',
+              TransferDirection.serverToServer =>
+                only.moveSource ? 'Moved to $where' : 'Copied to $where',
+            };
+          } else if (uploads.isEmpty && sent.isEmpty) {
             label = '${done.length} files saved to Downloads';
-          } else if (downloads.isEmpty) {
+          } else if (downloads.isEmpty && sent.isEmpty) {
             label = '${done.length} files uploaded';
+          } else if (downloads.isEmpty && uploads.isEmpty) {
+            label = '${done.length} files sent to another server';
           } else {
-            label = '${downloads.length} downloaded · '
-                '${uploads.length} uploaded';
+            // Mixed. Naming each part beats a single verb that is wrong for
+            // two thirds of what just happened.
+            label = [
+              if (downloads.isNotEmpty) '${downloads.length} downloaded',
+              if (uploads.isNotEmpty) '${uploads.length} uploaded',
+              if (sent.isNotEmpty) '${sent.length} sent across',
+            ].join(' · ');
           }
           icon = Icons.check_circle_outline;
           color = AppTheme.accent;
@@ -265,9 +290,7 @@ class _TransferTile extends StatelessWidget {
           TransferStatus.completed => Icons.check_circle,
           TransferStatus.failed => Icons.error,
           TransferStatus.cancelled => Icons.cancel,
-          _ => task.direction == TransferDirection.download
-              ? Icons.download
-              : Icons.upload,
+          _ => iconForDirection(task.direction),
         },
         color: switch (task.status) {
           TransferStatus.completed => AppTheme.accent,
@@ -325,10 +348,18 @@ class _TransferTile extends StatelessWidget {
   String _subtitle() {
     switch (task.status) {
       case TransferStatus.queued:
-        return 'Waiting…';
+        // A server-to-server transfer's row would otherwise be the one place
+        // in the app where "where is this going?" has no answer at all.
+        return task.direction == TransferDirection.serverToServer
+            ? 'Waiting… → ${task.destinationLabel ?? 'another server'}'
+            : 'Waiting…';
       case TransferStatus.completed:
-        return '${RemotePath.formatBytes(task.transferredBytes)} · '
-            '${task.destination ?? 'saved'}';
+        final landed = task.destination ?? 'saved';
+        return task.direction == TransferDirection.serverToServer &&
+                task.moveSource
+            ? '${RemotePath.formatBytes(task.transferredBytes)} · moved to '
+                '$landed'
+            : '${RemotePath.formatBytes(task.transferredBytes)} · $landed';
       case TransferStatus.cancelled:
         return 'Cancelled';
       case TransferStatus.failed:

@@ -1,12 +1,19 @@
 import 'dart:async';
+import 'dart:convert';
+import 'dart:typed_data';
 
 import 'package:dartssh2/dartssh2.dart';
+// `core.dart`, not `xterm.dart`: the terminal *buffer* is pure Dart and the
+// widget that draws it is not, and only the buffer belongs down here. See
+// [SessionController.terminal].
+import 'package:xterm/core.dart';
 
 import '../models/host.dart';
 import '../models/remote_entry.dart';
 import 'device_storage.dart';
 import 'download_announcer.dart';
 import 'download_plan.dart';
+import 'remote_copy.dart';
 import 'remote_path.dart';
 import 'session_keepalive.dart';
 import 'sftp_service.dart';
@@ -24,6 +31,24 @@ class PendingUpload {
   int get totalBytes =>
       files.fold<int>(0, (sum, file) => sum + file.size);
 }
+
+/// Finds *another* open session, by its id.
+///
+/// Supplied by `SessionManager`, which is the only thing that knows what else
+/// is open. Resolution happens when a transfer runs rather than when it is
+/// queued, so a destination closed in between fails the transfer with an
+/// explanation instead of writing into a dead channel — and so a retry, which
+/// rebuilds the task from its fields, looks the destination up again.
+///
+/// It hands back the whole session rather than just its filesystem because the
+/// destination has to be *told* when something lands on it: its file browser
+/// is a different pane on a different session, with no sight of the queue the
+/// transfer is running in.
+///
+/// Throws [SftpFailure] when there is no such live session.
+typedef RemoteTargetResolver = Future<SessionController> Function(
+  String sessionId,
+);
 
 /// One live authenticated session, shared by every view of it.
 ///
@@ -43,10 +68,13 @@ class SessionController {
     required this.connection,
     DeviceStorage? storage,
     Future<RemoteFileSystem> Function()? openFileSystem,
+    RemoteTargetResolver? resolveRemoteTarget,
     PeriodicScheduler keepaliveScheduler = Timer.periodic,
-  })  : _storage = storage ?? const MethodChannelDeviceStorage(),
+  })  : _storage = storage ?? createDefaultDeviceStorage(),
         // ignore: prefer_initializing_formals
-        _openFileSystem = openFileSystem {
+        _openFileSystem = openFileSystem,
+        // ignore: prefer_initializing_formals
+        _resolveRemoteTarget = resolveRemoteTarget {
     transfers = TransferQueue(executor: _runTransfer);
     _keepalive = SessionKeepalive(
       ping: connection.ping,
@@ -60,6 +88,14 @@ class SessionController {
 
   /// Test seam. Production leaves this null and opens SFTP on [connection].
   final Future<RemoteFileSystem> Function()? _openFileSystem;
+
+  /// How this session reaches the other open sessions, for server-to-server
+  /// transfers. Null when nothing else is open — or in the tests that do not
+  /// exercise them — and a copy queued without one fails rather than hangs.
+  final RemoteTargetResolver? _resolveRemoteTarget;
+
+  /// Whether this session can copy files straight to another server.
+  bool get canTransferToOtherSessions => _resolveRemoteTarget != null;
 
   /// The download/upload queue. Its executor is wired to this session, so a
   /// transfer cannot outlive the connection that is carrying it.
@@ -79,13 +115,77 @@ class SessionController {
 
   final _changes = StreamController<void>.broadcast();
 
+  /// Directories on *this* server that a transfer running on some *other*
+  /// session has just written into.
+  ///
+  /// Its own stream rather than a flag on [changes] because it carries a
+  /// payload (which directory) and because nothing else should have to
+  /// re-list on an unrelated notification. The file browser listens and
+  /// refreshes when the directory it is showing is named, so a file copied in
+  /// from another server appears where it landed instead of leaving the user
+  /// looking at a listing that does not contain it.
+  final _arrivals = StreamController<String>.broadcast();
+
   SSHSession? _shell;
   Future<SSHSession>? _shellOpening;
   Future<RemoteFileSystem>? _sftpOpening;
   RemoteFileSystem? _sftp;
 
+  /// The scrollback, cursor and escape-sequence state of this session's shell.
+  ///
+  /// Here rather than inside the widget that draws it, and that is not a
+  /// stylistic choice — it is what Phase 12 cost. Once a session outlives the
+  /// screen showing it (leaving for the host list is how a *second* session
+  /// gets opened), a `Terminal` owned by a `State` is thrown away every time
+  /// the user leaves, taking the scrollback with it and leaving the next view
+  /// to re-subscribe to an `SSHSession.stdout` that has already been listened
+  /// to — which throws. Found on the emulator by switching tabs after opening
+  /// a second session, exactly as described.
+  ///
+  /// `xterm`'s `Terminal` is pure Dart (`package:xterm/core.dart`), so this
+  /// keeps `services/` free of Flutter: the view supplies the font, the theme
+  /// and the gestures, and this supplies the bytes.
+  late final Terminal terminal = Terminal(
+    maxLines: 10000,
+    platform: TerminalTargetPlatform.linux,
+    onOutput: _sendToShell,
+    onResize: _handleTerminalResize,
+    onBell: () => onBell?.call(),
+  );
+
+  /// Set by the view, since a bell is haptics and a haptic is not a service.
+  void Function()? onBell;
+
+  /// Lets the view rewrite a keystroke on the way to the shell.
+  ///
+  /// Exists for one thing: the extra-key bar's sticky Ctrl. Whether "Ctrl" is
+  /// currently armed is a property of a keyboard drawn on a screen, so the
+  /// decision stays up there — but every route to the shell (soft keyboard,
+  /// hardware keyboard, the bar's own buttons) funnels through [terminal]'s
+  /// output callback, so the hook has to be here.
+  String Function(String data)? transformInput;
+
+  /// Completes when a view has laid out and reported the real column/row
+  /// count, so the PTY is opened at the right size instead of 80×24 followed
+  /// by an immediate resize — the remote shell draws its first prompt at
+  /// whatever width it was given.
+  final Completer<void> _initialSize = Completer<void>();
+
+  Future<void>? _shellReady;
+  final List<StreamSubscription<void>> _shellOutput = [];
+
+  /// True once the shell channel is open and wired to [terminal].
+  bool get isShellReady => _shellStarted;
+  var _shellStarted = false;
+
+  /// Why the shell could not be opened, or null. The session itself may be
+  /// perfectly alive — the file browser still works.
+  String? get shellError => _shellError;
+  String? _shellError;
+
   var _closed = false;
   var _disposed = false;
+  var _announcedDisconnect = false;
   String? _closeReason;
 
   Host get host => connection.host;
@@ -94,11 +194,35 @@ class SessionController {
   /// Transfer progress has its own stream on [transfers].
   Stream<void> get changes => _changes.stream;
 
+  /// Emits a directory on this server each time another session finishes
+  /// writing a file into it. See [_arrivals].
+  Stream<String> get arrivals => _arrivals.stream;
+
+  /// Announces that something landed in [directory] on this server. Called by
+  /// the *source* session's transfer, which is the only thing that knows.
+  void reportArrival(String directory) {
+    if (_disposed || _arrivals.isClosed) return;
+    _arrivals.add(directory);
+  }
+
   /// True once the transport is gone, for any reason.
   bool get isClosed => _closed;
 
   /// Why the session ended, for the disconnected banner.
   String? get closeReason => _closeReason;
+
+  /// The drop worth telling the user about, exactly once, or null.
+  ///
+  /// Here rather than on the screen for the same reason [_announcer] is: with
+  /// several sessions open, a drop on the one in the background still has to
+  /// be announced when the user comes back to it, and it must be announced
+  /// once — not on every rebuild while the banner is already up, and not
+  /// again by whatever `State` replaces the one that said it.
+  String? takeDisconnectAnnouncement() {
+    if (!_closed || _announcedDisconnect) return null;
+    _announcedDisconnect = true;
+    return _closeReason ?? 'Connection closed.';
+  }
 
   /// True once the shell channel has been opened.
   bool get hasShell => _shell != null;
@@ -160,6 +284,98 @@ class SessionController {
       _shellOpening = null;
       throw error;
     });
+  }
+
+  /// Opens the shell and wires it to [terminal] — once per session, however
+  /// many views come and go.
+  ///
+  /// Waits for a view to report the real terminal size first, with a 1.5 s
+  /// fallback to xterm's 80×24 default if one somehow never does: a slightly
+  /// wrong PTY beats a shell that never opens.
+  Future<void> ensureShell() => _shellReady ??= _openShell();
+
+  Future<void> _openShell() async {
+    await _initialSize.future.timeout(
+      const Duration(milliseconds: 1500),
+      onTimeout: () {},
+    );
+
+    try {
+      final session = await shell(
+        columns: terminal.viewWidth,
+        rows: terminal.viewHeight,
+      );
+
+      // Decoding through the chunked converter (rather than utf8.decode per
+      // chunk) keeps multi-byte characters intact when they straddle a packet
+      // boundary — otherwise box-drawing and emoji output corrupts.
+      const decoder = Utf8Decoder(allowMalformed: true);
+      _shellOutput.add(
+        session.stdout
+            .cast<List<int>>()
+            .transform(decoder)
+            .listen(terminal.write, onError: (Object _) {}),
+      );
+      _shellOutput.add(
+        session.stderr
+            .cast<List<int>>()
+            .transform(decoder)
+            .listen(terminal.write, onError: (Object _) {}),
+      );
+
+      unawaited(
+        session.done.then((_) {
+          final code = session.exitCode;
+          _handleShellEnded(
+            code == null
+                ? 'Shell session ended.'
+                : 'Shell exited with status $code.',
+          );
+        }).catchError((Object error) {
+          _handleShellEnded('Shell session ended: $error');
+        }),
+      );
+
+      _shellStarted = true;
+    } catch (e) {
+      _shellError = e.toString();
+      _shellStarted = true;
+      terminal.write('\r\n\x1b[31mFailed to open a shell: $e\x1b[0m\r\n');
+    }
+    _notify();
+  }
+
+  /// Drops the local handle on a shell channel that has ended, so every later
+  /// write and resize is a plain no-op instead of something that throws and
+  /// relies on being caught.
+  void _handleShellEnded(String reason) {
+    _shell = null;
+    reportShellEnded(reason);
+  }
+
+  void _sendToShell(String data) {
+    final shell = _shell;
+    if (shell == null || _closed) return;
+    final payload = transformInput?.call(data) ?? data;
+    try {
+      shell.write(Uint8List.fromList(utf8.encode(payload)));
+    } catch (_) {
+      // Keystroke arrived after the channel closed; the disconnect banner is
+      // already on its way.
+    }
+  }
+
+  void _handleTerminalResize(int width, int height, int pixelWidth,
+      int pixelHeight) {
+    if (!_initialSize.isCompleted) _initialSize.complete();
+    if (_closed) return;
+    try {
+      // Propagate SIGWINCH so full-screen programs (vim, htop, less) reflow.
+      _shell?.resizeTerminal(width, height, pixelWidth, pixelHeight);
+    } catch (_) {
+      // The channel can close between the layout pass and this call; a resize
+      // on a dead session is not worth surfacing.
+    }
   }
 
   /// Opens the SFTP subsystem, once, on the connection that is already
@@ -240,6 +456,35 @@ class SessionController {
     );
   }
 
+  /// Queues a copy of [remotePath] straight into another open session, named
+  /// [asName] in [remoteDirectory] over there.
+  ///
+  /// [moveSource] makes it a move: the file here is deleted, but only once the
+  /// write over there has been verified — see [copyRemoteFile].
+  TransferTask queueRemoteCopy({
+    required String remotePath,
+    required String name,
+    required String destinationSessionId,
+    required String destinationLabel,
+    required String remoteDirectory,
+    String? asName,
+    bool overwrite = false,
+    bool moveSource = false,
+    int? totalBytes,
+  }) {
+    final landingName = asName ?? name;
+    return transfers.enqueueRemoteCopy(
+      remotePath: remotePath,
+      name: landingName,
+      destinationSessionId: destinationSessionId,
+      destinationLabel: destinationLabel,
+      destinationPath: RemotePath.join(remoteDirectory, landingName),
+      overwrite: overwrite,
+      moveSource: moveSource,
+      totalBytes: totalBytes,
+    );
+  }
+
   /// The finished downloads that have not been announced to the user yet,
   /// given the queue's latest [tasks]. Empty when there is nothing new to
   /// say, or when the queue is still busy and the batch is not complete.
@@ -280,10 +525,13 @@ class SessionController {
     final sftp = await this.sftp();
     handle.throwIfCancelled();
 
-    if (task.direction == TransferDirection.download) {
-      await _runDownload(sftp, task, handle);
-    } else {
-      await _runUpload(sftp, task, handle);
+    switch (task.direction) {
+      case TransferDirection.download:
+        await _runDownload(sftp, task, handle);
+      case TransferDirection.upload:
+        await _runUpload(sftp, task, handle);
+      case TransferDirection.serverToServer:
+        await _runRemoteCopy(sftp, task, handle);
     }
   }
 
@@ -345,6 +593,60 @@ class SessionController {
     handle.setDestination(task.remotePath);
   }
 
+  /// Streams one file from this session's server straight to another open
+  /// session's, and — for a move — deletes it here once that is verified.
+  ///
+  /// The destination is resolved *now* rather than when the transfer was
+  /// queued: the user may have closed that session while this one sat in the
+  /// queue behind three other files, and a retry rebuilds the task from its
+  /// fields with no live object to hold on to.
+  Future<void> _runRemoteCopy(
+    RemoteFileSystem sftp,
+    TransferTask task,
+    TransferHandle handle,
+  ) async {
+    final destinationId = task.destinationSessionId;
+    final destinationPath = task.destinationPath;
+    final resolve = _resolveRemoteTarget;
+    if (destinationId == null || destinationPath == null || resolve == null) {
+      throw const SftpFailure(
+        'That transfer has no destination server to go to.',
+      );
+    }
+
+    final target = await resolve(destinationId);
+    final destination = await target.sftp();
+    handle.throwIfCancelled();
+
+    if (task.totalBytes == null) {
+      handle.setTotal(await sftp.sizeOf(task.remotePath));
+      handle.throwIfCancelled();
+    }
+
+    final outcome = await copyRemoteFile(
+      source: sftp,
+      destination: destination,
+      sourcePath: task.remotePath,
+      destinationPath: destinationPath,
+      overwrite: task.overwrite,
+      deleteSourceAfterVerify: task.moveSource,
+      onProgress: handle.report,
+      isCancelled: () => handle.isCancelled,
+    );
+    handle.throwIfCancelled();
+
+    // The file is over there now, and the browser over there has no way of
+    // knowing that from its own queue.
+    target.reportArrival(RemotePath.parent(outcome.destinationPath));
+
+    final label = task.destinationLabel;
+    handle.setDestination(
+      label == null || label.isEmpty
+          ? outcome.destinationPath
+          : '$label:${outcome.destinationPath}',
+    );
+  }
+
   /// Opens the system picker and stages the chosen file locally.
   Future<PickedLocalFile?> pickLocalFile() => _storage.pickFile();
 
@@ -375,6 +677,11 @@ class SessionController {
     transfers.cancelAll();
     await transfers.dispose();
 
+    for (final subscription in _shellOutput) {
+      unawaited(subscription.cancel());
+    }
+    _shellOutput.clear();
+
     final sftp = _sftp;
     _sftp = null;
     _sftpOpening = null;
@@ -396,6 +703,7 @@ class SessionController {
 
     connection.close();
     _closed = true;
+    await _arrivals.close();
     await _changes.close();
   }
 }

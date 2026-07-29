@@ -41,6 +41,11 @@ dependencies:
   # HMAC over known_hosts.json (Phase 3 integrity hardening). Pure Dart, and
   # already in the tree as a transitive dependency — no new native code.
   crypto: ^3.0.6
+  # Desktop upload/private-key file picker (DesktopDeviceStorage in
+  # device_storage.dart). Hand-rolling a native Open dialog three times over
+  # (GTK, IFileDialog, NSOpenPanel) would cost far more native code than this
+  # one Flutter-team-maintained dependency.
+  file_selector: ^1.1.0
 
 dev_dependencies:
   flutter_test:

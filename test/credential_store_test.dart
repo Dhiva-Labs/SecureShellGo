@@ -22,6 +22,25 @@ class FakeSecureStorageBackend implements SecureStorageBackend {
   }
 }
 
+/// A backend standing in for a locked/absent Linux keyring: every write
+/// fails the way `FlutterSecureStorageBackend.write` does when the platform
+/// cannot protect the secret.
+class UnavailableSecureStorageBackend implements SecureStorageBackend {
+  @override
+  Future<void> write(String key, String value) async {
+    throw const SecureStorageUnavailableException(
+      'No system keyring is available or unlocked.',
+      code: 'KeyringLocked',
+    );
+  }
+
+  @override
+  Future<String?> read(String key) async => null;
+
+  @override
+  Future<void> delete(String key) async {}
+}
+
 void main() {
   late FakeSecureStorageBackend backend;
   late CredentialStore store;
@@ -111,5 +130,23 @@ void main() {
   test('an entry that decodes to a non-map fails closed to null', () async {
     backend.data['credentials:host-1'] = '"just a string"';
     expect(await store.load('host-1'), isNull);
+  });
+
+  test('isAvailable defaults to true for a backend it cannot introspect',
+      () async {
+    // The fake has no notion of a locked keyring; a backend this class does
+    // not recognise is assumed available rather than blocking the UI on a
+    // check it cannot actually perform.
+    expect(await store.isAvailable(), isTrue);
+  });
+
+  test('save never swallows a locked-keyring failure into a silent success',
+      () async {
+    final store = CredentialStore(backend: UnavailableSecureStorageBackend());
+
+    await expectLater(
+      store.save('host-1', const SshCredentials(password: 'hunter2')),
+      throwsA(isA<SecureStorageUnavailableException>()),
+    );
   });
 }

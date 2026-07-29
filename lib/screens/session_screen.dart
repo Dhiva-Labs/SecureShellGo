@@ -2,167 +2,401 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
-import '../services/device_storage.dart';
 import '../services/keep_awake.dart';
 import '../services/layout_breakpoints.dart';
 import '../services/session_controller.dart';
-import '../services/session_foreground.dart';
-import '../services/session_registry.dart';
+import '../services/session_manager.dart';
 import '../services/settings_store.dart';
-import '../services/ssh_service.dart';
 import '../services/transfer_queue.dart';
 import '../theme.dart';
 import '../widgets/transfer_panel.dart';
 import 'file_browser_pane.dart';
 import 'terminal_pane.dart';
 
-/// Which view of the session is in front.
-enum SessionView { terminal, files }
-
-/// A live SSH session, presented as two views on one connection.
+/// Every open session, as tabs over one screen.
 ///
-/// This screen — not the terminal — owns the [SessionController], and so owns
-/// the connection's lifetime. It ends when the user disconnects or pops the
-/// route; flipping between the shell and the file browser does neither, which
-/// is the whole point of the Phase 3 ownership lift.
-class SessionScreen extends StatefulWidget {
-  // No longer `const`: the foreground-service reference count is shared by the
-  // whole process, so its default is a static instance rather than something
-  // that can be built at compile time. Nothing constructs this widget in a
-  // const context — it is only ever pushed onto a navigator.
-  SessionScreen({
+/// Phase 3 lifted ownership of the connection out of the terminal and into a
+/// `SessionController` held by this screen; Phase 12 lifts it one level
+/// further, out of the widget tree and into [SessionManager]. The reason is
+/// the same shape as last time: as long as the route owned the session, the
+/// only way to reach the host list — which is where a *second* session comes
+/// from — was to tear the first one down.
+///
+/// So this screen owns nothing but the view now. Popping it leaves the
+/// sessions connected and takes the user back to the host list, which says so;
+/// closing a tab is what ends a session, and closing the last one is what
+/// brings the foreground service down and pops this route.
+///
+/// Every open session is in the widget tree at once, inside an [IndexedStack].
+/// That is not an optimisation — it is the requirement: a `htop` in the
+/// session behind this one keeps running, keeps redrawing into its own
+/// `Terminal`, and is exactly where it was when its tab comes back to the
+/// front, because its `TerminalPane` was never disposed.
+class SessionsScreen extends StatefulWidget {
+  const SessionsScreen({
     super.key,
-    required this.connection,
+    required this.sessions,
     required this.settingsStore,
-    this.initialView = SessionView.terminal,
-    this.initialUploads = const [],
+    this.onAddSession,
     KeepAwakeController? keepAwake,
-    SessionForegroundController? foreground,
-    SessionRegistry? registry,
-  })  : keepAwake = keepAwake ?? const MethodChannelKeepAwake(),
-        foreground = foreground ?? SessionForegroundController.instance,
-        registry = registry ?? SessionRegistry.instance;
+  }) : keepAwake = keepAwake ?? const MethodChannelKeepAwake();
 
-  final SshConnection connection;
-  final SessionView initialView;
+  final SessionManager sessions;
   final SettingsStore settingsStore;
 
-  /// Files that came in from the share sheet and are waiting for a directory
-  /// — set when this session was opened *by* a share. Non-empty implies the
-  /// file browser, since that is where the user picks where they go.
-  final List<PickedLocalFile> initialUploads;
-
-  /// Where this session announces itself, so a later share can reuse the
-  /// connection instead of authenticating a second time.
-  final SessionRegistry registry;
+  /// Goes to the host list to start another session. Null falls back to
+  /// popping this route, which lands in the same place.
+  final VoidCallback? onAddSession;
 
   /// Test seam; production leaves this to the default channel-backed one.
   final KeepAwakeController keepAwake;
 
-  /// Holds the app in the foreground for as long as this session is live, so
-  /// Android does not reclaim the process while the user is in another app.
-  /// Process-wide by nature, hence a singleton default rather than something
-  /// threaded down from `main.dart`.
-  final SessionForegroundController foreground;
-
   @override
-  State<SessionScreen> createState() => _SessionScreenState();
+  State<SessionsScreen> createState() => _SessionsScreenState();
 }
 
-class _SessionScreenState extends State<SessionScreen> {
-  late final SessionController _session;
-  late SessionView _view;
-  StreamSubscription<void>? _sessionChanges;
-
-  /// The file browser opens an extra SSH channel, so it is not built until the
-  /// user actually asks for it.
-  late bool _filesBuilt;
-
-  /// So the disconnect snackbar fires once, right when the session actually
-  /// drops, rather than on every later rebuild while [_DisconnectedBanner] is
-  /// already showing.
-  bool _announcedDisconnect = false;
-
-  /// Whether this route currently owns a share of the foreground service, so
-  /// the release is exactly-once however we get here — a drop noticed in
-  /// `_handleSessionChange`, or an ordinary `dispose`.
-  bool _holdsForeground = false;
-
-  /// Stable identities for the two panes, so that going from the compact
-  /// `IndexedStack` to the medium/expanded side-by-side `Row` (and back, on a
-  /// fold or a DeX window resize) moves the *same* `TerminalPane` /
-  /// `FileBrowserPane` element instead of destroying and recreating it.
-  /// `TerminalPane`'s `Terminal` — scrollback, cursor, the lot — lives
-  /// inside its `State`, created once in `initState`; only a `GlobalKey` lets
-  /// Flutter reparent that `State` across a structural change in the same
-  /// build rather than tearing it down. Without this, folding or resizing
-  /// into a wide window would silently drop the running session's scrollback
-  /// and open a second SFTP channel.
-  final GlobalKey _terminalPaneKey = GlobalKey();
-  final GlobalKey _fileBrowserPaneKey = GlobalKey();
-
-  StreamSubscription<List<TransferTask>>? _transferChanges;
+class _SessionsScreenState extends State<SessionsScreen> {
+  StreamSubscription<void>? _changes;
 
   @override
   void initState() {
     super.initState();
-    _session = SessionController(connection: widget.connection);
-    _view = widget.initialView;
-    if (widget.initialUploads.isNotEmpty) {
-      _view = SessionView.files;
-      _session.requestUpload(widget.initialUploads);
-    }
-    _filesBuilt = _view == SessionView.files;
-    _sessionChanges = _session.changes.listen(_handleSessionChange);
-    _transferChanges = _session.transfers.changes.listen(_handleTransfers);
-
-    widget.registry.register(
-      _session.host.id,
-      LiveSession(session: _session, bringToFront: _bringToFront),
-    );
-
-    _holdsForeground = true;
-    unawaited(widget.foreground.acquire(_session.host.displayName));
-
+    // One subscription for N sessions: the manager folds every session's own
+    // change stream into its own, so a drop on a background tab still repaints
+    // that tab's status dot.
+    _changes = widget.sessions.changes.listen((_) {
+      if (mounted) setState(() {});
+    });
     if (widget.settingsStore.current.keepScreenAwake) {
       unawaited(widget.keepAwake.setEnabled(true));
     }
   }
 
-  /// Pops whatever the share flow stacked on top of this session, so a file
-  /// shared into a host that is already open lands on the session the user
-  /// already had.
-  bool _bringToFront() {
-    if (!mounted) return false;
-    final route = ModalRoute.of(context);
-    if (route == null) return false;
-    Navigator.of(context).popUntil((candidate) => candidate == route);
-    return true;
+  @override
+  void dispose() {
+    _changes?.cancel();
+    // The sessions are deliberately *not* disposed here — they belong to the
+    // manager and outlive this route.
+    unawaited(widget.keepAwake.setEnabled(false));
+    super.dispose();
+  }
+
+  void _addSession() {
+    final add = widget.onAddSession;
+    if (add != null) {
+      add();
+      return;
+    }
+    Navigator.of(context).pop();
+  }
+
+  void _show(SessionView view) {
+    final active = widget.sessions.active;
+    if (active == null || active.view == view) return;
+    // Drop the soft keyboard on the way out of the terminal, or the file list
+    // opens behind it.
+    FocusManager.instance.primaryFocus?.unfocus();
+    widget.sessions.showView(active.id, view);
+  }
+
+  Future<void> _closeActive() async {
+    final active = widget.sessions.active;
+    if (active == null) return;
+    await _closeSession(active);
+  }
+
+  /// Ends one session, asking first if there is anything to lose.
+  ///
+  /// Only this session: the confirmation names it, the transfer count is its
+  /// own, and every other tab carries on regardless of the answer.
+  Future<void> _closeSession(ManagedSession entry) async {
+    if (!entry.isClosed) {
+      final transfers = entry.controller.transfers.activeCount;
+      final confirmed = await showDialog<bool>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: const Text('Disconnect?'),
+          content: Text(
+            transfers > 0
+                ? 'Close the session on ${entry.host.displayName}? '
+                    '$transfers transfer${transfers == 1 ? '' : 's'} '
+                    '${transfers == 1 ? 'is' : 'are'} still running and will '
+                    'be cancelled.'
+                : 'Close the session on ${entry.host.displayName}?',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(false),
+              child: const Text('Stay'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(context).pop(true),
+              child: const Text('Disconnect'),
+            ),
+          ],
+        ),
+      );
+      if (confirmed != true) return;
+    }
+
+    await widget.sessions.close(entry.id);
+    // The last tab closing takes the screen with it — there is nothing left
+    // here to look at, and the host list is where a new session starts.
+    if (mounted && widget.sessions.isEmpty) Navigator.of(context).pop();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final manager = widget.sessions;
+    final entries = manager.sessions;
+    final active = manager.active;
+
+    if (active == null) {
+      // Only reachable for the frame between the last session closing and the
+      // pop landing.
+      return const Scaffold(body: SizedBox.shrink());
+    }
+
+    // Material 3 window size classes (see `layout_breakpoints.dart`), read
+    // from `MediaQuery` rather than the platform/device — a Chromebook, a
+    // DeX window and an unfolded foldable are all just "wide" by width, and a
+    // physical tablet in split-screen is not.
+    final wide = WindowSizeClass.forWidth(
+      MediaQuery.sizeOf(context).width,
+    ).isAtLeastMedium;
+
+    final closed = active.isClosed;
+
+    return Scaffold(
+      appBar: AppBar(
+        titleSpacing: 0,
+        leading: IconButton(
+          tooltip: entries.length == 1
+              ? 'Host list — this session stays connected'
+              : 'Host list — these sessions stay connected',
+          icon: const Icon(Icons.arrow_back),
+          onPressed: () => Navigator.of(context).pop(),
+        ),
+        title: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              active.host.displayName,
+              style: const TextStyle(fontSize: 16),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
+            Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(
+                  Icons.circle,
+                  size: 8,
+                  color: closed ? AppTheme.danger : AppTheme.accent,
+                ),
+                const SizedBox(width: 6),
+                Text(
+                  closed ? 'disconnected' : active.host.target,
+                  style: TextStyle(
+                    fontSize: 11.5,
+                    color: Theme.of(context).colorScheme.onSurfaceVariant,
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+        actions: [
+          _TransferAction(
+            queue: active.controller.transfers,
+            onTap: () => showTransfersSheet(
+              context,
+              active.controller.transfers,
+              onOpen: active.controller.openDownload,
+            ),
+          ),
+          // Both panes are already on screen side by side in the wide layout,
+          // so a toggle between them means nothing there.
+          if (!wide)
+            IconButton(
+              tooltip: active.view == SessionView.terminal
+                  ? 'Browse files'
+                  : 'Back to terminal',
+              icon: Icon(
+                active.view == SessionView.terminal
+                    ? Icons.folder_outlined
+                    : Icons.terminal,
+              ),
+              onPressed: () => _show(
+                active.view == SessionView.terminal
+                    ? SessionView.files
+                    : SessionView.terminal,
+              ),
+            ),
+          // With one session open this is the only sign that a second one is
+          // possible, so it stays in the bar rather than living only in the
+          // tab strip that has not appeared yet.
+          IconButton(
+            tooltip: 'New session',
+            icon: const Icon(Icons.add),
+            onPressed: _addSession,
+          ),
+          IconButton(
+            tooltip: closed ? 'Close tab' : 'Disconnect',
+            icon: Icon(closed ? Icons.close : Icons.power_settings_new),
+            color: closed ? null : AppTheme.danger,
+            onPressed: () => unawaited(_closeActive()),
+          ),
+        ],
+      ),
+      body: SafeArea(
+        child: Column(
+          children: [
+            // One session looks as it always did: no strip, no chrome, just
+            // the session.
+            if (entries.length > 1)
+              SessionTabStrip(
+                sessions: entries,
+                activeId: manager.activeId,
+                compact: !wide,
+                onSelect: manager.select,
+                onClose: (entry) => unawaited(_closeSession(entry)),
+                onAdd: _addSession,
+              ),
+            Expanded(
+              child: IndexedStack(
+                index: entries.indexWhere((s) => s.id == manager.activeId),
+                sizing: StackFit.expand,
+                children: [
+                  for (final entry in entries)
+                    // Every session's terminal is live and focusable at once.
+                    // Without this, a keystroke after switching tabs would go
+                    // to whichever terminal happened to hold focus — including
+                    // one the user cannot see.
+                    ExcludeFocus(
+                      excluding: entry.id != manager.activeId,
+                      child: _SessionPage(
+                        key: ValueKey<String>(entry.id),
+                        entry: entry,
+                        manager: manager,
+                        settingsStore: widget.settingsStore,
+                        active: entry.id == manager.activeId,
+                        wide: wide,
+                      ),
+                    ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// One session's two panes, and everything that is true of that session alone.
+///
+/// A widget per session rather than a map of per-session state on the screen:
+/// [IndexedStack] keeps every child's `State` alive, so this is where a
+/// session's pane keys, terminal focus and announcement subscriptions can live
+/// without any of them needing to be looked up by id.
+class _SessionPage extends StatefulWidget {
+  const _SessionPage({
+    super.key,
+    required this.entry,
+    required this.manager,
+    required this.settingsStore,
+    required this.active,
+    required this.wide,
+  });
+
+  final ManagedSession entry;
+  final SessionManager manager;
+  final SettingsStore settingsStore;
+  final bool active;
+  final bool wide;
+
+  @override
+  State<_SessionPage> createState() => _SessionPageState();
+}
+
+class _SessionPageState extends State<_SessionPage> {
+  /// Stable identities for the two panes, so that going from the compact
+  /// `IndexedStack` to the medium/expanded side-by-side `Row` (and back, on a
+  /// fold or a DeX window resize) moves the *same* `TerminalPane` /
+  /// `FileBrowserPane` element instead of destroying and recreating it.
+  /// `TerminalPane`'s `Terminal` — scrollback, cursor, the lot — lives inside
+  /// its `State`, created once in `initState`; only a `GlobalKey` lets Flutter
+  /// reparent that `State` across a structural change in the same build rather
+  /// than tearing it down. Without this, folding or resizing into a wide
+  /// window would silently drop the running session's scrollback and open a
+  /// second SFTP channel.
+  final GlobalKey _terminalPaneKey = GlobalKey();
+  final GlobalKey _fileBrowserPaneKey = GlobalKey();
+
+  /// Owned here rather than by `TerminalPane` so that a tab coming to the
+  /// front can put the caret back in this terminal.
+  final FocusNode _terminalFocus = FocusNode(debugLabel: 'terminal');
+
+  StreamSubscription<void>? _sessionChanges;
+  StreamSubscription<List<TransferTask>>? _transferChanges;
+
+  SessionController get _session => widget.entry.controller;
+
+  @override
+  void initState() {
+    super.initState();
+    _sessionChanges = _session.changes.listen(_handleSessionChange);
+    _transferChanges = _session.transfers.changes.listen(_handleTransfers);
+  }
+
+  @override
+  void didUpdateWidget(_SessionPage oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // Coming to the front: put the keyboard back where the user expects it.
+    // Post-frame because `ExcludeFocus` above only stops excluding this
+    // subtree as part of the same build that is running right now.
+    if (!oldWidget.active && widget.active) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted || !widget.active) return;
+        if (widget.entry.view == SessionView.terminal &&
+            !widget.entry.isClosed) {
+          _terminalFocus.requestFocus();
+        }
+      });
+    }
+  }
+
+  @override
+  void dispose() {
+    _sessionChanges?.cancel();
+    _transferChanges?.cancel();
+    _terminalFocus.dispose();
+    super.dispose();
   }
 
   void _handleSessionChange(void _) {
-    // The transport can drop while this route is off-screen or already gone;
-    // the service must still be released, so that happens before the
-    // mounted-only UI work below.
-    if (_session.isClosed) _releaseForeground();
     if (!mounted) return;
     setState(() {
-      // A share can arrive on a session showing the terminal; the file
-      // browser is where the destination gets chosen, so go there.
+      // A share can arrive on a session showing the terminal; the file browser
+      // is where the destination gets chosen, so go there.
       if (_session.pendingUpload != null) {
-        _view = SessionView.files;
-        _filesBuilt = true;
+        widget.manager.showView(widget.entry.id, SessionView.files);
       }
     });
-    if (_session.isClosed && !_announcedDisconnect) {
-      _announcedDisconnect = true;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(_session.closeReason ?? 'Connection closed.'),
-          backgroundColor: AppTheme.danger,
-        ),
-      );
-    }
+
+    // Whose drop this was matters now that several sessions can be open, and
+    // the session itself remembers whether it has been announced — a `State`
+    // is too short-lived a thing to be trusted with that.
+    final reason = _session.takeDisconnectAnnouncement();
+    if (reason == null) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(widget.active ? reason : '${widget.entry.host.displayName}: $reason'),
+        backgroundColor: AppTheme.danger,
+      ),
+    );
   }
 
   /// Announces finished downloads, with a way straight to the file.
@@ -172,8 +406,8 @@ class _SessionScreenState extends State<SessionScreen> {
   /// moment one finishes is the moment to offer "Open", rather than leaving
   /// the user to go and find a file manager.
   ///
-  /// Which downloads are new, and whether the batch is finished, is decided
-  /// by [SessionController.takeDownloadAnnouncement] rather than here — that
+  /// Which downloads are new, and whether the batch is finished, is decided by
+  /// [SessionController.takeDownloadAnnouncement] rather than here — that
   /// memory has to outlive this `State`, which a fold, a window resize or any
   /// other reason to rebuild the route is free to replace.
   void _handleTransfers(List<TransferTask> tasks) {
@@ -185,6 +419,10 @@ class _SessionScreenState extends State<SessionScreen> {
     ScaffoldMessenger.of(context).showSnackBar(
       buildDownloadSavedSnackBar(
         batch: batch,
+        // A download that finished on a session the user is not looking at
+        // still gets announced — with the host named, since "Saved notes.txt"
+        // from a tab three along is otherwise a mystery.
+        from: widget.active ? null : widget.entry.host.displayName,
         onOpen: (task) => unawaited(_openDownload(task)),
         onShowAll: () => unawaited(
           showTransfersSheet(
@@ -209,184 +447,14 @@ class _SessionScreenState extends State<SessionScreen> {
     }
   }
 
-  /// Idempotent — the session can close *and* the route can be popped, and
-  /// only one of those should decrement the count.
-  void _releaseForeground() {
-    if (!_holdsForeground) return;
-    _holdsForeground = false;
-    unawaited(widget.foreground.release());
-  }
-
-  @override
-  void dispose() {
-    widget.registry.unregister(_session.host.id, _session);
-    _sessionChanges?.cancel();
-    _transferChanges?.cancel();
-    _releaseForeground();
-    unawaited(widget.keepAwake.setEnabled(false));
-    unawaited(_session.dispose());
-    super.dispose();
-  }
-
-  void _show(SessionView view) {
-    if (_view == view) return;
-    // Drop the soft keyboard on the way out of the terminal, or the file list
-    // opens behind it.
-    FocusManager.instance.primaryFocus?.unfocus();
-    setState(() {
-      _view = view;
-      if (view == SessionView.files) _filesBuilt = true;
-    });
-  }
-
-  Future<void> _confirmLeave() async {
-    if (_session.isClosed) {
-      if (mounted) Navigator.of(context).pop();
-      return;
-    }
-
-    final transfers = _session.transfers.activeCount;
-    final shouldClose = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Disconnect?'),
-        content: Text(
-          transfers > 0
-              ? 'Close the session on ${_session.host.displayName}? '
-                  '$transfers transfer${transfers == 1 ? '' : 's'} '
-                  '${transfers == 1 ? 'is' : 'are'} still running and will be '
-                  'cancelled.'
-              : 'Close the session on ${_session.host.displayName}?',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(false),
-            child: const Text('Stay'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.of(context).pop(true),
-            child: const Text('Disconnect'),
-          ),
-        ],
-      ),
-    );
-
-    if (shouldClose == true && mounted) {
-      Navigator.of(context).pop();
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final host = _session.host;
-    final closed = _session.isClosed;
-
-    // Material 3 window size classes (see `layout_breakpoints.dart`), read
-    // from `MediaQuery` rather than the platform/device — a Chromebook, a
-    // DeX window and an unfolded foldable are all just "wide" by width, and
-    // a physical tablet in split-screen is not. Medium and expanded get the
-    // same side-by-side treatment; only compact keeps the toggle.
-    final wide = WindowSizeClass.forWidth(
-      MediaQuery.sizeOf(context).width,
-    ).isAtLeastMedium;
-
-    // Once the layout has gone wide, the file browser pane is live and its
-    // SFTP channel open; folding back to compact should not throw that away
-    // and re-show the "not built yet" placeholder in the IndexedStack branch.
-    // A plain field write (no `setState`) is safe here — this build is
-    // already running because `MediaQuery` changed, and it only affects what
-    // *this* build constructs.
-    if (wide) _filesBuilt = true;
-
-    return PopScope(
-      canPop: closed,
-      onPopInvokedWithResult: (didPop, _) {
-        if (!didPop) unawaited(_confirmLeave());
-      },
-      child: Scaffold(
-        appBar: AppBar(
-          titleSpacing: 0,
-          title: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text(host.displayName, style: const TextStyle(fontSize: 16)),
-              Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Icon(
-                    Icons.circle,
-                    size: 8,
-                    color: closed ? AppTheme.danger : AppTheme.accent,
-                  ),
-                  const SizedBox(width: 6),
-                  Text(
-                    closed ? 'disconnected' : host.target,
-                    style: TextStyle(
-                      fontSize: 11.5,
-                      color: Theme.of(context).colorScheme.onSurfaceVariant,
-                    ),
-                  ),
-                ],
-              ),
-            ],
-          ),
-          actions: [
-            _TransferAction(
-              queue: _session.transfers,
-              onTap: () => showTransfersSheet(
-                context,
-                _session.transfers,
-                onOpen: _session.openDownload,
-              ),
-            ),
-            // Both panes are already on screen side by side in the wide
-            // layout, so a toggle between them means nothing there.
-            if (!wide)
-              IconButton(
-                tooltip: _view == SessionView.terminal
-                    ? 'Browse files'
-                    : 'Back to terminal',
-                icon: Icon(
-                  _view == SessionView.terminal
-                      ? Icons.folder_outlined
-                      : Icons.terminal,
-                ),
-                onPressed: () => _show(
-                  _view == SessionView.terminal
-                      ? SessionView.files
-                      : SessionView.terminal,
-                ),
-              ),
-            IconButton(
-              tooltip: closed ? 'Back' : 'Disconnect',
-              icon: Icon(
-                closed ? Icons.arrow_back : Icons.power_settings_new,
-              ),
-              color: closed ? null : AppTheme.danger,
-              onPressed: _confirmLeave,
-            ),
-          ],
-        ),
-        body: SafeArea(
-          child: Column(
-            children: [
-              if (closed) _DisconnectedBanner(message: _session.closeReason),
-              Expanded(
-                child: wide ? _buildWide() : _buildCompact(),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
   Widget _terminalPane() {
     return TerminalPane(
       key: _terminalPaneKey,
       session: _session,
       settingsStore: widget.settingsStore,
+      focusNode: _terminalFocus,
+      // Only the session in front may take the keyboard when it is built.
+      autofocus: widget.active,
     );
   }
 
@@ -394,35 +462,203 @@ class _SessionScreenState extends State<SessionScreen> {
     return FileBrowserPane(
       key: _fileBrowserPaneKey,
       session: _session,
+      sessions: widget.manager,
+      sessionId: widget.entry.id,
       initialShowHidden: widget.settingsStore.current.showHiddenFilesByDefault,
     );
   }
 
-  /// Phones: one pane at a time behind the app-bar toggle, exactly as
-  /// before Phase 8.
-  Widget _buildCompact() {
-    return IndexedStack(
-      index: _view == SessionView.terminal ? 0 : 1,
-      sizing: StackFit.expand,
+  @override
+  Widget build(BuildContext context) {
+    final entry = widget.entry;
+
+    // Once the layout has gone wide, the file browser pane is live and its
+    // SFTP channel open; folding back to compact should not throw that away
+    // and re-show the "not built yet" placeholder in the IndexedStack branch.
+    if (widget.wide) widget.manager.markFilesBuilt(entry.id);
+
+    return Column(
       children: [
-        _terminalPane(),
-        if (_filesBuilt) _fileBrowserPane() else const SizedBox.shrink(),
+        if (entry.isClosed)
+          _DisconnectedBanner(
+            message: entry.controller.closeReason,
+            onClose: () => unawaited(widget.manager.close(entry.id)),
+          ),
+        Expanded(
+          child: widget.wide
+              // Tablets, DeX and unfolded foldables: both panes live at once,
+              // sharing the one `SessionController` — the file browser opening
+              // its SFTP channel here is deliberate, not lazy, since there is
+              // no "ask for it" tap in this layout for it to wait on.
+              ? Row(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Expanded(flex: 3, child: _terminalPane()),
+                    const VerticalDivider(width: 1),
+                    Expanded(flex: 2, child: _fileBrowserPane()),
+                  ],
+                )
+              // Phones: one pane at a time behind the app-bar toggle.
+              : IndexedStack(
+                  index: entry.view == SessionView.terminal ? 0 : 1,
+                  sizing: StackFit.expand,
+                  children: [
+                    _terminalPane(),
+                    if (entry.filesBuilt)
+                      _fileBrowserPane()
+                    else
+                      const SizedBox.shrink(),
+                  ],
+                ),
+        ),
       ],
     );
   }
+}
 
-  /// Tablets, DeX and unfolded foldables: both panes live at once, sharing
-  /// the one `SessionController` — the file browser opening its SFTP channel
-  /// here is deliberate, not lazy, since there is no "ask for it" tap in this
-  /// layout for it to wait on.
-  Widget _buildWide() {
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        Expanded(flex: 3, child: _terminalPane()),
-        const VerticalDivider(width: 1),
-        Expanded(flex: 2, child: _fileBrowserPane()),
-      ],
+/// The row of open sessions, above the panes.
+///
+/// Only appears from the second session on. A strip with one tab in it is
+/// chrome that says nothing, and the whole point of the single-session case is
+/// that it should look exactly as it did before any of this existed.
+@visibleForTesting
+class SessionTabStrip extends StatelessWidget {
+  const SessionTabStrip({
+    super.key,
+    required this.sessions,
+    required this.activeId,
+    required this.compact,
+    required this.onSelect,
+    required this.onClose,
+    required this.onAdd,
+  });
+
+  final List<ManagedSession> sessions;
+  final String? activeId;
+
+  /// Phones get narrower tabs; a tablet or a desktop window has room to show
+  /// the whole host label.
+  final bool compact;
+
+  final void Function(String id) onSelect;
+  final void Function(ManagedSession entry) onClose;
+  final VoidCallback onAdd;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: AppTheme.surface,
+      child: SizedBox(
+        height: compact ? 42 : 46,
+        child: Row(
+          children: [
+            Expanded(
+              child: ListView.builder(
+                scrollDirection: Axis.horizontal,
+                padding: const EdgeInsets.symmetric(horizontal: 4),
+                itemCount: sessions.length,
+                itemBuilder: (context, index) {
+                  final entry = sessions[index];
+                  return _SessionTab(
+                    entry: entry,
+                    selected: entry.id == activeId,
+                    maxWidth: compact ? 148 : 220,
+                    onTap: () => onSelect(entry.id),
+                    onClose: () => onClose(entry),
+                  );
+                },
+              ),
+            ),
+            const VerticalDivider(width: 1, indent: 8, endIndent: 8),
+            IconButton(
+              tooltip: 'New session',
+              icon: const Icon(Icons.add, size: 20),
+              onPressed: onAdd,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _SessionTab extends StatelessWidget {
+  const _SessionTab({
+    required this.entry,
+    required this.selected,
+    required this.maxWidth,
+    required this.onTap,
+    required this.onClose,
+  });
+
+  final ManagedSession entry;
+  final bool selected;
+  final double maxWidth;
+  final VoidCallback onTap;
+  final VoidCallback onClose;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final closed = entry.isClosed;
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 2),
+      child: Material(
+        color: selected
+            ? AppTheme.accent.withValues(alpha: 0.16)
+            : Colors.transparent,
+        borderRadius: BorderRadius.circular(8),
+        child: InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(8),
+          child: ConstrainedBox(
+            constraints: BoxConstraints(maxWidth: maxWidth),
+            child: Padding(
+              padding: const EdgeInsets.only(left: 10),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(
+                    Icons.circle,
+                    size: 8,
+                    color: closed ? AppTheme.danger : AppTheme.accent,
+                  ),
+                  const SizedBox(width: 8),
+                  Flexible(
+                    child: Text(
+                      entry.host.displayName,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontSize: 13,
+                        fontWeight:
+                            selected ? FontWeight.w600 : FontWeight.normal,
+                        color: selected
+                            ? theme.colorScheme.onSurface
+                            : theme.colorScheme.onSurfaceVariant,
+                      ),
+                    ),
+                  ),
+                  IconButton(
+                    tooltip: closed
+                        ? 'Close ${entry.host.displayName}'
+                        : 'Disconnect ${entry.host.displayName}',
+                    icon: const Icon(Icons.close, size: 15),
+                    visualDensity: VisualDensity.compact,
+                    padding: const EdgeInsets.symmetric(horizontal: 6),
+                    constraints: const BoxConstraints(
+                      minWidth: 32,
+                      minHeight: 32,
+                    ),
+                    onPressed: onClose,
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
     );
   }
 }
@@ -449,16 +685,20 @@ SnackBar buildDownloadSavedSnackBar({
   required List<TransferTask> batch,
   required void Function(TransferTask task) onOpen,
   required VoidCallback onShowAll,
+  String? from,
 }) {
   final single = batch.length == 1 ? batch.single : null;
   final uri = single?.destinationUri;
+  // Named only when the download finished on a session other than the one on
+  // screen, so the ordinary single-session case reads exactly as it always did.
+  final prefix = from == null ? '' : '$from: ';
 
   return SnackBar(
     persist: false,
     content: Text(
       single != null
-          ? 'Saved ${single.destination ?? single.name}'
-          : '${batch.length} files saved to Downloads',
+          ? '${prefix}Saved ${single.destination ?? single.name}'
+          : '$prefix${batch.length} files saved to Downloads',
     ),
     action: single != null && uri != null && uri.isNotEmpty
         ? SnackBarAction(label: 'Open', onPressed: () => onOpen(single))
@@ -500,9 +740,10 @@ class _TransferAction extends StatelessWidget {
 }
 
 class _DisconnectedBanner extends StatelessWidget {
-  const _DisconnectedBanner({this.message});
+  const _DisconnectedBanner({this.message, required this.onClose});
 
   final String? message;
+  final VoidCallback onClose;
 
   @override
   Widget build(BuildContext context) {
@@ -522,8 +763,11 @@ class _DisconnectedBanner extends StatelessWidget {
             ),
             const SizedBox(width: 8),
             TextButton(
-              onPressed: () => Navigator.of(context).pop(),
-              child: const Text('Back'),
+              // A dead session's tab is the one thing left to do something
+              // about, and closing it is the only useful thing — the others
+              // are unaffected either way.
+              onPressed: onClose,
+              child: const Text('Close'),
             ),
           ],
         ),
