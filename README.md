@@ -88,7 +88,7 @@ SecureShell Go is also published as a native `.deb` package via a Launchpad
 PPA:
 
 ```bash
-sudo add-apt-repository ppa:dhiva-labs/secureshellgo
+sudo add-apt-repository ppa:dhivalabs/secureshellgo
 sudo apt update
 sudo apt install secureshellgo
 ```

@@ -1,0 +1,24 @@
+# The Flutter tooling generates these when `flutter pub get` runs. They
+# contain symlinks into the local user's ~/.pub-cache, which is exactly
+# what must not end up in a source tarball that Launchpad's builders
+# extract into a different environment. They are regenerated at build
+# time when debian/rules invokes `flutter build linux --release`.
+tar-ignore = "linux/flutter/ephemeral"
+tar-ignore = "linux/flutter/generated_plugin_registrant.cc"
+tar-ignore = "linux/flutter/generated_plugin_registrant.h"
+tar-ignore = "linux/flutter/generated_plugins.cmake"
+tar-ignore = "windows/flutter/ephemeral"
+tar-ignore = "macos/Flutter/ephemeral"
+# Build outputs and package caches — regenerated at build time.
+tar-ignore = "build"
+tar-ignore = ".dart_tool"
+tar-ignore = ".flutter"
+tar-ignore = "flutter_linux_*.tar.xz"
+tar-ignore = "debian/.home"
+tar-ignore = "android/.gradle"
+tar-ignore = "android/build"
+tar-ignore = "android/app/build"
+# Editor scratch and OS metadata.
+tar-ignore = ".idea"
+tar-ignore = ".vscode"
+tar-ignore = ".DS_Store"

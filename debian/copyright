@@ -3,14 +3,6 @@ Upstream-Name: SecureShell Go
 Upstream-Contact: Dhiva Labs <dhivakar1010@gmail.com>
 Source: https://github.com/Dhiva-Labs/SecureShellGo
 
-Files-Excluded:
- build/*
- .dart_tool/*
- .flutter/*
- .git/*
- .idea/*
- android/key.properties
-
 Files: *
 Copyright: 2026 Dhiva Labs
 License: MIT
