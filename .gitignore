@@ -49,3 +49,4 @@ app.*.map.json
 # tree in case a build was interrupted.
 /debian/.home/
 /.flutter/
+/debian/files
