@@ -1,0 +1,39 @@
+Source: secureshellgo
+Section: net
+Priority: optional
+Maintainer: Dhiva Labs <dhivakar1010@gmail.com>
+Build-Depends: debhelper-compat (= 13),
+               clang,
+               cmake,
+               ninja-build,
+               pkg-config,
+               libgtk-3-dev,
+               liblzma-dev,
+               libsecret-1-dev,
+               libjsoncpp-dev,
+               ca-certificates,
+               curl,
+               unzip,
+               xz-utils,
+               git
+Standards-Version: 4.6.2
+Homepage: https://github.com/Dhiva-Labs/SecureShellGo
+Rules-Requires-Root: no
+
+Package: secureshellgo
+Architecture: amd64
+Depends: ${shlibs:Depends}, ${misc:Depends}, libsecret-1-0, libgtk-3-0
+Description: SSH terminal and SFTP client with strict host-key verification
+ SecureShell Go is a fast, security-first SSH terminal and SFTP client for
+ Linux servers. Run a real interactive xterm-256color shell and transfer
+ files over SFTP, with trust-on-first-use host-key verification at the
+ core.
+ .
+ A changed host key blocks the connection outright, with SHA256
+ fingerprints shown for out-of-band verification and an explicit,
+ checkbox-gated override required to proceed. Passwords, private keys, and
+ passphrases are kept only in encrypted secure storage.
+ .
+ Includes a saved host manager, password and private-key authentication,
+ and an SFTP file browser for uploads, downloads, and whole-folder
+ transfers, alongside the terminal in the same session.

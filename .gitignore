@@ -43,3 +43,9 @@ app.*.map.json
 /android/app/debug
 /android/app/profile
 /android/app/release
+
+# Debian build-time HOME and downloaded Flutter SDK, per debian/rules.
+# debian/rules clean removes these too, but keep them out of the working
+# tree in case a build was interrupted.
+/debian/.home/
+/.flutter/

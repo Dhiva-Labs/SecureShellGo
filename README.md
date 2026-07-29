@@ -82,6 +82,21 @@ project — so Gatekeeper will refuse to open the app and call it an
 "unidentified developer." Right-click the `.app`, choose **Open**, and
 confirm once; after that it launches normally.
 
+### Install on Ubuntu
+
+SecureShell Go is also published as a native `.deb` package via a Launchpad
+PPA:
+
+```bash
+sudo add-apt-repository ppa:dhiva-labs/secureshellgo
+sudo apt update
+sudo apt install secureshellgo
+```
+
+This tracks the same releases as the desktop `.tar.gz` above, built from the
+`debian/` packaging in this repository. See `packaging/PPA.md` for how the
+package itself is built and uploaded.
+
 ## Privacy
 
 SecureShell Go collects nothing: no analytics, no ads, no account, and no

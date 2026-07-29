@@ -1,0 +1,47 @@
+#!/usr/bin/make -f
+
+# Ubuntu PPA builders don't have Flutter installed, so the build fetches a
+# pinned copy into a build-scoped directory rather than relying on anything
+# already on the builder's PATH. Keeps the build reproducible and self
+# contained.
+FLUTTER_VERSION := 3.44.6
+FLUTTER_ROOT := $(CURDIR)/.flutter
+FLUTTER_TARBALL := flutter_linux_$(FLUTTER_VERSION)-stable.tar.xz
+FLUTTER_URL := https://storage.googleapis.com/flutter_infra_release/releases/stable/linux/$(FLUTTER_TARBALL)
+
+export PATH := $(FLUTTER_ROOT)/bin:$(PATH)
+export HOME := $(CURDIR)/debian/.home
+
+%:
+	dh $@
+
+override_dh_auto_build:
+	mkdir -p $(HOME)
+	if [ ! -x "$(FLUTTER_ROOT)/bin/flutter" ]; then \
+		rm -rf $(CURDIR)/flutter; \
+		curl -fSL -o $(CURDIR)/$(FLUTTER_TARBALL) "$(FLUTTER_URL)"; \
+		tar -xJf $(CURDIR)/$(FLUTTER_TARBALL) -C $(CURDIR); \
+		rm -f $(CURDIR)/$(FLUTTER_TARBALL); \
+		rm -rf $(FLUTTER_ROOT); \
+		mv $(CURDIR)/flutter $(FLUTTER_ROOT); \
+	fi
+	$(FLUTTER_ROOT)/bin/flutter --disable-analytics config --no-analytics
+	$(FLUTTER_ROOT)/bin/flutter build linux --release
+
+override_dh_auto_test:
+	# The Dart/Flutter test suite needs a Flutter engine and a display; it
+	# runs in CI, not at package build time.
+
+override_dh_auto_install:
+	mkdir -p debian/secureshellgo/opt/secureshellgo
+	cp -a build/linux/x64/release/bundle/. debian/secureshellgo/opt/secureshellgo/
+	mkdir -p debian/secureshellgo/usr/bin
+	install -m 0755 debian/secureshellgo.wrapper debian/secureshellgo/usr/bin/secureshellgo
+	mkdir -p debian/secureshellgo/usr/share/applications
+	install -m 0644 linux/secureshellgo.desktop debian/secureshellgo/usr/share/applications/secureshellgo.desktop
+	mkdir -p debian/secureshellgo/usr/share/icons/hicolor/256x256/apps
+	install -m 0644 linux/secureshellgo-256.png debian/secureshellgo/usr/share/icons/hicolor/256x256/apps/secureshellgo.png
+
+override_dh_auto_clean:
+	dh_auto_clean
+	rm -rf .flutter build .dart_tool debian/.home

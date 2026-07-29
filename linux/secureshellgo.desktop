@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=SecureShell Go
+GenericName=SSH Terminal
+Comment=SSH terminal and SFTP client with strict host-key verification
+Exec=secureshellgo %U
+Icon=secureshellgo
+Terminal=false
+Categories=Network;RemoteAccess;
+Keywords=ssh;sftp;terminal;remote;
+StartupWMClass=secure_shell_go
