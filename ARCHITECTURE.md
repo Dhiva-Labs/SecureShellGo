@@ -629,6 +629,39 @@ collision decision per directory as well as per file. Files only, for now;
 directories in a selection are named in the snackbar and left alone rather than
 half-copied.
 
+**Drag-and-drop across tabs is a second entry point, not a second path.** The
+file browser's rows are `LongPressDraggable<TabDropPayload>` on desktop
+platforms, each tab in `SessionTabStrip` is a `DragTarget<TabDropPayload>`, and
+an accepted drop hands off to the same `sendEntriesToSession` function that
+the per-entry "Copy to another server…" action sheet calls. That function is a
+top-level in `file_browser_pane.dart` precisely so both callers can reach it —
+the state-owned `_sendToServer` becomes a thin wrapper that picks the
+destination first and then calls the same function. The bytes still move
+through `queueRemoteCopy` on the source session's queue, `remote_copy.dart`
+still runs, and every promise `remote_copy.dart` makes about backpressure,
+staging under `.<name>.ssg-part-<millis>`, and the four-check
+`deleteSourceAfterVerify` chain holds unchanged.
+
+The payload is a public `TabDropPayload{sourceSessionId, entries,
+sourceDirectory}`. Public because `session_screen.dart`'s tab target must
+know its shape at compile time — a `DragTarget<TabDropPayload>` silently
+refuses payloads of any other type (a footgun `session_manager_test.dart` has
+learned to expect: no callback fires and no error is logged, the drop just
+does not land). Same-session drops are refused earlier still, in
+`onWillAcceptWithDetails`, so a tab under its own file never highlights and
+releasing on it counts as a cancel. Drag is desktop-only on purpose: on
+Android and iOS a long-press on a row is what opens the action sheet, which
+is the only path into multi-select on a touch device, and a
+`LongPressDraggable` there would swallow the gesture. The per-entry sheet's
+"Copy to another server…" row is what those users have and always did.
+
+If the drag starts while a selection is active, the payload carries every
+selected file — non-selected rows keep their old long-press-to-toggle
+behaviour, so entering and adjusting the selection still works during a
+drag-heavy workflow. The selection is cleared on `onDragCompleted`, not on
+cancel: a drag ended over empty space is the user changing their mind, not
+their commit to send.
+
 ---
 
 ## What later phases plug into

@@ -105,6 +105,46 @@ class _SessionsScreenState extends State<SessionsScreen> {
     await _closeSession(active);
   }
 
+  /// A file (or a selection) was dragged from one session's browser onto
+  /// [target]'s tab. The payload carries every entry the user meant to send
+  /// and names the source, so we can queue the transfer on the source
+  /// session's queue and hand the destination to the shared flow that the
+  /// per-entry action sheet also uses.
+  ///
+  /// Same-session drops are refused earlier, in the [DragTarget]'s
+  /// `onWillAcceptWithDetails`; by the time this runs, the drop is real.
+  Future<void> _handleTabDrop(
+    ManagedSession target,
+    TabDropPayload payload,
+  ) async {
+    final source = widget.sessions.byId(payload.sourceSessionId);
+    if (source == null) {
+      // The source session was closed between the drag starting and the drop
+      // landing. Surface a message rather than dropping silently.
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        content: Text(
+          'That session has been closed. Reopen it to send its files.',
+        ),
+      ));
+      return;
+    }
+
+    // Drop always brings the destination to the front, so the user can see
+    // the folder picker land on the tab they were aiming for.
+    widget.sessions.select(target.id);
+
+    await sendEntriesToSession(
+      context,
+      source: source.controller,
+      destination: target,
+      entries: payload.entries,
+      // Drag-and-drop is copy semantics: it lands a duplicate. Moving a file
+      // is destructive on the source and stays behind the explicit "Move to
+      // another server…" action sheet row.
+      move: false,
+    );
+  }
+
   /// Ends one session, asking first if there is anything to lose.
   ///
   /// Only this session: the confirmation names it, the transfer count is its
@@ -164,6 +204,12 @@ class _SessionsScreenState extends State<SessionsScreen> {
     final wide = WindowSizeClass.forWidth(
       MediaQuery.sizeOf(context).width,
     ).isAtLeastMedium;
+
+    // Only offer the drop target when there is anywhere to drop *from*: with
+    // one session open there is no other tab to drag to. The strip does not
+    // even render in that case, but the callback is defined on the widget so
+    // the check has to be here.
+    final canReceiveDrops = entries.length > 1;
 
     final closed = active.isClosed;
 
@@ -263,6 +309,7 @@ class _SessionsScreenState extends State<SessionsScreen> {
                 onSelect: manager.select,
                 onClose: (entry) => unawaited(_closeSession(entry)),
                 onAdd: _addSession,
+                onDrop: canReceiveDrops ? _handleTabDrop : null,
               ),
             Expanded(
               child: IndexedStack(
@@ -531,6 +578,7 @@ class SessionTabStrip extends StatelessWidget {
     required this.onSelect,
     required this.onClose,
     required this.onAdd,
+    this.onDrop,
   });
 
   final List<ManagedSession> sessions;
@@ -543,6 +591,16 @@ class SessionTabStrip extends StatelessWidget {
   final void Function(String id) onSelect;
   final void Function(ManagedSession entry) onClose;
   final VoidCallback onAdd;
+
+  /// A file (or a selection) was dropped onto [target]'s tab from another
+  /// session's browser. Null when there is nothing to drag from — one
+  /// session open, or the callers are still on a build that predates the
+  /// drag-and-drop path.
+  ///
+  /// Non-nullable target because same-session drops are refused earlier by
+  /// each tab's [DragTarget], so a callback that runs has already crossed
+  /// that check.
+  final void Function(ManagedSession target, TabDropPayload payload)? onDrop;
 
   @override
   Widget build(BuildContext context) {
@@ -565,6 +623,9 @@ class SessionTabStrip extends StatelessWidget {
                     maxWidth: compact ? 148 : 220,
                     onTap: () => onSelect(entry.id),
                     onClose: () => onClose(entry),
+                    onDrop: onDrop == null
+                        ? null
+                        : (payload) => onDrop!(entry, payload),
                   );
                 },
               ),
@@ -589,6 +650,7 @@ class _SessionTab extends StatelessWidget {
     required this.maxWidth,
     required this.onTap,
     required this.onClose,
+    this.onDrop,
   });
 
   final ManagedSession entry;
@@ -597,68 +659,110 @@ class _SessionTab extends StatelessWidget {
   final VoidCallback onTap;
   final VoidCallback onClose;
 
+  /// A payload was dropped onto this tab. Same-session drops are already
+  /// filtered out; null when there is no cross-session drop path (only one
+  /// session open).
+  final void Function(TabDropPayload payload)? onDrop;
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final closed = entry.isClosed;
 
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 2),
-      child: Material(
-        color: selected
-            ? AppTheme.accent.withValues(alpha: 0.16)
-            : Colors.transparent,
-        borderRadius: BorderRadius.circular(8),
-        child: InkWell(
-          onTap: onTap,
-          borderRadius: BorderRadius.circular(8),
-          child: ConstrainedBox(
-            constraints: BoxConstraints(maxWidth: maxWidth),
-            child: Padding(
-              padding: const EdgeInsets.only(left: 10),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Icon(
-                    Icons.circle,
-                    size: 8,
-                    color: closed ? AppTheme.danger : AppTheme.accent,
-                  ),
-                  const SizedBox(width: 8),
-                  Flexible(
-                    child: Text(
-                      entry.host.displayName,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        fontSize: 13,
-                        fontWeight:
-                            selected ? FontWeight.w600 : FontWeight.normal,
-                        color: selected
-                            ? theme.colorScheme.onSurface
-                            : theme.colorScheme.onSurfaceVariant,
+    // The base tab: same widget the drag-target below wraps around, so a tab
+    // that does not accept drops (only one session open, or a build with no
+    // drop callback wired in) looks and behaves exactly as it always did.
+    Widget buildTab({required bool hovering}) {
+      // Material asserts `shape` and `borderRadius` are not both set: use one
+      // or the other. The hovering border needs to hug the rounded corners,
+      // so it goes through `shape`; the non-hovering path stays on the
+      // simpler `borderRadius` it always used.
+      final radius = BorderRadius.circular(8);
+      return Padding(
+        padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 2),
+        child: Material(
+          color: selected
+              ? AppTheme.accent.withValues(alpha: 0.16)
+              : Colors.transparent,
+          borderRadius: hovering ? null : radius,
+          shape: hovering
+              ? RoundedRectangleBorder(
+                  side: const BorderSide(color: AppTheme.accent, width: 2),
+                  borderRadius: radius,
+                )
+              : null,
+          child: InkWell(
+            onTap: onTap,
+            borderRadius: BorderRadius.circular(8),
+            child: ConstrainedBox(
+              constraints: BoxConstraints(maxWidth: maxWidth),
+              child: Padding(
+                padding: const EdgeInsets.only(left: 10),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(
+                      Icons.circle,
+                      size: 8,
+                      color: closed ? AppTheme.danger : AppTheme.accent,
+                    ),
+                    const SizedBox(width: 8),
+                    Flexible(
+                      child: Text(
+                        entry.host.displayName,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: 13,
+                          fontWeight:
+                              selected ? FontWeight.w600 : FontWeight.normal,
+                          color: selected
+                              ? theme.colorScheme.onSurface
+                              : theme.colorScheme.onSurfaceVariant,
+                        ),
                       ),
                     ),
-                  ),
-                  IconButton(
-                    tooltip: closed
-                        ? 'Close ${entry.host.displayName}'
-                        : 'Disconnect ${entry.host.displayName}',
-                    icon: const Icon(Icons.close, size: 15),
-                    visualDensity: VisualDensity.compact,
-                    padding: const EdgeInsets.symmetric(horizontal: 6),
-                    constraints: const BoxConstraints(
-                      minWidth: 32,
-                      minHeight: 32,
+                    IconButton(
+                      tooltip: closed
+                          ? 'Close ${entry.host.displayName}'
+                          : 'Disconnect ${entry.host.displayName}',
+                      icon: const Icon(Icons.close, size: 15),
+                      visualDensity: VisualDensity.compact,
+                      padding: const EdgeInsets.symmetric(horizontal: 6),
+                      constraints: const BoxConstraints(
+                        minWidth: 32,
+                        minHeight: 32,
+                      ),
+                      onPressed: onClose,
                     ),
-                    onPressed: onClose,
-                  ),
-                ],
+                  ],
+                ),
               ),
             ),
           ),
         ),
-      ),
+      );
+    }
+
+    final drop = onDrop;
+    if (drop == null) return buildTab(hovering: false);
+
+    // The type parameter is not decoration: `DragTarget<TabDropPayload>`
+    // silently refuses any other payload type, and without it Flutter's
+    // arena would happily match a `DragTarget<dynamic>` against payloads
+    // meant for something else — the drop would land with no visible error.
+    return DragTarget<TabDropPayload>(
+      onWillAcceptWithDetails: (details) {
+        // A drop onto the tab of the session the file already lives on is a
+        // no-op (same-session copy is a rename or a `cp` on the shell, not a
+        // transfer). Refuse it silently: no highlight, and the drag continues
+        // as if this tab were not there, so releasing over it counts as a
+        // cancel.
+        return details.data.sourceSessionId != entry.id;
+      },
+      onAcceptWithDetails: (details) => drop(details.data),
+      builder: (context, candidateData, rejectedData) =>
+          buildTab(hovering: candidateData.isNotEmpty),
     );
   }
 }

@@ -31,6 +31,33 @@ class _DirectRouteOffer {
   final String? reason;
 }
 
+/// The payload of a drag from a file row in one session's browser onto
+/// another session's tab in the strip above.
+///
+/// Immutable and self-contained: it names its source (so the drop target can
+/// refuse a drop on the same session, and so the transfer can be queued on
+/// the source session's queue), the entries the user dragged (a single row,
+/// or every selected row when the drag starts in selection mode), and the
+/// directory those rows came from (informational — the drop dialog names it
+/// when picking the destination folder).
+///
+/// A public type on purpose: the drop target is defined in `session_screen.dart`
+/// and must know the payload's shape at compile time. Flutter's `DragTarget`
+/// silently drops payloads whose type does not match its type parameter, so
+/// mismatching this would look like "the drop simply did nothing" with no
+/// error message to grep for.
+class TabDropPayload {
+  const TabDropPayload({
+    required this.sourceSessionId,
+    required this.entries,
+    required this.sourceDirectory,
+  });
+
+  final String sourceSessionId;
+  final List<RemoteEntry> entries;
+  final String sourceDirectory;
+}
+
 /// The remote file browser: the other view on a live session.
 ///
 /// Reuses the session's authenticated connection through
@@ -455,67 +482,14 @@ class _FileBrowserPaneState extends State<FileBrowserPane>
     String directory, {
     required bool offerApplyToAll,
     String? hostLabel,
-  }) async {
-    var applyToAll = false;
-    final action = await showDialog<UploadCollisionAction>(
-      context: context,
-      builder: (context) => StatefulBuilder(
-        builder: (context, setDialogState) => AlertDialog(
-          title: const Text('Already on the server'),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                hostLabel == null
-                    ? '"$fileName" already exists in $directory.'
-                    : '"$fileName" already exists in $directory on '
-                        '$hostLabel.',
-                style: const TextStyle(height: 1.35),
-              ),
-              if (offerApplyToAll)
-                CheckboxListTile(
-                  value: applyToAll,
-                  onChanged: (v) =>
-                      setDialogState(() => applyToAll = v ?? false),
-                  contentPadding: EdgeInsets.zero,
-                  controlAffinity: ListTileControlAffinity.leading,
-                  title: const Text(
-                    'Do this for the rest of this batch',
-                    style: TextStyle(fontSize: 13),
-                  ),
-                ),
-            ],
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(context).pop(),
-              child: const Text('Cancel'),
-            ),
-            TextButton(
-              onPressed: () =>
-                  Navigator.of(context).pop(UploadCollisionAction.skip),
-              child: const Text('Skip'),
-            ),
-            TextButton(
-              onPressed: () =>
-                  Navigator.of(context).pop(UploadCollisionAction.overwrite),
-              child: const Text('Replace'),
-            ),
-            FilledButton(
-              onPressed: () =>
-                  Navigator.of(context).pop(UploadCollisionAction.keepBoth),
-              child: const Text('Keep both'),
-            ),
-          ],
-        ),
-      ),
-    );
-    // A dismissed dialog is not consent to overwrite someone's file: null
-    // cancels the whole batch.
-    if (action == null) return null;
-    return UploadCollisionResponse(action, applyToAll: applyToAll);
-  }
+  }) =>
+      askAboutRemoteCollisionDialog(
+        context,
+        fileName,
+        directory,
+        offerApplyToAll: offerApplyToAll,
+        hostLabel: hostLabel,
+      );
 
   /// Takes the files a share handed to this session and uploads them here.
   Future<void> _uploadShared(PendingUpload pending) async {
@@ -560,193 +534,18 @@ class _FileBrowserPaneState extends State<FileBrowserPane>
         : await _pickDestinationSession(destinations, move: move);
     if (!mounted || target == null) return;
 
-    // The bytes-bypass-this-device switch lives here rather than on the
-    // destination-picker sheet because the eligibility rule needs both
-    // ends: a password-auth destination cannot be forwarded via agent
-    // (see `direct_remote_copy.dart`), so we grey the switch and note
-    // the reason so the user is not left wondering why it is off.
-    final directOffer = _directRouteFor(target.host);
-    final chosenRoute = await _pickRoute(
-      target: target,
-      offer: directOffer,
-      move: move,
-    );
-    if (!mounted || chosenRoute == null) return;
-
-    final directory = await pickRemoteDirectory(
+    // Once the destination is known, the rest of the flow — route pick,
+    // folder pick, collision plan, queue, snackbar — is shared with the
+    // drag-onto-tab entry point in `session_screen.dart`, which walks in
+    // already knowing which tab was dropped on.
+    await sendEntriesToSession(
       context,
-      session: target,
-      confirmLabel: move ? 'Move here' : 'Copy here',
-      subtitle: entries.length == 1
-          ? '${move ? 'Move' : 'Copy'} ${entries.single.name} to…'
-          : '${move ? 'Move' : 'Copy'} ${entries.length} files to…',
+      source: widget.session,
+      destination: target,
+      entries: entries,
+      move: move,
+      onQueued: _clearSelection,
     );
-    if (!mounted || directory == null) return;
-
-    final RemoteFileSystem destinationFs;
-    try {
-      destinationFs = await target.controller.sftp();
-    } on SftpFailure catch (e) {
-      if (mounted) _snack(e.message, isError: true);
-      return;
-    }
-    if (!mounted) return;
-
-    final RemoteTransferPlan plan;
-    try {
-      plan = await planRemoteTransfer(
-        entries: entries,
-        destination: destinationFs,
-        destinationDirectory: directory,
-        ask: (fileName, {required offerApplyToAll}) =>
-            _askAboutRemoteCollision(
-          fileName,
-          directory,
-          offerApplyToAll: offerApplyToAll,
-          hostLabel: target.host.displayName,
-        ),
-      );
-    } on SftpFailure catch (e) {
-      if (mounted) _snack(e.message, isError: true);
-      return;
-    }
-    if (!mounted || plan.cancelled) return;
-
-    if (plan.isEmpty) {
-      _snack(_nothingSentMessage(plan), isError: plan.unsupported.isNotEmpty);
-      return;
-    }
-
-    for (final transfer in plan.transfers) {
-      final entry = plan.files[transfer.sourceIndex];
-      widget.session.queueRemoteCopy(
-        remotePath: entry.path,
-        name: entry.name,
-        destinationSessionId: target.id,
-        destinationLabel: target.host.displayName,
-        remoteDirectory: directory,
-        asName: transfer.remoteName,
-        overwrite: transfer.overwrite,
-        moveSource: move,
-        totalBytes: entry.size,
-        route: chosenRoute,
-      );
-    }
-
-    _clearSelection();
-    _snack(_sentMessage(plan, target, directory, move: move, route: chosenRoute));
-  }
-
-  /// Whether the direct path is eligible for [destination], and — when it
-  /// is not — a short reason to show under the disabled toggle.
-  _DirectRouteOffer _directRouteFor(Host destination) {
-    if (destination.authMethod != SshAuthMethod.privateKey) {
-      return const _DirectRouteOffer(
-        eligible: false,
-        reason: 'Password-auth destinations cannot be forwarded via agent.',
-      );
-    }
-    return const _DirectRouteOffer(eligible: true);
-  }
-
-  /// Ask the user which route to take. The direct-transfer toggle is
-  /// shown either way — when ineligible it is greyed out and captioned
-  /// with why, so a password-auth destination does not silently pick
-  /// relay under a name the user never saw.
-  Future<TransferRoute?> _pickRoute({
-    required ManagedSession target,
-    required _DirectRouteOffer offer,
-    required bool move,
-  }) async {
-    var useDirect = offer.eligible;
-    final go = await showDialog<bool>(
-      context: context,
-      builder: (context) => StatefulBuilder(
-        builder: (context, setDialogState) => AlertDialog(
-          title: Text(move ? 'Move to server' : 'Copy to server'),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                'Destination: ${target.host.displayName}',
-                style: const TextStyle(height: 1.4),
-              ),
-              const SizedBox(height: 12),
-              CheckboxListTile(
-                value: useDirect,
-                onChanged: offer.eligible
-                    ? (v) => setDialogState(() => useDirect = v ?? false)
-                    : null,
-                contentPadding: EdgeInsets.zero,
-                controlAffinity: ListTileControlAffinity.leading,
-                title: const Text(
-                  'Use direct transfer',
-                  style: TextStyle(fontSize: 14),
-                ),
-                subtitle: Text(
-                  offer.eligible
-                      ? 'Bytes go from source server to destination server '
-                          'on the network between them, bypassing this '
-                          'device. Falls back to the relay path if the '
-                          'servers cannot reach each other.'
-                      : offer.reason ??
-                          'Direct transfer is not available for this '
-                              'destination.',
-                  style: const TextStyle(fontSize: 12, height: 1.35),
-                ),
-              ),
-            ],
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(context).pop(false),
-              child: const Text('Cancel'),
-            ),
-            FilledButton(
-              onPressed: () => Navigator.of(context).pop(true),
-              child: Text(move ? 'Move' : 'Copy'),
-            ),
-          ],
-        ),
-      ),
-    );
-    if (go != true) return null;
-    return useDirect ? TransferRoute.direct : TransferRoute.relay;
-  }
-
-  String _nothingSentMessage(RemoteTransferPlan plan) {
-    if (plan.unsupported.isNotEmpty && plan.files.isEmpty) {
-      return plan.unsupported.length == 1
-          ? '"${plan.unsupported.single}" is a folder or a link. Only files '
-              'can go straight between servers for now.'
-          : 'Folders and links cannot go straight between servers yet — only '
-              'files.';
-    }
-    return 'Nothing sent — every file was skipped.';
-  }
-
-  String _sentMessage(
-    RemoteTransferPlan plan,
-    ManagedSession target,
-    String directory, {
-    required bool move,
-    required TransferRoute route,
-  }) {
-    final verb = move ? 'Moving' : 'Copying';
-    final count = plan.transfers.length;
-    final head = count == 1
-        ? '$verb ${plan.transfers.single.remoteName} to '
-            '${target.host.displayName}:$directory'
-        : '$verb $count files to ${target.host.displayName}:$directory';
-    final notes = <String>[
-      if (route == TransferRoute.direct) 'direct',
-      if (plan.skipped.isNotEmpty) '${plan.skipped.length} skipped',
-      if (plan.unsupported.isNotEmpty)
-        '${plan.unsupported.length} folder'
-            '${plan.unsupported.length == 1 ? '' : 's'} left out',
-    ];
-    return notes.isEmpty ? head : '$head · ${notes.join(' · ')}';
   }
 
   /// Which of several open servers the files are going to.
@@ -1102,6 +901,102 @@ class _FileBrowserPaneState extends State<FileBrowserPane>
     );
   }
 
+  /// Which rows the user meant to drag when they long-pressed [entry].
+  ///
+  /// Not selecting: the row under their finger, if it is a file. Selecting: if
+  /// the pressed row is *in* the selection, every selected file goes; if it is
+  /// not, the drag is empty and the long-press falls through to its ordinary
+  /// toggle-select. Non-file rows (directories, non-file symlinks) can never
+  /// start a drag — server-to-server directory copies are the documented open
+  /// gap, and dragging a folder onto a tab would only fail once.
+  List<RemoteEntry> _dragEntriesFor(RemoteEntry entry) {
+    if (_selecting) {
+      if (!_selected.contains(entry.path)) return const [];
+      return _visible
+          .where((e) => _selected.contains(e.path) && e.isDownloadable)
+          .toList(growable: false);
+    }
+    if (!entry.isDownloadable) return const [];
+    return [entry];
+  }
+
+  Widget _buildEntryTile(RemoteEntry entry) {
+    final tile = _EntryTile(
+      entry: entry,
+      selected: _selected.contains(entry.path),
+      selecting: _selecting,
+      onTap: () {
+        if (_selecting) {
+          _toggleSelection(entry);
+        } else if (entry.isNavigable) {
+          unawaited(_navigate(entry.path));
+        } else if (entry.isDownloadable) {
+          unawaited(_download([entry]));
+        }
+      },
+      onLongPress: () {
+        if (_selecting) {
+          _toggleSelection(entry);
+        } else {
+          unawaited(_showEntryActions(entry));
+        }
+      },
+    );
+
+    // Drag-to-tab only offers itself when there is somewhere to drag *to* — no
+    // other open session means no drop target. And on Android the long-press
+    // on a row is what opens the action sheet, which is the only path into
+    // multi-select on a touch device; a LongPressDraggable would swallow that
+    // gesture and leave Android users with no way in. Desktop platforms get
+    // drag; Android/iOS keep the old behaviour, and the same "Copy to another
+    // server…" row on the action sheet still works for them.
+    if (widget.sessionId == null || _destinations.isEmpty) return tile;
+    if (!_isDesktop(context)) return tile;
+
+    final dragEntries = _dragEntriesFor(entry);
+    if (dragEntries.isEmpty) return tile;
+
+    final payload = TabDropPayload(
+      sourceSessionId: widget.sessionId!,
+      entries: dragEntries,
+      sourceDirectory: _path,
+    );
+    return LongPressDraggable<TabDropPayload>(
+      data: payload,
+      hapticFeedbackOnStart: true,
+      // A single row keeps its height under the finger; a wider ghost during
+      // a multi-select drag would obscure the tab strip the user is aiming at.
+      feedback: _DragFeedback(entries: dragEntries),
+      // Fade the source row rather than remove it: pulling a row out from
+      // under the cursor makes the list jump, and the row is coming back the
+      // moment the drop lands (or is refused).
+      childWhenDragging: Opacity(opacity: 0.35, child: tile),
+      onDragCompleted: () {
+        // Only on an accepted drop — a cancelled drag leaves the selection
+        // where it was, because the user has not committed to anything yet.
+        if (_selecting) _clearSelection();
+      },
+      child: tile,
+    );
+  }
+
+  /// Desktop platforms — Linux, macOS, Windows — where a mouse is the primary
+  /// pointer and long-press-to-drag reads as natural. Kept out of the state
+  /// so the platform check can be swapped in tests via
+  /// [debugDefaultTargetPlatformOverride].
+  static bool _isDesktop(BuildContext context) {
+    switch (Theme.of(context).platform) {
+      case TargetPlatform.linux:
+      case TargetPlatform.macOS:
+      case TargetPlatform.windows:
+        return true;
+      case TargetPlatform.android:
+      case TargetPlatform.iOS:
+      case TargetPlatform.fuchsia:
+        return false;
+    }
+  }
+
   Widget _buildBody() {
     if (_loading) {
       return const Center(child: CircularProgressIndicator());
@@ -1137,36 +1032,316 @@ class _FileBrowserPaneState extends State<FileBrowserPane>
                 itemCount: visible.length,
                 separatorBuilder: (_, _) =>
                     const Divider(height: 1, indent: 56),
-                itemBuilder: (context, index) {
-                  final entry = visible[index];
-                  return _EntryTile(
-                    entry: entry,
-                    selected: _selected.contains(entry.path),
-                    selecting: _selecting,
-                    onTap: () {
-                      if (_selecting) {
-                        _toggleSelection(entry);
-                      } else if (entry.isNavigable) {
-                        unawaited(_navigate(entry.path));
-                      } else if (entry.isDownloadable) {
-                        unawaited(_download([entry]));
-                      }
-                    },
-                    onLongPress: () {
-                      if (_selecting) {
-                        _toggleSelection(entry);
-                      } else {
-                        unawaited(_showEntryActions(entry));
-                      }
-                    },
-                  );
-                },
+                itemBuilder: (context, index) => _buildEntryTile(visible[index]),
               ),
             ),
         ],
       ),
     );
   }
+}
+
+/// The shared "run a server-to-server transfer with a known destination" flow.
+///
+/// Two entry points call this: the browser pane's per-entry action sheet
+/// (which picks the destination first) and the drop handler on the tab strip
+/// (which knows the destination already, because that is what the drop chose).
+/// The steps in between — route pick, folder pick, collision resolution,
+/// queueing on the source session's [TransferQueue], and the snackbar — are
+/// the same either way. It runs on [context] so that a source whose pane has
+/// scrolled away can still show the dialogs on top of the sessions screen.
+///
+/// [onQueued] fires once the transfers have been enqueued (not once they
+/// finish). The action-sheet caller uses it to clear its selection; the drop
+/// caller has no selection to clear and leaves it null.
+Future<void> sendEntriesToSession(
+  BuildContext context, {
+  required SessionController source,
+  required ManagedSession destination,
+  required List<RemoteEntry> entries,
+  required bool move,
+  VoidCallback? onQueued,
+}) async {
+  if (entries.isEmpty) return;
+  final messenger = ScaffoldMessenger.of(context);
+
+  // The bytes-bypass-this-device switch lives here rather than on the
+  // destination-picker sheet because the eligibility rule needs both
+  // ends: a password-auth destination cannot be forwarded via agent
+  // (see `direct_remote_copy.dart`), so we grey the switch and note
+  // the reason so the user is not left wondering why it is off.
+  final directOffer = _directRouteFor(destination.host);
+  final chosenRoute = await _pickRoute(
+    context,
+    target: destination,
+    offer: directOffer,
+    move: move,
+  );
+  if (chosenRoute == null || !context.mounted) return;
+
+  final directory = await pickRemoteDirectory(
+    context,
+    session: destination,
+    confirmLabel: move ? 'Move here' : 'Copy here',
+    subtitle: entries.length == 1
+        ? '${move ? 'Move' : 'Copy'} ${entries.single.name} to…'
+        : '${move ? 'Move' : 'Copy'} ${entries.length} files to…',
+  );
+  if (directory == null || !context.mounted) return;
+
+  final RemoteFileSystem destinationFs;
+  try {
+    destinationFs = await destination.controller.sftp();
+  } on SftpFailure catch (e) {
+    if (context.mounted) _showErrorSnack(messenger, e.message);
+    return;
+  }
+  if (!context.mounted) return;
+
+  final RemoteTransferPlan plan;
+  try {
+    plan = await planRemoteTransfer(
+      entries: entries,
+      destination: destinationFs,
+      destinationDirectory: directory,
+      ask: (fileName, {required offerApplyToAll}) =>
+          askAboutRemoteCollisionDialog(
+        context,
+        fileName,
+        directory,
+        offerApplyToAll: offerApplyToAll,
+        hostLabel: destination.host.displayName,
+      ),
+    );
+  } on SftpFailure catch (e) {
+    if (context.mounted) _showErrorSnack(messenger, e.message);
+    return;
+  }
+  if (plan.cancelled || !context.mounted) return;
+
+  if (plan.isEmpty) {
+    messenger.showSnackBar(SnackBar(
+      content: Text(_nothingSentMessage(plan)),
+      backgroundColor: plan.unsupported.isNotEmpty ? AppTheme.danger : null,
+    ));
+    return;
+  }
+
+  for (final transfer in plan.transfers) {
+    final entry = plan.files[transfer.sourceIndex];
+    source.queueRemoteCopy(
+      remotePath: entry.path,
+      name: entry.name,
+      destinationSessionId: destination.id,
+      destinationLabel: destination.host.displayName,
+      remoteDirectory: directory,
+      asName: transfer.remoteName,
+      overwrite: transfer.overwrite,
+      moveSource: move,
+      totalBytes: entry.size,
+      route: chosenRoute,
+    );
+  }
+
+  onQueued?.call();
+  messenger.showSnackBar(SnackBar(
+    content: Text(
+      _sentMessage(plan, destination, directory, move: move, route: chosenRoute),
+    ),
+  ));
+}
+
+void _showErrorSnack(ScaffoldMessengerState messenger, String message) {
+  messenger.showSnackBar(SnackBar(
+    content: Text(message),
+    backgroundColor: AppTheme.danger,
+  ));
+}
+
+/// Whether the direct path is eligible for [destination], and — when it
+/// is not — a short reason to show under the disabled toggle.
+_DirectRouteOffer _directRouteFor(Host destination) {
+  if (destination.authMethod != SshAuthMethod.privateKey) {
+    return const _DirectRouteOffer(
+      eligible: false,
+      reason: 'Password-auth destinations cannot be forwarded via agent.',
+    );
+  }
+  return const _DirectRouteOffer(eligible: true);
+}
+
+/// Ask the user which route to take. The direct-transfer toggle is
+/// shown either way — when ineligible it is greyed out and captioned
+/// with why, so a password-auth destination does not silently pick
+/// relay under a name the user never saw.
+Future<TransferRoute?> _pickRoute(
+  BuildContext context, {
+  required ManagedSession target,
+  required _DirectRouteOffer offer,
+  required bool move,
+}) async {
+  var useDirect = offer.eligible;
+  final go = await showDialog<bool>(
+    context: context,
+    builder: (context) => StatefulBuilder(
+      builder: (context, setDialogState) => AlertDialog(
+        title: Text(move ? 'Move to server' : 'Copy to server'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Destination: ${target.host.displayName}',
+              style: const TextStyle(height: 1.4),
+            ),
+            const SizedBox(height: 12),
+            CheckboxListTile(
+              value: useDirect,
+              onChanged: offer.eligible
+                  ? (v) => setDialogState(() => useDirect = v ?? false)
+                  : null,
+              contentPadding: EdgeInsets.zero,
+              controlAffinity: ListTileControlAffinity.leading,
+              title: const Text(
+                'Use direct transfer',
+                style: TextStyle(fontSize: 14),
+              ),
+              subtitle: Text(
+                offer.eligible
+                    ? 'Bytes go from source server to destination server '
+                        'on the network between them, bypassing this '
+                        'device. Falls back to the relay path if the '
+                        'servers cannot reach each other.'
+                    : offer.reason ??
+                        'Direct transfer is not available for this '
+                            'destination.',
+                style: const TextStyle(fontSize: 12, height: 1.35),
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: Text(move ? 'Move' : 'Copy'),
+          ),
+        ],
+      ),
+    ),
+  );
+  if (go != true) return null;
+  return useDirect ? TransferRoute.direct : TransferRoute.relay;
+}
+
+/// Shared "this file already exists on the destination" prompt.
+///
+/// Used both by uploads (where the destination is this session) and by
+/// server-to-server transfers (where the destination is another session and
+/// [hostLabel] names it).
+Future<UploadCollisionResponse?> askAboutRemoteCollisionDialog(
+  BuildContext context,
+  String fileName,
+  String directory, {
+  required bool offerApplyToAll,
+  String? hostLabel,
+}) async {
+  var applyToAll = false;
+  final action = await showDialog<UploadCollisionAction>(
+    context: context,
+    builder: (context) => StatefulBuilder(
+      builder: (context, setDialogState) => AlertDialog(
+        title: const Text('Already on the server'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              hostLabel == null
+                  ? '"$fileName" already exists in $directory.'
+                  : '"$fileName" already exists in $directory on '
+                      '$hostLabel.',
+              style: const TextStyle(height: 1.35),
+            ),
+            if (offerApplyToAll)
+              CheckboxListTile(
+                value: applyToAll,
+                onChanged: (v) =>
+                    setDialogState(() => applyToAll = v ?? false),
+                contentPadding: EdgeInsets.zero,
+                controlAffinity: ListTileControlAffinity.leading,
+                title: const Text(
+                  'Do this for the rest of this batch',
+                  style: TextStyle(fontSize: 13),
+                ),
+              ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () =>
+                Navigator.of(context).pop(UploadCollisionAction.skip),
+            child: const Text('Skip'),
+          ),
+          TextButton(
+            onPressed: () =>
+                Navigator.of(context).pop(UploadCollisionAction.overwrite),
+            child: const Text('Replace'),
+          ),
+          FilledButton(
+            onPressed: () =>
+                Navigator.of(context).pop(UploadCollisionAction.keepBoth),
+            child: const Text('Keep both'),
+          ),
+        ],
+      ),
+    ),
+  );
+  // A dismissed dialog is not consent to overwrite someone's file: null
+  // cancels the whole batch.
+  if (action == null) return null;
+  return UploadCollisionResponse(action, applyToAll: applyToAll);
+}
+
+String _nothingSentMessage(RemoteTransferPlan plan) {
+  if (plan.unsupported.isNotEmpty && plan.files.isEmpty) {
+    return plan.unsupported.length == 1
+        ? '"${plan.unsupported.single}" is a folder or a link. Only files '
+            'can go straight between servers for now.'
+        : 'Folders and links cannot go straight between servers yet — only '
+            'files.';
+  }
+  return 'Nothing sent — every file was skipped.';
+}
+
+String _sentMessage(
+  RemoteTransferPlan plan,
+  ManagedSession target,
+  String directory, {
+  required bool move,
+  required TransferRoute route,
+}) {
+  final verb = move ? 'Moving' : 'Copying';
+  final count = plan.transfers.length;
+  final head = count == 1
+      ? '$verb ${plan.transfers.single.remoteName} to '
+          '${target.host.displayName}:$directory'
+      : '$verb $count files to ${target.host.displayName}:$directory';
+  final notes = <String>[
+    if (route == TransferRoute.direct) 'direct',
+    if (plan.skipped.isNotEmpty) '${plan.skipped.length} skipped',
+    if (plan.unsupported.isNotEmpty)
+      '${plan.unsupported.length} folder'
+          '${plan.unsupported.length == 1 ? '' : 's'} left out',
+  ];
+  return notes.isEmpty ? head : '$head · ${notes.join(' · ')}';
 }
 
 /// What [_ScanningDialog] hands back: a plan, a failure, or a cancellation.
@@ -1512,6 +1687,61 @@ class _SelectionBar extends StatelessWidget {
             ),
             const SizedBox(width: 8),
           ],
+        ),
+      ),
+    );
+  }
+}
+
+/// The small chip that floats under the cursor while dragging a file (or
+/// several) toward another session's tab.
+///
+/// Deliberately compact: the whole point of the drag is to see which tab is
+/// about to accept the drop, and a ghost the size of a row would cover the
+/// tab strip. Named for the batch when the drag carries a selection, so a
+/// user dragging fifteen files sees "15 files" rather than the name of
+/// whichever one happened to be under the finger.
+class _DragFeedback extends StatelessWidget {
+  const _DragFeedback({required this.entries});
+
+  final List<RemoteEntry> entries;
+
+  @override
+  Widget build(BuildContext context) {
+    final label = entries.length == 1
+        ? entries.single.name
+        : '${entries.length} files';
+    return Material(
+      // AppTheme.surface reads as "a card lifted off the list" against both
+      // the terminal background and the file browser's own surface.
+      color: AppTheme.surface,
+      elevation: 6,
+      borderRadius: BorderRadius.circular(6),
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 220),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(
+                entries.length == 1
+                    ? Icons.insert_drive_file_outlined
+                    : Icons.file_copy_outlined,
+                size: 16,
+                color: AppTheme.accent,
+              ),
+              const SizedBox(width: 8),
+              Flexible(
+                child: Text(
+                  label,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(fontSize: 13, height: 1.2),
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );
