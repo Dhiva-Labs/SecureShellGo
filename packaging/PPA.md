@@ -14,7 +14,7 @@ they need your private GPG key and your Launchpad login.
 2. Activate a PPA:
    - If publishing under a `Dhiva Labs` Launchpad team, create the team
      first, then activate the PPA at
-     `https://launchpad.net/~dhivalabs/+activate-ppa`.
+     `https://launchpad.net/~dhiva-labs/+activate-ppa`.
    - If publishing under your personal account instead, use
      `https://launchpad.net/~dhivakar1010/+activate-ppa` (adjust the
      commands below to match whichever name you actually use — the
@@ -41,15 +41,15 @@ is `<KEYID>` in the commands below.
 Add a stanza to `~/.dput.cf` (create the file if it doesn't exist):
 
 ```ini
-[secureshellgo-ppa]
+[dhiva-apps]
 fqdn = ppa.launchpad.net
 method = ftp
-incoming = ~dhivalabs/ubuntu/secureshellgo/
+incoming = ~dhiva-labs/ubuntu/apps/
 login = anonymous
 allow_unsigned_uploads = 0
 ```
 
-Adjust `~dhivalabs` in `incoming` to match whichever Launchpad name you
+Adjust `~dhiva-labs` in `incoming` to match whichever Launchpad name you
 actually activated the PPA under in step 1.
 
 ## 3. Build and upload the source package
@@ -74,7 +74,7 @@ your key. It produces, one directory up:
 Upload it:
 
 ```bash
-dput secureshellgo-ppa ../secureshellgo_1.2.0~noble1_source.changes
+dput dhiva-apps ../secureshellgo_1.2.0~noble1_source.changes
 ```
 
 ## 4. Wait for the build
@@ -84,7 +84,7 @@ and publishes the resulting `.deb` if the build succeeds. This typically
 takes 15–30 minutes but can be longer under load. Watch progress at:
 
 ```
-https://launchpad.net/~dhivalabs/+archive/ubuntu/secureshellgo/+packages
+https://launchpad.net/~dhiva-labs/+archive/ubuntu/apps/+packages
 ```
 
 (swap in your actual Launchpad name if different). Click through to a build
@@ -118,12 +118,12 @@ change.
 ## 5. Once published: user install command
 
 ```bash
-sudo add-apt-repository ppa:dhivalabs/secureshellgo
+sudo add-apt-repository ppa:dhiva-labs/apps
 sudo apt update
 sudo apt install secureshellgo
 ```
 
-(again, swap `dhivalabs` for whatever Launchpad name actually hosts the
+(again, swap `dhiva-labs` for whatever Launchpad name actually hosts the
 PPA).
 
 ## 6. Supporting older Ubuntu releases (jammy, focal, ...)
@@ -143,7 +143,7 @@ upload only targets the series named in the top `debian/changelog` stanza
 2. Rebuild and upload again:
    ```bash
    debuild -S -sa -k<KEYID>
-   dput secureshellgo-ppa ../secureshellgo_1.2.0~jammy1_source.changes
+   dput dhiva-apps ../secureshellgo_1.2.0~jammy1_source.changes
    ```
 3. Repeat per series. Launchpad builds and publishes each one
    independently; users on each release install the same way.
