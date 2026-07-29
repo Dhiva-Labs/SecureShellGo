@@ -1541,35 +1541,45 @@ class _EntryTile extends StatelessWidget {
         : '${RemotePath.formatBytes(entry.size)}  ·  '
             '${_formatTime(entry.modified)}';
 
-    return ListTile(
-      // Not dense: fat-finger comfort for a list of remote files matters
-      // more here than screen density.
-      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-      selected: selected,
-      selectedTileColor: AppTheme.accent.withValues(alpha: 0.1),
-      leading: selecting && entry.isDownloadable
-          ? Icon(
-              selected ? Icons.check_circle : Icons.circle_outlined,
-              color: selected ? AppTheme.accent : theme.colorScheme.onSurfaceVariant,
-            )
-          : Icon(_iconFor(entry), color: _colourFor(entry, theme)),
-      title: Text(
-        entry.name,
-        maxLines: 1,
-        overflow: TextOverflow.ellipsis,
-        style: TextStyle(
-          fontSize: 14,
-          color: entry.isHidden
-              ? theme.colorScheme.onSurfaceVariant
-              : theme.colorScheme.onSurface,
+    // ListTile has no onSecondaryTap of its own, so wrap it: on desktop
+    // right-click opens the same action sheet long-press opens on touch
+    // devices. Behind the tile so the ink and hover effects still come
+    // from the tile itself, not a bare GestureDetector.
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onSecondaryTap: onLongPress,
+      child: ListTile(
+        // Not dense: fat-finger comfort for a list of remote files matters
+        // more here than screen density.
+        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+        selected: selected,
+        selectedTileColor: AppTheme.accent.withValues(alpha: 0.1),
+        leading: selecting && entry.isDownloadable
+            ? Icon(
+                selected ? Icons.check_circle : Icons.circle_outlined,
+                color: selected
+                    ? AppTheme.accent
+                    : theme.colorScheme.onSurfaceVariant,
+              )
+            : Icon(_iconFor(entry), color: _colourFor(entry, theme)),
+        title: Text(
+          entry.name,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: TextStyle(
+            fontSize: 14,
+            color: entry.isHidden
+                ? theme.colorScheme.onSurfaceVariant
+                : theme.colorScheme.onSurface,
+          ),
         ),
+        subtitle: Text(subtitle, style: theme.textTheme.bodySmall),
+        trailing: entry.isNavigable
+            ? const Icon(Icons.chevron_right, size: 18)
+            : null,
+        onTap: onTap,
+        onLongPress: onLongPress,
       ),
-      subtitle: Text(subtitle, style: theme.textTheme.bodySmall),
-      trailing: entry.isNavigable
-          ? const Icon(Icons.chevron_right, size: 18)
-          : null,
-      onTap: onTap,
-      onLongPress: onLongPress,
     );
   }
 
