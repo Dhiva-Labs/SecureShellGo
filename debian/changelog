@@ -1,3 +1,17 @@
+secureshellgo (1.2.0~noble6) noble; urgency=medium
+
+  * Diagnostic build. Local network-isolated replicas of the ~noble5
+    source package (sanitized environment, tilde directory name,
+    HOME=/sbuild-nonexistent, zero network) build to completion, while
+    the Launchpad builder fails at `flutter pub get --offline` asking
+    for the un-vendored `test` package. Every machine-independent
+    difference has been eliminated, so this build has debian/rules
+    print the strip verification, cache shape, environment and the
+    verbose pub solver trace on the builder itself before running the
+    normal build steps.
+
+ -- Dhiva Labs <dhivakar1010@gmail.com>  Thu, 30 Jul 2026 23:30:00 +0530
+
 secureshellgo (1.2.0~noble5) noble; urgency=medium
 
   * Revert `dart pub get --enforce-lockfile --offline` back to
