@@ -26,12 +26,12 @@ override_dh_auto_build:
 	mkdir -p $(HOME)
 	if [ ! -x "$(FLUTTER_ROOT)/bin/flutter" ]; then \
 		rm -rf $(CURDIR)/flutter $(FLUTTER_ROOT); \
-		tar -xJf $(FLUTTER_TARBALL) -C $(CURDIR); \
+		tar --no-same-owner -xJf $(FLUTTER_TARBALL) -C $(CURDIR); \
 		mv $(CURDIR)/flutter $(FLUTTER_ROOT); \
 	fi
 	if [ ! -d "$(PUB_CACHE)/hosted" ]; then \
 		mkdir -p $(PUB_CACHE); \
-		tar -xJf $(PUB_CACHE_TARBALL) -C $(PUB_CACHE); \
+		tar --no-same-owner -xJf $(PUB_CACHE_TARBALL) -C $(PUB_CACHE); \
 	fi
 	$(FLUTTER_ROOT)/bin/flutter --disable-analytics config --no-analytics --no-cli-animations
 	# Belt-and-braces to keep pub genuinely offline. All three exist
@@ -67,8 +67,19 @@ override_dh_auto_build:
 	# and our app depends on flutter_test as a dev dep — so both the
 	# `flutter pub get` step and the later `flutter build linux` step
 	# walk into workspace expansion without this.
+	# The sed MUST NOT advance each pubspec.yaml's mtime: the flutter
+	# wrapper rebuilds its own tool (via an online `pub upgrade`) when
+	# flutter_tools/pubspec.yaml is newer than its pubspec.lock — that
+	# was failure mode number four, caught in a local network-isolated
+	# rehearsal before it wasted another Launchpad cycle. touch -r
+	# against a stamp file restores the original mtime after editing.
 	find $(PUB_CACHE) $(FLUTTER_ROOT)/packages -name pubspec.yaml \
-		-exec sed -i '/^resolution: workspace/d' {} +
+		-exec sh -c 'for f; do \
+			touch -r "$$f" "$$f.mtime-stamp"; \
+			sed -i "/^resolution: workspace/d" "$$f"; \
+			touch -r "$$f.mtime-stamp" "$$f"; \
+			rm -f "$$f.mtime-stamp"; \
+		done' - {} +
 	$(FLUTTER_ROOT)/bin/flutter pub get --offline
 	$(FLUTTER_ROOT)/bin/flutter build linux --release --no-pub
 
