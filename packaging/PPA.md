@@ -59,16 +59,16 @@ compile the package) and signs both the `.dsc` and `.changes` files with
 your key. It produces, one directory up:
 
 ```
-../secureshellgo_1.2.0~noble2_source.changes
-../secureshellgo_1.2.0~noble2_source.build
-../secureshellgo_1.2.0~noble2.dsc
-../secureshellgo_1.2.0~noble2.tar.xz
+../secureshellgo_1.2.0~noble3_source.changes
+../secureshellgo_1.2.0~noble3_source.build
+../secureshellgo_1.2.0~noble3.dsc
+../secureshellgo_1.2.0~noble3.tar.xz
 ```
 
 Upload it:
 
 ```bash
-dput dhiva-apps ../secureshellgo_1.2.0~noble2_source.changes
+dput dhiva-apps ../secureshellgo_1.2.0~noble3_source.changes
 ```
 
 ## 4. Wait for the build
@@ -89,7 +89,7 @@ upload failed for exactly this reason: `debian/rules` used `curl` to fetch
 `flutter_linux_3.44.6-stable.tar.xz` from `storage.googleapis.com`, and the
 build farm couldn't resolve the host.
 
-`1.2.0~noble2` fixes this by shipping the Flutter SDK and pub cache inside
+`1.2.0~noble3` fixes this by shipping the Flutter SDK and pub cache inside
 the source package under `packaging/vendor/`:
 
   * `packaging/vendor/flutter-3.44.6-linux-slim.tar.xz` — a Linux-only
