@@ -97,6 +97,17 @@ This tracks the same releases as the desktop `.tar.gz` above, built from the
 `debian/` packaging in this repository. See `packaging/PPA.md` for how the
 package itself is built and uploaded.
 
+### Install via snap
+
+SecureShell Go is also published on the Snap Store, which works on Ubuntu
+as well as Fedora, Arch, Manjaro, and any other distro with `snapd`:
+
+```bash
+sudo snap install secureshellgo
+```
+
+See `packaging/SNAP.md` for how the snap itself is built and published.
+
 ## Privacy
 
 SecureShell Go collects nothing: no analytics, no ads, no account, and no

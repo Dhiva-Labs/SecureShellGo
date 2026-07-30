@@ -50,3 +50,18 @@ app.*.map.json
 /debian/.home/
 /.flutter/
 /debian/files
+
+# snapcraft build state (parts/stage/prime are each 500 MB+ of build cache)
+# and the packed snap itself, per snap/snapcraft.yaml.
+/parts/
+/stage/
+/prime/
+/*.snap
+
+# Vendored Flutter SDK + pub cache used by debian/rules to build the
+# PPA source package offline (see packaging/vendor/README for how to
+# reproduce them). Kept out of git because GitHub's per-file limit is
+# 100 MB and the Flutter tarball is 147 MB, and because these are
+# packaging inputs (regenerated on Flutter version bumps) rather than
+# source code the repo tracks history for.
+/packaging/vendor/*.tar.xz

@@ -1,0 +1,94 @@
+# Snap Store packaging for SecureShell Go.
+#
+# This is a Flutter Linux desktop build, packaged independently of the
+# debian/ (Launchpad PPA) packaging in this repo. See packaging/SNAP.md for
+# how to build and publish it.
+#
+# Flutter + snapcraft background: https://snapcraft.io/docs/flutter-applications
+# GNOME extension background:     https://snapcraft.io/docs/gnome-extension
+#
+# That Flutter-applications doc describes wiring up the Flutter SDK via the
+# "flutter-stable" *extension*. On the snapcraft installed while writing this
+# (9.0.1), there is no such extension registered (`snapcraft extensions`
+# doesn't list it) — it has been superseded by a built-in `flutter` *plugin*
+# shipped with craft-parts, which is what `parts.secureshellgo.plugin:
+# flutter` below uses. It handles fetching the Flutter SDK and running
+# `flutter build linux --release` itself; no manual SDK setup needed here.
+# Net effect for us: the SDK comes from `git clone` of
+# https://github.com/flutter/flutter.git at part-build time, not from
+# storage.googleapis.com, so this route sidesteps the exact host the
+# Launchpad PPA builders block.
+name: secureshellgo
+title: SecureShell Go
+base: core22
+version: '1.2.0'
+summary: SSH terminal and SFTP client with strict host-key verification
+description: |
+  SecureShell Go is a fast, security-first SSH terminal and SFTP client for
+  Linux servers. Run a real interactive xterm-256color shell and transfer
+  files over SFTP, with trust-on-first-use host-key verification at the
+  core.
+
+  A changed host key blocks the connection outright, with SHA256
+  fingerprints shown for out-of-band verification and an explicit,
+  checkbox-gated override required to proceed. Passwords, private keys, and
+  passphrases are kept only in encrypted secure storage.
+
+  Includes a saved host manager, password and private-key authentication,
+  and an SFTP file browser for uploads, downloads, and whole-folder
+  transfers, alongside the terminal in the same session.
+grade: stable
+confinement: strict
+icon: snap/gui/icon.png
+
+apps:
+  secureshellgo:
+    command: secure_shell_go
+    # The `gnome` extension is the core22 replacement for what used to be
+    # separate desktop/gtk plumbing: it supplies the GTK3/GLib/Wayland/X11
+    # platform via a content snap, the `desktop-launch` command-chain
+    # wrapper, and font/theme/icon handling. It also injects the `desktop`,
+    # `desktop-legacy`, `gsettings`, `opengl`, `wayland` and `x11` plugs onto
+    # this app automatically. Those are also listed explicitly below —
+    # snapcraft de-duplicates the merged list, so this is just for
+    # readability/documentation; nothing double-declares in the built snap.
+    extensions:
+      - gnome
+    desktop: usr/share/applications/secureshellgo.desktop
+    plugs:
+      - home
+      - removable-media
+      - network
+      - network-bind
+      - desktop
+      - desktop-legacy
+      - wayland
+      - x11
+      - unity7
+      - gsettings
+      # Lets flutter_secure_storage's libsecret backend reach the host
+      # Secret Service (GNOME Keyring / KWallet) for credential storage.
+      - password-manager-service
+
+parts:
+  secureshellgo:
+    plugin: flutter
+    source: .
+    flutter-target: lib/main.dart
+    stage-packages:
+      - libgtk-3-0
+      - libsecret-1-0
+      - libssl3
+
+  desktop-assets:
+    # Reuse the same .desktop entry and icon the Debian package installs
+    # (see debian/rules' override_dh_auto_install) rather than maintaining a
+    # second copy of either.
+    plugin: dump
+    source: linux
+    organize:
+      secureshellgo.desktop: usr/share/applications/secureshellgo.desktop
+      secureshellgo-256.png: usr/share/icons/hicolor/256x256/apps/secureshellgo.png
+    stage:
+      - usr/share/applications/secureshellgo.desktop
+      - usr/share/icons/hicolor/256x256/apps/secureshellgo.png
