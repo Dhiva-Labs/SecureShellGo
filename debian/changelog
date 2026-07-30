@@ -1,3 +1,15 @@
+secureshellgo (1.2.0~noble2) noble; urgency=medium
+
+  * Vendor the Flutter SDK and pub cache under packaging/vendor/ so the
+    build no longer needs outbound network access — the previous
+    ~noble1 upload failed on Launchpad because debian/rules tried to
+    curl the Flutter SDK from storage.googleapis.com, which the build
+    farm blocks.
+  * Drop curl, unzip and ca-certificates from Build-Depends; nothing in
+    the build reaches the network any more.
+
+ -- Dhiva Labs <dhivakar1010@gmail.com>  Thu, 30 Jul 2026 12:00:00 +0530
+
 secureshellgo (1.2.0~noble1) noble; urgency=medium
 
   * Release for Ubuntu PPA

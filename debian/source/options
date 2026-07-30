@@ -9,15 +9,26 @@ tar-ignore = "linux/flutter/generated_plugin_registrant.h"
 tar-ignore = "linux/flutter/generated_plugins.cmake"
 tar-ignore = "windows/flutter/ephemeral"
 tar-ignore = "macos/Flutter/ephemeral"
-# Build outputs and package caches — regenerated at build time.
+# Build outputs, package caches, and the extracted vendored SDK —
+# regenerated at build time from packaging/vendor/. Leftover
+# flutter_linux_*.tar.xz from earlier download-based builds is excluded
+# too.
 tar-ignore = "build"
 tar-ignore = ".dart_tool"
 tar-ignore = ".flutter"
+tar-ignore = ".pub-cache"
 tar-ignore = "flutter_linux_*.tar.xz"
 tar-ignore = "debian/.home"
 tar-ignore = "android/.gradle"
 tar-ignore = "android/build"
 tar-ignore = "android/app/build"
+# Snap packaging is built and published separately (see packaging/SNAP.md);
+# nothing in this deb source package needs it.
+tar-ignore = "snap"
+tar-ignore = "parts"
+tar-ignore = "stage"
+tar-ignore = "prime"
+tar-ignore = "*.snap"
 # Editor scratch and OS metadata.
 tar-ignore = ".idea"
 tar-ignore = ".vscode"

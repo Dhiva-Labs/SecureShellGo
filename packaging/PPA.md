@@ -11,17 +11,11 @@ they need your private GPG key and your Launchpad login.
    one, and sign the
    [Code of Conduct](https://launchpad.net/codeofconduct) (required before
    you can upload packages).
-2. Activate a PPA:
-   - If publishing under a `Dhiva Labs` Launchpad team, create the team
-     first, then activate the PPA at
-     `https://launchpad.net/~dhiva-labs/+activate-ppa`.
-   - If publishing under your personal account instead, use
-     `https://launchpad.net/~dhivakar1010/+activate-ppa` (adjust the
-     commands below to match whichever name you actually use — the
-     `dput` target and `add-apt-repository` line both need to agree with
-     it).
-   - Name the PPA `secureshellgo` so the final install command matches the
-     one in `README.md`.
+2. Activate a PPA at
+   `https://launchpad.net/~dhiva-labs/+activate-ppa` (or your personal
+   account URL if you're not publishing under the `dhiva-labs` team).
+   Name the PPA `apps` so the `add-apt-repository ppa:dhiva-labs/apps`
+   line in `README.md` matches.
 3. Upload your GPG public key to your Launchpad account
    (`Account` → `OpenPGP keys`) and complete the encrypted-email
    confirmation loop Launchpad sends you (decrypt the email it sends with
@@ -65,16 +59,16 @@ compile the package) and signs both the `.dsc` and `.changes` files with
 your key. It produces, one directory up:
 
 ```
-../secureshellgo_1.2.0~noble1_source.changes
-../secureshellgo_1.2.0~noble1_source.build
-../secureshellgo_1.2.0~noble1.dsc
-../secureshellgo_1.2.0~noble1.tar.xz
+../secureshellgo_1.2.0~noble2_source.changes
+../secureshellgo_1.2.0~noble2_source.build
+../secureshellgo_1.2.0~noble2.dsc
+../secureshellgo_1.2.0~noble2.tar.xz
 ```
 
 Upload it:
 
 ```bash
-dput dhiva-apps ../secureshellgo_1.2.0~noble1_source.changes
+dput dhiva-apps ../secureshellgo_1.2.0~noble2_source.changes
 ```
 
 ## 4. Wait for the build
@@ -87,33 +81,30 @@ takes 15–30 minutes but can be longer under load. Watch progress at:
 https://launchpad.net/~dhiva-labs/+archive/ubuntu/apps/+packages
 ```
 
-(swap in your actual Launchpad name if different). Click through to a build
-log if it fails — the most likely failure mode is described below.
+## Why the vendored Flutter SDK
 
-### If the Launchpad build fails on network access
+Launchpad's build farm has **no outbound network access** during a source
+build — external DNS resolution is blocked. The initial `1.2.0~noble1`
+upload failed for exactly this reason: `debian/rules` used `curl` to fetch
+`flutter_linux_3.44.6-stable.tar.xz` from `storage.googleapis.com`, and the
+build farm couldn't resolve the host.
 
-Launchpad's build farm has **very restricted network access** — it does not
-allow arbitrary outbound HTTPS to fetch a multi-hundred-megabyte Flutter SDK
-tarball from `storage.googleapis.com` mid-build, which is exactly what
-`debian/rules` currently does (see `override_dh_auto_build`). If the build
-log shows the `curl` step failing or timing out, the `3.0 (native)` +
-"download Flutter during the build" approach won't work on Launchpad as-is,
-and one of these changes is needed instead:
+`1.2.0~noble2` fixes this by shipping the Flutter SDK and pub cache inside
+the source package under `packaging/vendor/`:
 
-- Switch to source format `3.0 (quilt)` and vendor a pinned Flutter SDK
-  tarball as an orig tarball / additional tarball component so the archive
-  contains everything the build needs — no network access required during
-  the actual build.
-- Or don't use a PPA source build at all: ship the Linux desktop build as a
-  **snap** (Snapcraft has its own build farm with different network rules
-  and Flutter's `snapcraft` extension is designed for exactly this) or as an
-  **AppImage** attached to GitHub Releases, and only use the PPA for
-  something that doesn't need a large SDK fetch.
+  * `packaging/vendor/flutter-3.44.6-linux-slim.tar.xz` — a Linux-only
+    stripped copy of Flutter 3.44.6 stable (~147 MB compressed).
+  * `packaging/vendor/pub-cache-3.44.6.tar.xz` — only the pub.dev packages
+    resolved by `pubspec.lock` (~19 MB compressed).
 
-Whichever path you take, the `debian/` directory in this repo is otherwise
-correct (control metadata, desktop file, icon, wrapper) and only
-`override_dh_auto_build`'s Flutter-acquisition strategy would need to
-change.
+`debian/rules` extracts these into build-scoped `.flutter/` and
+`.pub-cache/` directories, sets `FLUTTER_PREBUILT_ENGINE_VERSION` so the
+flutter tool doesn't try to derive it from a full git history, and runs
+`flutter pub get --offline` and `flutter build linux --release --no-pub`
+— nothing reaches the network.
+
+See `packaging/vendor/README` for the full recipe used to produce those
+tarballs and how to refresh them on a Flutter version bump.
 
 ## 5. Once published: user install command
 
@@ -122,9 +113,6 @@ sudo add-apt-repository ppa:dhiva-labs/apps
 sudo apt update
 sudo apt install secureshellgo
 ```
-
-(again, swap `dhiva-labs` for whatever Launchpad name actually hosts the
-PPA).
 
 ## 6. Supporting older Ubuntu releases (jammy, focal, ...)
 
@@ -150,12 +138,7 @@ upload only targets the series named in the top `debian/changelog` stanza
 
 ## Local verification
 
-Before uploading anything, sanity-check the packaging locally. The
-`debian/` metadata (control, changelog, copyright, rules, desktop file,
-icon) has been structurally validated in this repo, but the actual
-`dpkg-buildpackage` run has not been executed end-to-end yet — the
-Flutter SDK download alone is ~600 MB and the full build takes 10–15
-minutes on a fast machine.
+Before uploading anything, sanity-check the packaging locally.
 
 ```bash
 sudo apt install debhelper devscripts dput desktop-file-utils dh-make lintian

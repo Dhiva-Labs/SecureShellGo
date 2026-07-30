@@ -11,9 +11,6 @@ Build-Depends: debhelper-compat (= 13),
                liblzma-dev,
                libsecret-1-dev,
                libjsoncpp-dev,
-               ca-certificates,
-               curl,
-               unzip,
                xz-utils,
                git
 Standards-Version: 4.6.2

@@ -1,16 +1,23 @@
 #!/usr/bin/make -f
 
-# Ubuntu PPA builders don't have Flutter installed, so the build fetches a
-# pinned copy into a build-scoped directory rather than relying on anything
-# already on the builder's PATH. Keeps the build reproducible and self
-# contained.
+# Launchpad's PPA build farm has no outbound network access, so the Flutter
+# SDK and pub cache are vendored under packaging/vendor/ and extracted into
+# build-scoped directories here. See packaging/vendor/README for how the
+# tarballs are produced.
 FLUTTER_VERSION := 3.44.6
+FLUTTER_ENGINE_VERSION := 83675ed27633283e7fc296c8bca22e841224c096
+
 FLUTTER_ROOT := $(CURDIR)/.flutter
-FLUTTER_TARBALL := flutter_linux_$(FLUTTER_VERSION)-stable.tar.xz
-FLUTTER_URL := https://storage.googleapis.com/flutter_infra_release/releases/stable/linux/$(FLUTTER_TARBALL)
+FLUTTER_TARBALL := $(CURDIR)/packaging/vendor/flutter-$(FLUTTER_VERSION)-linux-slim.tar.xz
+PUB_CACHE_TARBALL := $(CURDIR)/packaging/vendor/pub-cache-$(FLUTTER_VERSION).tar.xz
 
 export PATH := $(FLUTTER_ROOT)/bin:$(PATH)
 export HOME := $(CURDIR)/debian/.home
+export PUB_CACHE := $(CURDIR)/.pub-cache
+# Tell the flutter tool which engine artifacts it already has, so it doesn't
+# try to derive the version from a real git history (there isn't one — the
+# vendored SDK ships a minimal .git shim instead).
+export FLUTTER_PREBUILT_ENGINE_VERSION := $(FLUTTER_ENGINE_VERSION)
 
 %:
 	dh $@
@@ -18,19 +25,32 @@ export HOME := $(CURDIR)/debian/.home
 override_dh_auto_build:
 	mkdir -p $(HOME)
 	if [ ! -x "$(FLUTTER_ROOT)/bin/flutter" ]; then \
-		rm -rf $(CURDIR)/flutter; \
-		curl -fSL -o $(CURDIR)/$(FLUTTER_TARBALL) "$(FLUTTER_URL)"; \
-		tar -xJf $(CURDIR)/$(FLUTTER_TARBALL) -C $(CURDIR); \
-		rm -f $(CURDIR)/$(FLUTTER_TARBALL); \
-		rm -rf $(FLUTTER_ROOT); \
+		rm -rf $(CURDIR)/flutter $(FLUTTER_ROOT); \
+		tar -xJf $(FLUTTER_TARBALL) -C $(CURDIR); \
 		mv $(CURDIR)/flutter $(FLUTTER_ROOT); \
 	fi
-	$(FLUTTER_ROOT)/bin/flutter --disable-analytics config --no-analytics
-	$(FLUTTER_ROOT)/bin/flutter build linux --release
+	if [ ! -d "$(PUB_CACHE)/hosted" ]; then \
+		mkdir -p $(PUB_CACHE); \
+		tar -xJf $(PUB_CACHE_TARBALL) -C $(PUB_CACHE); \
+	fi
+	$(FLUTTER_ROOT)/bin/flutter --disable-analytics config --no-analytics --no-cli-animations
+	$(FLUTTER_ROOT)/bin/flutter pub get --offline
+	$(FLUTTER_ROOT)/bin/flutter build linux --release --no-pub
 
 override_dh_auto_test:
 	# The Dart/Flutter test suite needs a Flutter engine and a display; it
 	# runs in CI, not at package build time.
+
+override_dh_dwz:
+	# The Flutter Linux shared libraries and the AOT-compiled application
+	# binary don't ship .debug_info in the form dwz expects, so
+	# dh_dwz fails outright. Skip DWARF compression for this package.
+
+override_dh_strip:
+	# libflutter_linux_gtk.so and the Flutter engine artifacts ship the
+	# exact binaries Google/Flutter tested against — stripping them here
+	# would produce a different .so than every other Flutter Linux
+	# installation and defeat symbol-based crash reporting. Skip strip.
 
 override_dh_auto_install:
 	mkdir -p debian/secureshellgo/opt/secureshellgo
@@ -44,4 +64,4 @@ override_dh_auto_install:
 
 override_dh_auto_clean:
 	dh_auto_clean
-	rm -rf .flutter build .dart_tool debian/.home
+	rm -rf .flutter .pub-cache build .dart_tool debian/.home

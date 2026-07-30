@@ -1,0 +1,84 @@
+Vendored build inputs for the Ubuntu PPA source package
+========================================================
+
+Launchpad's PPA build farm has no outbound network access, so anything the
+build needs must be shipped inside the source package. This directory holds
+the two large payloads that would otherwise have to be fetched over the
+network mid-build.
+
+flutter-3.44.6-linux-slim.tar.xz
+--------------------------------
+A Linux-only slice of the Flutter 3.44.6 stable SDK.
+
+Started from the upstream tarball:
+
+  https://storage.googleapis.com/flutter_infra_release/releases/stable/linux/flutter_linux_3.44.6-stable.tar.xz
+
+  Framework revision: ee80f08bbf97172ec030b8751ceab557177a34a6
+  Engine revision:    83675ed27633283e7fc296c8bca22e841224c096
+  Dart SDK:           3.12.2
+
+Stripped, before repacking, of everything the `flutter build linux --release`
+path does not touch:
+
+  * bin/cache/artifacts/engine/{android-*,darwin-*,ios*,windows-*,linux-x64-profile}
+  * bin/cache/flutter_web_sdk (Flutter web SDK)
+  * bin/cache/artifacts/{gradle_wrapper,ios-*,libimobiledevice*,libplist,libusbmuxd,openssl}
+  * dev/, examples/, docs/, agent-artifacts/
+  * bin/cache/dart-sdk/bin/dartaotruntime_{a,m,t}san (sanitizer builds)
+  * bin/cache/dart-sdk/bin/resources/{devtools,dartdoc}
+  * Web-only Dart snapshots (dart2js, dart2wasm, dartdevc, kernel_worker, wasm-opt)
+  * bin/cache/dart-sdk/bin/snapshots/analysis_server*.snapshot (IDE LSP support)
+  * bin/cache/dart-sdk/bin/snapshots/dart_mcp_server_aot.dart.snapshot
+  * *.sym debug symbol files
+  * bin/cache/dart-sdk/bin/{dartvm.sym,dartvm} was stripped and then dartvm was
+    restored because it is required by the Dart CLI dispatcher at runtime
+  * .git (replaced with a minimal shim so the flutter shell script's
+    `git rev-parse HEAD` still succeeds; combined with
+    `FLUTTER_PREBUILT_ENGINE_VERSION` set in debian/rules, this is enough for
+    the flutter tool to bootstrap without touching a real git history)
+
+Uncompressed size:  ~653 MB
+Compressed size:    ~147 MB (xz -6)
+
+pub-cache-3.44.6.tar.xz
+-----------------------
+The subset of the pub.dev hosted cache that resolves the exact package
+versions listed in pubspec.lock. Only the 77 hosted packages from
+pubspec.lock are shipped, along with their matching sha256 hash files under
+hosted-hashes/pub.dev/.
+
+Populated by running `flutter pub get` once against the stripped Flutter SDK
+above with a scratch PUB_CACHE, then copying only the pubspec.lock-resolved
+package directories out.
+
+Uncompressed size:  ~89 MB
+Compressed size:    ~19 MB (xz -6)
+
+How debian/rules uses these
+---------------------------
+1. Extract flutter-3.44.6-linux-slim.tar.xz into $(CURDIR)/.flutter/
+2. Extract pub-cache-3.44.6.tar.xz into $(CURDIR)/.pub-cache/
+3. Export FLUTTER_PREBUILT_ENGINE_VERSION so the flutter tool skips its git-
+   based engine-version lookup (which does not work with the shim .git).
+4. Run `flutter pub get --offline` (uses only the extracted pub cache).
+5. Run `flutter build linux --release --no-pub` (skips the online pub
+   check the build command would otherwise perform).
+
+No step reaches the network.
+
+Regenerating (only when bumping the Flutter version pin)
+--------------------------------------------------------
+This is not automated because it only happens on a version bump. Steps:
+
+  1. Download the upstream Flutter Linux stable tarball for the new version.
+  2. Extract and apply the prune list above.
+  3. Recreate the minimal .git shim with the new framework revision:
+       mkdir -p .git/refs/heads
+       echo "ref: refs/heads/stable" > .git/HEAD
+       echo "<framework-revision>" > .git/refs/heads/stable
+  4. Repack with `tar -cJf flutter-<version>-linux-slim.tar.xz flutter/`.
+  5. Rebuild the pub cache in the same session against a fresh project
+     checkout so pubspec.lock is honoured.
+  6. Update FLUTTER_VERSION and FLUTTER_ENGINE_VERSION in debian/rules to
+     match the new pin.
