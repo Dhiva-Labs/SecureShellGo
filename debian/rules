@@ -34,7 +34,29 @@ override_dh_auto_build:
 		tar -xJf $(PUB_CACHE_TARBALL) -C $(PUB_CACHE); \
 	fi
 	$(FLUTTER_ROOT)/bin/flutter --disable-analytics config --no-analytics --no-cli-animations
-	$(FLUTTER_ROOT)/bin/flutter pub get --offline
+	# Belt-and-braces to keep pub genuinely offline. All three exist
+	# because the ~noble2 build failed with "Got socket error trying to
+	# find package test at https://pub.dev." under --offline — meaning
+	# pub decided to re-resolve rather than trust pubspec.lock, and its
+	# offline-fallback fell through to a network call anyway.
+	#
+	# 1) Touch the lockfile: dpkg-source preserves mtimes, so a version
+	#    bump can leave pubspec.yaml newer than pubspec.lock and trigger
+	#    a "lockfile stale" re-resolution.
+	# 2) Strip `resolution: workspace` from every vendored pubspec: ten
+	#    of our transitive deps (test_api, meta, ffi, win32...) declare
+	#    it and it makes pub pull those packages' dev_dependencies
+	#    (`test: any`, `test_core: any`) as if they were monorepo
+	#    members. Those packages are not vendored, so pub tries to
+	#    fetch them.
+	# 3) Use `dart pub get --enforce-lockfile --offline`: --enforce-
+	#    lockfile forbids any resolution that would change the
+	#    lockfile, which forbids any network access even when a
+	#    workspace member would otherwise expand the set. Only exposed
+	#    through the dart CLI; `flutter pub get` does not accept it.
+	touch pubspec.lock
+	find $(PUB_CACHE) -name pubspec.yaml -exec sed -i '/^resolution: workspace/d' {} +
+	$(FLUTTER_ROOT)/bin/dart pub get --enforce-lockfile --offline
 	$(FLUTTER_ROOT)/bin/flutter build linux --release --no-pub
 
 override_dh_auto_test:

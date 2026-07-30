@@ -1,3 +1,24 @@
+secureshellgo (1.2.0~noble3) noble; urgency=medium
+
+  * Fix offline pub resolution failing on Launchpad ("Got socket error
+    trying to find package test at https://pub.dev." under --offline).
+    Three defensive fixes because the root cause is Launchpad-specific
+    and would not reproduce locally:
+    - Touch pubspec.lock before pub get: dpkg-source preserves mtimes,
+      so a version bump can leave pubspec.yaml newer than pubspec.lock
+      and trigger pub's "lockfile stale" re-resolution.
+    - Strip `resolution: workspace` from every pubspec in the vendored
+      pub cache: ten transitive deps (test_api, meta, ffi, win32...)
+      declare it, which pulls each package's dev_dependencies (`test`,
+      `test_core`) as if they were monorepo members.
+    - Use `dart pub get --enforce-lockfile --offline` instead of
+      `flutter pub get --offline`: --enforce-lockfile forbids any
+      resolution that would change the lockfile, which forbids any
+      network fallback even under workspace expansion. Only exposed
+      through the dart CLI.
+
+ -- Dhiva Labs <dhivakar1010@gmail.com>  Thu, 30 Jul 2026 13:30:00 +0530
+
 secureshellgo (1.2.0~noble2) noble; urgency=medium
 
   * Vendor the Flutter SDK and pub cache under packaging/vendor/ so the
