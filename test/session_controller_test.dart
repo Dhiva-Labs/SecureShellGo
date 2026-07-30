@@ -184,6 +184,15 @@ class FakeRemoteFs implements RemoteFileSystem {
   Future<bool> exists(String path) async => files.containsKey(path);
 
   @override
+  Future<void> mkdir(String path) async {}
+
+  @override
+  Future<void> removeDirectory(String path) async {}
+
+  @override
+  Future<bool> isDirectory(String path) async => false;
+
+  @override
   Future<void> close() async {
     closed = true;
   }
@@ -305,6 +314,9 @@ class FakeStorage implements DeviceStorage {
     int maxBytes = kDefaultPickedTextFileMaxBytes,
   }) async =>
       null;
+
+  @override
+  Future<PickedLocalDirectory?> pickDirectory() async => null;
 }
 
 /// Hands the session a keep-alive timer the test drives by hand, so no test

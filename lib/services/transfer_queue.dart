@@ -65,6 +65,7 @@ class TransferTask {
     this.destinationLabel,
     this.moveSource = false,
     this.route = TransferRoute.relay,
+    this.isDirectoryTransfer = false,
   });
 
   final String id;
@@ -135,6 +136,17 @@ class TransferTask {
   /// recursive directory download so the tree's shape survives the trip.
   /// Empty means straight into Downloads, which is every single-file case.
   final String relativeDirectory;
+
+  /// Whether this task's [remotePath] / [localPath] names a *directory* rather
+  /// than a file — the whole-folder upload, and the whole-folder
+  /// server-to-server copy or move. The executor branches on this: a folder
+  /// upload walks its local root and streams every file under it under one
+  /// row in the panel; a folder S2S transfer picks between the recursive
+  /// relay path and the direct `put -r` path exactly as its file cousin does.
+  ///
+  /// One row per top-level folder is what the UI shows: 300 files inside a
+  /// moved `Documents/` should not become 300 rows on the transfer panel.
+  final bool isDirectoryTransfer;
 
   /// Bytes, when known up front. Downloads learn it from `stat`, uploads from
   /// the picked file.
@@ -345,6 +357,33 @@ class TransferQueue {
     );
   }
 
+  /// Queues an upload of the local directory at [localPath] to [remotePath] —
+  /// the top-level destination folder. The executor walks the local tree,
+  /// mkdirs the shape, and streams every file underneath.
+  ///
+  /// One task, one row: the panel shows the folder's progress in aggregate,
+  /// not each file inside it.
+  TransferTask enqueueUploadDirectory({
+    required String localPath,
+    required String remotePath,
+    required String name,
+    int? totalBytes,
+    bool overwrite = false,
+  }) {
+    return _enqueue(
+      TransferTask(
+        id: _nextId(),
+        name: name,
+        remotePath: remotePath,
+        direction: TransferDirection.upload,
+        totalBytes: totalBytes,
+        localPath: localPath,
+        overwrite: overwrite,
+        isDirectoryTransfer: true,
+      ),
+    );
+  }
+
   /// Queues a copy of [remotePath] on this session straight into
   /// [destinationPath] on another open session, without the bytes touching
   /// the device.
@@ -363,6 +402,7 @@ class TransferQueue {
     bool moveSource = false,
     int? totalBytes,
     TransferRoute route = TransferRoute.relay,
+    bool isDirectoryTransfer = false,
   }) {
     return _enqueue(
       TransferTask(
@@ -377,6 +417,7 @@ class TransferQueue {
         destinationLabel: destinationLabel,
         moveSource: moveSource,
         route: route,
+        isDirectoryTransfer: isDirectoryTransfer,
       ),
     );
   }
@@ -458,6 +499,7 @@ class TransferQueue {
         // A retry keeps the route the user asked for the first time. The
         // fallback record is *this* attempt's, not something to carry over.
         route: task.route,
+        isDirectoryTransfer: task.isDirectoryTransfer,
       ),
     );
   }

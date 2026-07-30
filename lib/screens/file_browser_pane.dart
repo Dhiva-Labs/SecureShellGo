@@ -420,6 +420,91 @@ class _FileBrowserPaneState extends State<FileBrowserPane>
     }
   }
 
+  /// The other upload path: pick a whole folder and land it in the directory
+  /// the user is looking at. The shape is preserved: empty subfolders too.
+  ///
+  /// The local walk happens synchronously before anything is queued, so the
+  /// user can be told a count and a total before any bytes move — the same
+  /// courtesy the recursive download path extends before it schedules
+  /// hundreds of files.
+  Future<void> _pickAndUploadFolder() async {
+    final PickedLocalDirectory? picked;
+    try {
+      picked = await widget.session.pickLocalDirectory();
+    } on DeviceStorageException catch (e) {
+      if (mounted) _snack(e.message, isError: true);
+      return;
+    }
+    if (!mounted || picked == null) return;
+
+    // Captured now, in case the user navigates while the walk is running.
+    final directory = _path;
+
+    final LocalDirectoryTree tree;
+    try {
+      tree = await readLocalDirectoryTree(picked.path);
+    } on LocalDirectoryWalkFailure catch (e) {
+      if (mounted) _snack(e.message, isError: true);
+      return;
+    }
+    if (!mounted) return;
+
+    if (tree.isEmpty) {
+      _snack('${picked.name} is empty — nothing to upload.');
+      return;
+    }
+
+    // Whole-folder collision decision at the top level. Every file below
+    // cascades from this choice, the same rule the S2S folder path uses.
+    UploadCollisionResponse? decision;
+    final sftp = await _client();
+    if (!mounted) return;
+    final existing = await remoteNamesIn(sftp, directory, [picked.name]);
+    if (!mounted) return;
+    if (existing.contains(picked.name)) {
+      decision = await askAboutRemoteCollisionDialog(
+        context,
+        picked.name,
+        directory,
+        offerApplyToAll: false,
+        hostLabel: widget.session.host.displayName,
+      );
+      if (!mounted || decision == null) return;
+    }
+
+    String landingName = picked.name;
+    var overwrite = false;
+    if (decision != null) {
+      switch (decision.action) {
+        case UploadCollisionAction.overwrite:
+          overwrite = true;
+        case UploadCollisionAction.keepBoth:
+          landingName = RemotePath.deduplicate(
+            picked.name,
+            (candidate) => existing.contains(candidate),
+          );
+        case UploadCollisionAction.skip:
+          _snack('Skipped ${picked.name}.');
+          return;
+      }
+    }
+
+    widget.session.queueUploadDirectory(
+      pickedPath: picked.path,
+      pickedName: picked.name,
+      remoteDirectory: directory,
+      asName: landingName,
+      overwrite: overwrite,
+      totalBytes: tree.totalBytes,
+    );
+    _snack(
+      'Uploading ${picked.name} '
+      '(${tree.fileCount} file${tree.fileCount == 1 ? '' : 's'}, '
+      '${RemotePath.formatBytes(tree.totalBytes)}) '
+      'to $directory/$landingName',
+    );
+  }
+
   /// Uploads [files] into the directory currently on screen, resolving name
   /// collisions with the server first.
   ///
@@ -735,9 +820,13 @@ class _FileBrowserPaneState extends State<FileBrowserPane>
 
   Future<void> _showEntryActions(RemoteEntry entry) async {
     // Read before the sheet is built, so the "another server" rows appear only
-    // when there is in fact another server open right now.
-    final canSend =
-        entry.kind == RemoteEntryKind.file && _destinations.isNotEmpty;
+    // when there is in fact another server open right now. Directories are
+    // first-class targets since Phase 12.5 — the folder-copy and folder-move
+    // paths handle them the same way the file paths do at this layer.
+    final canSend = (entry.kind == RemoteEntryKind.file ||
+            entry.kind == RemoteEntryKind.directory) &&
+        _destinations.isNotEmpty;
+    final isFolder = entry.kind == RemoteEntryKind.directory;
 
     await showModalBottomSheet<void>(
       context: context,
@@ -779,7 +868,11 @@ class _FileBrowserPaneState extends State<FileBrowserPane>
             if (canSend) ...[
               ListTile(
                 leading: const Icon(Icons.drive_file_move_outlined),
-                title: const Text('Copy to another server…'),
+                title: Text(
+                  isFolder
+                      ? 'Copy folder to another server…'
+                      : 'Copy to another server…',
+                ),
                 subtitle: const Text('Straight across, without downloading'),
                 onTap: () {
                   Navigator.of(context).pop();
@@ -788,9 +881,17 @@ class _FileBrowserPaneState extends State<FileBrowserPane>
               ),
               ListTile(
                 leading: const Icon(Icons.drive_file_move_rtl_outlined),
-                title: const Text('Move to another server…'),
-                subtitle: const Text('Deletes this copy once the other is '
-                    'verified'),
+                title: Text(
+                  isFolder
+                      ? 'Move folder to another server…'
+                      : 'Move to another server…',
+                ),
+                subtitle: Text(
+                  isFolder
+                      ? 'Deletes this folder once every file has been '
+                          'verified over there'
+                      : 'Deletes this copy once the other is verified',
+                ),
                 onTap: () {
                   Navigator.of(context).pop();
                   unawaited(_sendToServer([entry], move: true));
@@ -866,6 +967,9 @@ class _FileBrowserPaneState extends State<FileBrowserPane>
               onToggleHidden: () => setState(() => _showHidden = !_showHidden),
               onRefresh: () => unawaited(_refresh()),
               onUpload: () => unawaited(_pickAndUpload()),
+              onUploadFolder: _folderPickerAvailable
+                  ? () => unawaited(_pickAndUploadFolder())
+                  : null,
             ),
           const Divider(height: 1),
           Expanded(child: _buildBody()),
@@ -903,20 +1007,25 @@ class _FileBrowserPaneState extends State<FileBrowserPane>
 
   /// Which rows the user meant to drag when they long-pressed [entry].
   ///
-  /// Not selecting: the row under their finger, if it is a file. Selecting: if
-  /// the pressed row is *in* the selection, every selected file goes; if it is
-  /// not, the drag is empty and the long-press falls through to its ordinary
-  /// toggle-select. Non-file rows (directories, non-file symlinks) can never
-  /// start a drag — server-to-server directory copies are the documented open
-  /// gap, and dragging a folder onto a tab would only fail once.
+  /// Not selecting: the row under their finger, if it is a file or a
+  /// directory — Phase 12.5 made folders first-class here, so a dragged
+  /// folder queues one recursive-copy task on drop. Selecting: if the
+  /// pressed row is *in* the selection, every selected file and folder in
+  /// the selection goes; if the pressed row is not in the selection, the
+  /// drag is empty and the long-press falls through to its ordinary
+  /// toggle-select. Non-file, non-directory rows (dangling symlinks and
+  /// anything else) cannot start a drag — the drop target has nowhere
+  /// sensible to put them.
   List<RemoteEntry> _dragEntriesFor(RemoteEntry entry) {
+    bool draggable(RemoteEntry e) =>
+        e.isDownloadable || e.kind == RemoteEntryKind.directory;
     if (_selecting) {
       if (!_selected.contains(entry.path)) return const [];
       return _visible
-          .where((e) => _selected.contains(e.path) && e.isDownloadable)
+          .where((e) => _selected.contains(e.path) && draggable(e))
           .toList(growable: false);
     }
-    if (!entry.isDownloadable) return const [];
+    if (!draggable(entry)) return const [];
     return [entry];
   }
 
@@ -978,6 +1087,24 @@ class _FileBrowserPaneState extends State<FileBrowserPane>
       },
       child: tile,
     );
+  }
+
+  /// Whether the platform has a folder picker wired up. Desktop platforms
+  /// use `file_selector`'s `getDirectoryPath`; Android's SAF tree picker is
+  /// a documented gap (`StorageBridge.kt`), so the entry hides on Android
+  /// until the PM lands it — a menu row that silently does nothing is
+  /// worse than none.
+  bool get _folderPickerAvailable {
+    switch (Theme.of(context).platform) {
+      case TargetPlatform.linux:
+      case TargetPlatform.macOS:
+      case TargetPlatform.windows:
+        return true;
+      case TargetPlatform.android:
+      case TargetPlatform.iOS:
+      case TargetPlatform.fuchsia:
+        return false;
+    }
   }
 
   /// Desktop platforms — Linux, macOS, Windows — where a mouse is the primary
@@ -1128,19 +1255,33 @@ Future<void> sendEntriesToSession(
   }
 
   for (final transfer in plan.transfers) {
-    final entry = plan.files[transfer.sourceIndex];
-    source.queueRemoteCopy(
-      remotePath: entry.path,
-      name: entry.name,
-      destinationSessionId: destination.id,
-      destinationLabel: destination.host.displayName,
-      remoteDirectory: directory,
-      asName: transfer.remoteName,
-      overwrite: transfer.overwrite,
-      moveSource: move,
-      totalBytes: entry.size,
-      route: chosenRoute,
-    );
+    final entry = plan.entryFor(transfer);
+    if (entry.kind == RemoteEntryKind.directory) {
+      source.queueRemoteCopyDirectory(
+        remotePath: entry.path,
+        name: entry.name,
+        destinationSessionId: destination.id,
+        destinationLabel: destination.host.displayName,
+        remoteDirectory: directory,
+        asName: transfer.remoteName,
+        overwrite: transfer.overwrite,
+        moveSource: move,
+        route: chosenRoute,
+      );
+    } else {
+      source.queueRemoteCopy(
+        remotePath: entry.path,
+        name: entry.name,
+        destinationSessionId: destination.id,
+        destinationLabel: destination.host.displayName,
+        remoteDirectory: directory,
+        asName: transfer.remoteName,
+        overwrite: transfer.overwrite,
+        moveSource: move,
+        totalBytes: entry.size,
+        route: chosenRoute,
+      );
+    }
   }
 
   onQueued?.call();
@@ -1311,14 +1452,14 @@ Future<UploadCollisionResponse?> askAboutRemoteCollisionDialog(
 }
 
 String _nothingSentMessage(RemoteTransferPlan plan) {
-  if (plan.unsupported.isNotEmpty && plan.files.isEmpty) {
+  if (plan.unsupported.isNotEmpty && plan.entries.isEmpty) {
     return plan.unsupported.length == 1
-        ? '"${plan.unsupported.single}" is a folder or a link. Only files '
-            'can go straight between servers for now.'
-        : 'Folders and links cannot go straight between servers yet — only '
-            'files.';
+        ? '"${plan.unsupported.single}" is a symbolic link. Only files and '
+            'folders can go straight between servers.'
+        : 'Symbolic links cannot go straight between servers — only files '
+            'and folders.';
   }
-  return 'Nothing sent — every file was skipped.';
+  return 'Nothing sent — every item was skipped.';
 }
 
 String _sentMessage(
@@ -1333,12 +1474,12 @@ String _sentMessage(
   final head = count == 1
       ? '$verb ${plan.transfers.single.remoteName} to '
           '${target.host.displayName}:$directory'
-      : '$verb $count files to ${target.host.displayName}:$directory';
+      : '$verb $count items to ${target.host.displayName}:$directory';
   final notes = <String>[
     if (route == TransferRoute.direct) 'direct',
     if (plan.skipped.isNotEmpty) '${plan.skipped.length} skipped',
     if (plan.unsupported.isNotEmpty)
-      '${plan.unsupported.length} folder'
+      '${plan.unsupported.length} link'
           '${plan.unsupported.length == 1 ? '' : 's'} left out',
   ];
   return notes.isEmpty ? head : '$head · ${notes.join(' · ')}';
@@ -1579,12 +1720,20 @@ class _BrowserActions extends StatelessWidget {
     required this.onToggleHidden,
     required this.onRefresh,
     required this.onUpload,
+    this.onUploadFolder,
   });
 
   final bool showHidden;
   final VoidCallback onToggleHidden;
   final VoidCallback onRefresh;
   final VoidCallback onUpload;
+
+  /// The folder picker's entry, or null on a platform where no picker is
+  /// wired up yet (Android). On desktop we surface it as a separate icon
+  /// alongside the file picker so a user who knows they want a whole folder
+  /// does not have to open a menu — the FAB below still handles the common
+  /// files case.
+  final VoidCallback? onUploadFolder;
 
   @override
   Widget build(BuildContext context) {
@@ -1605,6 +1754,12 @@ class _BrowserActions extends StatelessWidget {
             ),
           ),
           const Spacer(),
+          if (onUploadFolder != null)
+            IconButton(
+              tooltip: 'Upload a folder here',
+              icon: const Icon(Icons.drive_folder_upload, size: 20),
+              onPressed: onUploadFolder,
+            ),
           IconButton(
             tooltip: 'Upload a file here',
             icon: const Icon(Icons.upload_file, size: 20),

@@ -59,6 +59,15 @@ class TreeFs implements RemoteFileSystem {
   @override
   Future<bool> exists(String path) async => tree.containsKey(path);
 
+  @override
+  Future<void> mkdir(String path) async {}
+
+  @override
+  Future<void> removeDirectory(String path) async {}
+
+  @override
+  Future<bool> isDirectory(String path) async => tree.containsKey(path);
+
   // The write half of the interface. A directory *walk* never uses it — this
   // fake exists to describe a shape, not to move bytes — so reaching any of
   // these from a plan test is a bug in the test, and says so.

@@ -65,3 +65,11 @@ app.*.map.json
 # packaging inputs (regenerated on Flutter version bumps) rather than
 # source code the repo tracks history for.
 /packaging/vendor/*.tar.xz
+
+# dpkg-buildpackage / debhelper generated between clean and build. `debian/
+# rules clean` removes them, but keep them out of the working tree in case
+# a build was interrupted.
+/debian/.debhelper/
+/debian/debhelper-build-stamp
+/debian/secureshellgo/
+/debian/secureshellgo.substvars

@@ -1,3 +1,4 @@
+import '../models/remote_entry.dart';
 import 'remote_path.dart';
 import 'sftp_service.dart';
 import 'transfer_queue.dart';
@@ -218,4 +219,269 @@ String _defaultTemporaryName(String finalName) {
   // letting the server reject the open.
   final head = finalName.length > 200 ? finalName.substring(0, 200) : finalName;
   return '.$head$suffix';
+}
+
+/// One file inside a folder being copied across, resolved from the source's
+/// tree walk.
+class _WalkedFile {
+  const _WalkedFile({
+    required this.sourcePath,
+    required this.destinationPath,
+    this.size,
+  });
+
+  final String sourcePath;
+  final String destinationPath;
+  final int? size;
+}
+
+/// Streams a whole directory tree from [source] to [destination], one file at
+/// a time, preserving the shape and any empty subdirectories along the way.
+///
+/// **Why sequential.** Each file goes through [copyRemoteFile], and each of
+/// those does its own read-side backpressure against the SSH window (see the
+/// note on [copyRemoteFile] for the whole chain). Running several in parallel
+/// would share the same TCP window between them and finish no sooner in
+/// aggregate — the same "one at a time" rule the transfer queue applies at
+/// the batch level, applied here at the file level so a folder move takes its
+/// turn behind that session's other transfers rather than saturating them.
+///
+/// **Collision handling belongs to the caller.** By the time this runs, the
+/// destination directory is either fresh — a top-level `replace` has already
+/// removed the old one — or unique (a `keep both` has already renamed
+/// [destinationDirectory] via [RemotePath.deduplicate]). Nothing inside the
+/// folder can therefore collide with anything already on the destination, so
+/// per-file copies run without overwrite and without a per-file prompt.
+///
+/// **Move semantics.** [deleteSourceAfterVerify] pushes through to each
+/// per-file copy: only the four-check safety chain (bytes acked, handle
+/// closed, size on both sides matches) deletes anything. Directories on the
+/// source are then removed bottom-up once every file under them has left, and
+/// only rmdir'd if empty — a failed per-file copy leaves that file *and* every
+/// ancestor directory, which is what makes a partial move visible for a retry
+/// instead of hiding under a half-empty tree.
+///
+/// **Symlinks are not chased**, in either direction, for the same reason
+/// `download_plan.dart` skips them: a link to a directory can point back up
+/// its own tree and loop the walk, and a link to a file would duplicate bytes
+/// under two names. They are counted and left behind — the caller is told in
+/// the transfer's snackbar.
+Future<RemoteCopyOutcome> copyRemoteDirectory({
+  required RemoteFileSystem source,
+  required RemoteFileSystem destination,
+  required String sourceDirectory,
+  required String destinationDirectory,
+  bool overwrite = false,
+  bool deleteSourceAfterVerify = false,
+  TransferProgress? onProgress,
+  CancelCheck? isCancelled,
+  TemporaryNamer? temporaryNamer,
+}) async {
+  void checkCancelled() {
+    if (isCancelled?.call() ?? false) throw const TransferCancelled();
+  }
+
+  checkCancelled();
+
+  if (overwrite) {
+    // A top-level `Replace` at the collision prompt licenses this — anything
+    // deeper in the tree is not a collision, since the tree is about to be
+    // put back exactly by the copy below.
+    await removeRemoteDirectoryTree(destination, destinationDirectory);
+  }
+
+  try {
+    await destination.mkdir(destinationDirectory);
+  } on SftpFailure {
+    // Already exists — either the caller pre-created it, or the overwrite
+    // rm above did not fully clear it (a permission error, say). Fall through
+    // and let the per-file writes report the problem if one is still there.
+  }
+
+  // Walk the source tree breadth-first. Directories in [subdirs] are the
+  // ones we need to `mkdir` on the destination — empty subdirectories are
+  // recorded here too, so an empty `logs/` folder does not silently
+  // disappear across the transfer.
+  final subdirs = <String>[];
+  final files = <_WalkedFile>[];
+
+  final pending = <String>[''];
+  for (var index = 0; index < pending.length; index++) {
+    checkCancelled();
+    final relative = pending[index];
+    final currentSource = relative.isEmpty
+        ? sourceDirectory
+        : RemotePath.join(sourceDirectory, relative);
+    final List<RemoteEntry> listed;
+    try {
+      listed = await source.list(currentSource);
+    } on TransferCancelled {
+      rethrow;
+    } catch (_) {
+      // An unreadable subdirectory is stepped over rather than failing the
+      // whole move: the browser above has already told the user which
+      // directories will not open, and losing one branch of a large tree
+      // should not lose the whole tree.
+      continue;
+    }
+    for (final entry in listed) {
+      if (entry.kind == RemoteEntryKind.symlink) {
+        // A link to a directory could loop the walk, a link to a file would
+        // double-transfer bytes under two names. Same policy as the download
+        // walker and the direct path's tree.
+        continue;
+      }
+      final childRelative =
+          relative.isEmpty ? entry.name : '$relative/${entry.name}';
+      if (entry.kind == RemoteEntryKind.directory) {
+        subdirs.add(childRelative);
+        pending.add(childRelative);
+      } else if (entry.kind == RemoteEntryKind.file) {
+        files.add(_WalkedFile(
+          sourcePath: RemotePath.join(currentSource, entry.name),
+          destinationPath: RemotePath.join(destinationDirectory, childRelative),
+          size: entry.size,
+        ));
+      }
+    }
+  }
+
+  // Materialise every subdirectory on the destination up front, so an empty
+  // folder still lands and so per-file mkdirs never race with a parent that
+  // is still being created.
+  for (final relative in subdirs) {
+    checkCancelled();
+    final path = RemotePath.join(destinationDirectory, relative);
+    try {
+      await destination.mkdir(path);
+    } on SftpFailure {
+      // Already there — either from a repeated tree (see [overwrite] above)
+      // or from the caller having pre-populated. The per-file writes below
+      // are still gated on the temporary → rename dance, so a "wrong
+      // directory" would surface there.
+    }
+  }
+
+  var bytesMoved = 0;
+
+  for (final file in files) {
+    checkCancelled();
+    // A per-file failure propagates out of the loop as-is: no rmdirs run,
+    // whatever files landed stay landed, and the source's remaining tree is
+    // untouched. That is the "two files and a message" rule that
+    // [copyRemoteFile] applies for one file, applied to the batch.
+    final outcome = await copyRemoteFile(
+      source: source,
+      destination: destination,
+      sourcePath: file.sourcePath,
+      destinationPath: file.destinationPath,
+      overwrite: false,
+      deleteSourceAfterVerify: deleteSourceAfterVerify,
+      onProgress: (bytes) {
+        onProgress?.call(bytesMoved + bytes);
+      },
+      isCancelled: isCancelled,
+      temporaryNamer: temporaryNamer,
+    );
+    bytesMoved += outcome.bytesCopied;
+    onProgress?.call(bytesMoved);
+  }
+
+  var sourceDeleted = false;
+  if (deleteSourceAfterVerify) {
+    checkCancelled();
+    // Every file went across successfully — the loop above would have thrown
+    // otherwise — so every source subdirectory is *ours* to rmdir now.
+    // Bottom-up: a rmdir on a parent that still has a child directory in it
+    // would fail, so descend the recorded [subdirs] in reverse (BFS order
+    // reversed puts deepest first). A non-empty rmdir is silently swallowed:
+    // a symlink we skipped, or a subdirectory that could not be listed
+    // during the walk, still stays where it is, and the root rmdir below
+    // will report that by failing.
+    for (final relative in subdirs.reversed) {
+      final path = RemotePath.join(sourceDirectory, relative);
+      try {
+        await source.removeDirectory(path);
+      } catch (_) {
+        // Left behind — matches the "partial move is visible" invariant.
+      }
+    }
+    try {
+      await source.removeDirectory(sourceDirectory);
+      sourceDeleted = true;
+    } catch (_) {
+      // Root still holds something — a symlink, or an unwalkable subdir.
+      // The partial-move visibility that argues for.
+    }
+  }
+
+  return RemoteCopyOutcome(
+    bytesCopied: bytesMoved,
+    destinationPath: destinationDirectory,
+    sourceDeleted: sourceDeleted,
+  );
+}
+
+/// Walks [directory] on [fs] and removes everything under it, then the
+/// directory itself. Best-effort: failures are swallowed so that a subsequent
+/// mkdir can still put a fresh tree in place.
+///
+/// Called by [copyRemoteDirectory] under an `overwrite` and by
+/// `direct_remote_copy.dart` to clear the target before `sftp put -r` fills
+/// it. Public so both callers reach the same implementation rather than
+/// growing two subtly different tree-blows.
+Future<void> removeRemoteDirectoryTree(
+  RemoteFileSystem fs,
+  String directory,
+) async {
+  if (!await fs.isDirectory(directory)) {
+    // Not there at all, or is a file — either way, remove it and be done.
+    try {
+      await fs.remove(directory);
+    } catch (_) {
+      // Missing, or forbidden. Nothing to do.
+    }
+    return;
+  }
+
+  final subdirs = <String>[];
+  final pending = <String>[directory];
+  for (var index = 0; index < pending.length; index++) {
+    final current = pending[index];
+    final List<RemoteEntry> entries;
+    try {
+      entries = await fs.list(current);
+    } catch (_) {
+      // Cannot list this branch. Whatever is in it stays, and the parent's
+      // rmdir will fail loudly — a permission we cannot walk past is a
+      // reason to leave the tree half-cleared rather than pretend otherwise.
+      continue;
+    }
+    for (final entry in entries) {
+      final childPath = RemotePath.join(current, entry.name);
+      if (entry.kind == RemoteEntryKind.directory) {
+        subdirs.add(childPath);
+        pending.add(childPath);
+      } else {
+        try {
+          await fs.remove(childPath);
+        } catch (_) {
+          // Best-effort.
+        }
+      }
+    }
+  }
+
+  for (final path in subdirs.reversed) {
+    try {
+      await fs.removeDirectory(path);
+    } catch (_) {
+      // Best-effort.
+    }
+  }
+  try {
+    await fs.removeDirectory(directory);
+  } catch (_) {
+    // Best-effort — a symlink that will not rmdir might still be there.
+  }
 }

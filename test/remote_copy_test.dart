@@ -48,11 +48,45 @@ class MemoryFs implements RemoteFileSystem {
   @override
   Future<String> home() async => '/home/dev';
 
+  /// Directory paths that exist here. Directory folders are tracked
+  /// separately from files so `list` can return real entries for the
+  /// folder-copy tests, while single-file tests keep working with an empty
+  /// listing they never look at.
+  final Set<String> directories = {};
+
   @override
   Future<String> resolve(String path) async => path;
 
   @override
-  Future<List<RemoteEntry>> list(String path) async => const [];
+  Future<List<RemoteEntry>> list(String path) async {
+    if (throwOnList) {
+      throw SftpFailure('Permission denied.', isPermissionDenied: true);
+    }
+    final entries = <RemoteEntry>[];
+    for (final dir in directories) {
+      if (_parentOf(dir) == path) {
+        entries.add(RemoteEntry(
+          name: _basename(dir),
+          path: dir,
+          kind: RemoteEntryKind.directory,
+        ));
+      }
+    }
+    for (final entry in files.entries) {
+      if (_parentOf(entry.key) == path) {
+        entries.add(RemoteEntry(
+          name: _basename(entry.key),
+          path: entry.key,
+          kind: RemoteEntryKind.file,
+          size: entry.value,
+        ));
+      }
+    }
+    return entries;
+  }
+
+  /// Toggle to make `list` fail on any call — for the fallback-probe test.
+  var throwOnList = false;
 
   @override
   Future<int?> sizeOf(String path) async {
@@ -120,7 +154,44 @@ class MemoryFs implements RemoteFileSystem {
   }
 
   @override
+  Future<void> mkdir(String path) async {
+    if (directories.contains(path) || files.containsKey(path)) {
+      throw const SftpFailure('mkdir: already exists');
+    }
+    directories.add(path);
+  }
+
+  @override
+  Future<void> removeDirectory(String path) async {
+    if (!directories.contains(path)) {
+      throw const SftpFailure('rmdir: no such directory');
+    }
+    // Must be empty.
+    final hasChild = files.keys.any((k) => _parentOf(k) == path) ||
+        directories.any((d) => _parentOf(d) == path);
+    if (hasChild) {
+      throw const SftpFailure('rmdir: not empty');
+    }
+    directories.remove(path);
+    removed.add(path);
+  }
+
+  @override
+  Future<bool> isDirectory(String path) async => directories.contains(path);
+
+  @override
   Future<void> close() async {}
+}
+
+String _parentOf(String path) {
+  final index = path.lastIndexOf('/');
+  if (index <= 0) return '/';
+  return path.substring(0, index);
+}
+
+String _basename(String path) {
+  final index = path.lastIndexOf('/');
+  return index < 0 ? path : path.substring(index + 1);
 }
 
 /// A file being written into a [MemoryFs].
@@ -496,6 +567,169 @@ void main() {
 
       expect(source.files['/srv/a/report.pdf'], 1000);
       expect(source.removed, isEmpty);
+    });
+  });
+
+  group('folder copy', () {
+    Future<RemoteCopyOutcome> copyDir({
+      required String from,
+      required String to,
+      bool overwrite = false,
+      bool move = false,
+      TransferProgress? onProgress,
+      CancelCheck? isCancelled,
+    }) {
+      return copyRemoteDirectory(
+        source: source,
+        destination: destination,
+        sourceDirectory: from,
+        destinationDirectory: to,
+        overwrite: overwrite,
+        deleteSourceAfterVerify: move,
+        onProgress: onProgress,
+        isCancelled: isCancelled,
+        temporaryNamer: tempName,
+      );
+    }
+
+    /// Seeds `/srv/a/pm-folder/{a.txt, b.txt, sub/c.txt}` and an empty
+    /// `pm-folder/sub2/` — the shape the maintainer's test A→B move calls
+    /// out by name.
+    void seedPmFolder() {
+      source
+        ..directories.addAll([
+          '/srv/a/pm-folder',
+          '/srv/a/pm-folder/sub',
+          '/srv/a/pm-folder/sub2',
+        ])
+        ..files['/srv/a/pm-folder/a.txt'] = 100
+        ..files['/srv/a/pm-folder/b.txt'] = 200
+        ..files['/srv/a/pm-folder/sub/c.txt'] = 300;
+      destination.directories.add('/srv/b');
+    }
+
+    test('lands every file with the same shape and reports aggregate bytes',
+        () async {
+      seedPmFolder();
+
+      final progress = <int>[];
+      final outcome = await copyDir(
+        from: '/srv/a/pm-folder',
+        to: '/srv/b/pm-folder',
+        onProgress: progress.add,
+      );
+
+      expect(outcome.bytesCopied, 100 + 200 + 300);
+      expect(outcome.destinationPath, '/srv/b/pm-folder');
+      expect(outcome.sourceDeleted, isFalse);
+      expect(destination.directories, containsAll([
+        '/srv/b/pm-folder',
+        '/srv/b/pm-folder/sub',
+        '/srv/b/pm-folder/sub2', // empty subdir still lands
+      ]));
+      expect(destination.files, containsPair('/srv/b/pm-folder/a.txt', 100));
+      expect(destination.files, containsPair('/srv/b/pm-folder/b.txt', 200));
+      expect(
+        destination.files,
+        containsPair('/srv/b/pm-folder/sub/c.txt', 300),
+      );
+      // Progress is cumulative and eventually equals the total.
+      expect(progress.last, 600);
+    });
+
+    test('a move deletes the source tree bottom-up', () async {
+      seedPmFolder();
+
+      final outcome = await copyDir(
+        from: '/srv/a/pm-folder',
+        to: '/srv/b/pm-folder',
+        move: true,
+      );
+
+      expect(outcome.sourceDeleted, isTrue);
+      expect(source.files, isEmpty);
+      expect(source.directories, isNot(contains('/srv/a/pm-folder')));
+      expect(source.directories, isNot(contains('/srv/a/pm-folder/sub')));
+      // Every removeDirectory call happened after the file removes above it —
+      // rmdir on a non-empty directory would have thrown in the fake.
+    });
+
+    test('an overwrite wipes the destination tree first', () async {
+      seedPmFolder();
+      // A stale tree in the way. `Replace` at the collision prompt licenses
+      // the wipe; without overwrite this would be left alone.
+      destination
+        ..directories.addAll(['/srv/b/pm-folder', '/srv/b/pm-folder/old'])
+        ..files['/srv/b/pm-folder/old/stale.txt'] = 4242;
+
+      await copyDir(
+        from: '/srv/a/pm-folder',
+        to: '/srv/b/pm-folder',
+        overwrite: true,
+      );
+
+      expect(destination.files.containsKey('/srv/b/pm-folder/old/stale.txt'),
+          isFalse);
+      expect(destination.files['/srv/b/pm-folder/a.txt'], 100);
+    });
+
+    test('a cancel mid-batch leaves the source alone', () async {
+      seedPmFolder();
+      var cancelled = false;
+      source.onChunkRead = (moved) {
+        // Cancel after the first file finishes: the second file's copy
+        // should notice at the next between-chunks check.
+        if (moved >= 100) cancelled = true;
+      };
+
+      await expectLater(
+        copyDir(
+          from: '/srv/a/pm-folder',
+          to: '/srv/b/pm-folder',
+          move: true,
+          isCancelled: () => cancelled,
+        ),
+        throwsA(isA<TransferCancelled>()),
+      );
+
+      // The source root is untouched: nothing at all was rmdir'd, since a
+      // partial batch never reached the rmdir loop.
+      expect(source.directories, contains('/srv/a/pm-folder'));
+    });
+
+    test('a per-file failure aborts and leaves the source alone', () async {
+      seedPmFolder();
+      // The destination refuses writes on every file (limit smaller than one
+      // chunk). The first per-file copy fails, which throws up through the
+      // folder copy — the rmdir loop is skipped and the whole source tree
+      // stays.
+      destination.failWriteAfter = 10;
+
+      await expectLater(
+        copyDir(
+          from: '/srv/a/pm-folder',
+          to: '/srv/b/pm-folder',
+          move: true,
+        ),
+        throwsA(isA<SftpFailure>()),
+      );
+
+      expect(source.directories, contains('/srv/a/pm-folder/sub'));
+      expect(source.files.containsKey('/srv/a/pm-folder/a.txt'), isTrue,
+          reason: 'the file whose copy failed stays on the source');
+    });
+
+    test('an empty source directory still creates the destination', () async {
+      source.directories.addAll(['/srv/a/empty-folder']);
+      destination.directories.add('/srv/b');
+
+      final outcome = await copyDir(
+        from: '/srv/a/empty-folder',
+        to: '/srv/b/empty-folder',
+      );
+
+      expect(outcome.bytesCopied, 0);
+      expect(destination.directories, contains('/srv/b/empty-folder'));
     });
   });
 }

@@ -84,6 +84,17 @@ class DestinationFs implements RemoteFileSystem {
       throw UnimplementedError('planning never renames');
 
   @override
+  Future<void> mkdir(String path) async =>
+      throw UnimplementedError('planning never mkdirs');
+
+  @override
+  Future<void> removeDirectory(String path) async =>
+      throw UnimplementedError('planning never rmdirs');
+
+  @override
+  Future<bool> isDirectory(String path) async => false;
+
+  @override
   Future<void> close() async {}
 }
 
@@ -146,22 +157,25 @@ void main() {
       expect(destination.probed, isEmpty);
     });
 
-    test('index back into the files the plan kept, not the selection',
-        () async {
+    test('index into the plan entries, not the raw selection', () async {
       final destination = DestinationFs({'/srv/b': const []});
       final asker = prompt(const []);
 
       final plan = await planRemoteTransfer(
-        entries: [directory('src'), file('report.pdf')],
+        entries: [symlink('latest'), directory('src'), file('report.pdf')],
         destination: destination,
         destinationDirectory: '/srv/b',
         ask: asker.ask,
       );
 
-      // The directory was dropped, so index 0 is the file — reading the index
-      // against the original selection would have queued the folder.
-      expect(plan.transfers.single.sourceIndex, 0);
-      expect(plan.files[plan.transfers.single.sourceIndex].name, 'report.pdf');
+      // The symlink was dropped, so index 0 is the directory, index 1 the
+      // file — reading the index against the original selection would have
+      // pointed at the symlink for one of the transfers.
+      expect(
+        plan.transfers.map((t) => plan.entryFor(t).name),
+        ['src', 'report.pdf'],
+      );
+      expect(plan.unsupported, ['latest']);
     });
   });
 
@@ -288,8 +302,9 @@ void main() {
     });
   });
 
-  group('what cannot go across yet', () {
-    test('directories and links are named and left alone', () async {
+  group('what cannot go across', () {
+    test('symlinks are named and left alone; files and folders both plan',
+        () async {
       final destination = DestinationFs({'/srv/b': const []});
       final asker = prompt(const []);
 
@@ -304,11 +319,14 @@ void main() {
         ask: asker.ask,
       );
 
-      expect(plan.transfers.map((t) => t.remoteName), ['report.pdf']);
-      expect(plan.unsupported, ['src', 'latest']);
+      expect(
+        plan.transfers.map((t) => t.remoteName),
+        ['report.pdf', 'src'],
+      );
+      expect(plan.unsupported, ['latest']);
     });
 
-    test('a selection of nothing but folders costs no round trips', () async {
+    test('a selection of only folders still plans and lists', () async {
       final destination = DestinationFs({'/srv/b': const []});
       final asker = prompt(const []);
 
@@ -319,11 +337,35 @@ void main() {
         ask: asker.ask,
       );
 
-      expect(plan.isEmpty, isTrue);
-      expect(plan.cancelled, isFalse);
-      expect(plan.unsupported, ['src', 'docs']);
-      // Nothing to name, so nothing to list.
-      expect(destination.listed, isEmpty);
+      expect(plan.isEmpty, isFalse);
+      expect(
+        plan.transfers.map((t) => t.remoteName),
+        ['src', 'docs'],
+      );
+      // One listing on the destination, since folder collisions ask the
+      // same question a file collision does.
+      expect(destination.listed, ['/srv/b']);
+    });
+
+    test('a folder collides against an existing folder of the same name',
+        () async {
+      final destination =
+          DestinationFs({'/srv/b': const ['docs']});
+      final asker = prompt(const [
+        UploadCollisionResponse(UploadCollisionAction.keepBoth),
+      ]);
+
+      final plan = await planRemoteTransfer(
+        entries: [directory('docs')],
+        destination: destination,
+        destinationDirectory: '/srv/b',
+        ask: asker.ask,
+      );
+
+      // The user picked "Keep both", so the destination folder is renamed
+      // through the same de-duplication files use.
+      expect(plan.transfers.single.remoteName, 'docs (1)');
+      expect(plan.transfers.single.overwrite, isFalse);
     });
   });
 

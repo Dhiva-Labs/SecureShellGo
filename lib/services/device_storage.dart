@@ -31,6 +31,176 @@ class PickedTextFile {
   final String content;
 }
 
+/// A folder the user pointed the app at — the input to a recursive upload.
+///
+/// [path] is the absolute filesystem path (`/home/…/Documents`,
+/// `C:\Users\…\Docs`, or the Android content path a SAF tree URI has been
+/// resolved to). [name] is the folder's basename, which the browser uses
+/// verbatim as the destination directory's name — subject to the same
+/// [RemotePath.deduplicate] rules a file's name is, when the destination has
+/// something of that name already.
+class PickedLocalDirectory {
+  const PickedLocalDirectory({required this.path, required this.name});
+
+  final String path;
+  final String name;
+}
+
+/// One file inside a walked local directory, expressed relative to the walk's
+/// root so the shape can be reproduced on the remote destination — the same
+/// role [PlannedDownload.relativeDirectory] plays for the download side.
+class LocalFileEntry {
+  const LocalFileEntry({
+    required this.absolutePath,
+    required this.relativePath,
+    required this.size,
+  });
+
+  /// The file on this device.
+  final String absolutePath;
+
+  /// POSIX-joined path relative to the walk root, always including the
+  /// filename (e.g. `src/main.dart`). The parent segments are used to mkdir
+  /// the destination shape; the filename is used verbatim as the remote name
+  /// under it.
+  final String relativePath;
+
+  final int size;
+}
+
+/// What walking a local directory found: every plain file under it, every
+/// subdirectory (including the empty ones, which the recursive upload path
+/// still creates on the destination), plus the totals.
+class LocalDirectoryTree {
+  const LocalDirectoryTree({
+    required this.rootPath,
+    required this.rootName,
+    required this.directories,
+    required this.files,
+    required this.totalBytes,
+  });
+
+  final String rootPath;
+  final String rootName;
+
+  /// Subdirectories under [rootPath], relative to it. Empty subdirectories
+  /// are included: the recursive upload path mkdir's each one on the
+  /// destination so a folder called `logs/` with nothing in it does not
+  /// silently disappear across the transfer.
+  final List<String> directories;
+
+  final List<LocalFileEntry> files;
+
+  /// Sum of the sizes of every file returned. Read from the file system at
+  /// walk time; a file that changes between walk and upload does not update
+  /// this — the queue's progress bar caps at 100% either way.
+  final int totalBytes;
+
+  int get fileCount => files.length;
+
+  bool get isEmpty => files.isEmpty && directories.isEmpty;
+}
+
+/// Symlinks are not followed on the local walk, for the same reason they are
+/// not on remote walks: a link to a directory can point back up its own tree
+/// (`~/link -> ..`), and a link to a file would double-upload bytes under
+/// two names. They are counted so the caller can name them in a snackbar.
+class LocalDirectoryWalkFailure implements Exception {
+  const LocalDirectoryWalkFailure(this.message, {this.details});
+
+  final String message;
+  final String? details;
+
+  @override
+  String toString() => message;
+}
+
+/// Walks [directoryPath] on the device's real filesystem, breadth-first, and
+/// returns the shape of what a recursive upload will queue.
+///
+/// **Symlinks are skipped**, in either direction, for the same reason
+/// `download_plan.dart` skips them across SFTP: a link to a directory can
+/// loop the walk, and a link to a file would produce two remote copies of
+/// the same bytes. They are not counted here because the local walk is fast
+/// enough to be redone if the count matters later.
+///
+/// The caller passes the whole path through [DesktopDeviceStorage] or the
+/// SAF-resolved path on Android — this function has no notion of platform.
+/// Deliberately a top-level function rather than a method on [DeviceStorage]:
+/// it uses `dart:io` only, and does not need a channel or a permission
+/// prompt.
+Future<LocalDirectoryTree> readLocalDirectoryTree(String directoryPath) async {
+  final root = Directory(directoryPath);
+  if (!await root.exists()) {
+    throw LocalDirectoryWalkFailure(
+      'The folder you picked is no longer there.',
+      details: directoryPath,
+    );
+  }
+  final rootAbsolute = root.absolute.path;
+  final rootName = _basename(rootAbsolute);
+
+  final directories = <String>[];
+  final files = <LocalFileEntry>[];
+  var totalBytes = 0;
+
+  final pending = <({Directory directory, String relative})>[
+    (directory: root, relative: ''),
+  ];
+
+  for (var index = 0; index < pending.length; index++) {
+    final current = pending[index];
+    final List<FileSystemEntity> children;
+    try {
+      children = current.directory.listSync(followLinks: false);
+    } on FileSystemException catch (e) {
+      // Best-effort: an unreadable subdirectory is stepped over rather than
+      // failing the whole upload. A folder picked at the top level that
+      // will not list is a real error, though, and does throw.
+      if (current.relative.isEmpty) {
+        throw LocalDirectoryWalkFailure(
+          'Could not read the folder you picked.',
+          details: e.toString(),
+        );
+      }
+      continue;
+    }
+    for (final child in children) {
+      final stat = child.statSync();
+      if (stat.type == FileSystemEntityType.link) continue;
+      final name = _basename(child.path);
+      if (name.isEmpty) continue;
+      final childRelative =
+          current.relative.isEmpty ? name : '${current.relative}/$name';
+      if (child is Directory) {
+        directories.add(childRelative);
+        pending.add((directory: child, relative: childRelative));
+      } else if (child is File) {
+        int size;
+        try {
+          size = await child.length();
+        } catch (_) {
+          size = 0;
+        }
+        files.add(LocalFileEntry(
+          absolutePath: child.absolute.path,
+          relativePath: childRelative,
+          size: size,
+        ));
+        totalBytes += size;
+      }
+    }
+  }
+
+  return LocalDirectoryTree(
+    rootPath: rootAbsolute,
+    rootName: rootName,
+    directories: directories,
+    files: files,
+    totalBytes: totalBytes,
+  );
+}
+
 /// Default cap for [DeviceStorage.pickTextFile]. Chosen for private-key
 /// import (a key is at most a couple of KB); pass a different [maxBytes] for
 /// other uses.
@@ -69,7 +239,11 @@ List<PickedLocalFile> parseStagedFiles(Object? raw) {
 }
 
 String _basename(String path) {
-  final index = path.lastIndexOf('/');
+  // Handle both POSIX and Windows separators. `file_selector` on Windows
+  // hands back backslashes; on Linux and macOS forward slashes.
+  var index = path.lastIndexOf('/');
+  final backIndex = path.lastIndexOf('\\');
+  if (backIndex > index) index = backIndex;
   if (index < 0 || index == path.length - 1) return path;
   return path.substring(index + 1);
 }
@@ -134,6 +308,11 @@ abstract class DeviceStorage {
   /// Opens the system document picker for any number of files, staging each
   /// one. Empty if the user backed out.
   Future<List<PickedLocalFile>> pickFiles();
+
+  /// Opens the system directory picker. Null if the user backed out or the
+  /// platform has no such picker wired up (Android SAF tree picker is a
+  /// documented gap — see `StorageBridge.kt` for the diff the PM will land).
+  Future<PickedLocalDirectory?> pickDirectory();
 
   /// Opens the system document picker and reads the picked file's content
   /// directly into memory as text, instead of staging it to a path the way
@@ -304,6 +483,37 @@ class MethodChannelDeviceStorage implements DeviceStorage {
     } on MissingPluginException {
       throw const DeviceStorageException(
         'Picking files is only available on the Android build.',
+      );
+    }
+  }
+
+  /// Android's SAF tree picker is a documented gap: `StorageBridge.kt` has to
+  /// grow an `ACTION_OPEN_DOCUMENT_TREE` handler that resolves the returned
+  /// URI into a filesystem path the recursive upload code can walk. Until it
+  /// does, this returns null — the browser hides the "Upload folder" entry on
+  /// Android at the UI layer, so the user never sees a picker that does
+  /// nothing. The exact diff needed is in the handover report.
+  @override
+  Future<PickedLocalDirectory?> pickDirectory() async {
+    try {
+      final result =
+          await channel.invokeMapMethod<String, dynamic>('pickDirectory');
+      if (result == null) return null;
+      final path = result['path'] as String?;
+      if (path == null || path.isEmpty) return null;
+      return PickedLocalDirectory(
+        path: path,
+        name: result['name'] as String? ?? _basename(path),
+      );
+    } on PlatformException catch (e) {
+      throw DeviceStorageException(
+        'Could not open the folder picker.',
+        details: e.message,
+      );
+    } on MissingPluginException {
+      throw const DeviceStorageException(
+        'Picking folders on Android needs the SAF tree picker wired into '
+        'StorageBridge.kt — see the handover report.',
       );
     }
   }
@@ -526,6 +736,19 @@ class DesktopDeviceStorage implements DeviceStorage {
       files.add(await _toPickedLocalFile(file));
     }
     return files;
+  }
+
+  @override
+  Future<PickedLocalDirectory?> pickDirectory() async {
+    // `file_selector`'s `getDirectoryPath` shows the native "choose folder"
+    // dialog on Linux (GTK), macOS (NSOpenPanel) and Windows (IFileDialog).
+    // The dialog title mirrors the one on the file picker so the two feel
+    // like the same picker in different modes.
+    final path = await file_selector.getDirectoryPath(
+      confirmButtonText: 'Upload this folder',
+    );
+    if (path == null || path.isEmpty) return null;
+    return PickedLocalDirectory(path: path, name: _basename(path));
   }
 
   @override

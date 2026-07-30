@@ -103,6 +103,25 @@ abstract class RemoteFileSystem {
   /// under its final name, so a cancelled one never appears there at all.
   Future<void> rename(String from, String to);
 
+  /// Creates one directory on the server.
+  ///
+  /// Fails if [path] already exists or its parent does not — the recursive
+  /// folder-transfer code holds those invariants itself (breadth-first over
+  /// the parents first, and a preflight rm on an overwrite target) rather
+  /// than dressing this up as `mkdir -p`.
+  Future<void> mkdir(String path);
+
+  /// Removes an empty directory. Fails if the directory still holds anything,
+  /// which is the same protection [remove] has — a recursive rmdir is not a
+  /// thing to grow by accident. The recursive copy path removes files first
+  /// and then bottom-ups the rmdirs.
+  Future<void> removeDirectory(String path);
+
+  /// True when [path] exists **and** is a directory. False for a missing path,
+  /// a file, a symlink that does not point at a directory, or any status the
+  /// server declines to report.
+  Future<bool> isDirectory(String path);
+
   Future<void> close();
 }
 
@@ -360,6 +379,33 @@ class SftpService implements RemoteFileSystem {
       await _client.rename(from, to);
     } catch (e) {
       throw _describe(e, to);
+    }
+  }
+
+  @override
+  Future<void> mkdir(String path) async {
+    try {
+      await _client.mkdir(path);
+    } catch (e) {
+      throw _describe(e, path);
+    }
+  }
+
+  @override
+  Future<void> removeDirectory(String path) async {
+    try {
+      await _client.rmdir(path);
+    } catch (e) {
+      throw _describe(e, path);
+    }
+  }
+
+  @override
+  Future<bool> isDirectory(String path) async {
+    try {
+      return (await _client.stat(path)).isDirectory;
+    } catch (_) {
+      return false;
     }
   }
 

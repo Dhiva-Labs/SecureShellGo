@@ -177,4 +177,78 @@ void main() {
       );
     });
   });
+
+  group('readLocalDirectoryTree', () {
+    late Directory temp;
+
+    setUp(() async {
+      temp =
+          await Directory.systemTemp.createTemp('local_directory_tree_test');
+    });
+
+    tearDown(() async {
+      if (await temp.exists()) await temp.delete(recursive: true);
+    });
+
+    test('finds every file and preserves the relative shape', () async {
+      final root = Directory('${temp.path}/pm-folder')..createSync();
+      File('${root.path}/a.txt').writeAsStringSync('aaa');
+      File('${root.path}/b.txt').writeAsStringSync('bbbb');
+      final sub = Directory('${root.path}/sub')..createSync();
+      File('${sub.path}/c.txt').writeAsStringSync('ccccc');
+
+      final tree = await readLocalDirectoryTree(root.path);
+
+      expect(tree.rootName, 'pm-folder');
+      expect(tree.fileCount, 3);
+      expect(tree.totalBytes, 3 + 4 + 5);
+      expect(
+        tree.files.map((f) => f.relativePath).toList()..sort(),
+        ['a.txt', 'b.txt', 'sub/c.txt'],
+      );
+      expect(tree.directories, contains('sub'));
+    });
+
+    test('records empty subdirectories so the upload can recreate them',
+        () async {
+      final root = Directory('${temp.path}/with-empty')..createSync();
+      Directory('${root.path}/logs').createSync();
+
+      final tree = await readLocalDirectoryTree(root.path);
+
+      expect(tree.files, isEmpty);
+      expect(tree.directories, ['logs']);
+      // isEmpty is *about files* — the directory list still keeps the shape.
+      expect(tree.isEmpty, isFalse);
+    });
+
+    test('symlinks are not chased (would loop or double-upload)', () async {
+      // The whole reason the walk exists as its own thing rather than a
+      // straight `Directory.list(recursive: true)`.
+      final root = Directory('${temp.path}/with-link')..createSync();
+      File('${root.path}/real.txt').writeAsStringSync('hello');
+      try {
+        Link('${root.path}/loop').createSync('..');
+      } on FileSystemException {
+        // Windows without dev-mode: skip the symlink half quietly.
+      }
+
+      final tree = await readLocalDirectoryTree(root.path);
+
+      // The real file lands; the link is silently skipped rather than
+      // crawling out of `with-link/`.
+      expect(tree.files.map((f) => f.relativePath), contains('real.txt'));
+      expect(
+        tree.files.map((f) => f.relativePath),
+        isNot(contains('loop')),
+      );
+    });
+
+    test('a missing root fails loudly, not silently', () async {
+      await expectLater(
+        readLocalDirectoryTree('${temp.path}/does-not-exist'),
+        throwsA(isA<LocalDirectoryWalkFailure>()),
+      );
+    });
+  });
 }

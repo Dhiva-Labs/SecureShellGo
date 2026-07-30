@@ -619,15 +619,42 @@ through `RemotePath.deduplicate`, and a dismissed prompt cancelling rather than
 overwriting. `remote_transfer_plan.dart` is a thin wrapper that filters the
 selection and hands the names over.
 
-**Directories are not copied across, and that is on purpose.**
-`download_plan.dart`'s walker looks close to reusable and is not: its
-`relativeDirectory` is sanitised for MediaStore, which replaces `:*?"<>|`,
-strips leading dots and caps segments at 80 characters — all correct for
-Android and all wrong for a POSIX destination, where it would silently rename
-`.git` to `git`. A real recursive copy also needs `mkdir` on the far side and a
-collision decision per directory as well as per file. Files only, for now;
-directories in a selection are named in the snackbar and left alone rather than
-half-copied.
+**Directories are first-class since Phase 12.5.** `remote_transfer_plan.dart`
+no longer filters them into `unsupported`: a folder in a selection goes through
+the same [UploadPlan] the file collision path uses, so a `Documents/` folder
+on both ends gets the same replace/keep-both/skip prompt a file collision
+does, and the answer cascades to every file inside. There are two executors
+below that plan:
+
+- **Relay** (`copyRemoteDirectory` in `remote_copy.dart`): walks the source
+  tree over the source's SFTP channel, mkdir's the shape on the destination
+  (empty subdirectories included), then copies each file through
+  `copyRemoteFile` — one at a time, so the SSH window is not shared between
+  concurrent reads and so a cancel or a per-file failure aborts the whole
+  batch with the source untouched. On a top-level `replace`, the destination
+  tree is torn down via `removeRemoteDirectoryTree` before the mkdir + copies
+  run. Move semantics: each per-file copy runs with `deleteSourceAfterVerify`
+  and its four-check safety chain, and after every file has left, the source's
+  subdirectories are rmdir'd bottom-up. A cancel or failure mid-batch never
+  runs the rmdir loop, so a partial move is visible on both sides rather than
+  under a half-empty tree.
+
+- **Direct** (`copyRemoteDirectoryDirect` in `direct_remote_copy.dart`): the
+  source-side `sftp` batch runs `put -r SRC DST` in one exec channel. From A's
+  perspective SRC is on its own filesystem, so `put` reads it locally; DST is
+  B, over an SSH connection A opened using the forwarded agent. Overwrite
+  clears the destination via `removeRemoteDirectoryTree` on B (through our
+  trusted SFTP channel to B, not A's sftp) before `put -r` fills a fresh tree.
+  Verification is whole-batch: file count and total bytes on B must match A
+  before either the exec's success is trusted or a move deletes the source
+  tree. A verified mismatch or a cancel wipes the partial tree on B via
+  `removeRemoteDirectoryTree` so nothing left behind looks complete.
+
+The download side keeps its own `download_plan.dart` — its `relativeDirectory`
+is sanitised for MediaStore, which replaces `:*?"<>|`, strips leading dots and
+caps segments at 80 characters. That is all correct for Android and all wrong
+for a POSIX destination (`.git` would silently become `git`), which is why the
+S2S folder path does not go through the download planner.
 
 **Drag-and-drop across tabs is a second entry point, not a second path.** The
 file browser's rows are `LongPressDraggable<TabDropPayload>` on desktop
@@ -708,14 +735,19 @@ Reconnect after a drop, port forwarding (`client.forwardLocal` /
 `forwardRemote` are already available), and an agent (`agentHandler` is a
 constructor parameter on `SSHClient`).
 
-Remote-side file operations (rename, delete, mkdir, chmod) are the obvious next
+Remote-side file operations (rename, delete, chmod) are the obvious next
 thing in the browser. `RemoteFileSystem` gained `remove` and `rename` in Phase
-12 for the server-to-server path, so half of it is already there and tested;
-`SftpClient` also exposes `rmdir`, `mkdir` and `setStat`, and the entry point is
-the per-entry bottom sheet that already exists in `file_browser_pane`. Adding
-`mkdir` is also the first half of recursive server-to-server copying — the
-other half being a POSIX-side variant of `download_plan`'s relative paths, see
-Phase 12 for why the MediaStore one cannot be reused.
+12 for the server-to-server path — and `mkdir`, `removeDirectory` and
+`isDirectory` in Phase 12.5 for the recursive folder copy — so most of it is
+already there and tested; `SftpClient` also exposes `setStat`, and the entry
+point is the per-entry bottom sheet that already exists in `file_browser_pane`.
+
+The **local-folder upload path** for Android is a documented gap: desktop
+uses `file_selector`'s `getDirectoryPath()` via `DesktopDeviceStorage`, but
+`StorageBridge.kt` does not yet handle `ACTION_OPEN_DOCUMENT_TREE` and resolve
+a SAF tree URI into a path the `readLocalDirectoryTree` walker can traverse.
+The browser hides the "Upload folder" entry on Android rather than showing a
+picker that would fail.
 
 ---
 

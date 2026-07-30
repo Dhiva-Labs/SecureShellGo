@@ -484,6 +484,30 @@ class SessionController {
     );
   }
 
+  /// Queues a recursive upload of the local directory [pickedPath] into
+  /// [remoteDirectory] on this session, published as [asName] over there.
+  ///
+  /// One task per top-level folder — the executor walks the local tree and
+  /// streams every file under it under one row on the transfer panel, rather
+  /// than exploding a `Documents/` upload into 300 queue entries.
+  TransferTask queueUploadDirectory({
+    required String pickedPath,
+    required String pickedName,
+    required String remoteDirectory,
+    String? asName,
+    bool overwrite = false,
+    int? totalBytes,
+  }) {
+    final landingName = asName ?? pickedName;
+    return transfers.enqueueUploadDirectory(
+      localPath: pickedPath,
+      remotePath: RemotePath.join(remoteDirectory, landingName),
+      name: landingName,
+      overwrite: overwrite,
+      totalBytes: totalBytes,
+    );
+  }
+
   /// Queues a copy of [remotePath] straight into another open session, named
   /// [asName] in [remoteDirectory] over there.
   ///
@@ -517,6 +541,41 @@ class SessionController {
       moveSource: moveSource,
       totalBytes: totalBytes,
       route: route,
+    );
+  }
+
+  /// Queues a recursive copy of the directory at [remotePath] straight into
+  /// another open session, landing as [asName] under [remoteDirectory] over
+  /// there.
+  ///
+  /// One task per top-level folder — the executor picks between
+  /// [copyRemoteDirectory] (relay) and [copyRemoteDirectoryDirect] (direct)
+  /// the same way a file S2S copy does, and the panel shows folder progress
+  /// in aggregate.
+  TransferTask queueRemoteCopyDirectory({
+    required String remotePath,
+    required String name,
+    required String destinationSessionId,
+    required String destinationLabel,
+    required String remoteDirectory,
+    String? asName,
+    bool overwrite = false,
+    bool moveSource = false,
+    int? totalBytes,
+    TransferRoute route = TransferRoute.relay,
+  }) {
+    final landingName = asName ?? name;
+    return transfers.enqueueRemoteCopy(
+      remotePath: remotePath,
+      name: landingName,
+      destinationSessionId: destinationSessionId,
+      destinationLabel: destinationLabel,
+      destinationPath: RemotePath.join(remoteDirectory, landingName),
+      overwrite: overwrite,
+      moveSource: moveSource,
+      totalBytes: totalBytes,
+      route: route,
+      isDirectoryTransfer: true,
     );
   }
 
@@ -564,7 +623,11 @@ class SessionController {
       case TransferDirection.download:
         await _runDownload(sftp, task, handle);
       case TransferDirection.upload:
-        await _runUpload(sftp, task, handle);
+        if (task.isDirectoryTransfer) {
+          await _runUploadDirectory(sftp, task, handle);
+        } else {
+          await _runUpload(sftp, task, handle);
+        }
       case TransferDirection.serverToServer:
         await _runRemoteCopy(sftp, task, handle);
     }
@@ -628,6 +691,72 @@ class SessionController {
     handle.setDestination(task.remotePath);
   }
 
+  /// Recursive upload of one local directory into [task.remotePath] on the
+  /// server this session is connected to.
+  ///
+  /// The walk happens *inside* the task rather than before it so the total
+  /// size can be reported once (via [TransferHandle.setTotal]) and a cancel
+  /// in the middle of a long walk still stops the transfer, rather than
+  /// leaving a half-walked plan queued behind a "cannot cancel" row.
+  ///
+  /// Empty subdirectories on the source are mkdir'd on the destination so
+  /// the shape of the tree is preserved — a `logs/` folder with nothing in
+  /// it still lands.
+  Future<void> _runUploadDirectory(
+    RemoteFileSystem sftp,
+    TransferTask task,
+    TransferHandle handle,
+  ) async {
+    final localRoot = task.localPath!;
+    final remoteRoot = task.remotePath;
+    final tree = await readLocalDirectoryTree(localRoot);
+    handle.setTotal(tree.totalBytes);
+    handle.throwIfCancelled();
+
+    if (task.overwrite) {
+      // A top-level `Replace` at the collision prompt licenses the wipe. The
+      // destination directory is torn down and rebuilt fresh, so nothing
+      // inside can collide with anything already there.
+      await removeRemoteDirectoryTree(sftp, remoteRoot);
+      handle.throwIfCancelled();
+    }
+    try {
+      await sftp.mkdir(remoteRoot);
+    } on SftpFailure {
+      // Already exists (nothing to overwrite) — proceed and let the writes
+      // fail loudly if it turns out we cannot use it.
+    }
+
+    // Every subdirectory first, breadth-first order preserved by the walk,
+    // so empty folders survive and a per-file mkdir never races with an
+    // uncreated parent.
+    for (final relative in tree.directories) {
+      handle.throwIfCancelled();
+      final path = RemotePath.join(remoteRoot, relative);
+      try {
+        await sftp.mkdir(path);
+      } on SftpFailure {
+        // Already there is fine; a real failure surfaces on the file write.
+      }
+    }
+
+    var bytesMoved = 0;
+    for (final file in tree.files) {
+      handle.throwIfCancelled();
+      final remotePath = RemotePath.join(remoteRoot, file.relativePath);
+      final moved = await sftp.upload(
+        file.absolutePath,
+        remotePath,
+        onProgress: (bytes) => handle.report(bytesMoved + bytes),
+        isCancelled: () => handle.isCancelled,
+      );
+      bytesMoved += moved;
+      handle.report(bytesMoved);
+      handle.throwIfCancelled();
+    }
+    handle.setDestination(remoteRoot);
+  }
+
   /// Streams one file from this session's server straight to another open
   /// session's, and — for a move — deletes it here once that is verified.
   ///
@@ -666,7 +795,7 @@ class SessionController {
     final destination = await target.sftp();
     handle.throwIfCancelled();
 
-    if (task.totalBytes == null) {
+    if (task.totalBytes == null && !task.isDirectoryTransfer) {
       handle.setTotal(await sftp.sizeOf(task.remotePath));
       handle.throwIfCancelled();
     }
@@ -687,18 +816,31 @@ class SessionController {
         } else {
           try {
             handle.setRouteUsed(TransferRoute.direct);
-            outcome = await copyRemoteFileDirect(
-              source: this,
-              destHost: target.host,
-              destCredentials: destCreds,
-              destinationFs: destination,
-              sourcePath: task.remotePath,
-              destinationPath: destinationPath,
-              overwrite: task.overwrite,
-              deleteSourceAfterVerify: task.moveSource,
-              onProgress: handle.report,
-              isCancelled: () => handle.isCancelled,
-            );
+            outcome = task.isDirectoryTransfer
+                ? await copyRemoteDirectoryDirect(
+                    source: this,
+                    destHost: target.host,
+                    destCredentials: destCreds,
+                    destinationFs: destination,
+                    sourceDirectory: task.remotePath,
+                    destinationDirectory: destinationPath,
+                    overwrite: task.overwrite,
+                    deleteSourceAfterVerify: task.moveSource,
+                    onProgress: handle.report,
+                    isCancelled: () => handle.isCancelled,
+                  )
+                : await copyRemoteFileDirect(
+                    source: this,
+                    destHost: target.host,
+                    destCredentials: destCreds,
+                    destinationFs: destination,
+                    sourcePath: task.remotePath,
+                    destinationPath: destinationPath,
+                    overwrite: task.overwrite,
+                    deleteSourceAfterVerify: task.moveSource,
+                    onProgress: handle.report,
+                    isCancelled: () => handle.isCancelled,
+                  );
           } on SSHDirectCopyUnavailable catch (e) {
             if (e.reason == DirectCopyUnavailableReason.hostKeyMismatch) {
               // Refuse: a relay from this device cannot honestly answer a
@@ -717,22 +859,37 @@ class SessionController {
         TransferRoute.relay,
         fallbackReason: fallbackReason,
       );
-      return copyRemoteFile(
-        source: sftp,
-        destination: destination,
-        sourcePath: task.remotePath,
-        destinationPath: destinationPath,
-        overwrite: task.overwrite,
-        deleteSourceAfterVerify: task.moveSource,
-        onProgress: handle.report,
-        isCancelled: () => handle.isCancelled,
-      );
+      return task.isDirectoryTransfer
+          ? copyRemoteDirectory(
+              source: sftp,
+              destination: destination,
+              sourceDirectory: task.remotePath,
+              destinationDirectory: destinationPath,
+              overwrite: task.overwrite,
+              deleteSourceAfterVerify: task.moveSource,
+              onProgress: handle.report,
+              isCancelled: () => handle.isCancelled,
+            )
+          : copyRemoteFile(
+              source: sftp,
+              destination: destination,
+              sourcePath: task.remotePath,
+              destinationPath: destinationPath,
+              overwrite: task.overwrite,
+              deleteSourceAfterVerify: task.moveSource,
+              onProgress: handle.report,
+              isCancelled: () => handle.isCancelled,
+            );
     }();
     handle.throwIfCancelled();
 
-    // The file is over there now, and the browser over there has no way of
-    // knowing that from its own queue.
-    target.reportArrival(RemotePath.parent(outcome.destinationPath));
+    // The file — or the folder — is over there now, and the browser over
+    // there has no way of knowing that from its own queue.
+    target.reportArrival(
+      task.isDirectoryTransfer
+          ? outcome.destinationPath
+          : RemotePath.parent(outcome.destinationPath),
+    );
 
     final label = task.destinationLabel;
     handle.setDestination(
@@ -747,6 +904,12 @@ class SessionController {
 
   /// Opens the system picker for any number of files, staging each one.
   Future<List<PickedLocalFile>> pickLocalFiles() => _storage.pickFiles();
+
+  /// Opens the system folder picker. Null on cancel or when the platform has
+  /// no folder picker wired up (Android SAF is a documented gap — see the
+  /// handover report).
+  Future<PickedLocalDirectory?> pickLocalDirectory() =>
+      _storage.pickDirectory();
 
   /// Hands a finished download to whatever app can display it. False when
   /// nothing on the device can, or when the transfer has no URI to open —

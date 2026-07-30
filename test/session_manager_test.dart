@@ -118,6 +118,15 @@ class StubFs implements RemoteFileSystem {
   Future<bool> exists(String path) async => false;
 
   @override
+  Future<void> mkdir(String path) async {}
+
+  @override
+  Future<void> removeDirectory(String path) async {}
+
+  @override
+  Future<bool> isDirectory(String path) async => false;
+
+  @override
   Future<RemoteFileWriter> openWrite(String remotePath) async =>
       StubWriter(this, remotePath);
 
@@ -187,6 +196,9 @@ class StubStorage implements DeviceStorage {
     int maxBytes = kDefaultPickedTextFileMaxBytes,
   }) async =>
       null;
+
+  @override
+  Future<PickedLocalDirectory?> pickDirectory() async => null;
 }
 
 /// Records what the foreground service was asked to do, in order.

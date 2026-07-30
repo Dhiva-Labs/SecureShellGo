@@ -270,6 +270,86 @@ void main() {
           : null,
       timeout: const Timeout(Duration(seconds: 60)));
 
+  test('a whole folder lands via put -r and every file matches sha256',
+      () async {
+    // The direct-path claim for folders: sftp on A runs `put -r` and the
+    // destination tree ends up byte-identical to the source, without this
+    // device seeing the file bytes. Contents verified per-file via sha256.
+    _resetServerBFiles(demo!.serverBFilesDir);
+    // Also wipe any residue from a previous run of *this* test — both the
+    // source's directory (a re-created source has to look freshly-populated,
+    // not overlaid) and the destination's (the `put -r` semantics we depend
+    // on require the destination directory to not exist yet, so a stale
+    // one from an aborted run would nest the tree inside it instead).
+    final leftoverDest =
+        Directory('${demo.serverBFilesDir}/direct-folder');
+    if (leftoverDest.existsSync()) {
+      leftoverDest.deleteSync(recursive: true);
+    }
+    sourceController = await connect(demo.hostA);
+
+    final sourceRoot = '${demo.serverAFilesDir}/direct-folder';
+    final sourceRootDir = Directory(sourceRoot);
+    if (sourceRootDir.existsSync()) {
+      sourceRootDir.deleteSync(recursive: true);
+    }
+    sourceRootDir.createSync(recursive: true);
+    Directory('$sourceRoot/sub').createSync();
+    Directory('$sourceRoot/empty').createSync();
+    final aBytes = List<int>.generate(1024, (i) => (i * 3) & 0xff);
+    final bBytes = List<int>.generate(2048, (i) => (i * 5) & 0xff);
+    final cBytes = List<int>.generate(4096, (i) => (i * 11) & 0xff);
+    await File('$sourceRoot/a.bin').writeAsBytes(aBytes, flush: true);
+    await File('$sourceRoot/b.bin').writeAsBytes(bBytes, flush: true);
+    await File('$sourceRoot/sub/c.bin').writeAsBytes(cBytes, flush: true);
+
+    final destinationController = await connect(demo.hostB);
+    addTearDown(destinationController.dispose);
+    final destFs = await destinationController.sftp();
+
+    final outcome = await copyRemoteDirectoryDirect(
+      source: sourceController!,
+      destHost: demo.hostB,
+      destCredentials: demo.credentials,
+      destinationFs: destFs,
+      sourceDirectory: sourceRoot,
+      destinationDirectory: '${demo.serverBFilesDir}/direct-folder',
+    );
+
+    expect(outcome.bytesCopied, aBytes.length + bBytes.length + cBytes.length);
+    expect(outcome.sourceDeleted, isFalse);
+    expect(
+      sha256
+          .convert(File('${demo.serverBFilesDir}/direct-folder/a.bin')
+              .readAsBytesSync())
+          .toString(),
+      sha256.convert(aBytes).toString(),
+    );
+    expect(
+      sha256
+          .convert(File('${demo.serverBFilesDir}/direct-folder/b.bin')
+              .readAsBytesSync())
+          .toString(),
+      sha256.convert(bBytes).toString(),
+    );
+    expect(
+      sha256
+          .convert(File('${demo.serverBFilesDir}/direct-folder/sub/c.bin')
+              .readAsBytesSync())
+          .toString(),
+      sha256.convert(cBytes).toString(),
+    );
+    // Empty subdirectory survives.
+    expect(
+      Directory('${demo.serverBFilesDir}/direct-folder/empty').existsSync(),
+      isTrue,
+    );
+  },
+      skip: demo == null
+          ? 'demo servers not running (see ~/ssgo-demo/start-demo.sh)'
+          : null,
+      timeout: const Timeout(Duration(seconds: 90)));
+
   test('unreachable destination surfaces as noReachability', () async {
     _resetServerBFiles(demo!.serverBFilesDir);
     sourceController = await connect(demo.hostA);
