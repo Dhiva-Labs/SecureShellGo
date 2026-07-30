@@ -1,3 +1,16 @@
+secureshellgo (1.2.0~noble5) noble; urgency=medium
+
+  * Revert `dart pub get --enforce-lockfile --offline` back to
+    `flutter pub get --offline`. The dart CLI doesn't set up
+    FLUTTER_ROOT the way the flutter wrapper does, so `dart pub get`
+    can't resolve `flutter_test` (which comes from `sdk: flutter`,
+    not pub.dev) — ~noble4 failed with "the Flutter SDK is not
+    available." The extended strip that covers both .pub-cache and
+    .flutter/packages already stops the workspace expansion that
+    broke ~noble3; the enforce-lockfile flag was over-engineering.
+
+ -- Dhiva Labs <dhivakar1010@gmail.com>  Thu, 30 Jul 2026 20:15:00 +0530
+
 secureshellgo (1.2.0~noble4) noble; urgency=medium
 
   * Extend the `resolution: workspace` strip to include the vendored
