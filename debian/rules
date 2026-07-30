@@ -55,7 +55,17 @@ override_dh_auto_build:
 	#    workspace member would otherwise expand the set. Only exposed
 	#    through the dart CLI; `flutter pub get` does not accept it.
 	touch pubspec.lock
-	find $(PUB_CACHE) -name pubspec.yaml -exec sed -i '/^resolution: workspace/d' {} +
+	# Also strip `resolution: workspace` from the vendored Flutter SDK's
+	# own package pubspecs: flutter_test, flutter_localizations, and
+	# integration_test all declare it. Our app uses flutter_test as a dev
+	# dependency, so when `flutter build linux` walks its dependency graph
+	# it picks up flutter_test's workspace declaration and tries to
+	# resolve its dev_dependencies (`test`, `test_core`) from pub.dev.
+	# The ~noble3 build failed on this: `dart pub get` succeeded, but
+	# `flutter build linux --release --no-pub` still errored out with
+	# "Got socket error trying to find package test at https://pub.dev."
+	find $(PUB_CACHE) $(FLUTTER_ROOT)/packages -name pubspec.yaml \
+		-exec sed -i '/^resolution: workspace/d' {} +
 	$(FLUTTER_ROOT)/bin/dart pub get --enforce-lockfile --offline
 	$(FLUTTER_ROOT)/bin/flutter build linux --release --no-pub
 

@@ -1,3 +1,16 @@
+secureshellgo (1.2.0~noble4) noble; urgency=medium
+
+  * Extend the `resolution: workspace` strip to include the vendored
+    Flutter SDK's own package pubspecs (flutter_test, flutter_
+    localizations, integration_test). The ~noble3 build got past the
+    `dart pub get --enforce-lockfile --offline` step but then failed
+    inside `flutter build linux --release --no-pub` with the same
+    socket error — the workspace declaration in flutter_test's
+    pubspec.yaml (which our app depends on as a dev dep) pulled its
+    dev_dependencies (`test`, `test_core`) into the resolution.
+
+ -- Dhiva Labs <dhivakar1010@gmail.com>  Thu, 30 Jul 2026 19:40:00 +0530
+
 secureshellgo (1.2.0~noble3) noble; urgency=medium
 
   * Fix offline pub resolution failing on Launchpad ("Got socket error
