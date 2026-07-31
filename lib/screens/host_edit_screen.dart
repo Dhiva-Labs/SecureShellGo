@@ -8,13 +8,16 @@ import '../services/credential_store.dart';
 import '../services/device_storage.dart';
 import '../services/host_store.dart';
 import '../services/private_key_import.dart';
+import '../services/public_key_push.dart';
 import '../services/session_manager.dart';
 import '../services/settings_store.dart';
+import '../services/ssh_keygen.dart';
 import '../services/ssh_service.dart';
 import '../theme.dart';
 import '../widgets/error_banner.dart';
 import '../widgets/host_color_dot.dart';
 import '../widgets/host_key_dialog.dart';
+import '../widgets/public_key_dialog.dart';
 
 /// Dropdown value for "New group…". Every real group name is the trimmed
 /// result of a user-typed name (see `_promptNewGroupName` and
@@ -97,6 +100,8 @@ class _HostEditScreenState extends State<HostEditScreen> {
   bool _connecting = false;
   bool _loadingCredentials = false;
   bool _importingKey = false;
+  bool _generatingKey = false;
+  bool _installingKey = false;
   String? _error;
   String? _errorDetails;
 
@@ -375,6 +380,101 @@ class _HostEditScreenState extends State<HostEditScreen> {
       await _showKeyImportError(null, 'Could not read that file.');
     } finally {
       if (mounted) setState(() => _importingKey = false);
+    }
+  }
+
+  /// Fills the key field with a freshly generated ed25519 key and shows its
+  /// public half in a copyable dialog. The private half goes nowhere but this
+  /// field — the same one the paste/import flow already fills, saved the
+  /// same way through [CredentialStore] when the host is saved.
+  Future<void> _generateKey() async {
+    if (_generatingKey) return;
+    setState(() => _generatingKey = true);
+    try {
+      final hostLabel = _hostController.text.trim();
+      final generated = SshKeygen.generateEd25519(
+        comment: 'secureshellgo@${hostLabel.isEmpty ? 'host' : hostLabel}',
+      );
+      if (!mounted) return;
+      setState(() {
+        _keyController.text = generated.privateKeyPem;
+        _passphraseController.clear();
+      });
+      await showGeneratedPublicKeyDialog(context, generated.publicKeyLine);
+    } finally {
+      if (mounted) setState(() => _generatingKey = false);
+    }
+  }
+
+  /// Pushes the current key field's public half to this server's
+  /// `authorized_keys`, over a live session for this host if one is open, or
+  /// a fresh password-authenticated connection otherwise. See
+  /// `public_key_push.dart` — only the public line is ever built into a
+  /// command here.
+  Future<void> _installPublicKey() async {
+    if (_installingKey) return;
+
+    final pem = _keyController.text.trim();
+    if (pem.isEmpty) {
+      await _showKeyImportError(null, 'Generate or paste a private key first.');
+      return;
+    }
+
+    final String publicKeyLine;
+    try {
+      publicKeyLine = SshKeygen.publicLineFromPem(
+        pem,
+        passphrase:
+            _passphraseController.text.isEmpty ? null : _passphraseController.text,
+        comment: 'secureshellgo@${_hostController.text.trim()}',
+      );
+    } catch (_) {
+      await _showKeyImportError(
+        null,
+        'Could not read this private key (check the passphrase if it has '
+        'one).',
+      );
+      return;
+    }
+
+    final host = _buildHost();
+    final live = widget.sessions.liveForHost(host.id);
+
+    setState(() => _installingKey = true);
+    try {
+      if (live.isNotEmpty) {
+        await const PublicKeyPushService().installOverTransport(
+          transport: live.first.controller.connection,
+          publicKeyLine: publicKeyLine,
+        );
+      } else {
+        if (!mounted) return;
+        final password = await promptForPushPassword(context, host.target);
+        if (password == null || password.isEmpty) return;
+        if (!mounted) return;
+        await const PublicKeyPushService().installWithPassword(
+          sshService: widget.sshService,
+          host: host,
+          password: password,
+          publicKeyLine: publicKeyLine,
+          verifyHostKey: (prompt) async {
+            if (!mounted) return false;
+            return showHostKeyDialog(context, prompt);
+          },
+        );
+      }
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Public key installed on the server')),
+      );
+    } on PublicKeyPushFailure catch (e) {
+      if (!mounted) return;
+      await _showKeyImportError(null, e.message);
+    } catch (_) {
+      if (!mounted) return;
+      await _showKeyImportError(null, 'Could not install the key on the server.');
+    } finally {
+      if (mounted) setState(() => _installingKey = false);
     }
   }
 
@@ -786,6 +886,23 @@ class _HostEditScreenState extends State<HostEditScreen> {
             ),
           ),
           const SizedBox(height: 8),
+          Align(
+            alignment: Alignment.centerLeft,
+            child: OutlinedButton.icon(
+              onPressed: _generatingKey ? null : _generateKey,
+              icon: _generatingKey
+                  ? const SizedBox(
+                      width: 16,
+                      height: 16,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Icon(Icons.vpn_key_outlined, size: 18),
+              label: Text(
+                _generatingKey ? 'Generating…' : 'Generate new key',
+              ),
+            ),
+          ),
+          const SizedBox(height: 8),
           TextFormField(
             controller: _keyController,
             minLines: 5,
@@ -825,6 +942,23 @@ class _HostEditScreenState extends State<HostEditScreen> {
               labelText: 'Key passphrase (optional)',
               prefixIcon: Icon(Icons.lock_outline),
               helperText: 'Only if the key is encrypted.',
+            ),
+          ),
+          const SizedBox(height: 12),
+          Align(
+            alignment: Alignment.centerLeft,
+            child: OutlinedButton.icon(
+              onPressed: _installingKey ? null : _installPublicKey,
+              icon: _installingKey
+                  ? const SizedBox(
+                      width: 16,
+                      height: 16,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Icon(Icons.cloud_upload_outlined, size: 18),
+              label: Text(
+                _installingKey ? 'Installing…' : 'Install public key on server…',
+              ),
             ),
           ),
         ],

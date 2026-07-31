@@ -41,6 +41,10 @@ dependencies:
   # HMAC over known_hosts.json (Phase 3 integrity hardening). Pure Dart, and
   # already in the tree as a transitive dependency — no new native code.
   crypto: ^3.0.6
+  # ed25519 key generation (ssh_keygen.dart). Already in the tree — dartssh2
+  # signs with it — so declaring it adds no code, only honesty about the
+  # dependency.
+  pinenacl: ^0.6.0
   # Desktop upload/private-key file picker (DesktopDeviceStorage in
   # device_storage.dart). Hand-rolling a native Open dialog three times over
   # (GTK, IFileDialog, NSOpenPanel) would cost far more native code than this
