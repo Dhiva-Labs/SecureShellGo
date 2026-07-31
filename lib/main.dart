@@ -44,7 +44,18 @@ class _SecureShellGoAppState extends State<SecureShellGoApp> {
   late final KnownHostsService _knownHosts = KnownHostsService(
     integrityKey: KnownHostsIntegrityKey(_secureStorage),
   );
-  late final SshService _sshService = SshService(knownHosts: _knownHosts);
+  // The jump-host resolver turns a saved host's `jumpHostId` into the hop's
+  // own record and its own credentials, so every bastion in a chain is
+  // authenticated and host-key checked exactly like a target is. The stores
+  // are `late final` too, so naming them here before their own declarations
+  // is fine — nothing is built until the first connect touches it.
+  late final SshService _sshService = SshService(
+    knownHosts: _knownHosts,
+    jumpHosts: JumpHostResolver(
+      lookupHost: _hostStore.get,
+      loadCredentials: _credentialStore.load,
+    ),
+  );
   late final HostStore _hostStore = HostStore();
   late final CredentialStore _credentialStore =
       CredentialStore(backend: _secureStorage);

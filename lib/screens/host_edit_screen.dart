@@ -109,6 +109,13 @@ class _HostEditScreenState extends State<HostEditScreen> {
   String? _selectedGroup;
   HostColorLabel? _selectedColorLabel;
 
+  /// Every other saved host, as jump-host candidates. Loaded for the same
+  /// reason [_groupNames] is — it is a question about the whole store, not
+  /// about this host.
+  List<Host> _jumpCandidates = const [];
+  bool _loadingJumpCandidates = true;
+  String? _jumpHostId;
+
   @override
   void initState() {
     super.initState();
@@ -122,9 +129,11 @@ class _HostEditScreenState extends State<HostEditScreen> {
       _selectedGroup = host.group;
       _selectedColorLabel = host.colorLabel;
       _startupCommandController.text = host.startupCommand ?? '';
+      _jumpHostId = host.jumpHostId;
       _loadExistingCredentials(host.id);
     }
     unawaited(_loadGroupNames());
+    unawaited(_loadJumpCandidates());
   }
 
   Future<void> _loadGroupNames() async {
@@ -133,6 +142,23 @@ class _HostEditScreenState extends State<HostEditScreen> {
     setState(() {
       _groupNames = names;
       _loadingGroups = false;
+    });
+  }
+
+  Future<void> _loadJumpCandidates() async {
+    final hosts = await widget.hostStore.all();
+    if (!mounted) return;
+    setState(() {
+      // A host may never be its own jump host. Excluding it from the list is
+      // the first of the two guards; `JumpHostChain` catches the rest — a
+      // loop through a third host, and a reference left dangling by a
+      // deletion — at connect time, where the whole chain is visible.
+      final selfId = widget.host?.id ?? _savedHostId;
+      _jumpCandidates = [
+        for (final host in hosts)
+          if (host.id != selfId) host,
+      ];
+      _loadingJumpCandidates = false;
     });
   }
 
@@ -178,6 +204,7 @@ class _HostEditScreenState extends State<HostEditScreen> {
       group: _selectedGroup,
       colorLabel: _selectedColorLabel,
       startupCommand: startupCommand.isEmpty ? null : startupCommand,
+      jumpHostId: _jumpHostId,
     );
   }
 
@@ -212,7 +239,15 @@ class _HostEditScreenState extends State<HostEditScreen> {
         await widget.hostStore.add(host);
       }
       _savedHostId = host.id;
-      await widget.credentialStore.save(host.id, _buildCredentials());
+      if (host.authMethod.storesNoSecret) {
+        // Agent auth keeps nothing of its own to save, and the delete matters
+        // rather than being tidiness: switching a host that used to hold a
+        // password over to the agent must not leave that password sitting in
+        // secure storage for a method that will never read it.
+        await widget.credentialStore.delete(host.id);
+      } else {
+        await widget.credentialStore.save(host.id, _buildCredentials());
+      }
       if (!mounted) return;
       Navigator.of(context).pop(true);
     } on SecureStorageUnavailableException catch (e) {
@@ -457,6 +492,62 @@ class _HostEditScreenState extends State<HostEditScreen> {
     );
   }
 
+  Widget _buildJumpHostField() {
+    final selected = _jumpHostId;
+    // A saved jumpHostId whose host has since been deleted still has to
+    // appear as an item, or DropdownButtonFormField's one-matching-item
+    // assertion trips before the user ever gets the chance to fix it. It is
+    // shown as missing rather than silently reset to "Direct connection",
+    // which would hide a real misconfiguration.
+    final dangling = selected != null &&
+        !_jumpCandidates.any((host) => host.id == selected);
+
+    return DropdownButtonFormField<String?>(
+      key: ValueKey(selected),
+      initialValue: selected,
+      decoration: const InputDecoration(
+        labelText: 'Connect via jump host',
+        prefixIcon: Icon(Icons.alt_route),
+      ),
+      items: [
+        const DropdownMenuItem<String?>(
+          value: null,
+          child: Text('Direct connection'),
+        ),
+        for (final host in _jumpCandidates)
+          DropdownMenuItem<String?>(
+            value: host.id,
+            child: Text(host.displayName),
+          ),
+        if (dangling)
+          DropdownMenuItem<String?>(
+            value: selected,
+            child: const Text('(deleted host)'),
+          ),
+      ],
+      onChanged: _loadingJumpCandidates
+          ? null
+          : (value) => setState(() => _jumpHostId = value),
+    );
+  }
+
+  /// The auth methods offered for this host.
+  ///
+  /// The OS agent is never offered as a *new* choice yet: the agent client
+  /// (`ssh_agent_client.dart`) is complete, but dartssh2's synchronous
+  /// `SSHKeyPair.sign` cannot be satisfied by a socket round-trip, so a
+  /// host configured this way could not connect in this build — see
+  /// `_prepareIdentities` in `ssh_service.dart`. The segment still renders
+  /// when the host already uses it, so such a host (saved by a future
+  /// build, or this one before the option was withdrawn) can be changed to
+  /// something workable instead of tripping SegmentedButton's assertion
+  /// that the selected value is one of the segments.
+  List<SshAuthMethod> get _offeredAuthMethods => [
+        SshAuthMethod.password,
+        SshAuthMethod.privateKey,
+        if (_authMethod == SshAuthMethod.agent) SshAuthMethod.agent,
+      ];
+
   Widget _buildColorField(ThemeData theme) {
     return Row(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -596,19 +687,21 @@ class _HostEditScreenState extends State<HostEditScreen> {
               ? 'Required'
               : null,
         ),
+        const SizedBox(height: 16),
+        _buildJumpHostField(),
         const SizedBox(height: 20),
         SegmentedButton<SshAuthMethod>(
-          segments: const [
-            ButtonSegment(
-              value: SshAuthMethod.password,
-              icon: Icon(Icons.password),
-              label: Text('Password'),
-            ),
-            ButtonSegment(
-              value: SshAuthMethod.privateKey,
-              icon: Icon(Icons.key),
-              label: Text('Private key'),
-            ),
+          segments: [
+            for (final method in _offeredAuthMethods)
+              ButtonSegment(
+                value: method,
+                icon: Icon(switch (method) {
+                  SshAuthMethod.password => Icons.password,
+                  SshAuthMethod.privateKey => Icons.key,
+                  SshAuthMethod.agent => Icons.badge_outlined,
+                }),
+                label: Text(method.label),
+              ),
           ],
           selected: {_authMethod},
           onSelectionChanged: (selection) =>
@@ -649,6 +742,31 @@ class _HostEditScreenState extends State<HostEditScreen> {
             validator: (value) => (value == null || value.isEmpty)
                 ? 'Required'
                 : null,
+          )
+        // Explicit rather than folded into the trailing `else`, which stays
+        // the private-key branch: agent auth has no field to show, because
+        // there is deliberately nothing about it to store.
+        else if (_authMethod == SshAuthMethod.agent)
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Icon(
+                Icons.info_outline,
+                size: 18,
+                color: theme.colorScheme.onSurfaceVariant,
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Text(
+                  'Signing is done by the operating system\'s SSH agent. No '
+                  'password or key is saved for this host, and the private '
+                  'key never leaves the agent.',
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: theme.colorScheme.onSurfaceVariant,
+                  ),
+                ),
+              ),
+            ],
           )
         else ...[
           Align(

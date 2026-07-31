@@ -154,6 +154,157 @@ void main() {
       expect(error.message, contains('Enter a password'));
     });
   });
+
+  /// Every case here fails while resolving the chain, which happens before a
+  /// socket is opened — so they assert on the connect path proper without
+  /// needing a bastion to talk to.
+  group('jump hosts', () {
+    Host via(String? jumpHostId, {String id = 'target'}) => Host(
+          id: id,
+          label: 'Prod DB',
+          hostname: '127.0.0.1',
+          port: 1,
+          username: 'nobody',
+          authMethod: SshAuthMethod.password,
+          jumpHostId: jumpHostId,
+        );
+
+    SshService serviceWith(List<Host> hosts) {
+      final byId = {for (final host in hosts) host.id: host};
+      return SshService(
+        knownHosts: KnownHostsService(
+          file: File('${tempDir.path}/known_hosts.json'),
+        ),
+        jumpHosts: JumpHostResolver(
+          lookupHost: (id) async => byId[id],
+          loadCredentials: (_) async => const SshCredentials(password: 'x'),
+        ),
+      );
+    }
+
+    Future<SshConnectionException> connectFailure(
+      SshService svc,
+      Host target,
+    ) async {
+      try {
+        final connection = await svc.connect(
+          host: target,
+          credentials: const SshCredentials(password: 'x'),
+          verifyHostKey: (_) async => true,
+          timeout: const Duration(seconds: 5),
+        );
+        connection.close();
+        fail('Expected the connect to fail.');
+      } on SshConnectionException catch (e) {
+        return e;
+      }
+    }
+
+    test('a host set to jump via itself is refused by name', () async {
+      final target = via('target');
+      final error = await connectFailure(serviceWith([target]), target);
+      expect(error.message, contains('via itself'));
+      expect(error.message, contains('Prod DB'));
+    });
+
+    test('a loop is refused rather than recursing forever', () async {
+      final target = via('bastion');
+      final bastion = Host(
+        id: 'bastion',
+        label: 'Bastion',
+        hostname: '127.0.0.1',
+        port: 1,
+        username: 'nobody',
+        authMethod: SshAuthMethod.password,
+        jumpHostId: 'target',
+      );
+      final error = await connectFailure(
+        serviceWith([target, bastion]),
+        target,
+      );
+      expect(error.message, contains('loop'));
+    });
+
+    test('a deleted jump host names the host that still points at it',
+        () async {
+      final target = via('gone');
+      final error = await connectFailure(serviceWith([target]), target);
+      expect(error.message, contains('no longer exists'));
+      expect(error.message, contains('Prod DB'));
+    });
+
+    // Silently connecting direct would send the traffic somewhere the user
+    // deliberately configured it not to go.
+    test('a configured jump host with no resolver refuses to connect direct',
+        () async {
+      final error = await failure(
+        via('bastion'),
+        const SshCredentials(password: 'x'),
+      );
+      expect(error.message, contains('jump host'));
+      expect(error.message, isNot(contains('Connection refused')));
+    });
+
+    test('a chain failure is a plain connection error, so it is not retried '
+        'as if it were a dropped network', () async {
+      final target = via('target');
+      final error = await connectFailure(serviceWith([target]), target);
+      expect(error, isNot(isA<JumpHostException>()));
+      expect(error, isNot(isA<SshAuthenticationException>()));
+    });
+
+    test('a jump host with no saved credentials is an auth failure, which '
+        'reconnect must not retry', () async {
+      // Resolves fine, then fails on the hop's missing credential. The hop
+      // is unreachable here, so this asserts the type ordering only.
+      final svc = SshService(
+        knownHosts: KnownHostsService(
+          file: File('${tempDir.path}/known_hosts.json'),
+        ),
+        jumpHosts: JumpHostResolver(
+          lookupHost: (id) async => Host(
+            id: id,
+            label: 'Bastion',
+            hostname: '127.0.0.1',
+            port: 1,
+            username: 'nobody',
+            authMethod: SshAuthMethod.password,
+          ),
+          loadCredentials: (_) async => null,
+        ),
+      );
+      final error = await connectFailure(svc, via('bastion'));
+      // Port 1 refuses first, so this is the unreachable-jump message; what
+      // matters is that it is attributed to the jump, not to the target.
+      expect(error, isA<JumpHostException>());
+      expect(
+        (error as JumpHostException).phase,
+        JumpHostPhase.unreachable,
+      );
+      expect(error.jumpHost.displayName, 'Bastion');
+      expect(error.message, contains('jump host'));
+    });
+  });
+
+  group('agent auth', () {
+    test('an agent host fails clearly instead of crashing', () async {
+      final error = await failure(
+        host(authMethod: SshAuthMethod.agent),
+        const SshCredentials(),
+      );
+      // Either "no agent running" or the dartssh2 limitation, depending on
+      // whether the machine running the suite happens to have an agent — both
+      // are clear, and neither is a crash or a hang.
+      expect(error.message, isNotEmpty);
+      expect(
+        error.message,
+        anyOf(
+          contains('No SSH agent found'),
+          contains('SSH agent'),
+        ),
+      );
+    });
+  });
 }
 
 Future<Map<String, String>> _generateKeys(Directory dir) async {

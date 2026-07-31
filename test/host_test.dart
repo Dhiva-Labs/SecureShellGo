@@ -104,4 +104,100 @@ void main() {
       expect(labels, hasLength(HostColorLabel.values.length));
     });
   });
+
+  group('Host.jumpHostId', () {
+    test('round-trips through JSON', () {
+      final restored = Host.fromJson(
+        host.copyWith(jumpHostId: 'bastion-1').toJson(),
+      );
+      expect(restored.jumpHostId, 'bastion-1');
+    });
+
+    test('is absent from JSON when unset, and reads back as null', () {
+      expect(host.toJson().containsKey('jumpHostId'), isFalse);
+      expect(Host.fromJson(host.toJson()).jumpHostId, isNull);
+    });
+
+    test('a host saved before jump hosts existed reads as direct', () {
+      final legacy = {
+        'id': 'x',
+        'label': 'Old',
+        'hostname': 'example.com',
+        'port': 22,
+        'username': 'dev',
+        'authMethod': 'password',
+      };
+      expect(Host.fromJson(legacy).jumpHostId, isNull);
+    });
+
+    test('an empty stored id reads as null, not as an unmatchable id', () {
+      final restored = Host.fromJson({
+        ...host.toJson(),
+        'jumpHostId': '   ',
+      });
+      expect(restored.jumpHostId, isNull);
+    });
+
+    test('withJumpHost(null) clears it, which copyWith cannot do', () {
+      final via = host.copyWith(jumpHostId: 'bastion-1');
+      expect(via.copyWith(jumpHostId: null).jumpHostId, 'bastion-1');
+      expect(via.withJumpHost(null).jumpHostId, isNull);
+    });
+
+    // The bug this guards against is a real one: withGroup rebuilds the host
+    // field by field, so every field added later has to be added to it too.
+    test('survives withGroup, which rebuilds field by field', () {
+      final via = host.copyWith(jumpHostId: 'bastion-1');
+      expect(via.withGroup('Elsewhere').jumpHostId, 'bastion-1');
+      expect(via.withGroup(null).jumpHostId, 'bastion-1');
+    });
+
+    test('survives withJumpHost, which rebuilds field by field', () {
+      final moved = host.withJumpHost('bastion-1');
+      expect(moved.id, host.id);
+      expect(moved.label, host.label);
+      expect(moved.hostname, host.hostname);
+      expect(moved.port, host.port);
+      expect(moved.username, host.username);
+      expect(moved.authMethod, host.authMethod);
+      expect(moved.group, host.group);
+      expect(moved.colorLabel, host.colorLabel);
+    });
+  });
+
+  group('SshAuthMethod.agent', () {
+    test('round-trips through JSON', () {
+      final restored = Host.fromJson(
+        host.copyWith(authMethod: SshAuthMethod.agent).toJson(),
+      );
+      expect(restored.authMethod, SshAuthMethod.agent);
+    });
+
+    test('an unknown method still falls back to password', () {
+      expect(SshAuthMethod.fromName('totally-new'), SshAuthMethod.password);
+      expect(SshAuthMethod.fromName(null), SshAuthMethod.password);
+    });
+
+    // A desktop-saved agent host must parse on a phone rather than throwing,
+    // so the connect path can be the thing that explains the problem.
+    test('parses on any platform, so a synced host cannot crash the list', () {
+      final restored = Host.fromJson({
+        'id': 'x',
+        'label': 'Desktop box',
+        'hostname': 'example.com',
+        'port': 22,
+        'username': 'dev',
+        'authMethod': 'agent',
+      });
+      expect(restored.authMethod, SshAuthMethod.agent);
+    });
+
+    test('is the only method that stores no secret', () {
+      final storeless = [
+        for (final m in SshAuthMethod.values)
+          if (m.storesNoSecret) m,
+      ];
+      expect(storeless, [SshAuthMethod.agent]);
+    });
+  });
 }

@@ -1,12 +1,23 @@
 /// How the user authenticates against a remote host.
 enum SshAuthMethod {
   password,
-  privateKey;
+  privateKey,
+
+  /// Sign with a key held by the operating system's ssh-agent. Desktop only —
+  /// Android has no agent to talk to — and, unlike the other two, it stores
+  /// no secret for the host at all: the private key never leaves the agent.
+  /// See `ssh_agent_client.dart`.
+  agent;
 
   String get label => switch (this) {
         SshAuthMethod.password => 'Password',
         SshAuthMethod.privateKey => 'Private key',
+        SshAuthMethod.agent => 'OS SSH agent',
       };
+
+  /// True when choosing this method means no password, key or passphrase is
+  /// written to the credential store for the host.
+  bool get storesNoSecret => this == SshAuthMethod.agent;
 
   static SshAuthMethod fromName(String? name) => SshAuthMethod.values.firstWhere(
         (m) => m.name == name,
@@ -72,6 +83,7 @@ class Host {
     this.group,
     this.colorLabel,
     this.startupCommand,
+    this.jumpHostId,
   });
 
   final String id;
@@ -101,6 +113,18 @@ class Host {
   /// this field existed.
   final String? startupCommand;
 
+  /// The [id] of another saved host to tunnel through (OpenSSH `ProxyJump`),
+  /// or null to dial this host directly.
+  ///
+  /// An id rather than an embedded copy of the jump host: the jump's address
+  /// and credentials are edited in one place, and re-pointing it does not
+  /// leave a stale duplicate behind. The cost is that the reference can
+  /// dangle — the jump host may since have been deleted — and that a chain
+  /// can loop back on itself. Neither is checked here, because a model that
+  /// only sees itself cannot see the other hosts; both are resolved, and
+  /// rejected with a specific message, in `jump_host_chain.dart`.
+  final String? jumpHostId;
+
   /// `user@host` or `user@host:port` when the port is non-standard.
   String get target =>
       port == 22 ? '$username@$hostname' : '$username@$hostname:$port';
@@ -119,6 +143,7 @@ class Host {
     String? group,
     HostColorLabel? colorLabel,
     String? startupCommand,
+    String? jumpHostId,
   }) {
     return Host(
       id: id ?? this.id,
@@ -131,8 +156,29 @@ class Host {
       group: group ?? this.group,
       colorLabel: colorLabel ?? this.colorLabel,
       startupCommand: startupCommand ?? this.startupCommand,
+      jumpHostId: jumpHostId ?? this.jumpHostId,
     );
   }
+
+  /// Re-points (or clears, with null) the jump host.
+  ///
+  /// Separate from [copyWith] for the same reason [withGroup] is: `??` can
+  /// only move a field away from null, and "Direct connection" — the default
+  /// every host starts at — is exactly the value that has to be settable
+  /// again once a jump host has been chosen.
+  Host withJumpHost(String? jumpHostId) => Host(
+        id: id,
+        label: label,
+        hostname: hostname,
+        port: port,
+        username: username,
+        authMethod: authMethod,
+        lastConnectedAt: lastConnectedAt,
+        group: group,
+        colorLabel: colorLabel,
+        startupCommand: startupCommand,
+        jumpHostId: jumpHostId,
+      );
 
   /// Reassigns this host's group, [group] null meaning Ungrouped.
   ///
@@ -151,6 +197,7 @@ class Host {
         group: group,
         colorLabel: colorLabel,
         startupCommand: startupCommand,
+        jumpHostId: jumpHostId,
       );
 
   Map<String, dynamic> toJson() => {
@@ -165,6 +212,7 @@ class Host {
         if (group != null) 'group': group,
         if (colorLabel != null) 'colorLabel': colorLabel!.name,
         if (startupCommand != null) 'startupCommand': startupCommand,
+        if (jumpHostId != null) 'jumpHostId': jumpHostId,
       };
 
   factory Host.fromJson(Map<String, dynamic> json) {
@@ -190,6 +238,13 @@ class Host {
       // reads as "nothing to run", the same as a host where the field was
       // left blank.
       startupCommand: json['startupCommand'] as String?,
+      // Absent on every host saved before jump hosts existed, which reads as
+      // a direct connection. An empty string is treated the same way rather
+      // than becoming an id that can never match a host.
+      jumpHostId: switch (json['jumpHostId']) {
+        final String id when id.trim().isNotEmpty => id,
+        _ => null,
+      },
     );
   }
 }
