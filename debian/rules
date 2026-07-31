@@ -60,6 +60,23 @@ override_dh_auto_build:
 	#    resolution: workspace wasn't stripped from .flutter/packages.
 	#    With the strip covering both cache and SDK packages,
 	#    `flutter pub get --offline` is the right knob.
+	# The vendored SDK ships flutter_tools/.dart_tool/package_config.json
+	# generated on the machine that produced the tarball, with absolute
+	# rootUris into that machine's scratch pub cache. flutter_tools'
+	# PubDependencies.isUpToDate (flutter_cache.dart) walks this file and
+	# checks each rootUri contains a pubspec.yaml; when the paths do not
+	# exist — every machine except the one that built the tarball — the
+	# artifact reads as stale and the tool re-resolves its OWN package
+	# online (`dart pub get --directory .flutter/packages/flutter_tools`),
+	# which wants flutter_tools' dev deps (`test`) and dies on the
+	# builders' blocked network. This was the true cause of the ~noble2,
+	# ~noble3 and ~noble5 failures; it never reproduced locally because
+	# the original scratch directory still existed here. Point every
+	# rootUri at flutter_tools itself (the check validates only that a
+	# pubspec.yaml exists at the path); the tool executes from its AOT
+	# snapshot and does not re-resolve from this file.
+	sed -i 's|"rootUri": "file:///[^"]*"|"rootUri": "../"|g' \
+		$(FLUTTER_ROOT)/packages/flutter_tools/.dart_tool/package_config.json
 	touch pubspec.lock
 	# Strip `resolution: workspace` from BOTH the vendored pub cache
 	# AND the vendored Flutter SDK's own package pubspecs. flutter_
@@ -80,30 +97,6 @@ override_dh_auto_build:
 			touch -r "$$f.mtime-stamp" "$$f"; \
 			rm -f "$$f.mtime-stamp"; \
 		done' - {} +
-	# Diagnostic block: local network-isolated replicas of this exact
-	# build (same source package, sanitized env, tilde directory name,
-	# HOME=/sbuild-nonexistent) pass, while the Launchpad builder fails
-	# at pub get wanting the un-vendored `test` package. These lines make
-	# the builder itself report why: whether the workspace strip took
-	# effect, what the resolver derives, and what the environment looks
-	# like. The verbose solver trace is capped and the plain pub get
-	# still runs afterwards, so a passing build proceeds normally.
-	@echo "=== DIAG: strip verification ==="
-	grep -c 'resolution: workspace' \
-		$(FLUTTER_ROOT)/packages/flutter_test/pubspec.yaml || true
-	grep -rl 'resolution: workspace' $(FLUTTER_ROOT)/packages \
-		--include=pubspec.yaml | head -5 || true
-	@echo "=== DIAG: cache shape ==="
-	ls $(PUB_CACHE)/hosted/pub.dev | wc -l || true
-	ls $(PUB_CACHE)/hosted-hashes/pub.dev | wc -l || true
-	@echo "=== DIAG: tool/dart identity ==="
-	$(FLUTTER_ROOT)/bin/dart --version || true
-	@echo "=== DIAG: environment ==="
-	env | sort || true
-	@echo "=== DIAG: verbose solver trace (capped) ==="
-	$(FLUTTER_ROOT)/bin/flutter pub get --offline -v 2>&1 | \
-		grep -E 'SLVR|workspace|test|ERR|error' | head -120 || true
-	@echo "=== DIAG: end ==="
 	$(FLUTTER_ROOT)/bin/flutter pub get --offline
 	$(FLUTTER_ROOT)/bin/flutter build linux --release --no-pub
 

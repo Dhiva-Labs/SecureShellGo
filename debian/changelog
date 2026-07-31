@@ -1,3 +1,19 @@
+secureshellgo (1.2.0~noble7) noble; urgency=medium
+
+  * Root cause of every offline-resolution failure since ~noble2, found
+    via the ~noble6 diagnostic build: the vendored SDK ships flutter_
+    tools/.dart_tool/package_config.json with absolute rootUris into
+    the scratch pub cache of the machine that produced the tarball.
+    flutter_tools' PubDependencies.isUpToDate validates those paths
+    exist; on any other machine they do not, the artifact reads as
+    stale, and the tool re-resolves its own package ONLINE (ignoring
+    our --offline), asking pub.dev for its dev dependency `test`.
+    Rewrite every rootUri to point at flutter_tools itself before the
+    build — the probe validates only that a pubspec.yaml exists, and
+    the tool runs from its AOT snapshot rather than this file.
+
+ -- Dhiva Labs <dhivakar1010@gmail.com>  Fri, 31 Jul 2026 13:20:00 +0530
+
 secureshellgo (1.2.0~noble6) noble; urgency=medium
 
   * Diagnostic build. Local network-isolated replicas of the ~noble5
