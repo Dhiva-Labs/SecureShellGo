@@ -75,8 +75,21 @@ override_dh_auto_build:
 	# rootUri at flutter_tools itself (the check validates only that a
 	# pubspec.yaml exists at the path); the tool executes from its AOT
 	# snapshot and does not re-resolve from this file.
-	sed -i 's|"rootUri": "file:///[^"]*"|"rootUri": "../"|g' \
-		$(FLUTTER_ROOT)/packages/flutter_tools/.dart_tool/package_config.json
+	# Each rootUri must be DISTINCT and parse-valid: the Dart VM loads
+	# this file during the build and rejects duplicate package roots, so
+	# a single shared target is not an option (caught in the pristine
+	# rehearsal, not on the builders). Give every entry its own stub
+	# directory carrying a real pubspec.yaml.
+	python3 -c 'import json,os; \
+		p=".flutter/packages/flutter_tools/.dart_tool/package_config.json"; \
+		d=json.load(open(p)); base=os.path.dirname(p); \
+		stubs=os.path.join(base,"pubstubs"); \
+		[e.update(rootUri="pubstubs/"+e["name"]) or \
+		 os.makedirs(os.path.join(stubs,e["name"],"lib"),exist_ok=True) or \
+		 open(os.path.join(stubs,e["name"],"pubspec.yaml"),"w") \
+		   .write("name: "+e["name"]+chr(10)) \
+		 for e in d["packages"]]; \
+		json.dump(d,open(p,"w"),indent=2)'
 	touch pubspec.lock
 	# Strip `resolution: workspace` from BOTH the vendored pub cache
 	# AND the vendored Flutter SDK's own package pubspecs. flutter_

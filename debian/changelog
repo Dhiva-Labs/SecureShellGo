@@ -1,3 +1,16 @@
+secureshellgo (1.2.0~noble8) noble; urgency=medium
+
+  * The ~noble7 rootUri rewrite made every package share one root, and
+    the Dart VM rejects a package_config with duplicate roots when it
+    loads the file during the build — caught by the pristine local
+    rehearsal before upload. Rewrite instead points each entry at its
+    own generated stub directory (pubstubs/<name>/ with a real
+    pubspec.yaml), keeping the file parse-valid for the VM and
+    existence-valid for flutter_tools' staleness probe. Declares
+    python3 in Build-Depends for the rewrite.
+
+ -- Dhiva Labs <dhivakar1010@gmail.com>  Fri, 31 Jul 2026 13:55:00 +0530
+
 secureshellgo (1.2.0~noble7) noble; urgency=medium
 
   * Root cause of every offline-resolution failure since ~noble2, found
