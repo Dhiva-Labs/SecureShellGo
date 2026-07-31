@@ -67,9 +67,23 @@ typedef RemoteTargetResolver = Future<SessionController> Function(
 /// it — stays free of the credential store's dependency chain. The direct
 /// copy path calls it once per transfer to pull *just the destination's*
 /// key, hand it to a [CredentialSSHAgent] scoped to that transfer, and let
-/// it fall out of scope when the exec ends.
+/// it fall out of scope when the exec ends. The same lookup, asked for this
+/// session's own host id, is what logs the transfer's second connection in —
+/// see [SessionController.openAgentForwardedConnection].
 typedef DestinationCredentialResolver = Future<SshCredentials?> Function(
   String hostId,
+);
+
+/// Dials a second connection to [host] — one whose channels may carry SSH
+/// agent forwarding — using [credentials].
+///
+/// A callback for the same reason [DestinationCredentialResolver] is: the
+/// session stays clear of the SSH service's dependency chain, and the only
+/// thing this hands a session is the ability to *open* a connection.
+/// `SshService.connect(..., agentForwarding: true)` fits it.
+typedef AgentForwardingConnector = Future<SessionTransport> Function(
+  Host host,
+  SshCredentials credentials,
 );
 
 /// What to send to the shell for a host's configured startup command, or
@@ -103,6 +117,7 @@ class SessionController {
     Future<RemoteFileSystem> Function()? openFileSystem,
     RemoteTargetResolver? resolveRemoteTarget,
     DestinationCredentialResolver? resolveDestinationCredentials,
+    AgentForwardingConnector? connectWithAgentForwarding,
     PeriodicScheduler keepaliveScheduler = Timer.periodic,
     ReconnectSupport? reconnect,
     ReconnectDelayScheduler reconnectScheduler = Timer.new,
@@ -114,6 +129,8 @@ class SessionController {
         _resolveRemoteTarget = resolveRemoteTarget,
         // ignore: prefer_initializing_formals
         _resolveDestinationCredentials = resolveDestinationCredentials,
+        // ignore: prefer_initializing_formals
+        _connectWithAgentForwarding = connectWithAgentForwarding,
         // ignore: prefer_initializing_formals
         _keepaliveScheduler = keepaliveScheduler {
     transfers = TransferQueue(executor: _runTransfer);
@@ -158,6 +175,12 @@ class SessionController {
   /// (unit tests), and a direct transfer requested without one falls back
   /// to the relay path.
   final DestinationCredentialResolver? _resolveDestinationCredentials;
+
+  /// How this session dials the extra connection a direct transfer runs its
+  /// exec on. Null in the same circumstances as
+  /// [_resolveDestinationCredentials], and with the same consequence — the
+  /// transfer falls back to the relay path rather than failing.
+  final AgentForwardingConnector? _connectWithAgentForwarding;
 
   /// Whether this session can copy files straight to another server.
   bool get canTransferToOtherSessions => _resolveRemoteTarget != null;
@@ -710,6 +733,36 @@ class SessionController {
               details: error.toString(),
             );
     });
+  }
+
+  /// Dials a second, short-lived connection to *this session's own* server,
+  /// to carry the one agent-forwarded exec a direct A→B copy runs on.
+  ///
+  /// **Why not this session's connection.** dartssh2 puts an
+  /// `auth-agent-req@openssh.com` on every session channel opened by a client
+  /// that was built with an agent handler, and throws when the server says
+  /// no; OpenSSH says yes exactly once per connection. A session whose client
+  /// carried a handler would therefore run one exec and then fail every stats
+  /// poll, log tail, service action and key push for the rest of its life —
+  /// so the handler cannot live here, and [SSHClient.agentHandler] is `final`,
+  /// so it cannot be attached for the transfer and detached afterwards
+  /// either. One extra login per transfer buys all of those back, and it
+  /// narrows what the source server can ask this device to sign to exactly
+  /// the connection doing the transfer: nothing on the session the user is
+  /// typing in will answer an agent request at all.
+  ///
+  /// Null when this session has no way to dial one — no connector wired in,
+  /// or nothing saved for this host — so the caller can fall back to the
+  /// relay path instead of failing the transfer.
+  ///
+  /// The caller owns what comes back and must close it.
+  Future<SessionTransport?> openAgentForwardedConnection() async {
+    final dial = _connectWithAgentForwarding;
+    final resolve = _resolveDestinationCredentials;
+    if (dial == null || resolve == null) return null;
+    final credentials = await resolve(host.id);
+    if (credentials == null) return null;
+    return dial(host, credentials);
   }
 
   // -------------------------------------------------------------- transfers

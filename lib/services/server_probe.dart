@@ -168,19 +168,26 @@ class ServerProbeCommands {
   /// `2>/dev/null` on every member of every chain: a server missing `nproc`
   /// should fall through quietly, not mix "command not found" into output
   /// that is about to be parsed.
-  static const String probe = 'echo $marker$kernelSection; '
+  ///
+  /// **Every marker is single-quoted, and has to be.** [marker] begins with
+  /// `#`, and a bare `#` at the start of a word is where a POSIX shell starts
+  /// a comment — `echo #=ssg=kernel; uname -sr` echoes an empty line and
+  /// discards the entire rest of the command. Unquoted, this probe returns
+  /// nothing at all from any real server. The quotes change what `sh` reads,
+  /// not what is printed, so [splitProbeSections] still sees `#=ssg=kernel`.
+  static const String probe = "echo '$marker$kernelSection'; "
       'uname -sr 2>/dev/null; '
-      'echo $marker$hostnameSection; '
+      "echo '$marker$hostnameSection'; "
       'uname -n 2>/dev/null; '
-      'echo $marker$uptimeSection; '
+      "echo '$marker$uptimeSection'; "
       'cat /proc/uptime 2>/dev/null || uptime 2>/dev/null; '
-      'echo $marker$loadSection; '
+      "echo '$marker$loadSection'; "
       'cat /proc/loadavg 2>/dev/null || uptime 2>/dev/null; '
-      'echo $marker$memorySection; '
+      "echo '$marker$memorySection'; "
       'cat /proc/meminfo 2>/dev/null || free -b 2>/dev/null; '
-      'echo $marker$diskSection; '
+      "echo '$marker$diskSection'; "
       'df -Pk / 2>/dev/null; '
-      'echo $marker$cpuSection; '
+      "echo '$marker$cpuSection'; "
       'nproc 2>/dev/null || getconf _NPROCESSORS_ONLN 2>/dev/null || '
       'grep -c ^processor /proc/cpuinfo 2>/dev/null';
 }

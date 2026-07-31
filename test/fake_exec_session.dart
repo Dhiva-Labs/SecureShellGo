@@ -32,6 +32,7 @@ class FakeExecSession extends SSHSession {
     List<String>? stdoutChunks,
     Stream<String>? stdoutStream,
     this.exitDelay,
+    this.exits = false,
   })  : stdoutChunks = stdoutChunks ?? (stdout.isEmpty ? const [] : [stdout]),
         _stdoutStream = stdoutStream, // ignore: prefer_initializing_formals
         super(_inertChannel());
@@ -48,6 +49,16 @@ class FakeExecSession extends SSHSession {
   /// How long `waitForExit` takes to answer. Used to hold a probe in flight
   /// while a test asserts what happens to the tick that lands on top of it.
   final Duration? exitDelay;
+
+  /// Whether the remote command should be treated as having ended.
+  ///
+  /// The inert channel underneath never closes, so [SSHSession.done] never
+  /// completes — the right shape for a `tail -F` that runs until something
+  /// kills it, and the wrong one for a command that exits. Callers that wait
+  /// on `done` rather than `waitForExit` (the direct copy path does, because
+  /// it has to race the exit against a cancel poll) opt in with this. Off by
+  /// default so the tail tests keep the session they need.
+  final bool exits;
 
   /// A caller-driven stdout stream, for the tail tests: they push lines in
   /// over time rather than replaying a fixed script.
@@ -83,6 +94,11 @@ class FakeExecSession extends SSHSession {
   Stream<Uint8List> get stderr => stderrText.isEmpty
       ? const Stream.empty()
       : Stream.value(Uint8List.fromList(utf8.encode(stderrText)));
+
+  @override
+  Future<void> get done => exits
+      ? Future<void>.delayed(exitDelay ?? Duration.zero)
+      : super.done;
 
   @override
   Future<int?> waitForExit({Duration? timeout}) async {
@@ -157,8 +173,10 @@ class FakeExecTransport implements SessionTransport {
     this.stderrText = '',
     this.exitCode = 0,
     this.delay,
+    bool agentForwarding = false,
     FakeExecSession Function(String command)? respond,
-  }) : _respond = respond; // ignore: prefer_initializing_formals
+  })  : agentSlot = agentForwarding ? MutableSSHAgentHandler() : null,
+        _respond = respond; // ignore: prefer_initializing_formals
 
   String stdout;
   String stderrText;
@@ -177,8 +195,32 @@ class FakeExecTransport implements SessionTransport {
   /// open a channel at all.
   Object? failWith;
 
+  /// Whether the agent slot held a delegate at the moment of each `execute`.
+  /// The scoping claim the direct copy path makes is that it is true for its
+  /// one exec and false either side of it.
+  final List<bool> agentInstalledAtExec = [];
+
+  /// Whether the agent-forwarding request has already been granted on this
+  /// connection. See [execute].
+  var _agentGranted = false;
+
   @override
   Future<SSHSession> execute(String command) async {
+    // Models what a real OpenSSH server does to a dartssh2 client that holds
+    // an agent handler: dartssh2 puts an `auth-agent-req@openssh.com` on
+    // *every* session channel such a client opens and throws when it is
+    // refused, and sshd grants it once per connection. So a transport with a
+    // slot runs one exec and fails every later one — which is exactly what
+    // took out the stats poll, the log tail, the service actions and the key
+    // push. A transport without a slot (the default, and the shape of every
+    // session connection) is reusable for the life of the session.
+    if (agentSlot != null) {
+      if (_agentGranted) {
+        throw SSHChannelRequestError('Failed to request agent forwarding');
+      }
+      _agentGranted = true;
+    }
+    agentInstalledAtExec.add(agentSlot?.isInstalled ?? false);
     commands.add(command);
     final failure = failWith;
     if (failure != null) throw failure;
@@ -208,7 +250,11 @@ class FakeExecTransport implements SessionTransport {
   Future<void> get done => Completer<void>().future;
 
   @override
-  bool get isClosed => false;
+  bool get isClosed => closed;
+
+  /// Set by [close]. The direct copy path owns the connection it dials, so
+  /// "was it hung up afterwards" is an assertion worth being able to make.
+  var closed = false;
 
   @override
   Future<SSHSession> startShell({
@@ -221,12 +267,14 @@ class FakeExecTransport implements SessionTransport {
   @override
   Future<SftpClient> openSftp() => throw UnimplementedError();
 
+  /// Null unless built with `agentForwarding: true` — the production shape
+  /// of a session connection, and the reason its execs are repeatable.
   @override
-  MutableSSHAgentHandler get agentSlot => throw UnimplementedError();
+  final MutableSSHAgentHandler? agentSlot;
 
   @override
   Future<void> ping() async {}
 
   @override
-  void close() {}
+  void close() => closed = true;
 }

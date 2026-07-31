@@ -82,6 +82,16 @@ class _SecureShellGoAppState extends State<SecureShellGoApp> {
   // credential is ever exposed to the source server beyond the single
   // signing session an [SSHAgentHandler] hands out on request.
   //
+  // That signing session runs on a connection of the transfer's own, dialled
+  // by `connectWithAgentForwarding` and hung up when the transfer ends. It
+  // cannot run on the session's connection: OpenSSH grants
+  // `auth-agent-req@openssh.com` once per connection and dartssh2 asks for it
+  // on every channel a client with an agent handler opens, so a session that
+  // carried one would lose every exec after its first — the stats poll, the
+  // log tail, the service actions, the key push. Refusing every agent request
+  // on the connection the user is actually typing in is the better shape
+  // anyway. See `SessionController.openAgentForwardedConnection`.
+  //
   // The same two dependencies also let a session rebuild its own transport
   // after the network drops underneath it. Nothing new is cached: the
   // credential is fetched from the existing store at the moment an attempt
@@ -89,6 +99,18 @@ class _SecureShellGoAppState extends State<SecureShellGoApp> {
   // the same known-hosts check — that a hand-made connection does.
   late final SessionManager _sessions = SessionManager(
     resolveDestinationCredentials: _credentialStore.load,
+    connectWithAgentForwarding: (host, credentials) => _sshService.connect(
+      host: host,
+      credentials: credentials,
+      // Nobody is being asked anything for this one: it goes to a host this
+      // session is already connected to, so known-hosts has the key and the
+      // policy matches it silently. A key that has *changed* since the
+      // session came up reaches this prompt, and the only honest answer with
+      // no human in front of it is no — the same reasoning as the reconnect
+      // path in `session_reconnect.dart`.
+      verifyHostKey: (_) async => false,
+      agentForwarding: true,
+    ),
     reconnect: ReconnectSupport(
       loadCredentials: _credentialStore.load,
       connect: ({

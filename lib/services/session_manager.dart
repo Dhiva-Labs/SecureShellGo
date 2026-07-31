@@ -8,7 +8,10 @@ import 'sftp_service.dart';
 import 'ssh_service.dart';
 
 export 'session_controller.dart'
-    show DestinationCredentialResolver, ReconnectSupport;
+    show
+        AgentForwardingConnector,
+        DestinationCredentialResolver,
+        ReconnectSupport;
 
 /// Which view of a session is in front.
 ///
@@ -85,12 +88,15 @@ class SessionManager {
     SessionForegroundController? foreground,
     SessionControllerFactory? createController,
     DestinationCredentialResolver? resolveDestinationCredentials,
+    AgentForwardingConnector? connectWithAgentForwarding,
     ReconnectSupport? reconnect,
   })  : _foreground = foreground ?? SessionForegroundController.instance,
         // ignore: prefer_initializing_formals
         _createController = createController,
         // ignore: prefer_initializing_formals
         _resolveDestinationCredentials = resolveDestinationCredentials,
+        // ignore: prefer_initializing_formals
+        _connectWithAgentForwarding = connectWithAgentForwarding,
         // ignore: prefer_initializing_formals
         _reconnect = reconnect;
 
@@ -120,6 +126,7 @@ class SessionManager {
       connection: connection,
       resolveRemoteTarget: resolveRemoteTarget,
       resolveDestinationCredentials: resolveDestinationCredentials,
+      connectWithAgentForwarding: _connectWithAgentForwarding,
       reconnect: _reconnect,
     );
   }
@@ -136,6 +143,13 @@ class SessionManager {
   /// the transfer runs; the manager is the one thing above the sessions
   /// that has (or, in tests, does not have) the credential store wired in.
   final DestinationCredentialResolver? _resolveDestinationCredentials;
+
+  /// And it needs a connection of its own to forward that key over — see
+  /// [SessionController.openAgentForwardedConnection] for why it cannot use
+  /// the session's. Same story as the two above: the manager is where the
+  /// SSH service is in scope, and null here simply means direct transfers
+  /// fall back to the relay path.
+  final AgentForwardingConnector? _connectWithAgentForwarding;
 
   final List<ManagedSession> _sessions = [];
   final Map<String, StreamSubscription<void>> _watchers = {};

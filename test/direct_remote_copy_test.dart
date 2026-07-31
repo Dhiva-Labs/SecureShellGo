@@ -52,7 +52,20 @@ void main() {
       credentials: SshCredentials(privateKeyPem: demo!.keyPem),
       verifyHostKey: (_) async => true,
     );
-    return SessionController(connection: connection);
+    return SessionController(
+      connection: connection,
+      // What the direct path needs to dial its own connection for the one
+      // agent-forwarded exec. The session's connection deliberately has no
+      // agent handler — see `SessionController.openAgentForwardedConnection`
+      // — so without these two a direct transfer cannot start at all.
+      resolveDestinationCredentials: (_) async => demo.credentials,
+      connectWithAgentForwarding: (host, credentials) => sshService!.connect(
+        host: host,
+        credentials: credentials,
+        verifyHostKey: (_) async => true,
+        agentForwarding: true,
+      ),
+    );
   }
 
   test('bytes land on B intact and match the source sha256', () async {
@@ -175,6 +188,8 @@ void main() {
       connection: await _reconnect(demo.hostA, demo.keyPem),
       resolveRemoteTarget: (id) async => destinationController,
       resolveDestinationCredentials: (id) async => demo.credentials,
+      connectWithAgentForwarding: (host, credentials) =>
+          _connectForwarding(host, demo.keyPem),
     );
     // Swap in the rewired controller. Dispose of the plain one first so
     // it releases its channel.
@@ -462,6 +477,23 @@ Future<SessionTransport> _reconnect(Host host, String keyPem) async {
     host: host,
     credentials: SshCredentials(privateKeyPem: keyPem),
     verifyHostKey: (_) async => true,
+  );
+}
+
+/// The same, but with an agent slot — the connection a direct transfer runs
+/// its one exec on.
+Future<SessionTransport> _connectForwarding(Host host, String keyPem) async {
+  final tempDir = Directory.systemTemp.createTempSync('forwarding');
+  final svc = SshService(
+    knownHosts: KnownHostsService(
+      file: File('${tempDir.path}/known_hosts.json'),
+    ),
+  );
+  return svc.connect(
+    host: host,
+    credentials: SshCredentials(privateKeyPem: keyPem),
+    verifyHostKey: (_) async => true,
+    agentForwarding: true,
   );
 }
 

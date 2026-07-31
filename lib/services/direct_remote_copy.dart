@@ -10,7 +10,9 @@ import 'remote_copy.dart';
 import 'remote_path.dart';
 import 'session_controller.dart';
 import 'sftp_service.dart';
-import 'ssh_agent_backend.dart';
+// Re-exports `ssh_agent_backend.dart`, which is where [CredentialSSHAgent]
+// and [MutableSSHAgentHandler] come from.
+import 'ssh_service.dart';
 import 'transfer_queue.dart';
 
 /// Why the direct A→B path could not run for a particular transfer.
@@ -47,6 +49,12 @@ enum DirectCopyUnavailableReason {
   /// `AllowAgentForwarding yes` and the account has to be allowed to use
   /// it; some hardened boxes disable it wholesale.
   agentRefused,
+
+  /// The second connection the direct path runs its exec on could not be
+  /// opened at all — nothing saved for the source host, no connector wired
+  /// in, or the dial itself failed. Distinct from [agentRefused]: the source
+  /// server never got as far as being asked about forwarding.
+  noForwardingConnection,
 
   /// The destination's host key on the wire does not match what we have
   /// trusted for it on this device. This is a security event, not a
@@ -100,11 +108,18 @@ enum DirectCopyWarning { hostKeyCheckRelaxed }
 /// mechanism at the heart of this — is what makes that possible: `sftp` on
 /// A sends signing requests back through the exec channel to a
 /// [CredentialSSHAgent] living in *this* process, which holds the one key.
-/// [SSHClient.agentHandler] on the source is a swappable
-/// [MutableSSHAgentHandler] set at connect time; this call installs a
-/// per-transfer handler into it, runs the exec, and clears it again — no
-/// key touches A even in-memory over the wire, and no state carries over to
-/// the next transfer.
+///
+/// **On a connection of its own.** The exec does not run on [source]'s
+/// session connection. `SSHClient.agentHandler` is `final`, dartssh2 puts an
+/// `auth-agent-req@openssh.com` on every session channel a client holding one
+/// opens, and OpenSSH grants that once per connection — so a session client
+/// with a handler would run one exec and fail every stats poll, log tail and
+/// service action afterwards. Each transfer therefore dials its own
+/// connection to A (see [SessionController.openAgentForwardedConnection]),
+/// installs the handler in *its* slot, runs the single exec, and hangs it up.
+/// No key touches A even in-memory over the wire, nothing carries over to the
+/// next transfer, and the connection the user is typing in never answers an
+/// agent request at all.
 ///
 /// **Batch mode.** The source-side `sftp` runs with `-b -` (batch from
 /// stdin) and `-o BatchMode=yes -o PasswordAuthentication=no`. Missing
@@ -172,11 +187,7 @@ Future<RemoteCopyOutcome> copyRemoteFileDirect({
 
   if (isCancelled?.call() ?? false) throw const TransferCancelled();
 
-  // Install the destination's key into the source's agent slot for the
-  // duration of this exec. The `release` clears the slot only if it still
-  // holds this specific agent, so a second transfer starting before this
-  // one has cleaned up will not be silently unhooked from underneath.
-  final release = source.connection.agentSlot.install(agent);
+  _ForwardedExec? exec;
   var published = false;
 
   try {
@@ -220,7 +231,8 @@ Future<RemoteCopyOutcome> copyRemoteFileDirect({
 
     warnings?.add(DirectCopyWarning.hostKeyCheckRelaxed);
 
-    final session = await _openExec(source, command);
+    exec = await _openForwardedExec(source, agent, command);
+    final session = exec.session;
 
     // Feed the batch script. Close stdin so `sftp -b -` sees EOF.
     session.stdin.add(Uint8List.fromList(utf8.encode(batch)));
@@ -242,6 +254,10 @@ Future<RemoteCopyOutcome> copyRemoteFileDirect({
     );
     await stderrDone;
     final stderrText = utf8.decode(stderrBytes, allowMalformed: true).trim();
+    // The exec is over; everything below runs on our own trusted SFTP to A
+    // and B. Hang up the transfer's connection now rather than holding a
+    // second login on the source open across the verification.
+    exec.close();
 
     if (isCancelled?.call() ?? false) {
       await _cleanupTemporary(destinationFs, tempRemotePath);
@@ -304,7 +320,8 @@ Future<RemoteCopyOutcome> copyRemoteFileDirect({
       sourceDeleted: false,
     );
   } finally {
-    release();
+    // Idempotent: the happy path already hung up as soon as the exec ended.
+    exec?.close();
     // Best-effort cleanup: any exit that did not verify a landed file
     // should leave no temp behind on the destination. `_cleanupTemporary`
     // above handles the known-failure cases; this catches surprise throws
@@ -354,10 +371,76 @@ Future<int?> _awaitExit(
 
 const Object _poll = Object();
 
-Future<SSHSession> _openExec(SessionController source, String command) async {
+/// One transfer's exec on the source, plus the connection it owns.
+///
+/// The connection exists for this exec and nothing else can reach it, so
+/// [close] takes both down together. Idempotent, because the happy path lets
+/// go of it as soon as the exec has exited — no reason to hold a second login
+/// open through a verification walk — and the caller's `finally` still calls
+/// it as a backstop.
+class _ForwardedExec {
+  _ForwardedExec(this.session, this._transport, this._release);
+
+  final SSHSession session;
+  final SessionTransport _transport;
+  final void Function() _release;
+  var _closed = false;
+
+  void close() {
+    if (_closed) return;
+    _closed = true;
+    _release();
+    try {
+      _transport.close();
+    } catch (_) {
+      // Already gone.
+    }
+  }
+}
+
+/// Dials the transfer's own connection to the source, installs [agent] in its
+/// agent slot, and starts [command] on it.
+///
+/// Every failure past the dial takes the connection down with it — a
+/// half-built transfer must not leave an extra authenticated session sitting
+/// on the source server.
+Future<_ForwardedExec> _openForwardedExec(
+  SessionController source,
+  CredentialSSHAgent agent,
+  String command,
+) async {
+  SessionTransport? transport;
   try {
-    return await source.connection.execute(command);
+    transport = await source.openAgentForwardedConnection();
+  } on SshConnectionException catch (e) {
+    throw SSHDirectCopyUnavailable(
+      reason: DirectCopyUnavailableReason.noForwardingConnection,
+      message: 'Could not open a second connection to the source server for '
+          'this transfer. ${e.message}',
+      details: e.details,
+    );
+  }
+
+  final slot = transport?.agentSlot;
+  if (transport == null || slot == null) {
+    transport?.close();
+    throw const SSHDirectCopyUnavailable(
+      reason: DirectCopyUnavailableReason.noForwardingConnection,
+      message: 'This session cannot open the agent-forwarding connection the '
+          'direct path needs — there is no saved credential for the source '
+          'server to log it in with.',
+    );
+  }
+
+  // The release clears the slot only if it still holds this specific agent,
+  // so nothing can be unhooked from underneath a transfer that installed
+  // after it. Belt and braces on a connection only this transfer can see.
+  final release = slot.install(agent);
+  try {
+    return _ForwardedExec(await transport.execute(command), transport, release);
   } catch (e) {
+    release();
+    transport.close();
     // The client throws SSHChannelRequestError('Failed to request agent
     // forwarding') when the source's sshd refuses the auth-agent-req.
     final text = e.toString();
@@ -584,7 +667,7 @@ Future<RemoteCopyOutcome> copyRemoteDirectoryDirect({
   final sourceParent = RemotePath.parent(sourceDirectory);
   final sourceName = RemotePath.basename(sourceDirectory);
 
-  final release = source.connection.agentSlot.install(agent);
+  _ForwardedExec? exec;
   var published = false;
 
   try {
@@ -625,7 +708,8 @@ Future<RemoteCopyOutcome> copyRemoteDirectoryDirect({
 
     warnings?.add(DirectCopyWarning.hostKeyCheckRelaxed);
 
-    final session = await _openExec(source, command);
+    exec = await _openForwardedExec(source, agent, command);
+    final session = exec.session;
 
     session.stdin.add(Uint8List.fromList(utf8.encode(batch)));
     unawaited(session.stdin.close());
@@ -638,6 +722,9 @@ Future<RemoteCopyOutcome> copyRemoteDirectoryDirect({
     final exit = await _awaitExit(session, isCancelled: isCancelled);
     await stderrDone;
     final stderrText = utf8.decode(stderrBytes, allowMalformed: true).trim();
+    // Nothing below needs the source-side `sftp` any more; the walk that
+    // verifies the tree runs over our own trusted SFTP sessions.
+    exec.close();
 
     if (isCancelled?.call() ?? false) {
       // A cancel mid-put leaves whatever partial tree A had time to write.
@@ -696,7 +783,8 @@ Future<RemoteCopyOutcome> copyRemoteDirectoryDirect({
       sourceDeleted: false,
     );
   } finally {
-    release();
+    // Idempotent: the happy path already hung up as soon as the exec ended.
+    exec?.close();
     if (!published) {
       // The verify block already cleaned up on the failure paths it can
       // classify; this catches surprise throws between exec and verify.

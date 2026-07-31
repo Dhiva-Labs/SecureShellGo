@@ -194,23 +194,33 @@ abstract class SessionTransport {
 
   /// Runs [command] on the remote side over a fresh exec channel.
   ///
-  /// Used by the direct server-to-server copy path (see
-  /// `direct_remote_copy.dart`) to invoke `sftp` or `scp` on the *source*
-  /// server, with agent forwarding enabled so the destination server can
-  /// sign challenges against a key held on this device — never one written
-  /// to the source. Because [SSHClient.agentHandler] is `final`, the client
-  /// has to be born with one; that is what [agentSlot] is for.
+  /// Every exec the app runs comes through here — the stats probe, the log
+  /// tail, the service and process actions, the public-key push — so a
+  /// connection has to serve as many of them as the session lives for. That
+  /// is the whole reason an ordinary transport carries no [agentSlot]:
+  /// dartssh2 sends `auth-agent-req@openssh.com` on *every* session channel
+  /// a client with an agent handler opens, and throws if the server refuses
+  /// it. OpenSSH grants that request once per connection, so a client born
+  /// with a handler runs exactly one exec and then fails every later one.
+  ///
+  /// The direct server-to-server copy is the one feature that does need
+  /// forwarding, and it dials a connection of its own for its single exec
+  /// rather than borrowing this one. See `direct_remote_copy.dart` and
+  /// [SessionTransport.agentSlot].
   Future<SSHSession> execute(String command) =>
       throw UnimplementedError('This transport does not support exec.');
 
-  /// The swappable agent handler wired into this connection's SSH client.
+  /// The swappable agent handler wired into this connection's SSH client, or
+  /// null — the ordinary case — when the client was built without one.
   ///
-  /// Empty on a freshly connected transport; per-transfer code plugs in a
-  /// [CredentialSSHAgent] with [MutableSSHAgentHandler.install], runs its
-  /// exec, and calls the returned release. Nothing else on the connection
-  /// sees any identity, and no state persists between transfers.
-  MutableSSHAgentHandler get agentSlot =>
-      throw UnimplementedError('This transport has no agent slot.');
+  /// Only the short-lived connection a direct transfer dials for its one
+  /// exec has a slot, because carrying a handler costs the connection every
+  /// exec after the first (see [execute]). On that connection the transfer
+  /// plugs in a [CredentialSSHAgent] with [MutableSSHAgentHandler.install],
+  /// runs its exec, and calls the returned release. No identity is ever
+  /// reachable from the session's own connection, and none persists past the
+  /// transfer that installed it.
+  MutableSSHAgentHandler? get agentSlot => null;
 
   /// Sends one keep-alive and waits for the server's reply.
   ///
@@ -227,7 +237,7 @@ class SshConnection implements SessionTransport {
     required this.client,
     required this.host,
     required this.socket,
-    required this.agentSlot,
+    this.agentSlot,
     this.jumpLinks = const [],
   });
 
@@ -248,11 +258,13 @@ class SshConnection implements SessionTransport {
 
   final SSHSocket socket;
 
-  /// The agent slot handed to [SSHClient.agentHandler] at construction. The
-  /// direct copy path installs a per-transfer [CredentialSSHAgent] into it
-  /// and clears it again when the exec ends.
+  /// The agent slot handed to [SSHClient.agentHandler] at construction, or
+  /// null on every connection not dialled with `agentForwarding: true` —
+  /// which is all of them bar the one a direct transfer opens for its single
+  /// exec. The direct copy path installs a per-transfer [CredentialSSHAgent]
+  /// into it and clears it again when the exec ends.
   @override
-  final MutableSSHAgentHandler agentSlot;
+  final MutableSSHAgentHandler? agentSlot;
 
   @override
   bool get isClosed => client.isClosed;
@@ -271,11 +283,14 @@ class SshConnection implements SessionTransport {
   @override
   Future<void> ping() => client.ping();
 
-  /// Runs [command] on the source server. Because the client was constructed
-  /// with [agentSlot] as its `agentHandler`, dartssh2 automatically sends an
-  /// `auth-agent-req@openssh.com` request on the channel — the destination
-  /// server's `scp`/`sftp` can then reach back to sign against whatever key
-  /// the caller installed just before this call.
+  /// Runs [command] over a fresh exec channel.
+  ///
+  /// dartssh2 adds an `auth-agent-req@openssh.com` request to this channel
+  /// if and only if the client was built with an agent handler — so on an
+  /// ordinary connection ([agentSlot] null) this is repeatable for the life
+  /// of the session, and on a transfer's own connection the source server's
+  /// `sftp` gets a path back to whatever key the caller installed just
+  /// before this call. See [SessionTransport.execute].
   @override
   Future<SSHSession> execute(String command) => client.execute(command);
 
@@ -356,11 +371,20 @@ class SshService {
   /// human-readable message on every failure path; failures that happened on
   /// a hop rather than on [host] are [JumpHostException] or
   /// [JumpHostAuthException], which name the hop.
+  ///
+  /// [agentForwarding] gives the connection an [SshConnection.agentSlot], and
+  /// with it the ability to carry `auth-agent-req@openssh.com`. It is off by
+  /// default and exactly one caller turns it on — the direct server-to-server
+  /// copy, for the one connection it dials per transfer. A connection that
+  /// carries a handler can only ever run *one* exec, so this is never right
+  /// for a session the user is going to keep working in; see
+  /// [SessionTransport.execute].
   Future<SshConnection> connect({
     required Host host,
     required SshCredentials credentials,
     required HostKeyVerifier verifyHostKey,
     Duration timeout = defaultTimeout,
+    bool agentForwarding = false,
   }) async {
     // Resolved before any socket is opened, so a self-reference or a loop
     // costs nothing and cannot recurse.
@@ -388,6 +412,7 @@ class SshService {
         verifyHostKey: verifyHostKey,
         timeout: timeout,
         jumpLinks: List.unmodifiable(links),
+        agentForwarding: agentForwarding,
       );
     } catch (_) {
       // Any hop already standing is ours to tear down — nothing else has a
@@ -613,19 +638,26 @@ class SshService {
     required HostKeyVerifier verifyHostKey,
     required Duration timeout,
     required List<SshJumpLink> jumpLinks,
+    bool agentForwarding = false,
   }) async {
     // Set by the verify handler so we can distinguish "user said no" from a
     // genuine handshake failure once the client surfaces the error.
     var userRejectedKey = false;
 
-    // Every session is born with an empty agent slot so a later direct
-    // server-to-server transfer can plug a scoped [CredentialSSHAgent] into
-    // it without a second authentication. Empty replies to sign requests
-    // with SSH_AGENT_FAILURE, which is what OpenSSH reads as "no key here"
-    // — so an accidental forward with no destination key installed simply
-    // gets refused instead of ever exposing something we did not mean to
-    // hand out.
-    final agentSlot = MutableSSHAgentHandler();
+    // Null unless the caller asked for forwarding, and the difference is not
+    // cosmetic: dartssh2 decides per *client* whether to put an
+    // `auth-agent-req@openssh.com` on every session channel it opens, and
+    // OpenSSH answers that request once per connection. A session that keeps
+    // a handler therefore loses every exec after its first — which is the
+    // stats poll, the log tail, the service actions and the key push. So the
+    // handler goes on the connection that needs it and nowhere else.
+    //
+    // When there is a slot it starts empty, and empty replies to sign
+    // requests with SSH_AGENT_FAILURE — what OpenSSH reads as "no key here".
+    // A forward that reaches us before the transfer installs its key is
+    // refused rather than answered with something we did not mean to hand
+    // out.
+    final agentSlot = agentForwarding ? MutableSSHAgentHandler() : null;
 
     final client = SSHClient(
       socket,

@@ -18,11 +18,14 @@ enum TransferDirection { download, upload, serverToServer }
 /// servers, which is the guaranteed case since it *did* — that is how each
 /// session got opened.
 ///
-/// [direct] opens an exec channel on the source and runs `sftp` there,
-/// pointing at the destination. Bytes flow source → destination on the
-/// network between them; agent forwarding sends signing challenges back
-/// through the exec channel to a [MutableSSHAgentHandler] here, so the
-/// destination's private key never touches the source. Faster when the two
+/// [direct] dials a second, short-lived connection to the source and runs
+/// `sftp` there over one exec channel, pointing at the destination. Bytes
+/// flow source → destination on the network between them; agent forwarding
+/// sends signing challenges back through that exec channel to a
+/// [MutableSSHAgentHandler] held on that connection alone, so the
+/// destination's private key never touches the source — and the session's
+/// own connection never carries an agent handler, which is what keeps its
+/// execs reusable. Faster when the two
 /// servers are on the same LAN; falls back to [relay] when the source
 /// cannot reach the destination or the destination auth cannot be
 /// forwarded.
