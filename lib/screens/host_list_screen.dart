@@ -5,6 +5,8 @@ import 'package:flutter/services.dart';
 
 import '../models/host.dart';
 import '../models/snippet.dart';
+import '../services/app_lock_controller.dart';
+import '../services/backup_service.dart';
 import '../services/credential_store.dart';
 import '../services/device_storage.dart';
 import '../services/host_grouping.dart';
@@ -62,6 +64,8 @@ class HostListScreen extends StatefulWidget {
     this.shareIntake,
     this.snippetStore,
     this.tunnels,
+    this.appLock,
+    this.backupService,
   });
 
   final HostStore hostStore;
@@ -100,6 +104,14 @@ class HostListScreen extends StatefulWidget {
   /// running tunnel must survive going anywhere else in the app. Null hides
   /// the Tunnels affordances entirely.
   final TunnelRuntime? tunnels;
+
+  /// The optional app lock, passed straight through to [SettingsScreen] —
+  /// the gate itself lives above the whole app in `main.dart`, so this route
+  /// only needs it to render the setting. Null hides that section.
+  final AppLockController? appLock;
+
+  /// Backs the Backup row in Settings. Null hides it.
+  final BackupService? backupService;
 
   @override
   State<HostListScreen> createState() => _HostListScreenState();
@@ -789,6 +801,8 @@ class _HostListScreenState extends State<HostListScreen> {
           snippetStore: _snippetStore,
           tunnels: widget.tunnels,
           hostStore: widget.hostStore,
+          appLock: widget.appLock,
+          backupService: widget.backupService,
         ),
       ),
     );

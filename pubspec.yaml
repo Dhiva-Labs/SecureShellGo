@@ -45,6 +45,12 @@ dependencies:
   # signs with it — so declaring it adds no code, only honesty about the
   # dependency.
   pinenacl: ^0.6.0
+  # Argon2id and AES-GCM for the encrypted backup container
+  # (backup_crypto.dart). Inherited through dartssh2, but declared here
+  # deliberately: every backup ever written depends on these primitives
+  # staying put, and that is not a promise another package's dependency
+  # list should be making on our behalf.
+  pointycastle: ^4.0.0
   # Desktop upload/private-key file picker (DesktopDeviceStorage in
   # device_storage.dart). Hand-rolling a native Open dialog three times over
   # (GTK, IFileDialog, NSOpenPanel) would cost far more native code than this

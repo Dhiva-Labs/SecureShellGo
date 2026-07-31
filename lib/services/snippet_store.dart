@@ -125,4 +125,15 @@ class SnippetStore {
     _snippets.remove(id);
     await _persist();
   }
+
+  /// Swaps the entire contents of the store for [snippets], in one write.
+  /// Mirrors [HostStore.replaceAll] — see there for why the backup importer
+  /// needs this rather than a loop of [add]/[delete].
+  Future<void> replaceAll(Iterable<Snippet> snippets) async {
+    await ensureLoaded();
+    _snippets
+      ..clear()
+      ..addEntries([for (final s in snippets) MapEntry(s.id, s)]);
+    await _persist();
+  }
 }

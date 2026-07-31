@@ -137,6 +137,26 @@ class HostStore {
     await _persist();
   }
 
+  /// Swaps the entire contents of the store for [hosts], in one write.
+  ///
+  /// For the encrypted-backup importer (`backup_service.dart`), which has to
+  /// put a whole restored configuration in place without leaving a half-built
+  /// one behind if something fails part way. Doing it host by host through
+  /// [add]/[delete] would be one file write per host and a window after each
+  /// one where the store on disk is neither the old configuration nor the new
+  /// one; this is a single [_persist] over an already-assembled map.
+  ///
+  /// Order is taken from [hosts], so a restored store lists its hosts the way
+  /// the backup did. A duplicate id in [hosts] keeps the last one, matching
+  /// what [add] would have done.
+  Future<void> replaceAll(Iterable<Host> hosts) async {
+    await ensureLoaded();
+    _hosts
+      ..clear()
+      ..addEntries([for (final host in hosts) MapEntry(host.id, host)]);
+    await _persist();
+  }
+
   /// Every distinct, non-empty group name currently assigned to a host,
   /// sorted case-insensitively. There is no separate groups table — see
   /// [Host.group] — so this *is* the list of groups; it is what the "existing

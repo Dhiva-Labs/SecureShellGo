@@ -21,6 +21,9 @@ class MainActivity : FlutterActivity() {
 
     private var storage: StorageBridge? = null
 
+    /** The optional app lock's platform half. See `AppLockBridge.kt`. */
+    private var appLock: AppLockBridge? = null
+
     /**
      * Kept so a share arriving while the app is already running can tell Dart
      * to come and get it. The cold-start case needs no push — Dart asks once
@@ -99,6 +102,16 @@ class MainActivity : FlutterActivity() {
             }
         }
 
+        // The optional app lock: the OS credential sheet, and the FLAG_SECURE
+        // that keeps the terminal out of the recent-apps thumbnail while the
+        // lock is switched on.
+        val lock = AppLockBridge(this)
+        appLock = lock
+        MethodChannel(
+            flutterEngine.dartExecutor.binaryMessenger,
+            AppLockBridge.CHANNEL,
+        ).setMethodCallHandler(lock)
+
         // Start/stop the foreground service that keeps the process — and so
         // the SSH socket — alive while the user is in another app. The
         // reference counting lives on the Dart side in
@@ -162,6 +175,8 @@ class MainActivity : FlutterActivity() {
 
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         if (storage?.onActivityResult(requestCode, resultCode, data) == true) return
+        // The API 23–27 confirm-credential screen comes back through here.
+        if (appLock?.onActivityResult(requestCode, resultCode, data) == true) return
         super.onActivityResult(requestCode, resultCode, data)
     }
 
@@ -196,6 +211,10 @@ class MainActivity : FlutterActivity() {
     override fun onDestroy() {
         storage?.dispose()
         storage = null
+        // Answers any credential prompt still in flight, so the Dart side is
+        // never left awaiting a result that can no longer arrive.
+        appLock?.dispose()
+        appLock = null
         shareChannel?.setMethodCallHandler(null)
         shareChannel = null
         // The engine goes with the activity, and the session with the engine,
