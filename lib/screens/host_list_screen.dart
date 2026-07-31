@@ -13,6 +13,7 @@ import '../services/session_manager.dart';
 import '../services/settings_store.dart';
 import '../services/share_intake.dart';
 import '../services/ssh_service.dart';
+import '../services/terminal_workspace.dart';
 import '../theme.dart';
 import '../widgets/host_key_dialog.dart';
 import 'host_edit_screen.dart';
@@ -34,6 +35,7 @@ class HostListScreen extends StatefulWidget {
     required this.sshService,
     required this.settingsStore,
     required this.sessions,
+    this.workspace,
     this.shareIntake,
   });
 
@@ -47,6 +49,13 @@ class HostListScreen extends StatefulWidget {
   /// session outlives the route showing it: leaving the sessions screen for
   /// this list is how a second one gets started.
   final SessionManager sessions;
+
+  /// The desktop pane layout, passed straight through to [SessionsScreen].
+  /// Held above this route rather than by it so that leaving the sessions
+  /// screen — the very thing this list exists for — does not reset the splits.
+  /// Null lets the sessions screen build a route-scoped one; mobile never
+  /// reads it either way.
+  final TerminalWorkspace? workspace;
 
   /// Where files shared from other apps arrive. The home screen owns this
   /// because it is the one route that is always on the stack — a share can
@@ -150,6 +159,7 @@ class _HostListScreenState extends State<HostListScreen> {
           builder: (_) => SessionsScreen(
             sessions: widget.sessions,
             settingsStore: widget.settingsStore,
+            workspace: widget.workspace,
             // "New session" is a trip back to this list. Popping is exactly
             // that, and it keeps the sessions behind it alive.
             onAddSession: () => Navigator.of(context).pop(),

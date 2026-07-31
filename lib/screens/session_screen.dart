@@ -7,11 +7,13 @@ import '../services/layout_breakpoints.dart';
 import '../services/session_controller.dart';
 import '../services/session_manager.dart';
 import '../services/settings_store.dart';
+import '../services/terminal_workspace.dart';
 import '../services/transfer_queue.dart';
 import '../theme.dart';
 import '../widgets/transfer_panel.dart';
 import 'file_browser_pane.dart';
 import 'terminal_pane.dart';
+import 'workspace_view.dart';
 
 /// Every open session, as tabs over one screen.
 ///
@@ -32,12 +34,19 @@ import 'terminal_pane.dart';
 /// session behind this one keeps running, keeps redrawing into its own
 /// `Terminal`, and is exactly where it was when its tab comes back to the
 /// front, because its `TerminalPane` was never disposed.
+///
+/// Phase 13 adds a second body for desktop only: the split workspace, where up
+/// to four panes each show a session and the rest wait in the tab strip. The
+/// bargain above is unchanged there — a session with no pane of its own is
+/// still built, still laid out at full size, and merely not painted. Phones
+/// and tablets never build a workspace at all; see [_isDesktop].
 class SessionsScreen extends StatefulWidget {
   const SessionsScreen({
     super.key,
     required this.sessions,
     required this.settingsStore,
     this.onAddSession,
+    this.workspace,
     KeepAwakeController? keepAwake,
   }) : keepAwake = keepAwake ?? const MethodChannelKeepAwake();
 
@@ -48,6 +57,15 @@ class SessionsScreen extends StatefulWidget {
   /// popping this route, which lands in the same place.
   final VoidCallback? onAddSession;
 
+  /// The desktop pane layout, built in `main.dart` so that splits, ratios and
+  /// bindings survive a trip to the host list — which is how a second session
+  /// is opened, and so the single most likely moment for the user to want the
+  /// layout back the way they left it.
+  ///
+  /// Null builds a private one that lives and dies with this route, which is
+  /// what tests (and mobile, which never reads it) get.
+  final TerminalWorkspace? workspace;
+
   /// Test seam; production leaves this to the default channel-backed one.
   final KeepAwakeController keepAwake;
 
@@ -55,8 +73,25 @@ class SessionsScreen extends StatefulWidget {
   State<SessionsScreen> createState() => _SessionsScreenState();
 }
 
+/// What the app bar's split button can do to the focused pane.
+enum _WorkspaceAction { splitRight, splitDown, closePane }
+
 class _SessionsScreenState extends State<SessionsScreen> {
   StreamSubscription<void>? _changes;
+  StreamSubscription<void>? _workspaceChanges;
+
+  /// Falls back to a route-scoped workspace when none was handed down — see
+  /// [SessionsScreen.workspace]. Only that fallback is disposed here.
+  late final TerminalWorkspace _workspace =
+      widget.workspace ?? TerminalWorkspace();
+  late final bool _ownsWorkspace = widget.workspace == null;
+
+  /// One stable key per session, so that moving a session between panes — or
+  /// out of the panes entirely when its pane closes — *reparents* its page
+  /// rather than rebuilding it. Without this, dragging a session to the other
+  /// half of the window would reset its file browser to the home directory
+  /// and re-open its SFTP channel.
+  final Map<String, GlobalKey> _pageKeys = {};
 
   @override
   void initState() {
@@ -65,20 +100,94 @@ class _SessionsScreenState extends State<SessionsScreen> {
     // change stream into its own, so a drop on a background tab still repaints
     // that tab's status dot.
     _changes = widget.sessions.changes.listen((_) {
-      if (mounted) setState(() {});
+      if (!mounted) return;
+      _syncWorkspace();
+      setState(() {});
     });
+    _workspaceChanges = _workspace.changes.listen(_handleWorkspaceChange);
     if (widget.settingsStore.current.keepScreenAwake) {
       unawaited(widget.keepAwake.setEnabled(true));
     }
   }
 
   @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    // The first sync has to happen after the platform is readable and before
+    // the first build, which is exactly this hook. Doing it in `build` would
+    // mean mutating a controller — and notifying its listeners — from inside a
+    // build, which is the "setState() called during build" crash.
+    _syncWorkspace();
+  }
+
+  @override
   void dispose() {
     _changes?.cancel();
+    _workspaceChanges?.cancel();
+    if (_ownsWorkspace) unawaited(_workspace.dispose());
     // The sessions are deliberately *not* disposed here — they belong to the
     // manager and outlive this route.
     unawaited(widget.keepAwake.setEnabled(false));
     super.dispose();
+  }
+
+  /// Desktop platforms — Linux, macOS, Windows — where a window is big enough
+  /// and a mouse precise enough for a split workspace to be worth having.
+  /// Same shape as `FileBrowserPane`'s check, and for the same reason: it
+  /// reads the platform through the theme so a test can swap it with
+  /// [debugDefaultTargetPlatformOverride].
+  static bool _isDesktop(BuildContext context) {
+    switch (Theme.of(context).platform) {
+      case TargetPlatform.linux:
+      case TargetPlatform.macOS:
+      case TargetPlatform.windows:
+        return true;
+      case TargetPlatform.android:
+      case TargetPlatform.iOS:
+      case TargetPlatform.fuchsia:
+        return false;
+    }
+  }
+
+  /// Tells the workspace which sessions exist. Mobile never calls this — and
+  /// never reads the workspace either, so the tabbed layout is untouched by
+  /// everything below.
+  void _syncWorkspace() {
+    if (!_isDesktop(context)) return;
+    final manager = widget.sessions;
+    final ids = manager.sessions.map((s) => s.id).toList(growable: false);
+    _pageKeys.removeWhere((id, _) => !ids.contains(id));
+    _workspace.syncSessions(ids, activeId: manager.activeId);
+  }
+
+  void _handleWorkspaceChange(void _) {
+    if (!mounted) return;
+    // The app bar's title, transfer button and disconnect action all read
+    // `SessionManager.active`. On desktop the pane holding the keyboard *is*
+    // the session the user is working in, so the two are kept in step here
+    // rather than left as two competing ideas of what "active" means.
+    final focused = _workspace.focusedSessionId;
+    if (focused != null) widget.sessions.select(focused);
+    setState(() {});
+  }
+
+  /// A tab was tapped. On desktop that means "show this one in the pane I am
+  /// looking at" — otherwise a tab for a session that is not in any pane would
+  /// change the app bar and nothing else.
+  void _selectSession(String id) {
+    if (_isDesktop(context)) _workspace.showSession(id);
+    widget.sessions.select(id);
+  }
+
+  void _handleWorkspaceAction(_WorkspaceAction action) {
+    switch (action) {
+      case _WorkspaceAction.splitRight:
+        _workspace.splitFocused(WorkspaceAxis.row);
+      case _WorkspaceAction.splitDown:
+        _workspace.splitFocused(WorkspaceAxis.column);
+      case _WorkspaceAction.closePane:
+        _workspace.closePane(_workspace.focusedPaneId);
+    }
   }
 
   void _addSession() {
@@ -185,6 +294,110 @@ class _SessionsScreenState extends State<SessionsScreen> {
     if (mounted && widget.sessions.isEmpty) Navigator.of(context).pop();
   }
 
+  /// One session's page, with the identity that lets it be moved rather than
+  /// rebuilt. See [_pageKeys].
+  Widget _page(
+    ManagedSession entry, {
+    required SessionManager manager,
+    required bool active,
+    required bool wide,
+  }) {
+    return _SessionPage(
+      key: _pageKeys.putIfAbsent(entry.id, GlobalKey.new),
+      entry: entry,
+      manager: manager,
+      settingsStore: widget.settingsStore,
+      active: active,
+      wide: wide,
+    );
+  }
+
+  /// Phones and tablets: one session at a time, all of them alive.
+  Widget _tabbedBody(
+    SessionManager manager,
+    List<ManagedSession> entries,
+    bool wide,
+  ) {
+    return IndexedStack(
+      index: entries.indexWhere((s) => s.id == manager.activeId),
+      sizing: StackFit.expand,
+      children: [
+        for (final entry in entries)
+          // Every session's terminal is live and focusable at once. Without
+          // this, a keystroke after switching tabs would go to whichever
+          // terminal happened to hold focus — including one the user cannot
+          // see.
+          ExcludeFocus(
+            excluding: entry.id != manager.activeId,
+            child: _page(
+              entry,
+              manager: manager,
+              active: entry.id == manager.activeId,
+              wide: wide,
+            ),
+          ),
+      ],
+    );
+  }
+
+  /// Desktop: the pane tree, over every session that has no pane of its own.
+  Widget _workspaceBody(
+    SessionManager manager,
+    List<ManagedSession> entries,
+    bool wide,
+  ) {
+    final visible = _workspace.visibleSessionIds.toSet();
+    final focusedSessionId = _workspace.focusedSessionId;
+    // A split pane is half a window or less. Handing it the side-by-side
+    // layout would put a 40-column terminal next to a file browser too narrow
+    // to read a filename in, so a split workspace gives each pane the
+    // one-view-at-a-time layout and the app bar's toggle switches the focused
+    // one between them.
+    final paneWide = wide && !_workspace.isSplit;
+
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        // A session with no pane of its own is still built and still laid out
+        // at the full size of the workspace — it is simply never painted.
+        // That is the same bargain the tabbed layout's IndexedStack makes, and
+        // it is what keeps a background `htop` running, and running at a width
+        // it will not have to reflow from when its pane comes back.
+        for (final entry in entries)
+          if (!visible.contains(entry.id))
+            Visibility(
+              visible: false,
+              maintainState: true,
+              maintainAnimation: true,
+              maintainSize: true,
+              maintainInteractivity: false,
+              child: ExcludeFocus(
+                child: _page(
+                  entry,
+                  manager: manager,
+                  active: false,
+                  wide: paneWide,
+                ),
+              ),
+            ),
+        WorkspaceView(
+          workspace: _workspace,
+          sessions: entries,
+          onAddSession: _addSession,
+          paneContent: (entry) => _page(
+            entry,
+            manager: manager,
+            // Exactly one pane is focused, and a session appears in at most
+            // one pane, so at most one page is `active` — which is what puts
+            // the caret in that terminal and keeps it out of the others.
+            active: entry.id == focusedSessionId,
+            wide: paneWide,
+          ),
+        ),
+      ],
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final manager = widget.sessions;
@@ -204,6 +417,11 @@ class _SessionsScreenState extends State<SessionsScreen> {
     final wide = WindowSizeClass.forWidth(
       MediaQuery.sizeOf(context).width,
     ).isAtLeastMedium;
+
+    // Desktop gets the split workspace; everything else gets the tabbed
+    // layout it always had, untouched.
+    final desktop = _isDesktop(context);
+    final split = desktop && _workspace.isSplit;
 
     // Only offer the drop target when there is anywhere to drop *from*: with
     // one session open there is no other tab to drag to. The strip does not
@@ -262,9 +480,36 @@ class _SessionsScreenState extends State<SessionsScreen> {
               onOpen: active.controller.openDownload,
             ),
           ),
+          if (desktop)
+            PopupMenuButton<_WorkspaceAction>(
+              tooltip: 'Split the focused pane',
+              icon: const Icon(Icons.splitscreen_outlined),
+              onSelected: _handleWorkspaceAction,
+              itemBuilder: (context) => [
+                PopupMenuItem<_WorkspaceAction>(
+                  value: _WorkspaceAction.splitRight,
+                  enabled: _workspace.canSplit,
+                  child: const Text('Split right'),
+                ),
+                PopupMenuItem<_WorkspaceAction>(
+                  value: _WorkspaceAction.splitDown,
+                  enabled: _workspace.canSplit,
+                  child: const Text('Split down'),
+                ),
+                const PopupMenuDivider(),
+                PopupMenuItem<_WorkspaceAction>(
+                  value: _WorkspaceAction.closePane,
+                  // Closing the only pane would leave nothing to focus and
+                  // nowhere to put the next session.
+                  enabled: split,
+                  child: const Text('Close pane'),
+                ),
+              ],
+            ),
           // Both panes are already on screen side by side in the wide layout,
-          // so a toggle between them means nothing there.
-          if (!wide)
+          // so a toggle between them means nothing there — except in a split
+          // workspace, where each pane is narrow and shows one at a time.
+          if (!wide || split)
             IconButton(
               tooltip: active.view == SessionView.terminal
                   ? 'Browse files'
@@ -306,34 +551,15 @@ class _SessionsScreenState extends State<SessionsScreen> {
                 sessions: entries,
                 activeId: manager.activeId,
                 compact: !wide,
-                onSelect: manager.select,
+                onSelect: _selectSession,
                 onClose: (entry) => unawaited(_closeSession(entry)),
                 onAdd: _addSession,
                 onDrop: canReceiveDrops ? _handleTabDrop : null,
               ),
             Expanded(
-              child: IndexedStack(
-                index: entries.indexWhere((s) => s.id == manager.activeId),
-                sizing: StackFit.expand,
-                children: [
-                  for (final entry in entries)
-                    // Every session's terminal is live and focusable at once.
-                    // Without this, a keystroke after switching tabs would go
-                    // to whichever terminal happened to hold focus — including
-                    // one the user cannot see.
-                    ExcludeFocus(
-                      excluding: entry.id != manager.activeId,
-                      child: _SessionPage(
-                        key: ValueKey<String>(entry.id),
-                        entry: entry,
-                        manager: manager,
-                        settingsStore: widget.settingsStore,
-                        active: entry.id == manager.activeId,
-                        wide: wide,
-                      ),
-                    ),
-                ],
-              ),
+              child: desktop
+                  ? _workspaceBody(manager, entries, wide)
+                  : _tabbedBody(manager, entries, wide),
             ),
           ],
         ),

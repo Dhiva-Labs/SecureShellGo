@@ -36,6 +36,7 @@ lib/
     host_store.dart             hosts.json
     session_controller.dart     one live session, shared by terminal + browser
     session_manager.dart        every open session, and which one is in front
+    terminal_workspace.dart     the desktop pane tree: splits, ratios, bindings
     session_keepalive.dart      the 30 s keep-alive schedule for a live session
     session_foreground.dart     refcount + channel for the foreground service
     sftp_service.dart           RemoteFileSystem over dartssh2's SftpClient
@@ -57,6 +58,7 @@ lib/
     session_screen.dart         owns the session; hosts the two panes
     terminal_pane.dart          xterm view wired to the SSH shell channel
     file_browser_pane.dart      SFTP browser, uploads and downloads
+    workspace_view.dart         draws the pane tree: dividers, headers, focus
 
   widgets/
     host_key_dialog.dart        the accept/reject host key UI
@@ -691,6 +693,70 @@ their commit to send.
 
 ---
 
+## The split workspace, on desktop only (Phase 13)
+
+Several sessions have been open at once since Phase 12; Phase 13 is about
+seeing more than one of them at a time. On Linux, Windows and macOS the
+terminal area splits into up to four panes, each showing one open session.
+Android and iOS are untouched — `SessionsScreen` gates on the platform (the
+same `Theme.of(context).platform` switch `FileBrowserPane` uses for
+drag-and-drop) and the phone build never so much as reads the workspace.
+
+```
+TerminalWorkspace                      pure Dart, built in main.dart
+  root: WorkspaceNode                  sealed: WorkspacePane | WorkspaceSplit
+    WorkspacePane   { id, sessionId? } one rectangle, at most one session
+    WorkspaceSplit  { id, axis,        two children and the divider between
+                      first, second,   them; `ratio` is first's share
+                      ratio }
+  focusedPaneId                        exactly one, always a live pane
+  syncSessions(ids, activeId)          ← SessionManager changes
+  visibleSessionIds / visibleSessions()  ┐ the broadcast seam
+  writeToVisibleSessions(data)           ┘
+```
+
+**Why a controller rather than widget state.** The interesting part of a split
+view is tree arithmetic — splicing a split in above the pane being split so
+nothing already on screen jumps to a different corner, collapsing a split back
+into its surviving child when one side closes, keeping the focus on a pane
+that still exists after either. None of that needs a widget tree to be true,
+so none of it is in one. It is built in `main.dart` next to `SessionManager`
+and for the same reason: going back to the host list to open another server
+tears the sessions screen down, and coming back has to find the splits, the
+dividers and the bindings where they were left.
+
+**A session is bound to at most one pane.** Two panes on one session would be
+two `TerminalView`s over one `Terminal`, each reporting its own column count
+into the same `onResize` — the PTY would be resized twice a frame to two
+different sizes. So `showSession` *swaps*: putting B into the pane showing A
+gives A's pane whatever B's pane was showing. Dragging one onto the other
+therefore trades places, which is what the gesture looks like it should do.
+
+**Panes are layout, sessions are sessions.** Closing a pane does not close
+anything: the session keeps running, keeps its transfers, and is one click
+away in the tab strip. Closing a *tab* empties whichever pane was showing it
+rather than rearranging the tree, because the layout is the user's.
+
+**Everything stays in the tree.** A session with no pane of its own is still
+built and still laid out at the workspace's full size — it is merely never
+painted (`Visibility` with `maintainSize`). That is the same bargain the
+phone layout's `IndexedStack` makes, and it is what keeps a background `htop`
+running at a width it will not have to reflow from. The screen holds one
+`GlobalKey` per session so moving one between panes reparents its page
+instead of resetting its file browser and re-opening its SFTP channel.
+
+**The broadcast seam.** "Type once, send to every visible pane" is not built
+yet and has no UI. What is built is the pair of questions it needs answered —
+which shells is the user looking at, and put this in all of them — because
+both belong to whatever owns the layout. `WorkspaceSession` is deliberately
+two members wide (`id`, `writeInput`): the workspace holds session *ids*, and
+a resolver injected in `main.dart` turns one into a `LiveWorkspaceSession`
+over the real `SessionController`. `writeInput` goes through
+`Terminal.textInput`, the same door the extra-key bar and the soft keyboard
+use, so a broadcast write is indistinguishable from typing.
+
+---
+
 ## What later phases plug into
 
 Nothing below requires changing the service layer.
@@ -817,6 +883,27 @@ picker that would fail.
   stopped, a failing ping not disabling the schedule, a tick landing on an
   unanswered ping being skipped rather than stacked, and the timeout that
   clears a ping which never answers.
+- `test/terminal_workspace_test.dart` — the pane tree with no widgets in
+  sight: splitting in place and nesting, the four-pane cap, a sibling taking
+  over the space when a pane closes, the last pane refusing to, the focus
+  always landing on a pane that exists, divider ratios clamped away from both
+  ends and unmoved by a collapse elsewhere, one session never in two panes
+  (and the swap that keeps it that way), `syncSessions` emptying a pane whose
+  session closed and putting a newly opened one in the focused pane, and the
+  broadcast seam — reading order, empty panes and dead bindings skipped,
+  `skipFocused`, and a workspace with no resolver answering honestly.
+- `test/workspace_view_test.dart` — the pane chrome: no header, divider or
+  focus border while there is one pane; exactly one pane outlined once split;
+  a click anywhere in a pane taking the focus; the pane menu splitting and
+  closing, and greying "Split right" out at the cap; the header picker
+  swapping two visible sessions; the divider dragging, and refusing to drag a
+  pane shut; and the empty pane offering every open session.
+- `test/session_workspace_test.dart` — the screen around it: Android getting
+  the tabbed layout with no split control and a workspace that was never told
+  anything, desktop adopting the front session, every session built whether or
+  not it has a pane, the app-bar split putting two servers on screen at once,
+  a session opened while split landing in the focused pane, closing a pane
+  leaving both sessions connected, and the app bar following the focused pane.
 - `test/transfer_queue_test.dart` — sequencing, progress publication,
   cancellation of queued and running tasks, failure isolation, aggregate
   progress, `clearFinished`, and retry (a failed download re-queued with its

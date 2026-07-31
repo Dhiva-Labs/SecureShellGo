@@ -11,6 +11,7 @@ import 'services/known_hosts_service.dart';
 import 'services/session_manager.dart';
 import 'services/settings_store.dart';
 import 'services/ssh_service.dart';
+import 'services/terminal_workspace.dart';
 import 'theme.dart';
 
 void main() {
@@ -64,6 +65,22 @@ class _SecureShellGoAppState extends State<SecureShellGoApp> {
     resolveDestinationCredentials: _credentialStore.load,
   );
 
+  // The desktop split layout. Built here for the same reason the sessions are:
+  // going back to the host list to open another server tears the sessions
+  // screen down, and coming back must find the panes, the dividers and the
+  // bindings exactly where they were left.
+  //
+  // The resolver is how the (not yet built) broadcast-input feature reaches
+  // the shells behind the visible panes; the workspace itself holds only
+  // session ids. Mobile builds this and never reads it.
+  late final TerminalWorkspace _workspace = TerminalWorkspace(
+    resolveSession: (id) {
+      final session = _sessions.byId(id);
+      if (session == null) return null;
+      return LiveWorkspaceSession(session.id, session.controller);
+    },
+  );
+
   @override
   void initState() {
     super.initState();
@@ -81,6 +98,7 @@ class _SecureShellGoAppState extends State<SecureShellGoApp> {
     // app going away is the one thing that ends a session the user did not
     // close themselves.
     unawaited(_sessions.dispose());
+    unawaited(_workspace.dispose());
     _settingsStore.dispose();
     super.dispose();
   }
@@ -100,6 +118,7 @@ class _SecureShellGoAppState extends State<SecureShellGoApp> {
         sshService: _sshService,
         settingsStore: _settingsStore,
         sessions: _sessions,
+        workspace: _workspace,
       ),
     );
   }
