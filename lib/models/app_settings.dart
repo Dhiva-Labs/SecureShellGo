@@ -36,6 +36,7 @@ class AppSettings {
     this.colorScheme = TerminalColorScheme.classic,
     this.keepScreenAwake = false,
     this.showHiddenFilesByDefault = false,
+    this.collapsedGroups = const <String>{},
   });
 
   static const double defaultFontSize = 13;
@@ -46,6 +47,12 @@ class AppSettings {
   final TerminalColorScheme colorScheme;
   final bool keepScreenAwake;
   final bool showHiddenFilesByDefault;
+
+  /// Names of saved-hosts-list group sections the user has collapsed —
+  /// see `services/host_grouping.dart` for the sentinel key the Ungrouped
+  /// section uses here. Absent, not collapsed, is the default for every
+  /// group: a newly created one, or one nobody has touched yet, starts open.
+  final Set<String> collapsedGroups;
 
   /// Keeps a font size inside the range the settings slider and pinch-zoom
   /// both respect. `num.clamp` returns `num`, not `double`, which is the kind
@@ -62,6 +69,7 @@ class AppSettings {
     TerminalColorScheme? colorScheme,
     bool? keepScreenAwake,
     bool? showHiddenFilesByDefault,
+    Set<String>? collapsedGroups,
   }) {
     return AppSettings(
       terminalFontSize: clampFontSize(terminalFontSize ?? this.terminalFontSize),
@@ -69,6 +77,7 @@ class AppSettings {
       keepScreenAwake: keepScreenAwake ?? this.keepScreenAwake,
       showHiddenFilesByDefault:
           showHiddenFilesByDefault ?? this.showHiddenFilesByDefault,
+      collapsedGroups: collapsedGroups ?? this.collapsedGroups,
     );
   }
 
@@ -78,6 +87,7 @@ class AppSettings {
         'colorScheme': colorScheme.name,
         'keepScreenAwake': keepScreenAwake,
         'showHiddenFilesByDefault': showHiddenFilesByDefault,
+        'collapsedGroups': collapsedGroups.toList(),
       };
 
   factory AppSettings.fromJson(Map<String, dynamic> json) => AppSettings(
@@ -90,5 +100,11 @@ class AppSettings {
         keepScreenAwake: json['keepScreenAwake'] as bool? ?? false,
         showHiddenFilesByDefault:
             json['showHiddenFilesByDefault'] as bool? ?? false,
+        // Absent on every settings.json written before v1.3.0 — reads as
+        // "nothing collapsed" rather than failing the whole file.
+        collapsedGroups: switch (json['collapsedGroups']) {
+          final List<dynamic> names => {for (final name in names) '$name'},
+          _ => const <String>{},
+        },
       );
 }

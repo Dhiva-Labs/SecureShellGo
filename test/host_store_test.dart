@@ -24,6 +24,8 @@ void main() {
     int port = 22,
     String username = 'dev',
     SshAuthMethod authMethod = SshAuthMethod.password,
+    String? group,
+    HostColorLabel? colorLabel,
   }) {
     return Host(
       id: id ?? 'fixed-id',
@@ -32,6 +34,8 @@ void main() {
       port: port,
       username: username,
       authMethod: authMethod,
+      group: group,
+      colorLabel: colorLabel,
     );
   }
 
@@ -175,5 +179,145 @@ void main() {
     final saved = await store.get('fixed-id');
     expect(saved?.label, 'Renamed');
     expect(saved?.lastConnectedAt, connectedAt);
+  });
+
+  test('group and colorLabel survive a reload from disk', () async {
+    final store = HostStore(file: storeFile);
+    await store.add(host(group: 'Work', colorLabel: HostColorLabel.teal));
+
+    final reloaded = HostStore(file: storeFile);
+    final saved = await reloaded.get('fixed-id');
+    expect(saved?.group, 'Work');
+    expect(saved?.colorLabel, HostColorLabel.teal);
+  });
+
+  test('hosts.json written before v1.3.0 (no group/colorLabel keys) still '
+      'loads', () async {
+    await storeFile.writeAsString('''
+    {
+      "version": 1,
+      "hosts": [
+        {"id": "legacy", "label": "", "hostname": "example.com", "port": 22, "username": "dev", "authMethod": "password"}
+      ]
+    }
+    ''');
+    final store = HostStore(file: storeFile);
+    final saved = await store.get('legacy');
+    expect(saved, isNotNull);
+    expect(saved!.group, isNull);
+    expect(saved.colorLabel, isNull);
+  });
+
+  test('an unrecognised colorLabel id reads as no colour rather than failing '
+      'the entry', () async {
+    await storeFile.writeAsString('''
+    {
+      "version": 1,
+      "hosts": [
+        {"id": "a", "label": "", "hostname": "example.com", "port": 22, "username": "dev", "authMethod": "password", "colorLabel": "chartreuse"}
+      ]
+    }
+    ''');
+    final store = HostStore(file: storeFile);
+    final saved = await store.get('a');
+    expect(saved, isNotNull);
+    expect(saved!.colorLabel, isNull);
+  });
+
+  test('withGroup reassigns without disturbing any other field', () {
+    final original = host(group: 'Work', colorLabel: HostColorLabel.pink);
+    final moved = original.withGroup('Home');
+    expect(moved.group, 'Home');
+    expect(moved.colorLabel, HostColorLabel.pink);
+    expect(moved.id, original.id);
+  });
+
+  test('withGroup(null) clears the group back to Ungrouped', () {
+    final grouped = host(group: 'Work');
+    expect(grouped.withGroup(null).group, isNull);
+  });
+
+  group('HostStore group operations', () {
+    test('groupNames returns every distinct group, sorted, case-insensitive '
+        'and ungrouped hosts excluded', () async {
+      final store = HostStore(file: storeFile);
+      await store.add(host(id: 'a', group: 'zebra'));
+      await store.add(host(id: 'b', group: 'Apple'));
+      await store.add(host(id: 'c'));
+      await store.add(host(id: 'd', group: 'apple'));
+
+      expect(await store.groupNames(), ['Apple', 'apple', 'zebra']);
+    });
+
+    test('renameGroup moves every host in the old name to the new one',
+        () async {
+      final store = HostStore(file: storeFile);
+      await store.add(host(id: 'a', group: 'Work'));
+      await store.add(host(id: 'b', group: 'Work'));
+      await store.add(host(id: 'c', group: 'Home'));
+
+      await store.renameGroup('Work', 'Office');
+
+      final all = await store.all();
+      expect(all.firstWhere((h) => h.id == 'a').group, 'Office');
+      expect(all.firstWhere((h) => h.id == 'b').group, 'Office');
+      expect(all.firstWhere((h) => h.id == 'c').group, 'Home');
+    });
+
+    test('renameGroup persists across a reload', () async {
+      final store = HostStore(file: storeFile);
+      await store.add(host(id: 'a', group: 'Work'));
+      await store.renameGroup('Work', 'Office');
+
+      final reloaded = HostStore(file: storeFile);
+      expect((await reloaded.get('a'))?.group, 'Office');
+    });
+
+    test('renameGroup with a blank new name is a no-op', () async {
+      final store = HostStore(file: storeFile);
+      await store.add(host(id: 'a', group: 'Work'));
+      await store.renameGroup('Work', '   ');
+      expect((await store.get('a'))?.group, 'Work');
+    });
+
+    test('renameGroup ignores a name nothing currently uses', () async {
+      final store = HostStore(file: storeFile);
+      await store.add(host(id: 'a', group: 'Work'));
+      await store.renameGroup('DoesNotExist', 'Office');
+      expect((await store.get('a'))?.group, 'Work');
+    });
+
+    test('deleteGroup moves its hosts to Ungrouped without deleting them',
+        () async {
+      final store = HostStore(file: storeFile);
+      await store.add(host(id: 'a', group: 'Work'));
+      await store.add(host(id: 'b', group: 'Work'));
+      await store.add(host(id: 'c', group: 'Home'));
+
+      await store.deleteGroup('Work');
+
+      final all = await store.all();
+      expect(all, hasLength(3));
+      expect(all.firstWhere((h) => h.id == 'a').group, isNull);
+      expect(all.firstWhere((h) => h.id == 'b').group, isNull);
+      expect(all.firstWhere((h) => h.id == 'c').group, 'Home');
+      expect(await store.groupNames(), ['Home']);
+    });
+
+    test('deleteGroup persists the Ungrouped move across a reload', () async {
+      final store = HostStore(file: storeFile);
+      await store.add(host(id: 'a', group: 'Work'));
+      await store.deleteGroup('Work');
+
+      final reloaded = HostStore(file: storeFile);
+      expect((await reloaded.get('a'))?.group, isNull);
+    });
+
+    test('deleteGroup for a name nothing uses is a harmless no-op', () async {
+      final store = HostStore(file: storeFile);
+      await store.add(host(id: 'a', group: 'Work'));
+      await store.deleteGroup('DoesNotExist');
+      expect((await store.get('a'))?.group, 'Work');
+    });
   });
 }

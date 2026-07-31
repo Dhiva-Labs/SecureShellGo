@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -11,7 +13,14 @@ import '../services/settings_store.dart';
 import '../services/ssh_service.dart';
 import '../theme.dart';
 import '../widgets/error_banner.dart';
+import '../widgets/host_color_dot.dart';
 import '../widgets/host_key_dialog.dart';
+
+/// Dropdown value for "New group…". Every real group name is the trimmed
+/// result of a user-typed name (see `_promptNewGroupName` and
+/// `HostStore.renameGroup`), so the untrimmed leading space here guarantees
+/// this sentinel can never collide with one.
+const String _newGroupSentinel = ' new-group';
 
 /// Add or edit a saved host.
 ///
@@ -90,6 +99,15 @@ class _HostEditScreenState extends State<HostEditScreen> {
   String? _error;
   String? _errorDetails;
 
+  /// Every group name currently in use, for the group dropdown. Loaded async
+  /// (unlike the host fields above, which come straight off [widget.host])
+  /// because it has to ask [HostStore] across every saved host, not just
+  /// this one.
+  List<String> _groupNames = const [];
+  bool _loadingGroups = true;
+  String? _selectedGroup;
+  HostColorLabel? _selectedColorLabel;
+
   @override
   void initState() {
     super.initState();
@@ -100,8 +118,20 @@ class _HostEditScreenState extends State<HostEditScreen> {
       _portController.text = host.port.toString();
       _usernameController.text = host.username;
       _authMethod = host.authMethod;
+      _selectedGroup = host.group;
+      _selectedColorLabel = host.colorLabel;
       _loadExistingCredentials(host.id);
     }
+    unawaited(_loadGroupNames());
+  }
+
+  Future<void> _loadGroupNames() async {
+    final names = await widget.hostStore.groupNames();
+    if (!mounted) return;
+    setState(() {
+      _groupNames = names;
+      _loadingGroups = false;
+    });
   }
 
   Future<void> _loadExistingCredentials(String hostId) async {
@@ -141,6 +171,8 @@ class _HostEditScreenState extends State<HostEditScreen> {
       username: _usernameController.text.trim(),
       authMethod: _authMethod,
       lastConnectedAt: existing?.lastConnectedAt,
+      group: _selectedGroup,
+      colorLabel: _selectedColorLabel,
     );
   }
 
@@ -327,6 +359,132 @@ class _HostEditScreenState extends State<HostEditScreen> {
     );
   }
 
+  /// Asks for a new group's name; null means the dialog was cancelled. Only
+  /// trims and checks non-blank here — [_pickGroup] is the one that decides
+  /// what to do with the result, so this stays reusable if group creation is
+  /// ever offered from somewhere other than the dropdown.
+  Future<String?> _promptNewGroupName() {
+    final controller = TextEditingController();
+    return showDialog<String>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('New group'),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          textCapitalization: TextCapitalization.words,
+          decoration: const InputDecoration(labelText: 'Group name'),
+          onSubmitted: (value) {
+            final trimmed = value.trim();
+            if (trimmed.isNotEmpty) Navigator.of(context).pop(trimmed);
+          },
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () {
+              final trimmed = controller.text.trim();
+              if (trimmed.isNotEmpty) Navigator.of(context).pop(trimmed);
+            },
+            child: const Text('Create'),
+          ),
+        ],
+      ),
+    ).whenComplete(controller.dispose);
+  }
+
+  /// Handles every selection the group dropdown can produce, including
+  /// intercepting [_newGroupSentinel] to prompt for a name instead of
+  /// assigning that placeholder itself as the group.
+  Future<void> _pickGroup(String? value) async {
+    if (value != _newGroupSentinel) {
+      setState(() => _selectedGroup = value);
+      return;
+    }
+    final created = await _promptNewGroupName();
+    if (created == null || !mounted) return;
+    setState(() {
+      _selectedGroup = created;
+      if (!_groupNames.contains(created)) {
+        _groupNames = [..._groupNames, created]
+          ..sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
+      }
+    });
+  }
+
+  Widget _buildGroupField() {
+    // The current selection has to be in `items` even before _groupNames
+    // finishes loading (editing a host whose group is not yet in that list)
+    // or DropdownButtonFormField's one-matching-item assertion trips.
+    final names = <String>{
+      ..._groupNames,
+      ?_selectedGroup,
+    }.toList()
+      ..sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
+
+    return DropdownButtonFormField<String?>(
+      // Remounts the field's internal FormFieldState whenever the selection
+      // changes for a reason other than the user picking straight off this
+      // widget — namely _pickGroup landing on a freshly created name after
+      // intercepting _newGroupSentinel. DropdownButtonFormField otherwise
+      // only reads its value once, at construction (`initialValue`).
+      key: ValueKey(_selectedGroup),
+      initialValue: _selectedGroup,
+      decoration: const InputDecoration(
+        labelText: 'Group (optional)',
+        prefixIcon: Icon(Icons.folder_outlined),
+      ),
+      items: [
+        const DropdownMenuItem<String?>(value: null, child: Text('No group')),
+        for (final name in names)
+          DropdownMenuItem<String?>(value: name, child: Text(name)),
+        const DropdownMenuItem<String?>(
+          value: _newGroupSentinel,
+          child: Text('New group…'),
+        ),
+      ],
+      onChanged: _loadingGroups
+          ? null
+          : (value) => unawaited(_pickGroup(value)),
+    );
+  }
+
+  Widget _buildColorField(ThemeData theme) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Padding(
+          padding: const EdgeInsets.only(top: 14),
+          child: Text('Colour tag', style: theme.textTheme.bodyLarge),
+        ),
+        const SizedBox(width: 16),
+        Expanded(
+          child: Wrap(
+            spacing: 12,
+            runSpacing: 8,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            children: [
+              _ColorOption(
+                colorLabel: null,
+                selected: _selectedColorLabel == null,
+                onTap: () => setState(() => _selectedColorLabel = null),
+              ),
+              for (final option in HostColorLabel.values)
+                _ColorOption(
+                  colorLabel: option,
+                  selected: _selectedColorLabel == option,
+                  onTap: () => setState(() => _selectedColorLabel = option),
+                ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -369,6 +527,10 @@ class _HostEditScreenState extends State<HostEditScreen> {
           ),
           textInputAction: TextInputAction.next,
         ),
+        const SizedBox(height: 16),
+        _buildGroupField(),
+        const SizedBox(height: 16),
+        _buildColorField(theme),
         const SizedBox(height: 16),
         Row(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -595,6 +757,39 @@ class _HostEditScreenState extends State<HostEditScreen> {
           ),
         ],
       ],
+    );
+  }
+}
+
+/// One tappable dot in the colour-tag row, including the leading "no
+/// colour" option ([colorLabel] null).
+class _ColorOption extends StatelessWidget {
+  const _ColorOption({
+    required this.colorLabel,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final HostColorLabel? colorLabel;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Tooltip(
+      message: colorLabel?.label ?? 'No colour',
+      child: InkWell(
+        onTap: onTap,
+        customBorder: const CircleBorder(),
+        child: Padding(
+          padding: const EdgeInsets.all(4),
+          child: HostColorDot(
+            colorLabel: colorLabel,
+            size: 22,
+            selected: selected,
+          ),
+        ),
+      ),
     );
   }
 }

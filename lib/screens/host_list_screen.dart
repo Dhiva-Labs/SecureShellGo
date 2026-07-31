@@ -6,6 +6,7 @@ import 'package:flutter/services.dart';
 import '../models/host.dart';
 import '../services/credential_store.dart';
 import '../services/device_storage.dart';
+import '../services/host_grouping.dart';
 import '../services/host_store.dart';
 import '../services/known_hosts_service.dart';
 import '../services/layout_breakpoints.dart';
@@ -15,17 +16,29 @@ import '../services/share_intake.dart';
 import '../services/ssh_service.dart';
 import '../services/terminal_workspace.dart';
 import '../theme.dart';
+import '../widgets/host_color_dot.dart';
 import '../widgets/host_key_dialog.dart';
 import 'host_edit_screen.dart';
 import 'session_screen.dart';
 import 'settings_screen.dart';
 import 'share_target_screen.dart';
 
+/// Dropdown-free equivalent of `HostEditScreen`'s `_newGroupSentinel`: a
+/// group-picker dialog value meaning "prompt for a new name" rather than a
+/// real group. The leading space keeps it out of reach of `.trim()`, so it
+/// can never collide with an actual group name (always trimmed — see
+/// `HostStore.renameGroup`).
+const String _newGroupDialogSentinel = ' new-group';
+
 /// The app's home screen: the list of saved hosts.
 ///
 /// Replaces the Phase 1 [ConnectScreen] entirely. Tapping a host connects
 /// immediately using its saved credentials; the FAB and each host's overflow
 /// menu cover add/edit/delete and forgetting trusted host keys.
+///
+/// Since v1.3.0 hosts also render inside collapsible group sections (see
+/// `services/host_grouping.dart`), with a simple search field that filters
+/// across every group and force-expands whichever ones still have a match.
 class HostListScreen extends StatefulWidget {
   const HostListScreen({
     super.key,
@@ -91,6 +104,12 @@ class _HostListScreenState extends State<HostListScreen> {
 
   StreamSubscription<void>? _sessionChanges;
 
+  final _searchController = TextEditingController();
+
+  /// Trimmed live value of [_searchController]. Kept as its own field rather
+  /// than re-reading the controller everywhere a rebuild needs it.
+  String _query = '';
+
   @override
   void initState() {
     super.initState();
@@ -117,6 +136,7 @@ class _HostListScreenState extends State<HostListScreen> {
   void dispose() {
     _sessionChanges?.cancel();
     _shareIntake.stop();
+    _searchController.dispose();
     super.dispose();
   }
 
@@ -439,6 +459,15 @@ class _HostListScreenState extends State<HostListScreen> {
               },
             ),
             ListTile(
+              leading: const Icon(Icons.drive_file_move_outline),
+              title: const Text('Move to group…'),
+              subtitle: Text(host.group ?? 'Ungrouped'),
+              onTap: () {
+                Navigator.of(context).pop();
+                unawaited(_reassignGroup(host));
+              },
+            ),
+            ListTile(
               leading: const Icon(Icons.copy_all_outlined),
               title: const Text('Copy user@host'),
               subtitle: Text(host.target),
@@ -468,6 +497,173 @@ class _HostListScreenState extends State<HostListScreen> {
         ),
       ),
     );
+  }
+
+  /// The group-picker used by the host's own "Move to group…" action. A
+  /// [SimpleDialog] rather than a dropdown: this is a one-off pick, not a
+  /// form field with a save button, so there is nothing to submit — picking
+  /// an option closes the dialog immediately.
+  Future<void> _reassignGroup(Host host) async {
+    final groupNames = await widget.hostStore.groupNames();
+    if (!mounted) return;
+
+    final selected = await showDialog<String>(
+      context: context,
+      builder: (context) => SimpleDialog(
+        title: Text('Move "${host.displayName}" to'),
+        children: [
+          _GroupPickOption(
+            label: 'Ungrouped',
+            selected: host.group == null,
+            // Empty string stands for Ungrouped here — distinct from `null`,
+            // which showDialog already uses to mean "dismissed".
+            onTap: () => Navigator.of(context).pop(''),
+          ),
+          for (final name in groupNames)
+            _GroupPickOption(
+              label: name,
+              selected: host.group == name,
+              onTap: () => Navigator.of(context).pop(name),
+            ),
+          _GroupPickOption(
+            label: 'New group…',
+            selected: false,
+            onTap: () => Navigator.of(context).pop(_newGroupDialogSentinel),
+          ),
+        ],
+      ),
+    );
+    if (selected == null || !mounted) return;
+
+    String? newGroup;
+    if (selected == _newGroupDialogSentinel) {
+      final created = await _promptGroupName(title: 'New group');
+      if (created == null || !mounted) return;
+      newGroup = created;
+    } else if (selected.isEmpty) {
+      newGroup = null;
+    } else {
+      newGroup = selected;
+    }
+
+    if (newGroup == host.group) return;
+    await widget.hostStore.update(host.withGroup(newGroup));
+    if (!mounted) return;
+    _refresh();
+  }
+
+  /// Backs both "New group…" (blank [initialName]) and the group header's
+  /// "Rename group" (pre-filled). Returns the trimmed name, or null if the
+  /// dialog was cancelled or the input was left blank.
+  Future<String?> _promptGroupName({
+    required String title,
+    String initialName = '',
+  }) {
+    final controller = TextEditingController(text: initialName);
+    return showDialog<String>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text(title),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          textCapitalization: TextCapitalization.words,
+          decoration: const InputDecoration(labelText: 'Group name'),
+          onSubmitted: (value) {
+            final trimmed = value.trim();
+            if (trimmed.isNotEmpty) Navigator.of(context).pop(trimmed);
+          },
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () {
+              final trimmed = controller.text.trim();
+              if (trimmed.isNotEmpty) Navigator.of(context).pop(trimmed);
+            },
+            child: const Text('Save'),
+          ),
+        ],
+      ),
+    ).whenComplete(controller.dispose);
+  }
+
+  Future<void> _renameGroup(String name) async {
+    final newName = await _promptGroupName(
+      title: 'Rename group',
+      initialName: name,
+    );
+    if (newName == null || newName == name || !mounted) return;
+
+    await widget.hostStore.renameGroup(name, newName);
+    // Carries the collapsed/expanded state over to the renamed key — without
+    // this a rename would silently pop a collapsed section back open, since
+    // the new name would not be in the persisted set.
+    await _moveCollapsedKey(from: name, to: newName);
+    if (!mounted) return;
+    _refresh();
+  }
+
+  Future<void> _deleteGroup(String name) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Delete group?'),
+        content: Text(
+          'Removes "$name". Its hosts move to Ungrouped — nothing is '
+          'deleted.',
+          style: const TextStyle(height: 1.35),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            style: FilledButton.styleFrom(backgroundColor: AppTheme.danger),
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+
+    await widget.hostStore.deleteGroup(name);
+    await _forgetCollapsedKey(name);
+    if (!mounted) return;
+    _refresh();
+  }
+
+  Future<void> _toggleSection(HostSection section) async {
+    final key = section.settingsKey;
+    final current = widget.settingsStore.current.collapsedGroups;
+    final next = {...current};
+    if (!next.remove(key)) next.add(key);
+    await widget.settingsStore.update((s) => s.copyWith(collapsedGroups: next));
+    if (mounted) setState(() {});
+  }
+
+  Future<void> _moveCollapsedKey({
+    required String from,
+    required String to,
+  }) async {
+    final current = widget.settingsStore.current.collapsedGroups;
+    if (!current.contains(from)) return;
+    final next = {...current}
+      ..remove(from)
+      ..add(to);
+    await widget.settingsStore.update((s) => s.copyWith(collapsedGroups: next));
+  }
+
+  Future<void> _forgetCollapsedKey(String key) async {
+    final current = widget.settingsStore.current.collapsedGroups;
+    if (!current.contains(key)) return;
+    final next = {...current}..remove(key);
+    await widget.settingsStore.update((s) => s.copyWith(collapsedGroups: next));
   }
 
   Future<void> _forgetHostKeys(Host host) async {
@@ -595,6 +791,7 @@ class _HostListScreenState extends State<HostListScreen> {
                 live: widget.sessions.liveCount,
                 onResume: () => unawaited(_showSessions()),
               ),
+            _buildSearchField(),
             Expanded(child: _buildHostList()),
           ],
         ),
@@ -607,11 +804,36 @@ class _HostListScreenState extends State<HostListScreen> {
     );
   }
 
+  Widget _buildSearchField() {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 8, 12, 4),
+      child: TextField(
+        controller: _searchController,
+        decoration: InputDecoration(
+          isDense: true,
+          hintText: 'Search hosts',
+          prefixIcon: const Icon(Icons.search, size: 20),
+          suffixIcon: _query.isEmpty
+              ? null
+              : IconButton(
+                  tooltip: 'Clear',
+                  icon: const Icon(Icons.clear, size: 18),
+                  onPressed: () {
+                    _searchController.clear();
+                    setState(() => _query = '');
+                  },
+                ),
+        ),
+        onChanged: (value) => setState(() => _query = value),
+      ),
+    );
+  }
+
   Widget _buildHostList() {
     // Only the widest class gets the grid — a phone in split-screen or a
     // narrow tablet window (medium) still reads better as a single column.
     final width = MediaQuery.sizeOf(context).width;
-    final expanded =
+    final expandedLayout =
         WindowSizeClass.forWidth(width) == WindowSizeClass.expanded;
 
     return FutureBuilder<List<Host>>(
@@ -621,6 +843,8 @@ class _HostListScreenState extends State<HostListScreen> {
           return const Center(child: CircularProgressIndicator());
         }
         final hosts = snapshot.data!;
+        final sections = HostGrouping.buildSections(hosts, query: _query);
+
         // A CustomScrollView with AlwaysScrollableScrollPhysics — rather than
         // gating RefreshIndicator's child on hosts.isEmpty — is what lets
         // pull-to-refresh work even from the empty-state illustration, the
@@ -635,10 +859,14 @@ class _HostListScreenState extends State<HostListScreen> {
                   hasScrollBody: false,
                   child: _EmptyHostList(onAddHost: _addHost),
                 )
-              else if (expanded)
-                _buildHostGrid(hosts)
+              else if (sections.isEmpty)
+                SliverFillRemaining(
+                  hasScrollBody: false,
+                  child: _NoSearchResults(query: _query.trim()),
+                )
               else
-                _buildHostListSliver(hosts),
+                for (final section in sections)
+                  _buildSection(section, expandedLayout: expandedLayout),
             ],
           ),
         );
@@ -646,32 +874,70 @@ class _HostListScreenState extends State<HostListScreen> {
     );
   }
 
-  /// Compact and medium: the plain one-column list, unchanged from before
-  /// Phase 8.
-  Widget _buildHostListSliver(List<Host> hosts) {
+  /// One group section: its header, and (unless collapsed) its hosts as
+  /// either the compact/medium list or the expanded grid. Grouped into a
+  /// single [SliverMainAxisGroup] so the pair can carry one bottom margin
+  /// without a separate sliver-padding entry per section leaking into the
+  /// flat `slivers` list `CustomScrollView` wants.
+  Widget _buildSection(HostSection section, {required bool expandedLayout}) {
+    // While searching, every section still on screen already matched the
+    // query — auto-expanding it is what surfaces the hit without the user
+    // having to also go find and tap its (possibly collapsed) header.
+    final searching = _query.trim().isNotEmpty;
+    final collapsed = !searching &&
+        widget.settingsStore.current.collapsedGroups
+            .contains(section.settingsKey);
+
     return SliverPadding(
-      padding: const EdgeInsets.symmetric(vertical: 8),
-      sliver: SliverList.separated(
-        itemCount: hosts.length,
-        separatorBuilder: (_, _) => const Divider(height: 1),
-        itemBuilder: (context, index) {
-          final host = hosts[index];
-          final connecting = _connectingHostId == host.id;
-          return ListTile(
+      padding: const EdgeInsets.only(bottom: 6),
+      sliver: SliverMainAxisGroup(
+        slivers: [
+          SliverToBoxAdapter(
+            child: _GroupHeader(
+              section: section,
+              collapsed: collapsed,
+              onToggle: searching ? null : () => _toggleSection(section),
+              onRename: section.isUngrouped
+                  ? null
+                  : () => _renameGroup(section.group!),
+              onDelete: section.isUngrouped
+                  ? null
+                  : () => _deleteGroup(section.group!),
+            ),
+          ),
+          if (!collapsed)
+            if (expandedLayout)
+              _buildGridSliver(section.hosts)
+            else
+              _buildListSliver(section.hosts),
+        ],
+      ),
+    );
+  }
+
+  /// Compact and medium: the plain one-column list, unchanged in shape from
+  /// before Phase 8 — now built per section instead of once for every host.
+  Widget _buildListSliver(List<Host> hosts) {
+    return SliverList.separated(
+      itemCount: hosts.length,
+      separatorBuilder: (_, _) => const Divider(height: 1),
+      itemBuilder: (context, index) {
+        final host = hosts[index];
+        final connecting = _connectingHostId == host.id;
+        // ListTile has no onSecondaryTap of its own, so wrap it: on desktop
+        // right-click opens the same action sheet long-press opens on touch
+        // devices. Behind the tile so the ink and hover effects still come
+        // from the tile itself, not a bare GestureDetector — same pattern as
+        // file_browser_pane.dart's _EntryTile.
+        return GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onSecondaryTap: connecting ? null : () => _showHostActions(host),
+          child: ListTile(
             contentPadding: const EdgeInsets.symmetric(
               horizontal: 16,
               vertical: 10,
             ),
-            leading: CircleAvatar(
-              radius: 22,
-              backgroundColor: AppTheme.surface,
-              child: Icon(
-                host.authMethod == SshAuthMethod.password
-                    ? Icons.password
-                    : Icons.key,
-                size: 22,
-              ),
-            ),
+            leading: _hostAvatar(host, radius: 22),
             title: Text(
               host.displayName,
               style: const TextStyle(fontWeight: FontWeight.w600),
@@ -706,18 +972,18 @@ class _HostListScreenState extends State<HostListScreen> {
                   ),
             onTap: connecting ? null : () => _connect(host),
             onLongPress: connecting ? null : () => _showHostActions(host),
-          );
-        },
-      ),
+          ),
+        );
+      },
     );
   }
 
   /// Expanded: a 2-column grid of host cards, same actions as the list —
-  /// tap to connect, "more" for the same bottom sheet, long-press as a
-  /// shortcut to it. A wide window has room to show more hosts at once
-  /// without the list stretching into an uncomfortably long single line per
-  /// row.
-  Widget _buildHostGrid(List<Host> hosts) {
+  /// tap to connect, "more" for the same bottom sheet, long-press (or
+  /// right-click on desktop) as a shortcut to it. A wide window has room to
+  /// show more hosts at once without the list stretching into an
+  /// uncomfortably long single line per row.
+  Widget _buildGridSliver(List<Host> hosts) {
     return SliverPadding(
       padding: const EdgeInsets.all(12),
       sliver: SliverGrid(
@@ -744,6 +1010,124 @@ class _HostListScreenState extends State<HostListScreen> {
   }
 }
 
+/// One tappable row in the "Move to group…" dialog.
+class _GroupPickOption extends StatelessWidget {
+  const _GroupPickOption({
+    required this.label,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final String label;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return SimpleDialogOption(
+      onPressed: onTap,
+      child: Row(
+        children: [
+          SizedBox(
+            width: 24,
+            child: selected
+                ? const Icon(Icons.check, size: 18, color: AppTheme.accent)
+                : null,
+          ),
+          const SizedBox(width: 8),
+          Expanded(child: Text(label)),
+        ],
+      ),
+    );
+  }
+}
+
+/// The header row of one collapsible group section: chevron, name, host
+/// count, and — for a named group, never for Ungrouped — the overflow menu
+/// that renames or deletes it.
+class _GroupHeader extends StatelessWidget {
+  const _GroupHeader({
+    required this.section,
+    required this.collapsed,
+    required this.onToggle,
+    this.onRename,
+    this.onDelete,
+  });
+
+  final HostSection section;
+  final bool collapsed;
+  final VoidCallback? onToggle;
+  final VoidCallback? onRename;
+  final VoidCallback? onDelete;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final name = section.group ?? 'Ungrouped';
+    final count = section.hosts.length;
+
+    return Material(
+      color: theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.4),
+      child: InkWell(
+        onTap: onToggle,
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(8, 8, 4, 8),
+          child: Row(
+            children: [
+              Icon(
+                collapsed ? Icons.chevron_right : Icons.expand_more,
+                size: 20,
+                color: theme.colorScheme.onSurfaceVariant,
+              ),
+              const SizedBox(width: 4),
+              Expanded(
+                child: Text(
+                  name,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: theme.textTheme.labelLarge
+                      ?.copyWith(fontWeight: FontWeight.w700),
+                ),
+              ),
+              Text(
+                '$count',
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: theme.colorScheme.onSurfaceVariant,
+                ),
+              ),
+              if (onRename != null || onDelete != null)
+                PopupMenuButton<_GroupMenuAction>(
+                  tooltip: 'Group actions',
+                  icon: const Icon(Icons.more_vert, size: 20),
+                  onSelected: (action) => switch (action) {
+                    _GroupMenuAction.rename => onRename?.call(),
+                    _GroupMenuAction.delete => onDelete?.call(),
+                  },
+                  itemBuilder: (context) => const [
+                    PopupMenuItem(
+                      value: _GroupMenuAction.rename,
+                      child: Text('Rename group'),
+                    ),
+                    PopupMenuItem(
+                      value: _GroupMenuAction.delete,
+                      child: Text('Delete group'),
+                    ),
+                  ],
+                )
+              else
+                // Keeps the count aligned across sections regardless of
+                // whether this one has an overflow menu.
+                const SizedBox(width: 48),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+enum _GroupMenuAction { rename, delete }
+
 /// One host, as a card in the expanded grid — the same information and
 /// actions as a list row, laid out for a fixed-size grid cell instead of a
 /// full-width tile.
@@ -763,78 +1147,76 @@ class _HostCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    return Card(
-      margin: EdgeInsets.zero,
-      clipBehavior: Clip.antiAlias,
-      child: InkWell(
-        onTap: connecting ? null : onTap,
-        onLongPress: connecting ? null : onMore,
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(14, 12, 8, 12),
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              CircleAvatar(
-                radius: 18,
-                backgroundColor: AppTheme.surface,
-                child: Icon(
-                  host.authMethod == SshAuthMethod.password
-                      ? Icons.password
-                      : Icons.key,
-                  size: 18,
-                ),
-              ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Text(
-                      host.displayName,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(fontWeight: FontWeight.w600),
-                    ),
-                    const SizedBox(height: 2),
-                    Text(
-                      host.target,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: theme.textTheme.bodySmall,
-                    ),
-                    if (host.lastConnectedAt != null)
-                      Padding(
-                        padding: const EdgeInsets.only(top: 4),
-                        child: Text(
-                          _formatLastConnected(host.lastConnectedAt!),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                            fontSize: 11,
-                            color: theme.colorScheme.onSurfaceVariant,
+    // Same desktop right-click affordance as the list tile — see
+    // _buildListSliver — wrapped around the Card rather than the InkWell so
+    // the card's own ink and hover effects are untouched.
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onSecondaryTap: connecting ? null : onMore,
+      child: Card(
+        margin: EdgeInsets.zero,
+        clipBehavior: Clip.antiAlias,
+        child: InkWell(
+          onTap: connecting ? null : onTap,
+          onLongPress: connecting ? null : onMore,
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(14, 12, 8, 12),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                _hostAvatar(host, radius: 18),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        host.displayName,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(fontWeight: FontWeight.w600),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        host.target,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: theme.textTheme.bodySmall,
+                      ),
+                      if (host.lastConnectedAt != null)
+                        Padding(
+                          padding: const EdgeInsets.only(top: 4),
+                          child: Text(
+                            _formatLastConnected(host.lastConnectedAt!),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              fontSize: 11,
+                              color: theme.colorScheme.onSurfaceVariant,
+                            ),
                           ),
                         ),
-                      ),
-                  ],
+                    ],
+                  ),
                 ),
-              ),
-              connecting
-                  ? const Padding(
-                      padding: EdgeInsets.all(8),
-                      child: SizedBox(
-                        width: 18,
-                        height: 18,
-                        child: CircularProgressIndicator(strokeWidth: 2),
+                connecting
+                    ? const Padding(
+                        padding: EdgeInsets.all(8),
+                        child: SizedBox(
+                          width: 18,
+                          height: 18,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        ),
+                      )
+                    : IconButton(
+                        tooltip: 'More',
+                        icon: const Icon(Icons.more_vert, size: 20),
+                        onPressed: onMore,
+                        visualDensity: VisualDensity.compact,
                       ),
-                    )
-                  : IconButton(
-                      tooltip: 'More',
-                      icon: const Icon(Icons.more_vert, size: 20),
-                      onPressed: onMore,
-                      visualDensity: VisualDensity.compact,
-                    ),
-            ],
+              ],
+            ),
           ),
         ),
       ),
@@ -978,6 +1360,76 @@ class _EmptyHostList extends StatelessWidget {
       ),
     );
   }
+}
+
+/// Shown instead of [_EmptyHostList] when there are saved hosts but none of
+/// them match the search field.
+class _NoSearchResults extends StatelessWidget {
+  const _NoSearchResults({required this.query});
+
+  final String query;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(32),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              Icons.search_off,
+              size: 56,
+              color: theme.colorScheme.onSurfaceVariant.withValues(alpha: 0.6),
+            ),
+            const SizedBox(height: 16),
+            Text('No hosts match "$query"', style: theme.textTheme.titleMedium),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// The leading avatar for a host tile or card: the auth-method icon, plus a
+/// small badge in the corner for [Host.colorLabel] when it has one. A
+/// top-level function (not a method on either call site) since both
+/// `_buildListSliver`'s `ListTile.leading` and `_HostCard` need the exact
+/// same thing.
+Widget _hostAvatar(Host host, {required double radius}) {
+  final avatar = CircleAvatar(
+    radius: radius,
+    backgroundColor: AppTheme.surface,
+    child: Icon(
+      host.authMethod == SshAuthMethod.password ? Icons.password : Icons.key,
+      size: radius,
+    ),
+  );
+
+  if (host.colorLabel == null) return avatar;
+
+  return Stack(
+    clipBehavior: Clip.none,
+    children: [
+      avatar,
+      Positioned(
+        right: -1,
+        bottom: -1,
+        // The backdrop is what keeps the badge legible against an avatar
+        // background close to it in hue — without it a red tag on top of
+        // the (also warm) default avatar background nearly disappears.
+        child: Container(
+          padding: const EdgeInsets.all(2),
+          decoration: const BoxDecoration(
+            shape: BoxShape.circle,
+            color: AppTheme.terminalBackground,
+          ),
+          child: HostColorDot(colorLabel: host.colorLabel, size: radius * 0.64),
+        ),
+      ),
+    ],
+  );
 }
 
 /// `today at 14:32`, `26 Jul at 14:32` this year, `26 Jul 2024` before that —

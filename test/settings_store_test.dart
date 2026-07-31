@@ -59,18 +59,39 @@ void main() {
         colorScheme: TerminalColorScheme.monokai,
         keepScreenAwake: true,
         showHiddenFilesByDefault: true,
+        collapsedGroups: {'Work', 'Home'},
       );
       final restored = AppSettings.fromJson(settings.toJson());
       expect(restored.terminalFontSize, 20);
       expect(restored.colorScheme, TerminalColorScheme.monokai);
       expect(restored.keepScreenAwake, isTrue);
       expect(restored.showHiddenFilesByDefault, isTrue);
+      expect(restored.collapsedGroups, {'Work', 'Home'});
     });
 
     test('fromJson falls back to defaults for missing fields', () {
       final settings = AppSettings.fromJson(const {});
       expect(settings.terminalFontSize, AppSettings.defaultFontSize);
       expect(settings.colorScheme, TerminalColorScheme.classic);
+      expect(settings.collapsedGroups, isEmpty);
+    });
+
+    test('settings.json written before v1.3.0 (no collapsedGroups key) '
+        'loads with nothing collapsed', () {
+      final settings = AppSettings.fromJson(const {
+        'version': 1,
+        'terminalFontSize': 14.0,
+        'colorScheme': 'classic',
+        'keepScreenAwake': false,
+        'showHiddenFilesByDefault': false,
+      });
+      expect(settings.collapsedGroups, isEmpty);
+    });
+
+    test('copyWith replaces collapsedGroups wholesale, not merged', () {
+      const settings = AppSettings(collapsedGroups: {'Work'});
+      final next = settings.copyWith(collapsedGroups: {'Home'});
+      expect(next.collapsedGroups, {'Home'});
     });
 
     test('fromJson falls back to classic for an unknown colour scheme name',

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:xterm/xterm.dart';
 
 import 'models/app_settings.dart';
+import 'models/host.dart';
 
 /// Terminal-appropriate Material 3 dark theme.
 ///
@@ -109,6 +110,27 @@ class AppTheme {
       TerminalColorScheme.monokai => _monokai,
       TerminalColorScheme.blackOnWhite => _blackOnWhite,
       TerminalColorScheme.retroGreen => _retroGreen,
+    };
+  }
+
+  /// Resolves a saved host's colour-tag id (`Host.colorLabel?.name`, the
+  /// persisted shape) to the swatch it names, or null for no tag. Public —
+  /// not just used by the host list and edit screen — so a later phase's
+  /// terminal tabs can tint themselves to match without duplicating this
+  /// palette; kept here rather than on the enum in `models/host.dart` for
+  /// the same reason [terminalThemeFor] is not on [TerminalColorScheme].
+  static Color? hostColorFor(String? colorId) {
+    final label = HostColorLabel.fromId(colorId);
+    if (label == null) return null;
+    return switch (label) {
+      HostColorLabel.red => const Color(0xFFF85149),
+      HostColorLabel.orange => const Color(0xFFDB6D28),
+      HostColorLabel.yellow => const Color(0xFFD29922),
+      HostColorLabel.green => const Color(0xFF3FB950),
+      HostColorLabel.teal => const Color(0xFF39C5CF),
+      HostColorLabel.blue => const Color(0xFF58A6FF),
+      HostColorLabel.purple => const Color(0xFFBC8CFF),
+      HostColorLabel.pink => const Color(0xFFF778BA),
     };
   }
 

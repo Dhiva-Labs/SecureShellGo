@@ -136,4 +136,55 @@ class HostStore {
     _hosts.remove(id);
     await _persist();
   }
+
+  /// Every distinct, non-empty group name currently assigned to a host,
+  /// sorted case-insensitively. There is no separate groups table — see
+  /// [Host.group] — so this *is* the list of groups; it is what the "existing
+  /// groups" dropdown and the "New group…" flow both read to decide whether a
+  /// typed name is new.
+  Future<List<String>> groupNames() async {
+    await ensureLoaded();
+    final names = <String>{
+      for (final host in _hosts.values)
+        if (host.group != null) host.group!,
+    };
+    return names.toList()
+      ..sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
+  }
+
+  /// Reassigns every host currently in [oldName] to [newName], in one write.
+  /// A blank [newName], or one equal to [oldName], is a no-op — the caller is
+  /// expected to have already validated the typed name before offering this.
+  Future<void> renameGroup(String oldName, String newName) async {
+    await ensureLoaded();
+    final trimmed = newName.trim();
+    if (trimmed.isEmpty || trimmed == oldName) return;
+
+    var changed = false;
+    // Snapshotted with toList(): reassigning writes into _hosts while this
+    // loop reads it, and _hosts is a LinkedHashMap that Dart's for-in over
+    // .values does not tolerate being mutated underneath.
+    for (final host in _hosts.values.toList()) {
+      if (host.group == oldName) {
+        _hosts[host.id] = host.withGroup(trimmed);
+        changed = true;
+      }
+    }
+    if (changed) await _persist();
+  }
+
+  /// Moves every host out of group [name] and into Ungrouped, in one write.
+  /// Never removes a [Host] — "delete group" only ever means "forget this
+  /// label", per the group header's overflow menu.
+  Future<void> deleteGroup(String name) async {
+    await ensureLoaded();
+    var changed = false;
+    for (final host in _hosts.values.toList()) {
+      if (host.group == name) {
+        _hosts[host.id] = host.withGroup(null);
+        changed = true;
+      }
+    }
+    if (changed) await _persist();
+  }
 }
