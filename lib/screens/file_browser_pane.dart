@@ -7,16 +7,19 @@ import '../models/host.dart';
 import '../models/remote_entry.dart';
 import '../services/device_storage.dart';
 import '../services/download_plan.dart';
+import '../services/editor_document.dart';
 import '../services/remote_path.dart';
 import '../services/remote_transfer_plan.dart';
 import '../services/session_controller.dart';
 import '../services/session_manager.dart';
+import '../services/settings_store.dart';
 import '../services/sftp_service.dart';
 import '../services/transfer_queue.dart';
 import '../services/upload_plan.dart';
 import '../theme.dart';
 import '../widgets/transfer_panel.dart';
 import 'remote_directory_picker.dart';
+import 'remote_editor_screen.dart';
 
 /// What to do when a download would land on an existing file name.
 enum _CollisionChoice { keepBoth, overwrite, cancel }
@@ -67,12 +70,18 @@ class FileBrowserPane extends StatefulWidget {
   const FileBrowserPane({
     super.key,
     required this.session,
+    required this.settingsStore,
     this.sessions,
     this.sessionId,
     this.initialShowHidden = false,
   });
 
   final SessionController session;
+
+  /// Where the editor gets the terminal font size and colour scheme from, so
+  /// a file opened out of this browser is drawn in the same palette as the
+  /// terminal next to it.
+  final SettingsStore settingsStore;
 
   /// The other open sessions, so a file can be sent straight to one of them.
   /// Null in a context with no manager behind it, which simply hides the
@@ -795,6 +804,38 @@ class _FileBrowserPaneState extends State<FileBrowserPane>
     );
   }
 
+  // ---------------------------------------------------------------- editing
+
+  /// Opens [entry] in the built-in editor, over this session's SFTP channel.
+  ///
+  /// The same [RemoteFileSystem] the listing came from is handed straight to
+  /// the editor: no second connection, no second credential prompt, and no
+  /// interaction with the transfer queue — an edit is a round trip, not a
+  /// transfer. The refusals (binary, too large) belong to the editor, which
+  /// is where the bytes are, so nothing is pre-judged from the row here.
+  Future<void> _edit(RemoteEntry entry) async {
+    final RemoteFileSystem sftp;
+    try {
+      sftp = await _client();
+    } on SftpFailure catch (e) {
+      if (mounted) _snack(e.message, isError: true);
+      return;
+    }
+    if (!mounted) return;
+
+    await openRemoteEditor(
+      context,
+      filesystem: sftp,
+      settingsStore: widget.settingsStore,
+      paths: [entry.path],
+      hostLabel: widget.session.host.displayName,
+    );
+    // A save changes the size and the timestamp on the row behind the
+    // editor; coming back to a listing that still shows the old ones makes a
+    // successful save look like it did nothing.
+    if (mounted && !_loading) unawaited(_refresh());
+  }
+
   /// Puts the remote path on the clipboard, so it can be pasted straight into
   /// the terminal pane next door.
   Future<void> _copyPath(RemoteEntry entry) async {
@@ -843,6 +884,16 @@ class _FileBrowserPaneState extends State<FileBrowserPane>
               ),
             ),
             const Divider(height: 1),
+            if (entry.isDownloadable)
+              ListTile(
+                leading: const Icon(Icons.edit_note, color: AppTheme.accent),
+                title: const Text('Edit'),
+                subtitle: const Text('Opens on the server, saves back in place'),
+                onTap: () {
+                  Navigator.of(context).pop();
+                  unawaited(_edit(entry));
+                },
+              ),
             if (entry.isDownloadable)
               ListTile(
                 leading: const Icon(Icons.download),
@@ -1040,7 +1091,15 @@ class _FileBrowserPaneState extends State<FileBrowserPane>
         } else if (entry.isNavigable) {
           unawaited(_navigate(entry.path));
         } else if (entry.isDownloadable) {
-          unawaited(_download([entry]));
+          // A tap on something that reads as text and is small enough to
+          // arrive quickly opens it for editing; everything else keeps the
+          // download it has always had. The action sheet still offers both
+          // either way, so neither choice is a dead end.
+          if (tapShouldEdit(name: entry.name, size: entry.size)) {
+            unawaited(_edit(entry));
+          } else {
+            unawaited(_download([entry]));
+          }
         }
       },
       onLongPress: () {

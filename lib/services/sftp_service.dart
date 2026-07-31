@@ -50,6 +50,41 @@ abstract class RemoteFileWriter {
   Future<void> abort();
 }
 
+/// A file's identity at one moment, as the server reported it.
+///
+/// The editor records one of these when it opens a file and compares against
+/// a fresh one before it writes: if the size or the modification time moved
+/// while the file was open on screen, somebody else got there first and the
+/// save has to stop and ask rather than flatten their work.
+class RemoteFileStat {
+  const RemoteFileStat({this.size, this.modified, this.permissions});
+
+  final int? size;
+  final DateTime? modified;
+
+  /// Octal permission bits, without the file-type bits — `0644`, `0755`.
+  final int? permissions;
+}
+
+/// The stat-and-chmod half of a remote filesystem.
+///
+/// Split out of [RemoteFileSystem], and asked for separately, because it is
+/// the *editor's* requirement and nothing else's: listing, downloading and
+/// copying never need a file's mode, and folding these two methods into
+/// [RemoteFileSystem] would oblige every fake in the test tree to grow them
+/// for a feature none of them exercises. [RemoteFileWriter] is a separate
+/// interface for the same reason.
+abstract class RemoteFileMetadata {
+  /// Stats one path, or null when the server will not say — including
+  /// because the file is not there.
+  Future<RemoteFileStat?> statFile(String path);
+
+  /// Sets [path]'s permission bits. Returns false when the server declines,
+  /// which is a normal outcome on a filesystem mounted without them and is
+  /// reported to the user rather than treated as a failed save.
+  Future<bool> setPermissions(String path, int permissions);
+}
+
 /// What the browser and the transfer queue need from a remote filesystem.
 ///
 /// An interface rather than just [SftpService] so the session's transfer logic
@@ -132,7 +167,7 @@ abstract class RemoteFileSystem {
 /// authenticated SSH connection as the shell — `SSHClient.sftp()` opens a
 /// second channel, not a second login — which is the whole reason the file
 /// browser costs the user no extra password or host-key prompt.
-class SftpService implements RemoteFileSystem {
+class SftpService implements RemoteFileSystem, RemoteFileMetadata {
   SftpService(this._client);
 
   final SftpClient _client;
@@ -344,6 +379,41 @@ class SftpService implements RemoteFileSystem {
       await _client.stat(path);
       return true;
     } catch (_) {
+      return false;
+    }
+  }
+
+  @override
+  Future<RemoteFileStat?> statFile(String path) async {
+    try {
+      final attrs = await _client.stat(path);
+      return RemoteFileStat(
+        size: attrs.size,
+        modified: _timeOf(attrs.modifyTime),
+        // The low twelve bits: permissions and the setuid/setgid/sticky
+        // flags, without the file-type bits above them. Handing the whole
+        // mode word back to `setStat` would work, but storing the type in
+        // something called "permissions" invites a later caller to write it
+        // somewhere it does not belong.
+        permissions: attrs.mode == null ? null : attrs.mode!.value & 0xFFF,
+      );
+    } catch (_) {
+      return null;
+    }
+  }
+
+  @override
+  Future<bool> setPermissions(String path, int permissions) async {
+    try {
+      await _client.setStat(
+        path,
+        SftpFileAttrs(mode: SftpFileMode.value(permissions & 0xFFF)),
+      );
+      return true;
+    } catch (_) {
+      // A server that will not chmod is not a failed save — the bytes are
+      // already safely in place by the time this runs. The caller says so in
+      // the confirmation instead.
       return false;
     }
   }

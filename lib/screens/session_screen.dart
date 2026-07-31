@@ -846,6 +846,7 @@ class _SessionPageState extends State<_SessionPage> {
     return FileBrowserPane(
       key: _fileBrowserPaneKey,
       session: _session,
+      settingsStore: widget.settingsStore,
       sessions: widget.manager,
       sessionId: widget.entry.id,
       initialShowHidden: widget.settingsStore.current.showHiddenFilesByDefault,

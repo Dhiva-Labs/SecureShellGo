@@ -25,6 +25,7 @@ lib/
     host.dart                   Host (persistable) + SshCredentials (in-memory only)
     known_host.dart             KnownHostKey — one trusted host key
     remote_entry.dart           RemoteEntry — one row of a remote directory
+    syntax_token.dart           TokenKind + HighlightSpan for the editor
 
   services/                     all I/O and protocol work, no Flutter imports
     known_hosts_service.dart    the trusted-key store (sealed JSON on disk)
@@ -49,6 +50,10 @@ lib/
     device_storage.dart         Dart half of the MediaStore / picker channel
     share_intake.dart           files arriving from other apps' Share menus
     private_key_import.dart     classify a picked key file, no socket needed
+    editor_document.dart        binary sniff, UTF-8 decode, line-ending style
+    syntax_highlighter.dart     hand-rolled per-language tokenizers, no deps
+    editor_search.dart          find/replace: plain and regex, counts, go-to-line
+    editor_save.dart            the conflict guard + temp-then-rename save-back
 
   screens/
     host_list_screen.dart       home: saved hosts, connect, "browse files"
@@ -58,12 +63,14 @@ lib/
     session_screen.dart         owns the session; hosts the two panes
     terminal_pane.dart          xterm view wired to the SSH shell channel
     file_browser_pane.dart      SFTP browser, uploads and downloads
+    remote_editor_screen.dart   the tabbed text editor: find, save, conflicts
     workspace_view.dart         draws the pane tree: dividers, headers, focus
 
   widgets/
     host_key_dialog.dart        the accept/reject host key UI
     terminal_key_bar.dart       Esc/Tab/Ctrl-x/arrows row for soft keyboards
     transfer_panel.dart         transfer summary bar + transfers bottom sheet
+    code_editor_field.dart      highlighting controller + scroll-synced gutter
 
 android/app/src/main/kotlin/.../StorageBridge.kt
                                 MediaStore Downloads writer + SAF file picker

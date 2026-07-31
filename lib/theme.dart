@@ -3,6 +3,7 @@ import 'package:xterm/xterm.dart';
 
 import 'models/app_settings.dart';
 import 'models/host.dart';
+import 'models/syntax_token.dart';
 
 /// Terminal-appropriate Material 3 dark theme.
 ///
@@ -117,6 +118,69 @@ class AppTheme {
       TerminalColorScheme.retroGreen => _retroGreen,
     };
   }
+
+  /// The editor's syntax colour for [kind], out of the user's own terminal
+  /// palette.
+  ///
+  /// The point of routing this through [TerminalTheme] rather than a fixed
+  /// set of editor colours is that the two views sit side by side: a user on
+  /// Solarized Light who opens a file from the browser should not get a
+  /// near-black editor next to their cream terminal. Every mode in
+  /// `syntax_highlighter.dart` reduces to these ten kinds, so a scheme only
+  /// has to answer ten questions to theme all thirteen languages.
+  ///
+  /// The ANSI slots are picked for contrast against the scheme's own
+  /// background, not for what they are called: `brightBlack` is every
+  /// palette's "dimmed" tone, which is what a comment wants, and the
+  /// foreground is left alone for unclassified text so that the base style
+  /// and [TokenKind.plain] can never disagree.
+  static TextStyle syntaxStyleFor(TokenKind kind, TerminalTheme theme) {
+    return switch (kind) {
+      TokenKind.plain => TextStyle(color: theme.foreground),
+      TokenKind.keyword => TextStyle(color: theme.magenta),
+      TokenKind.builtin => TextStyle(color: theme.blue),
+      TokenKind.string => TextStyle(color: theme.green),
+      TokenKind.number => TextStyle(color: theme.cyan),
+      TokenKind.comment => TextStyle(
+          color: theme.brightBlack,
+          fontStyle: FontStyle.italic,
+        ),
+      TokenKind.meta => TextStyle(color: theme.yellow),
+      TokenKind.attribute => TextStyle(color: theme.brightCyan),
+      TokenKind.heading => TextStyle(
+          color: theme.brightMagenta,
+          fontWeight: FontWeight.w700,
+        ),
+      TokenKind.operator => TextStyle(color: theme.white),
+    };
+  }
+
+  /// The band behind the line the caret is on.
+  ///
+  /// Derived from the scheme's foreground rather than hard-coded so it lands
+  /// on the right side of the background in both a dark scheme and a light
+  /// one — `selection` would be the obvious choice but is tuned to be seen
+  /// under a deliberate drag, which is far too loud to sit under the caret
+  /// permanently.
+  static Color editorCurrentLine(TerminalTheme theme) =>
+      theme.foreground.withValues(alpha: 0.07);
+
+  /// Line numbers: dimmed, except the one the caret is on.
+  static Color editorGutterText(TerminalTheme theme) => theme.brightBlack;
+
+  static Color editorGutterActiveText(TerminalTheme theme) => theme.foreground;
+
+  /// Find hits, and the one the caret is sitting on. These two are already in
+  /// every [TerminalTheme] — the terminal's own search uses them — so the
+  /// editor's find bar highlights in exactly the colours the user's terminal
+  /// search does.
+  static Color editorMatch(TerminalTheme theme) => theme.searchHitBackground;
+
+  static Color editorCurrentMatch(TerminalTheme theme) =>
+      theme.searchHitBackgroundCurrent;
+
+  static Color editorMatchText(TerminalTheme theme) =>
+      theme.searchHitForeground;
 
   /// Resolves a saved host's colour-tag id (`Host.colorLabel?.name`, the
   /// persisted shape) to the swatch it names, or null for no tag. Public —
