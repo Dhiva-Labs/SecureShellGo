@@ -21,7 +21,7 @@
 name: secureshellgo
 title: SecureShell Go
 base: core22
-version: '1.2.0'
+version: '1.3.0'
 summary: SSH terminal and SFTP client with strict host-key verification
 description: |
   SecureShell Go is a fast, security-first SSH terminal and SFTP client for
@@ -40,6 +40,11 @@ description: |
 grade: stable
 confinement: strict
 icon: snap/gui/icon.png
+license: MIT
+website: https://github.com/Dhiva-Labs/SecureShellGo
+source-code: https://github.com/Dhiva-Labs/SecureShellGo
+issues: https://github.com/Dhiva-Labs/SecureShellGo/issues
+contact: dhivakar1010@gmail.com
 
 apps:
   secureshellgo:
@@ -75,6 +80,15 @@ parts:
     plugin: flutter
     source: .
     flutter-target: lib/main.dart
+    # `source: .` copies the working tree verbatim, local build state and
+    # all. A build/ directory left by a host-side `flutter build linux`
+    # carries a CMakeCache.txt naming host paths, and CMake refuses to reuse
+    # a cache generated somewhere else — the build dies before it compiles a
+    # line. These are all regenerated inside the container anyway.
+    override-pull: |
+      craftctl default
+      rm -rf build .dart_tool .flutter .pub-cache debian/.home \
+        linux/flutter/ephemeral
     stage-packages:
       - libgtk-3-0
       - libsecret-1-0
