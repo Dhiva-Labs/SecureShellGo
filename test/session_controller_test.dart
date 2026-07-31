@@ -1233,6 +1233,45 @@ void main() {
       // The transport is fine; the file browser must still work.
       expect(session.isClosed, isFalse);
     });
+
+    test('a host with a startup command still fails to open cleanly',
+        () async {
+      // FakeTransport.startShell always throws (see its own doc comment: a
+      // real SSH channel cannot be usefully faked), so the success path that
+      // sends the startup command never runs here — this only guards that
+      // configuring one does not change how the failure is reported.
+      final session = build();
+      addTearDown(session.dispose);
+      session.terminal.resize(80, 24);
+
+      await session.ensureShell();
+
+      expect(session.shellError, isNotNull);
+      expect(session.isClosed, isFalse);
+    });
+  });
+
+  group('startup command', () {
+    test('nothing configured sends nothing', () {
+      expect(startupCommandPayload(null), isNull);
+    });
+
+    test('blank or whitespace-only is treated as nothing configured', () {
+      expect(startupCommandPayload(''), isNull);
+      expect(startupCommandPayload('   \n  '), isNull);
+    });
+
+    test('a real command is sent with a trailing newline, as if Enter was '
+        'pressed', () {
+      expect(
+        startupCommandPayload('cd /var/www && ls'),
+        'cd /var/www && ls\n',
+      );
+    });
+
+    test('surrounding whitespace is trimmed before the newline is added', () {
+      expect(startupCommandPayload('  uptime  '), 'uptime\n');
+    });
   });
 
   group('announcing a disconnect', () {

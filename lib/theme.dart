@@ -106,8 +106,13 @@ class AppTheme {
   static TerminalTheme terminalThemeFor(TerminalColorScheme scheme) {
     return switch (scheme) {
       TerminalColorScheme.classic => terminalTheme,
+      TerminalColorScheme.dracula => _dracula,
       TerminalColorScheme.solarizedDark => _solarizedDark,
+      TerminalColorScheme.solarizedLight => _solarizedLight,
+      TerminalColorScheme.nord => _nord,
+      TerminalColorScheme.gruvboxDark => _gruvboxDark,
       TerminalColorScheme.monokai => _monokai,
+      TerminalColorScheme.oneDark => _oneDark,
       TerminalColorScheme.blackOnWhite => _blackOnWhite,
       TerminalColorScheme.retroGreen => _retroGreen,
     };
@@ -133,6 +138,143 @@ class AppTheme {
       HostColorLabel.pink => const Color(0xFFF778BA),
     };
   }
+
+  /// Published Dracula palette (draculatheme.com/terminal).
+  static const TerminalTheme _dracula = TerminalTheme(
+    cursor: Color(0xFFF8F8F2),
+    selection: Color(0x5544475A),
+    foreground: Color(0xFFF8F8F2),
+    background: Color(0xFF282A36),
+    black: Color(0xFF21222C),
+    red: Color(0xFFFF5555),
+    green: Color(0xFF50FA7B),
+    yellow: Color(0xFFF1FA8C),
+    blue: Color(0xFFBD93F9),
+    magenta: Color(0xFFFF79C6),
+    cyan: Color(0xFF8BE9FD),
+    white: Color(0xFFF8F8F2),
+    brightBlack: Color(0xFF6272A4),
+    brightRed: Color(0xFFFF6E6E),
+    brightGreen: Color(0xFF69FF94),
+    brightYellow: Color(0xFFFFFFA5),
+    brightBlue: Color(0xFFD6ACFF),
+    brightMagenta: Color(0xFFFF92DF),
+    brightCyan: Color(0xFFA4FFFF),
+    brightWhite: Color(0xFFFFFFFF),
+    searchHitBackground: Color(0xFFF1FA8C),
+    searchHitBackgroundCurrent: Color(0xFFFFB86C),
+    searchHitForeground: Color(0xFF282A36),
+  );
+
+  /// Solarized Light — same 16 base tones as [_solarizedDark], background
+  /// and foreground swapped (Ethan Schoonover's published value table).
+  static const TerminalTheme _solarizedLight = TerminalTheme(
+    cursor: Color(0xFF657B83),
+    selection: Color(0x55EEE8D5),
+    foreground: Color(0xFF657B83),
+    background: Color(0xFFFDF6E3),
+    black: Color(0xFF073642),
+    red: Color(0xFFDC322F),
+    green: Color(0xFF859900),
+    yellow: Color(0xFFB58900),
+    blue: Color(0xFF268BD2),
+    magenta: Color(0xFFD33682),
+    cyan: Color(0xFF2AA198),
+    white: Color(0xFFEEE8D5),
+    brightBlack: Color(0xFF002B36),
+    brightRed: Color(0xFFCB4B16),
+    brightGreen: Color(0xFF586E75),
+    brightYellow: Color(0xFF657B83),
+    brightBlue: Color(0xFF839496),
+    brightMagenta: Color(0xFF6C71C4),
+    brightCyan: Color(0xFF93A1A1),
+    brightWhite: Color(0xFFFDF6E3),
+    searchHitBackground: Color(0xFFB58900),
+    searchHitBackgroundCurrent: Color(0xFFCB4B16),
+    searchHitForeground: Color(0xFFFDF6E3),
+  );
+
+  /// Published Nord palette (nordtheme.com), 16-colour terminal mapping.
+  static const TerminalTheme _nord = TerminalTheme(
+    cursor: Color(0xFFD8DEE9),
+    selection: Color(0x554C566A),
+    foreground: Color(0xFFD8DEE9),
+    background: Color(0xFF2E3440),
+    black: Color(0xFF3B4252),
+    red: Color(0xFFBF616A),
+    green: Color(0xFFA3BE8C),
+    yellow: Color(0xFFEBCB8B),
+    blue: Color(0xFF81A1C1),
+    magenta: Color(0xFFB48EAD),
+    cyan: Color(0xFF88C0D0),
+    white: Color(0xFFE5E9F0),
+    brightBlack: Color(0xFF4C566A),
+    brightRed: Color(0xFFBF616A),
+    brightGreen: Color(0xFFA3BE8C),
+    brightYellow: Color(0xFFEBCB8B),
+    brightBlue: Color(0xFF81A1C1),
+    brightMagenta: Color(0xFFB48EAD),
+    brightCyan: Color(0xFF8FBCBB),
+    brightWhite: Color(0xFFECEFF4),
+    searchHitBackground: Color(0xFFEBCB8B),
+    searchHitBackgroundCurrent: Color(0xFFD08770),
+    searchHitForeground: Color(0xFF2E3440),
+  );
+
+  /// Published Gruvbox Dark (medium contrast) terminal mapping
+  /// (morhetz/gruvbox).
+  static const TerminalTheme _gruvboxDark = TerminalTheme(
+    cursor: Color(0xFFEBDBB2),
+    selection: Color(0x55504945),
+    foreground: Color(0xFFEBDBB2),
+    background: Color(0xFF282828),
+    black: Color(0xFF282828),
+    red: Color(0xFFCC241D),
+    green: Color(0xFF98971A),
+    yellow: Color(0xFFD79921),
+    blue: Color(0xFF458588),
+    magenta: Color(0xFFB16286),
+    cyan: Color(0xFF689D6A),
+    white: Color(0xFFA89984),
+    brightBlack: Color(0xFF928374),
+    brightRed: Color(0xFFFB4934),
+    brightGreen: Color(0xFFB8BB26),
+    brightYellow: Color(0xFFFABD2F),
+    brightBlue: Color(0xFF83A598),
+    brightMagenta: Color(0xFFD3869B),
+    brightCyan: Color(0xFF8EC07C),
+    brightWhite: Color(0xFFEBDBB2),
+    searchHitBackground: Color(0xFFD79921),
+    searchHitBackgroundCurrent: Color(0xFFFE8019),
+    searchHitForeground: Color(0xFF282828),
+  );
+
+  /// Published Atom One Dark terminal mapping.
+  static const TerminalTheme _oneDark = TerminalTheme(
+    cursor: Color(0xFF528BFF),
+    selection: Color(0x553E4451),
+    foreground: Color(0xFFABB2BF),
+    background: Color(0xFF282C34),
+    black: Color(0xFF282C34),
+    red: Color(0xFFE06C75),
+    green: Color(0xFF98C379),
+    yellow: Color(0xFFE5C07B),
+    blue: Color(0xFF61AFEF),
+    magenta: Color(0xFFC678DD),
+    cyan: Color(0xFF56B6C2),
+    white: Color(0xFFABB2BF),
+    brightBlack: Color(0xFF5C6370),
+    brightRed: Color(0xFFE06C75),
+    brightGreen: Color(0xFF98C379),
+    brightYellow: Color(0xFFE5C07B),
+    brightBlue: Color(0xFF61AFEF),
+    brightMagenta: Color(0xFFC678DD),
+    brightCyan: Color(0xFF56B6C2),
+    brightWhite: Color(0xFFFFFFFF),
+    searchHitBackground: Color(0xFFE5C07B),
+    searchHitBackgroundCurrent: Color(0xFFD19A66),
+    searchHitForeground: Color(0xFF282C34),
+  );
 
   static const TerminalTheme _solarizedDark = TerminalTheme(
     cursor: Color(0xFF93A1A1),

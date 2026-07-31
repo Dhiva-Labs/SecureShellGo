@@ -71,6 +71,7 @@ class Host {
     this.lastConnectedAt,
     this.group,
     this.colorLabel,
+    this.startupCommand,
   });
 
   final String id;
@@ -95,6 +96,11 @@ class Host {
   /// This host's colour tag, or null for none.
   final HostColorLabel? colorLabel;
 
+  /// Sent to the shell, followed by a newline, the moment it opens. Null
+  /// means "nothing to run" — the ordinary case, and every host saved before
+  /// this field existed.
+  final String? startupCommand;
+
   /// `user@host` or `user@host:port` when the port is non-standard.
   String get target =>
       port == 22 ? '$username@$hostname' : '$username@$hostname:$port';
@@ -112,6 +118,7 @@ class Host {
     DateTime? lastConnectedAt,
     String? group,
     HostColorLabel? colorLabel,
+    String? startupCommand,
   }) {
     return Host(
       id: id ?? this.id,
@@ -123,6 +130,7 @@ class Host {
       lastConnectedAt: lastConnectedAt ?? this.lastConnectedAt,
       group: group ?? this.group,
       colorLabel: colorLabel ?? this.colorLabel,
+      startupCommand: startupCommand ?? this.startupCommand,
     );
   }
 
@@ -142,6 +150,7 @@ class Host {
         lastConnectedAt: lastConnectedAt,
         group: group,
         colorLabel: colorLabel,
+        startupCommand: startupCommand,
       );
 
   Map<String, dynamic> toJson() => {
@@ -155,6 +164,7 @@ class Host {
           'lastConnectedAt': lastConnectedAt!.toIso8601String(),
         if (group != null) 'group': group,
         if (colorLabel != null) 'colorLabel': colorLabel!.name,
+        if (startupCommand != null) 'startupCommand': startupCommand,
       };
 
   factory Host.fromJson(Map<String, dynamic> json) {
@@ -176,6 +186,10 @@ class Host {
       // colour rather than failing the entry, same as lastConnectedAt above.
       group: (rawGroup == null || rawGroup.trim().isEmpty) ? null : rawGroup,
       colorLabel: HostColorLabel.fromId(json['colorLabel'] as String?),
+      // Absent on every host saved before this field existed — that just
+      // reads as "nothing to run", the same as a host where the field was
+      // left blank.
+      startupCommand: json['startupCommand'] as String?,
     );
   }
 }

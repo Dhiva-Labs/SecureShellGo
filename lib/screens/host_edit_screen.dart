@@ -77,6 +77,7 @@ class _HostEditScreenState extends State<HostEditScreen> {
   final _keyController = TextEditingController();
   final _passphraseController = TextEditingController();
   final _passphraseFocusNode = FocusNode();
+  final _startupCommandController = TextEditingController();
 
   late final DeviceStorage _deviceStorage =
       widget.deviceStorage ?? createDefaultDeviceStorage();
@@ -120,6 +121,7 @@ class _HostEditScreenState extends State<HostEditScreen> {
       _authMethod = host.authMethod;
       _selectedGroup = host.group;
       _selectedColorLabel = host.colorLabel;
+      _startupCommandController.text = host.startupCommand ?? '';
       _loadExistingCredentials(host.id);
     }
     unawaited(_loadGroupNames());
@@ -158,11 +160,13 @@ class _HostEditScreenState extends State<HostEditScreen> {
     _keyController.dispose();
     _passphraseController.dispose();
     _passphraseFocusNode.dispose();
+    _startupCommandController.dispose();
     super.dispose();
   }
 
   Host _buildHost() {
     final existing = widget.host;
+    final startupCommand = _startupCommandController.text.trim();
     return Host(
       id: existing?.id ?? _savedHostId ?? widget.hostStore.newId(),
       label: _labelController.text.trim(),
@@ -173,6 +177,7 @@ class _HostEditScreenState extends State<HostEditScreen> {
       lastConnectedAt: existing?.lastConnectedAt,
       group: _selectedGroup,
       colorLabel: _selectedColorLabel,
+      startupCommand: startupCommand.isEmpty ? null : startupCommand,
     );
   }
 
@@ -705,6 +710,26 @@ class _HostEditScreenState extends State<HostEditScreen> {
             ),
           ),
         ],
+        const SizedBox(height: 20),
+        TextFormField(
+          controller: _startupCommandController,
+          decoration: const InputDecoration(
+            labelText: 'Run after connect (optional)',
+            hintText: 'cd /var/www && ls',
+            prefixIcon: Icon(Icons.play_arrow_outlined),
+            helperText:
+                'Runs once, automatically, right when the shell opens — '
+                'as if typed and Enter pressed.',
+          ),
+          autocorrect: false,
+          enableSuggestions: false,
+          textInputAction: TextInputAction.done,
+          style: const TextStyle(
+            fontFamily: AppTheme.monoFontFamily,
+            fontFamilyFallback: AppTheme.monoFontFamilyFallback,
+            fontSize: 13,
+          ),
+        ),
         const SizedBox(height: 12),
         Row(
           crossAxisAlignment: CrossAxisAlignment.start,

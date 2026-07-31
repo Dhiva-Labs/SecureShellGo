@@ -191,7 +191,25 @@ void main() {
     expect(saved?.colorLabel, HostColorLabel.teal);
   });
 
-  test('hosts.json written before v1.3.0 (no group/colorLabel keys) still '
+  test('a host with no startupCommand reads as none', () async {
+    final store = HostStore(file: storeFile);
+    await store.add(host());
+    expect((await store.get('fixed-id'))?.startupCommand, isNull);
+  });
+
+  test('startupCommand survives a reload from disk', () async {
+    final store = HostStore(file: storeFile);
+    await store.add(
+      host().copyWith(startupCommand: 'cd /var/www && ls'),
+    );
+
+    final reloaded = HostStore(file: storeFile);
+    final saved = await reloaded.get('fixed-id');
+    expect(saved?.startupCommand, 'cd /var/www && ls');
+  });
+
+  test('hosts.json written before v1.3.0 (no group, colorLabel or '
+      'startupCommand keys) still '
       'loads', () async {
     await storeFile.writeAsString('''
     {
@@ -206,6 +224,7 @@ void main() {
     expect(saved, isNotNull);
     expect(saved!.group, isNull);
     expect(saved.colorLabel, isNull);
+    expect(saved.startupCommand, isNull);
   });
 
   test('an unrecognised colorLabel id reads as no colour rather than failing '

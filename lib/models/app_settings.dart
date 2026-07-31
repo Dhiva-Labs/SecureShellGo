@@ -5,15 +5,25 @@
 /// so `models/` stays free of the `xterm` import.
 enum TerminalColorScheme {
   classic,
+  dracula,
   solarizedDark,
+  solarizedLight,
+  nord,
+  gruvboxDark,
   monokai,
+  oneDark,
   blackOnWhite,
   retroGreen;
 
   String get label => switch (this) {
         TerminalColorScheme.classic => 'SecureShell Go (default)',
+        TerminalColorScheme.dracula => 'Dracula',
         TerminalColorScheme.solarizedDark => 'Solarized Dark',
+        TerminalColorScheme.solarizedLight => 'Solarized Light',
+        TerminalColorScheme.nord => 'Nord',
+        TerminalColorScheme.gruvboxDark => 'Gruvbox Dark',
         TerminalColorScheme.monokai => 'Monokai',
+        TerminalColorScheme.oneDark => 'One Dark',
         TerminalColorScheme.blackOnWhite => 'Black on white',
         TerminalColorScheme.retroGreen => 'Retro green',
       };

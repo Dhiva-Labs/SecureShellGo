@@ -264,6 +264,10 @@ class _TerminalPreview extends StatelessWidget {
   }
 }
 
+/// A strip of the scheme's background plus its core ANSI colours, so the
+/// radio list reads as a palette preview rather than a single swatch — the
+/// background alone cannot tell Dracula and One Dark apart at a glance, but
+/// the strip can.
 class _SchemeSwatch extends StatelessWidget {
   const _SchemeSwatch({required this.scheme});
 
@@ -272,24 +276,26 @@ class _SchemeSwatch extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final palette = AppTheme.terminalThemeFor(scheme);
+    final strip = [
+      palette.background,
+      palette.red,
+      palette.green,
+      palette.yellow,
+      palette.blue,
+      palette.magenta,
+    ];
     return Container(
-      width: 30,
+      width: 64,
       height: 30,
+      clipBehavior: Clip.antiAlias,
       decoration: BoxDecoration(
-        color: palette.background,
         borderRadius: BorderRadius.circular(6),
         border: Border.all(color: Colors.white.withValues(alpha: 0.15)),
       ),
-      alignment: Alignment.center,
-      child: Text(
-        '>_',
-        style: TextStyle(
-          color: palette.green,
-          fontSize: 11,
-          fontWeight: FontWeight.bold,
-          fontFamily: AppTheme.monoFontFamily,
-          fontFamilyFallback: AppTheme.monoFontFamilyFallback,
-        ),
+      child: Row(
+        children: [
+          for (final color in strip) Expanded(child: ColoredBox(color: color)),
+        ],
       ),
     );
   }

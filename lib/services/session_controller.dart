@@ -72,6 +72,17 @@ typedef DestinationCredentialResolver = Future<SshCredentials?> Function(
   String hostId,
 );
 
+/// What to send to the shell for a host's configured startup command, or
+/// null when there is nothing to run. A free function (rather than inline in
+/// [SessionController]) so this decision is unit-testable without a real
+/// shell channel, which `FakeTransport.startShell` in the test suite cannot
+/// open.
+String? startupCommandPayload(String? command) {
+  final trimmed = command?.trim();
+  if (trimmed == null || trimmed.isEmpty) return null;
+  return '$trimmed\n';
+}
+
 /// One live authenticated session, shared by every view of it.
 ///
 /// Phase 1 let `TerminalScreen` own the [SshConnection] and close it in
@@ -594,6 +605,7 @@ class SessionController {
       );
 
       _shellStarted = true;
+      _sendStartupCommand();
     } catch (e) {
       _shellError = e.toString();
       _shellStarted = true;
@@ -626,6 +638,21 @@ class SessionController {
   void _handleShellEnded(String reason) {
     _shell = null;
     reportShellEnded(reason);
+  }
+
+  /// Runs [Host.startupCommand] once, as if the user had typed it and
+  /// pressed Enter. Best-effort: a shell that closes before this reaches it
+  /// is not worth surfacing, same as any other keystroke sent to a dead
+  /// channel.
+  void _sendStartupCommand() {
+    final payload = startupCommandPayload(host.startupCommand);
+    final shell = _shell;
+    if (payload == null || shell == null) return;
+    try {
+      shell.write(Uint8List.fromList(utf8.encode(payload)));
+    } catch (_) {
+      // Channel closed before this could run.
+    }
   }
 
   void _sendToShell(String data) {

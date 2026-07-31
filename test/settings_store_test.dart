@@ -106,6 +106,14 @@ void main() {
           AppSettings.fromJson(const {'terminalFontSize': 999});
       expect(settings.terminalFontSize, AppSettings.maxFontSize);
     });
+
+    test('every new colour scheme round-trips through JSON by name', () {
+      for (final scheme in TerminalColorScheme.values) {
+        final settings = AppSettings(colorScheme: scheme);
+        final restored = AppSettings.fromJson(settings.toJson());
+        expect(restored.colorScheme, scheme);
+      }
+    });
   });
 
   group('SettingsStore', () {
@@ -137,6 +145,22 @@ void main() {
       expect(reloaded.current.terminalFontSize, 18);
       expect(reloaded.current.colorScheme, TerminalColorScheme.retroGreen);
       expect(reloaded.current.keepScreenAwake, isTrue);
+    });
+
+    test('a newly added colour scheme and font size survive a reload',
+        () async {
+      final store = SettingsStore(file: storeFile);
+      await store.save(
+        const AppSettings(
+          terminalFontSize: 16,
+          colorScheme: TerminalColorScheme.dracula,
+        ),
+      );
+
+      final reloaded = SettingsStore(file: storeFile);
+      await reloaded.ensureLoaded();
+      expect(reloaded.current.terminalFontSize, 16);
+      expect(reloaded.current.colorScheme, TerminalColorScheme.dracula);
     });
 
     test('update applies a partial change on top of the current settings',
