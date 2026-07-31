@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
+import '../services/broadcast_input.dart';
 import '../services/keep_awake.dart';
 import '../services/layout_breakpoints.dart';
 import '../services/session_controller.dart';
@@ -79,12 +80,22 @@ enum _WorkspaceAction { splitRight, splitDown, closePane }
 class _SessionsScreenState extends State<SessionsScreen> {
   StreamSubscription<void>? _changes;
   StreamSubscription<void>? _workspaceChanges;
+  StreamSubscription<void>? _broadcastChanges;
 
   /// Falls back to a route-scoped workspace when none was handed down — see
   /// [SessionsScreen.workspace]. Only that fallback is disposed here.
   late final TerminalWorkspace _workspace =
       widget.workspace ?? TerminalWorkspace();
   late final bool _ownsWorkspace = widget.workspace == null;
+
+  /// Whether typing goes to every visible pane at once.
+  ///
+  /// Route-scoped on purpose, unlike the workspace above. The layout is the
+  /// user's and has to survive a trip to the host list; "everything I type
+  /// goes to four servers" is a *mode*, and a mode that outlived the screen it
+  /// is explained on would be waiting, unannounced, for the next person to
+  /// open a session and start typing. Coming back here always finds it off.
+  late final BroadcastInput _broadcast = BroadcastInput(workspace: _workspace);
 
   /// One stable key per session, so that moving a session between panes — or
   /// out of the panes entirely when its pane closes — *reparents* its page
@@ -105,6 +116,12 @@ class _SessionsScreenState extends State<SessionsScreen> {
       setState(() {});
     });
     _workspaceChanges = _workspace.changes.listen(_handleWorkspaceChange);
+    // Its own stream rather than a flag read during build: the broadcaster
+    // also turns *itself* off (when a split collapses), and that has to repaint
+    // the app bar and every pane header without anything else having happened.
+    _broadcastChanges = _broadcast.changes.listen((_) {
+      if (mounted) setState(() {});
+    });
     if (widget.settingsStore.current.keepScreenAwake) {
       unawaited(widget.keepAwake.setEnabled(true));
     }
@@ -124,6 +141,14 @@ class _SessionsScreenState extends State<SessionsScreen> {
   void dispose() {
     _changes?.cancel();
     _workspaceChanges?.cancel();
+    _broadcastChanges?.cancel();
+    // Hand the taps back. This screen is the only thing that ever sets them,
+    // and the sessions outlive it — a closure left pointing at a disposed
+    // broadcaster would fire on the next keystroke after the user came back.
+    for (final entry in widget.sessions.sessions) {
+      entry.controller.onInputSent = null;
+    }
+    unawaited(_broadcast.dispose());
     if (_ownsWorkspace) unawaited(_workspace.dispose());
     // The sessions are deliberately *not* disposed here — they belong to the
     // manager and outlive this route.
@@ -158,6 +183,25 @@ class _SessionsScreenState extends State<SessionsScreen> {
     final ids = manager.sessions.map((s) => s.id).toList(growable: false);
     _pageKeys.removeWhere((id, _) => !ids.contains(id));
     _workspace.syncSessions(ids, activeId: manager.activeId);
+    _attachInputTaps(manager);
+  }
+
+  /// Points every open session's keystroke tap at the broadcaster.
+  ///
+  /// Re-applied on every sync rather than once per session, because a session
+  /// opened later has to be tapped too and this is the one place that hears
+  /// about every one of them. The tap itself is inert while broadcasting is
+  /// off — [BroadcastInput.handleInput] returns before doing anything — so
+  /// this costs one null check per keystroke in the ordinary case.
+  ///
+  /// Desktop only, like everything else past [_syncWorkspace]'s guard: the
+  /// tabbed phone layout has one session on screen at a time, so there is
+  /// nothing to broadcast *to*.
+  void _attachInputTaps(SessionManager manager) {
+    for (final entry in manager.sessions) {
+      final id = entry.id;
+      entry.controller.onInputSent = (data) => _broadcast.handleInput(id, data);
+    }
   }
 
   void _handleWorkspaceChange(void _) {
@@ -384,6 +428,7 @@ class _SessionsScreenState extends State<SessionsScreen> {
           workspace: _workspace,
           sessions: entries,
           onAddSession: _addSession,
+          broadcasting: _broadcast.enabled,
           paneContent: (entry) => _page(
             entry,
             manager: manager,
@@ -472,6 +517,17 @@ class _SessionsScreenState extends State<SessionsScreen> {
           ],
         ),
         actions: [
+          // First in the row, and impossible to miss once it is on: while
+          // broadcasting, this is the single most important fact about what
+          // the next keystroke is going to do.
+          if (split)
+            _BroadcastAction(
+              enabled: _broadcast.enabled,
+              paneCount: _broadcast.targetCount,
+              // No `setState`: toggling publishes on the broadcaster's own
+              // stream, which this screen is already listening to.
+              onToggle: _broadcast.toggle,
+            ),
           _TransferAction(
             queue: active.controller.transfers,
             onTap: () => showTransfersSheet(
@@ -752,7 +808,16 @@ class _SessionPageState extends State<_SessionPage> {
 
     return Column(
       children: [
-        if (entry.isClosed)
+        // Reconnecting takes precedence over the disconnected banner: both
+        // describe the same dead transport, but only one of them is still a
+        // live story. Neither blocks anything — the scrollback stays on
+        // screen and stays scrollable underneath.
+        if (_session.isReconnecting)
+          _ReconnectingBanner(
+            message: _session.reconnectMessage,
+            onStop: () => setState(_session.stopReconnecting),
+          )
+        else if (entry.isClosed)
           _DisconnectedBanner(
             message: entry.controller.closeReason,
             onClose: () => unawaited(widget.manager.close(entry.id)),
@@ -1038,6 +1103,76 @@ SnackBar buildDownloadSavedSnackBar({
   );
 }
 
+/// The broadcast-input toggle, and — while it is on — the loudest thing in
+/// the app bar.
+///
+/// Two quite different shapes on purpose. Off, it is an ordinary icon button
+/// that says nothing, because "not broadcasting" is the normal state of the
+/// world and normal states do not deserve chrome. On, it becomes a filled
+/// warning-coloured chip that names the number of panes involved, because at
+/// that point the user's mental model and the app's behaviour have diverged in
+/// a way that can cost them a production server — and an icon in a slightly
+/// different tint is not enough to close that gap.
+class _BroadcastAction extends StatelessWidget {
+  const _BroadcastAction({
+    required this.enabled,
+    required this.paneCount,
+    required this.onToggle,
+  });
+
+  final bool enabled;
+
+  /// How many panes a keystroke lands in, the focused one included.
+  final int paneCount;
+
+  final VoidCallback onToggle;
+
+  @override
+  Widget build(BuildContext context) {
+    if (!enabled) {
+      return IconButton(
+        tooltip: 'Broadcast input to every visible pane',
+        icon: const Icon(Icons.podcasts_outlined),
+        onPressed: onToggle,
+      );
+    }
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 4),
+      child: Tooltip(
+        message: 'Broadcasting — tap to stop',
+        child: Material(
+          color: AppTheme.danger,
+          borderRadius: BorderRadius.circular(6),
+          child: InkWell(
+            onTap: onToggle,
+            borderRadius: BorderRadius.circular(6),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 10),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Icon(Icons.podcasts, size: 16, color: Colors.white),
+                  const SizedBox(width: 6),
+                  Text(
+                    'Broadcasting to $paneCount '
+                    '${paneCount == 1 ? 'pane' : 'panes'}',
+                    style: const TextStyle(
+                      fontSize: 12.5,
+                      fontWeight: FontWeight.w600,
+                      color: Colors.white,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 /// App-bar transfer button, with a count badge while anything is moving.
 class _TransferAction extends StatelessWidget {
   const _TransferAction({required this.queue, required this.onTap});
@@ -1065,6 +1200,53 @@ class _TransferAction extends StatelessWidget {
           ),
         );
       },
+    );
+  }
+}
+
+/// "Reconnecting…", above the terminal whose transport has just died.
+///
+/// Deliberately not a dialog, not a modal barrier and not a full-screen
+/// placeholder: the session may well be back in two seconds, and having thrown
+/// a modal over the user's scrollback for a Wi-Fi handover would be a worse
+/// experience than the drop it is reporting. The old buffer stays on screen
+/// and stays readable throughout.
+class _ReconnectingBanner extends StatelessWidget {
+  const _ReconnectingBanner({this.message, required this.onStop});
+
+  final String? message;
+  final VoidCallback onStop;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: AppTheme.accent.withValues(alpha: 0.13),
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
+        child: Row(
+          children: [
+            const SizedBox(
+              width: 16,
+              height: 16,
+              child: CircularProgressIndicator(strokeWidth: 2),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Text(
+                message ?? 'Reconnecting…',
+                style: const TextStyle(fontSize: 13, height: 1.3),
+              ),
+            ),
+            const SizedBox(width: 8),
+            TextButton(
+              // Reconnecting is a guess about what the user wants; this is how
+              // they say otherwise, without having to close the tab to do it.
+              onPressed: onStop,
+              child: const Text('Stop'),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }

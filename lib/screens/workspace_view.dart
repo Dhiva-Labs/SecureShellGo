@@ -21,9 +21,20 @@ class WorkspaceView extends StatelessWidget {
     required this.sessions,
     required this.paneContent,
     required this.onAddSession,
+    this.broadcasting = false,
   });
 
   final TerminalWorkspace workspace;
+
+  /// Whether keystrokes typed into the focused pane are being mirrored into
+  /// every other visible pane.
+  ///
+  /// Drawn here as well as in the app bar, and drawn loudly, because the app
+  /// bar is not where the user is looking while they type. The state is
+  /// dangerous in exactly one way — a command meant for a staging box landing
+  /// on a production one — and the mitigation is that every pane about to
+  /// receive it is wearing the same warning colour as the "Disconnect" button.
+  final bool broadcasting;
 
   /// Every open session, in tab-strip order — what a pane's picker offers.
   final List<ManagedSession> sessions;
@@ -123,6 +134,9 @@ class WorkspaceView extends StatelessWidget {
     if (!workspace.isSplit) return content;
 
     final focused = pane.id == workspace.focusedPaneId;
+    // An empty pane has no shell to receive anything, so it stays neutral —
+    // colouring it would overstate how far the broadcast reaches.
+    final receiving = broadcasting && entry != null;
     return Listener(
       // Focus follows the click anywhere in the pane, including the header and
       // the gaps around the terminal. Translucent so the terminal underneath
@@ -137,9 +151,11 @@ class WorkspaceView extends StatelessWidget {
           // make `htop` redraw.
           border: Border.all(
             width: 1.5,
-            color: focused
-                ? AppTheme.accent
-                : Theme.of(context).colorScheme.outlineVariant,
+            color: receiving
+                ? AppTheme.danger
+                : focused
+                    ? AppTheme.accent
+                    : Theme.of(context).colorScheme.outlineVariant,
           ),
         ),
         child: Column(
@@ -150,6 +166,7 @@ class WorkspaceView extends StatelessWidget {
               entry: entry,
               sessions: sessions,
               focused: focused,
+              receiving: receiving,
             ),
             Expanded(child: content),
           ],
@@ -215,6 +232,7 @@ class _PaneHeader extends StatelessWidget {
     required this.entry,
     required this.sessions,
     required this.focused,
+    required this.receiving,
   });
 
   final TerminalWorkspace workspace;
@@ -222,6 +240,9 @@ class _PaneHeader extends StatelessWidget {
   final ManagedSession? entry;
   final List<ManagedSession> sessions;
   final bool focused;
+
+  /// Whether broadcast input is on and this pane has a shell to receive it.
+  final bool receiving;
 
   /// Menu value for "show nothing here". Never collides with a session id,
   /// which `SessionManager` always builds as `session-<n>`.
@@ -253,14 +274,26 @@ class _PaneHeader extends StatelessWidget {
     final canSplit = workspace.canSplit;
 
     return Material(
-      color: focused
-          ? AppTheme.accent.withValues(alpha: 0.12)
-          : AppTheme.surface,
+      // The focused pane's tint is stronger than its neighbours' in both
+      // moods, so "which pane am I typing in" survives the warning colour
+      // rather than being flattened by it.
+      color: receiving
+          ? AppTheme.danger.withValues(alpha: focused ? 0.30 : 0.18)
+          : focused
+              ? AppTheme.accent.withValues(alpha: 0.12)
+              : AppTheme.surface,
       child: SizedBox(
         height: 30,
         child: Row(
           children: [
             const SizedBox(width: 8),
+            if (receiving) ...[
+              const Tooltip(
+                message: 'Receiving broadcast input',
+                child: Icon(Icons.podcasts, size: 12, color: AppTheme.danger),
+              ),
+              const SizedBox(width: 7),
+            ],
             if (session != null) ...[
               Icon(
                 Icons.circle,

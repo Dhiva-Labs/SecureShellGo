@@ -359,4 +359,112 @@ void main() {
       expect(manager.activeId, beta.id);
     });
   });
+
+  group('broadcast input', () {
+    /// Two sessions, split into two panes, on desktop — the only arrangement
+    /// in which broadcasting means anything.
+    Future<void> pumpSplit(WidgetTester tester) async {
+      manager.open(FakeTransport(id: 'h1', label: 'Alpha'));
+      manager.open(FakeTransport(id: 'h2', label: 'Beta'));
+      await pumpScreen(tester, TargetPlatform.linux);
+      workspace.splitFocused(WorkspaceAxis.row);
+      await tester.pumpAndSettle();
+    }
+
+    testWidgets('is not offered until there is more than one pane',
+        (tester) async {
+      manager.open(FakeTransport(id: 'h1', label: 'Alpha'));
+
+      await pumpScreen(tester, TargetPlatform.linux);
+
+      expect(find.byIcon(Icons.podcasts_outlined), findsNothing);
+    });
+
+    testWidgets('is not offered on the tabbed layout at all', (tester) async {
+      manager.open(FakeTransport(id: 'h1', label: 'Alpha'));
+      manager.open(FakeTransport(id: 'h2', label: 'Beta'));
+
+      await pumpScreen(tester, TargetPlatform.android);
+
+      expect(find.byIcon(Icons.podcasts_outlined), findsNothing);
+    });
+
+    testWidgets('appears, off, once the workspace is split', (tester) async {
+      await pumpSplit(tester);
+
+      expect(find.byIcon(Icons.podcasts_outlined), findsOneWidget);
+      expect(find.textContaining('Broadcasting'), findsNothing);
+    });
+
+    testWidgets('says how many panes it is broadcasting to', (tester) async {
+      await pumpSplit(tester);
+
+      await tester.tap(find.byIcon(Icons.podcasts_outlined));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Broadcasting to 2 panes'), findsOneWidget);
+      // Every pane about to receive keystrokes wears the warning marker too —
+      // the app bar is not where the user is looking while they type.
+      expect(find.byIcon(Icons.podcasts), findsNWidgets(3));
+    });
+
+    testWidgets('turns off again on a second tap', (tester) async {
+      await pumpSplit(tester);
+      await tester.tap(find.byIcon(Icons.podcasts_outlined));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('Broadcasting to 2 panes'));
+      await tester.pumpAndSettle();
+
+      expect(find.textContaining('Broadcasting'), findsNothing);
+      expect(find.byIcon(Icons.podcasts_outlined), findsOneWidget);
+    });
+
+    testWidgets('turns itself off when the split collapses', (tester) async {
+      await pumpSplit(tester);
+      await tester.tap(find.byIcon(Icons.podcasts_outlined));
+      await tester.pumpAndSettle();
+      expect(find.text('Broadcasting to 2 panes'), findsOneWidget);
+
+      workspace.closePane(workspace.panes.last.id);
+      await tester.pumpAndSettle();
+
+      expect(find.textContaining('Broadcasting'), findsNothing);
+      // And the control is gone with it: one pane is not a broadcast.
+      expect(find.byIcon(Icons.podcasts_outlined), findsNothing);
+    });
+
+    testWidgets('taps every session, including one opened later',
+        (tester) async {
+      // The tap is what carries a keystroke from the focused pane's shell to
+      // the broadcaster; a session nobody attached one to could never
+      // broadcast from.
+      await pumpSplit(tester);
+      for (final entry in manager.sessions) {
+        expect(entry.controller.onInputSent, isNotNull);
+      }
+
+      manager.open(FakeTransport(id: 'h3', label: 'Gamma'));
+      await tester.pumpAndSettle();
+
+      expect(manager.sessions, hasLength(3));
+      for (final entry in manager.sessions) {
+        expect(entry.controller.onInputSent, isNotNull);
+      }
+    });
+
+    testWidgets('hands the taps back when the screen goes away',
+        (tester) async {
+      await pumpSplit(tester);
+      final sessions = manager.sessions;
+
+      // Leaving for the host list tears this route down; the sessions stay.
+      await tester.pumpWidget(const MaterialApp(home: SizedBox.shrink()));
+      await tester.pumpAndSettle();
+
+      for (final entry in sessions) {
+        expect(entry.controller.onInputSent, isNull);
+      }
+    });
+  });
 }

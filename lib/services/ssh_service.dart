@@ -37,6 +37,19 @@ class HostKeyRejectedException extends SshConnectionException {
   const HostKeyRejectedException(super.message, {super.details});
 }
 
+/// Raised when the server rejected the credentials themselves.
+///
+/// A subclass rather than a flag, so every existing `on SshConnectionException`
+/// site keeps catching it and keeps showing the same message it always did.
+/// What the distinction buys is the automatic reconnect path: a dropped
+/// network should be retried and a wrong password must not be, and telling
+/// those apart by matching on a human-readable message string is exactly the
+/// sort of thing that stops working the first time someone improves the
+/// wording. See `reconnect_policy.dart`.
+class SshAuthenticationException extends SshConnectionException {
+  const SshAuthenticationException(super.message, {super.details});
+}
+
 /// The parts of a live connection a session needs.
 ///
 /// Exists so `SessionController` can be exercised without a server: dartssh2's
@@ -288,10 +301,13 @@ class SshService {
           'Connection cancelled: the server\'s host key was not trusted.',
         );
       }
-      throw SshConnectionException(
-        _describeSshError(e, host),
-        details: e.toString(),
-      );
+      final message = _describeSshError(e, host);
+      // Same message either way — the type is for the reconnect schedule,
+      // which must never retry this. See [SshAuthenticationException].
+      if (e is SSHAuthFailError) {
+        throw SshAuthenticationException(message, details: e.toString());
+      }
+      throw SshConnectionException(message, details: e.toString());
     }
 
     return SshConnection(

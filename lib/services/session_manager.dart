@@ -7,7 +7,8 @@ import 'session_foreground.dart';
 import 'sftp_service.dart';
 import 'ssh_service.dart';
 
-export 'session_controller.dart' show DestinationCredentialResolver;
+export 'session_controller.dart'
+    show DestinationCredentialResolver, ReconnectSupport;
 
 /// Which view of a session is in front.
 ///
@@ -84,24 +85,52 @@ class SessionManager {
     SessionForegroundController? foreground,
     SessionControllerFactory? createController,
     DestinationCredentialResolver? resolveDestinationCredentials,
+    ReconnectSupport? reconnect,
   })  : _foreground = foreground ?? SessionForegroundController.instance,
-        _createController = createController ?? _defaultController,
         // ignore: prefer_initializing_formals
-        _resolveDestinationCredentials = resolveDestinationCredentials;
+        _createController = createController,
+        // ignore: prefer_initializing_formals
+        _resolveDestinationCredentials = resolveDestinationCredentials,
+        // ignore: prefer_initializing_formals
+        _reconnect = reconnect;
 
-  static SessionController _defaultController(
+  /// Builds the controller for a new session, honouring the injected factory
+  /// when there is one.
+  ///
+  /// An instance method rather than the static default it replaced, because
+  /// what the default now needs — [_reconnect] — is per-manager state.
+  /// Keeping [SessionControllerFactory] at three parameters is deliberate:
+  /// it is a test seam with several implementations already written against
+  /// it, and a session built through it is a session built with fakes, which
+  /// has no business reconnecting to anything.
+  SessionController _newController(
     SessionTransport connection,
     RemoteTargetResolver resolveRemoteTarget,
     DestinationCredentialResolver? resolveDestinationCredentials,
-  ) =>
-      SessionController(
-        connection: connection,
-        resolveRemoteTarget: resolveRemoteTarget,
-        resolveDestinationCredentials: resolveDestinationCredentials,
+  ) {
+    final custom = _createController;
+    if (custom != null) {
+      return custom(
+        connection,
+        resolveRemoteTarget,
+        resolveDestinationCredentials,
       );
+    }
+    return SessionController(
+      connection: connection,
+      resolveRemoteTarget: resolveRemoteTarget,
+      resolveDestinationCredentials: resolveDestinationCredentials,
+      reconnect: _reconnect,
+    );
+  }
 
   final SessionForegroundController _foreground;
-  final SessionControllerFactory _createController;
+  final SessionControllerFactory? _createController;
+
+  /// How a session rebuilds its own transport after an unexpected drop. Null
+  /// in tests and anywhere the app has no SSH service and credential store to
+  /// offer, in which case a dropped session simply stays dropped.
+  final ReconnectSupport? _reconnect;
 
   /// The direct-copy path needs the destination host's key at the moment
   /// the transfer runs; the manager is the one thing above the sessions
@@ -173,7 +202,7 @@ class SessionManager {
     List<PickedLocalFile> uploads = const [],
   }) {
     final id = 'session-${_idCounter++}';
-    final controller = _createController(
+    final controller = _newController(
       connection,
       _resolverFor(id),
       _resolveDestinationCredentials,

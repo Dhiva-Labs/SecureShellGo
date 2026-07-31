@@ -61,8 +61,27 @@ class _SecureShellGoAppState extends State<SecureShellGoApp> {
   // The lookup is scoped to the one host id at the point of use — no
   // credential is ever exposed to the source server beyond the single
   // signing session an [SSHAgentHandler] hands out on request.
+  //
+  // The same two dependencies also let a session rebuild its own transport
+  // after the network drops underneath it. Nothing new is cached: the
+  // credential is fetched from the existing store at the moment an attempt
+  // runs, and the connect goes through the same `SshService` — and therefore
+  // the same known-hosts check — that a hand-made connection does.
   late final SessionManager _sessions = SessionManager(
     resolveDestinationCredentials: _credentialStore.load,
+    reconnect: ReconnectSupport(
+      loadCredentials: _credentialStore.load,
+      connect: ({
+        required host,
+        required credentials,
+        required verifyHostKey,
+      }) =>
+          _sshService.connect(
+        host: host,
+        credentials: credentials,
+        verifyHostKey: verifyHostKey,
+      ),
+    ),
   );
 
   // The desktop split layout. Built here for the same reason the sessions are:
@@ -70,8 +89,8 @@ class _SecureShellGoAppState extends State<SecureShellGoApp> {
   // screen down, and coming back must find the panes, the dividers and the
   // bindings exactly where they were left.
   //
-  // The resolver is how the (not yet built) broadcast-input feature reaches
-  // the shells behind the visible panes; the workspace itself holds only
+  // The resolver is how broadcast input reaches the shells behind the visible
+  // panes (see `broadcast_input.dart`); the workspace itself holds only
   // session ids. Mobile builds this and never reads it.
   late final TerminalWorkspace _workspace = TerminalWorkspace(
     resolveSession: (id) {

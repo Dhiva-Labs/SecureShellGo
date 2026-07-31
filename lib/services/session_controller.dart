@@ -17,6 +17,7 @@ import 'download_plan.dart';
 import 'remote_copy.dart';
 import 'remote_path.dart';
 import 'session_keepalive.dart';
+import 'session_reconnect.dart';
 import 'sftp_service.dart';
 import 'ssh_service.dart';
 import 'transfer_queue.dart';
@@ -26,6 +27,8 @@ export 'direct_remote_copy.dart'
         DirectCopyUnavailableReason,
         DirectCopyWarning,
         SSHDirectCopyUnavailable;
+export 'session_reconnect.dart'
+    show ReconnectSupport, ReconnectConnector, ReconnectDelayScheduler;
 
 /// Files waiting for a destination directory on this session.
 class PendingUpload {
@@ -84,28 +87,51 @@ typedef DestinationCredentialResolver = Future<SshCredentials?> Function(
 /// the state machine is testable without a widget tree.
 class SessionController {
   SessionController({
-    required this.connection,
+    required SessionTransport connection,
     DeviceStorage? storage,
     Future<RemoteFileSystem> Function()? openFileSystem,
     RemoteTargetResolver? resolveRemoteTarget,
     DestinationCredentialResolver? resolveDestinationCredentials,
     PeriodicScheduler keepaliveScheduler = Timer.periodic,
-  })  : _storage = storage ?? createDefaultDeviceStorage(),
+    ReconnectSupport? reconnect,
+    ReconnectDelayScheduler reconnectScheduler = Timer.new,
+  })  : _connection = connection,
+        _storage = storage ?? createDefaultDeviceStorage(),
         // ignore: prefer_initializing_formals
         _openFileSystem = openFileSystem,
         // ignore: prefer_initializing_formals
         _resolveRemoteTarget = resolveRemoteTarget,
         // ignore: prefer_initializing_formals
-        _resolveDestinationCredentials = resolveDestinationCredentials {
+        _resolveDestinationCredentials = resolveDestinationCredentials,
+        // ignore: prefer_initializing_formals
+        _keepaliveScheduler = keepaliveScheduler {
     transfers = TransferQueue(executor: _runTransfer);
-    _keepalive = SessionKeepalive(
-      ping: connection.ping,
-      scheduler: keepaliveScheduler,
-    )..start();
+    _startKeepalive();
+    if (reconnect != null) {
+      final reconnector = SessionReconnector(
+        host: connection.host,
+        support: reconnect,
+        adopt: adoptTransport,
+        scheduler: reconnectScheduler,
+      );
+      _reconnector = reconnector;
+      // Folded into this session's own change stream, so the banner in the
+      // terminal area needs one subscription rather than two — and so a view
+      // that predates any of this keeps working unchanged.
+      _reconnectChanges = reconnector.changes.listen((_) => _notify());
+    }
     _watchTransport();
   }
 
-  final SessionTransport connection;
+  /// The live transport.
+  ///
+  /// Mutable behind a getter because a session now *outlives* its transport:
+  /// when the network drops and the automatic reconnect succeeds, the tab, the
+  /// scrollback, the transfer queue and the id all stay exactly as they were
+  /// and only this is replaced. See [adoptTransport].
+  SessionTransport get connection => _connection;
+  SessionTransport _connection;
+
   final DeviceStorage _storage;
 
   /// Test seam. Production leaves this null and opens SFTP on [connection].
@@ -138,8 +164,31 @@ class SessionController {
 
   /// Keeps the socket from idling out while the app is in the background —
   /// the other half of Phase 7, alongside the foreground service that keeps
-  /// the *process* alive. Runs for exactly as long as the session does.
-  late final SessionKeepalive _keepalive;
+  /// the *process* alive. Runs for exactly as long as the transport does.
+  ///
+  /// Not `final`: [SessionKeepalive.stop] is deliberately permanent, so a
+  /// session that reconnects gets a *new* one bound to the new transport
+  /// rather than trying to restart a schedule that has already been retired.
+  late SessionKeepalive _keepalive;
+
+  /// Kept so the replacement keep-alive built by [adoptTransport] uses the
+  /// same (possibly faked) clock the first one did.
+  final PeriodicScheduler _keepaliveScheduler;
+
+  /// Rebuilds the transport when it dies unexpectedly, or null when this
+  /// session was built without the means to — no credential store and no SSH
+  /// service, which is every unit test that does not exercise reconnection.
+  SessionReconnector? _reconnector;
+  StreamSubscription<void>? _reconnectChanges;
+
+  /// Which transport the watchers below belong to.
+  ///
+  /// A dead transport's `done` future can complete *after* its replacement has
+  /// been adopted — the old socket erroring out while the new one is already
+  /// carrying a shell. Without this, that late completion would mark the
+  /// freshly reconnected session as closed and start a second reconnect of a
+  /// session that is perfectly healthy.
+  var _transportGeneration = 0;
 
   final _changes = StreamController<void>.broadcast();
 
@@ -193,6 +242,39 @@ class SessionController {
   /// output callback, so the hook has to be here.
   String Function(String data)? transformInput;
 
+  /// Watches everything this session sends to its shell *as user input*.
+  ///
+  /// The tap the broadcast-input feature listens on. It sits at the far end of
+  /// the funnel described on [transformInput] — soft keyboard, hardware
+  /// keyboard, the extra-key bar and paste all arrive here, already rewritten
+  /// by [transformInput], as the exact bytes that went down the channel. So a
+  /// mirrored keystroke is the same bytes the focused pane sent, sticky-Ctrl
+  /// and bracketed paste included, rather than a second guess at what the user
+  /// meant.
+  ///
+  /// A notification, not a filter: it cannot change or suppress what was typed
+  /// here, because a broadcast that could swallow the user's own keystroke on
+  /// the way past would be a far worse bug than any it prevents.
+  ///
+  /// Not everything `Terminal` emits is input — see [_absorbingRemoteOutput].
+  void Function(String data)? onInputSent;
+
+  /// True while remote output is being fed into [terminal].
+  ///
+  /// `Terminal.onOutput` carries two quite different things: what the user
+  /// typed, and the terminal's own *replies* to escape sequences the remote
+  /// program sent — device attributes, operating status, cursor position,
+  /// size reports. A reply is indistinguishable from a keystroke by the time it
+  /// reaches [_sendToShell], and broadcasting one would spray `\x1b[?1;2c`
+  /// across three other people's shells the moment anybody started `vim`.
+  ///
+  /// They are, however, perfectly distinguishable by *when* they happen: a
+  /// reply is emitted synchronously from inside `Terminal.write`, while the
+  /// parser is running over the remote bytes that asked for it. So every write
+  /// is bracketed and the tap stays quiet for its duration — see
+  /// [_writeToTerminal].
+  var _absorbingRemoteOutput = false;
+
   /// Completes when a view has laid out and reported the real column/row
   /// count, so the PTY is opened at the right size instead of 80×24 followed
   /// by an immediate resize — the remote shell draws its first prompt at
@@ -215,6 +297,10 @@ class SessionController {
   var _disposed = false;
   var _announcedDisconnect = false;
   String? _closeReason;
+
+  /// Whether the shell channel ended in an orderly way while the transport was
+  /// still up — which is what `exit` looks like from here. See [_markClosed].
+  var _shellExitedCleanly = false;
 
   Host get host => connection.host;
 
@@ -248,6 +334,12 @@ class SessionController {
   /// again by whatever `State` replaces the one that said it.
   String? takeDisconnectAnnouncement() {
     if (!_closed || _announcedDisconnect) return null;
+    // Held back while an automatic reconnect is in flight. A red "connection
+    // lost" toast on top of a banner already saying "reconnecting…" is two
+    // different accounts of the same event, and the announcement is not
+    // consumed here — so if the reconnect does give up, it is still waiting
+    // to be said, and gets said then.
+    if (isReconnecting) return null;
     _announcedDisconnect = true;
     return _closeReason ?? 'Connection closed.';
   }
@@ -258,15 +350,135 @@ class SessionController {
   /// Whether keep-alives are still being sent. Diagnostics and tests.
   bool get isKeepaliveRunning => _keepalive.isRunning;
 
+  // ------------------------------------------------------------- reconnect
+
+  /// True while this session is trying to rebuild its own transport.
+  ///
+  /// The session is also [isClosed] throughout — it genuinely has no shell
+  /// — so views that knew nothing about reconnection keep behaving correctly
+  /// (the terminal is read-only, the key bar is gone) while a view that does
+  /// know can show why.
+  bool get isReconnecting => _reconnector?.isActive ?? false;
+
+  /// What the terminal area should say about the reconnection, or null when
+  /// there is nothing to say.
+  String? get reconnectMessage => _reconnector?.message;
+
+  /// True once reconnection has been tried and abandoned. Distinguishes "this
+  /// session is gone and we did what we could" from "this session is gone".
+  bool get reconnectGaveUp => _reconnector?.hasGivenUp ?? false;
+
+  /// How many reconnection attempts have been made. Diagnostics and tests.
+  int get reconnectAttempts => _reconnector?.attempts ?? 0;
+
+  /// Stops trying, for good. The Stop button on the reconnecting banner.
+  void stopReconnecting() {
+    _reconnector?.cancel();
+    _notify();
+  }
+
+  /// Takes over [next] as this session's transport, in place of the one that
+  /// died.
+  ///
+  /// This is what makes a reconnect land in the same tab and the same pane
+  /// rather than in a new session beside the corpse of the old one: the id,
+  /// the [terminal] with its scrollback, the transfer queue, the pane binding
+  /// and every view already built over them are untouched, and only the things
+  /// that were tied to the dead socket — shell channel, SFTP channel,
+  /// keep-alive — are rebuilt.
+  ///
+  /// **Scrollback is kept.** The `Terminal` belongs to the session, not to the
+  /// transport, so keeping it is the option that requires doing nothing at
+  /// all; clearing it would mean reaching in and emptying a buffer that
+  /// nothing else has any reason to touch. It is also the more useful of the
+  /// two — the command whose output the user was reading when the train went
+  /// into a tunnel is still there. A dim rule is written across the buffer so
+  /// that the join is visible and nobody mistakes the old output for output of
+  /// the new shell.
+  Future<void> adoptTransport(SessionTransport next) async {
+    if (_disposed) {
+      // Nothing left to adopt into; leaving it open would strand a socket.
+      next.close();
+      return;
+    }
+
+    // The old transport is dead, but "dead" is a conclusion drawn from a
+    // future completing — the socket underneath may still be half-open.
+    _connection.close();
+
+    for (final subscription in _shellOutput) {
+      unawaited(subscription.cancel());
+    }
+    _shellOutput.clear();
+
+    _connection = next;
+    _transportGeneration++;
+
+    _shell = null;
+    _shellOpening = null;
+    _shellReady = null;
+    _shellStarted = false;
+    _shellError = null;
+    _shellExitedCleanly = false;
+    // The old channels died with the old transport. Dropping the handles is
+    // what makes the file browser's next call open a fresh one rather than
+    // write into a closed channel.
+    _sftp = null;
+    _sftpOpening = null;
+
+    _closed = false;
+    _closeReason = null;
+    _announcedDisconnect = false;
+
+    _startKeepalive();
+    _watchTransport();
+    _notify();
+
+    _writeToTerminal(
+      '\r\n\x1b[2m── reconnected to ${host.displayName} ──\x1b[0m\r\n',
+    );
+    await ensureShell();
+  }
+
+  void _startKeepalive() {
+    _keepalive = SessionKeepalive(
+      // Through the field rather than the value it holds today: a reconnect
+      // replaces the transport, and a keep-alive still pinging the old one
+      // would be pinging a socket nobody is listening on.
+      ping: () => _connection.ping(),
+      scheduler: _keepaliveScheduler,
+    )..start();
+  }
+
+  /// Watches the current transport for its death, and classifies it.
+  ///
+  /// The two branches are not cosmetic — they are what decides whether an
+  /// automatic reconnect is appropriate. `done` completing *normally* means
+  /// the far end said goodbye in an orderly way: the user typed `exit`, or an
+  /// administrator's idle policy closed the session, or the server is going
+  /// down. None of those want to be undone by a client that immediately dials
+  /// back. `done` completing with an *error* is the transport breaking
+  /// underneath a session nobody asked to end — a Wi-Fi handover, a closed
+  /// lid, a NAT mapping expiring — which is precisely the case reconnection
+  /// exists for.
   void _watchTransport() {
-    connection.done.then((_) {
-      _markClosed('Connection closed by the remote host.');
+    final generation = _transportGeneration;
+    final transport = _connection;
+    transport.done.then((_) {
+      _markClosed('Connection closed by the remote host.', generation);
     }).catchError((Object error) {
-      _markClosed('Connection lost: $error');
+      _markClosed('Connection lost: $error', generation, retryable: true);
     });
   }
 
-  void _markClosed(String reason) {
+  void _markClosed(
+    String reason,
+    int generation, {
+    bool retryable = false,
+  }) {
+    // A transport that has already been replaced is entitled to finish dying;
+    // it just no longer speaks for this session. See [_transportGeneration].
+    if (generation != _transportGeneration) return;
     if (_closed) return;
     _closed = true;
     _closeReason = reason;
@@ -278,6 +490,17 @@ class SessionController {
     // Anything still queued is now unrunnable; failing it loudly beats a
     // progress bar that never moves again.
     transfers.cancelAll();
+
+    // A shell that exited cleanly before the transport went is the user
+    // leaving — `exit`, `logout`, Ctrl-D — and dialling their server back
+    // after they have just said goodbye to it is the one behaviour this
+    // feature must never have. It is checked here, on top of the orderly/error
+    // split in [_watchTransport], because a server that drops the TCP
+    // connection rudely straight after a clean `exit` would otherwise look
+    // exactly like a network fault.
+    if (retryable && !_disposed && !_shellExitedCleanly) {
+      _reconnector?.begin();
+    }
     _notify();
   }
 
@@ -342,17 +565,23 @@ class SessionController {
         session.stdout
             .cast<List<int>>()
             .transform(decoder)
-            .listen(terminal.write, onError: (Object _) {}),
+            .listen(_writeToTerminal, onError: (Object _) {}),
       );
       _shellOutput.add(
         session.stderr
             .cast<List<int>>()
             .transform(decoder)
-            .listen(terminal.write, onError: (Object _) {}),
+            .listen(_writeToTerminal, onError: (Object _) {}),
       );
 
       unawaited(
         session.done.then((_) {
+          // Completing without an error means the channel was closed properly
+          // at the far end, which is what a shell that has *exited* does. The
+          // exit status may or may not have come with it (servers differ), so
+          // the status is used for the message and the orderliness for the
+          // decision — see [_markClosed].
+          _shellExitedCleanly = true;
           final code = session.exitCode;
           _handleShellEnded(
             code == null
@@ -368,9 +597,27 @@ class SessionController {
     } catch (e) {
       _shellError = e.toString();
       _shellStarted = true;
-      terminal.write('\r\n\x1b[31mFailed to open a shell: $e\x1b[0m\r\n');
+      _writeToTerminal('\r\n\x1b[31mFailed to open a shell: $e\x1b[0m\r\n');
     }
     _notify();
+  }
+
+  /// Puts bytes on the screen, with the input tap held shut for the duration.
+  ///
+  /// Every write into [terminal] that did not come from the user goes through
+  /// here. `Terminal.write` runs the escape-sequence parser synchronously, and
+  /// a parser that meets a query — `CSI c`, `CSI 6n` — answers it by
+  /// calling straight back out through `onOutput`, the callback keystrokes
+  /// use too.
+  /// Bracketing the write is what lets [_sendToShell] tell the two apart. See
+  /// [_absorbingRemoteOutput].
+  void _writeToTerminal(String data) {
+    _absorbingRemoteOutput = true;
+    try {
+      terminal.write(data);
+    } finally {
+      _absorbingRemoteOutput = false;
+    }
   }
 
   /// Drops the local handle on a shell channel that has ended, so every later
@@ -391,6 +638,11 @@ class SessionController {
       // Keystroke arrived after the channel closed; the disconnect banner is
       // already on its way.
     }
+    // Announced after the local write, never instead of it: this session is
+    // the one the user is typing in and it gets its keystroke whatever any
+    // listener does with the news. Terminal replies to escape queries are not
+    // news — see [_absorbingRemoteOutput].
+    if (!_absorbingRemoteOutput) onInputSent?.call(payload);
   }
 
   void _handleTerminalResize(int width, int height, int pixelWidth,
@@ -930,6 +1182,13 @@ class SessionController {
   Future<void> dispose() async {
     if (_disposed) return;
     _disposed = true;
+
+    // First, and before anything else can complete: closing the tab is the
+    // user saying they are done with this server, and a reconnect that
+    // outlived it would dial back — and, worse, hand a live transport to
+    // [adoptTransport] on a session that no longer exists.
+    await _reconnectChanges?.cancel();
+    await _reconnector?.dispose();
 
     _keepalive.stop();
     transfers.cancelAll();
