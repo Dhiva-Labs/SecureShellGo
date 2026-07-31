@@ -10,10 +10,12 @@ import '../services/session_manager.dart';
 import '../services/settings_store.dart';
 import '../services/snippet_store.dart';
 import '../services/terminal_workspace.dart';
+import '../services/transfer_hub.dart';
 import '../services/transfer_queue.dart';
 import '../services/tunnel_runtime.dart';
 import '../theme.dart';
 import '../widgets/snippet_picker.dart';
+import '../widgets/transfer_hub_panel.dart';
 import '../widgets/transfer_panel.dart';
 import '../widgets/tunnel_indicator.dart';
 import 'file_browser_pane.dart';
@@ -130,6 +132,11 @@ class _SessionsScreenState extends State<SessionsScreen> {
   /// `SessionsScreen.snippetStore`.
   late final SnippetStore _snippetStore = widget.snippetStore ?? SnippetStore();
 
+  // Merges every open session's own TransferQueue for the "all transfers"
+  // app-bar icon below — see transfer_hub.dart. Built once per screen, not
+  // per session, since it is the *set* of sessions this follows.
+  late final TransferHub _hub = TransferHub.forSessionManager(widget.sessions);
+
   @override
   void initState() {
     super.initState();
@@ -180,6 +187,7 @@ class _SessionsScreenState extends State<SessionsScreen> {
       entry.controller.onInputSent = null;
     }
     unawaited(_broadcast.dispose());
+    unawaited(_hub.dispose());
     if (_ownsWorkspace) unawaited(_workspace.dispose());
     // The sessions are deliberately *not* disposed here — they belong to the
     // manager and outlive this route.
@@ -612,6 +620,13 @@ class _SessionsScreenState extends State<SessionsScreen> {
                 ),
               ],
             ),
+          // Persistent across every tab, unlike the button above: this one
+          // is not "this session's transfers" but every session's, so it
+          // stays put — and its badge counted — whichever tab is in front.
+          TransferHubAction(
+            hub: _hub,
+            onTap: () => showTransferHubSheet(context, _hub),
+          ),
           // Both panes are already on screen side by side in the wide layout,
           // so a toggle between them means nothing there — except in a split
           // workspace, where each pane is narrow and shows one at a time.

@@ -4,7 +4,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../models/host.dart';
+import '../models/path_bookmark.dart';
 import '../models/remote_entry.dart';
+import '../services/bookmark_store.dart';
 import '../services/device_storage.dart';
 import '../services/download_plan.dart';
 import '../services/editor_document.dart';
@@ -17,6 +19,7 @@ import '../services/sftp_service.dart';
 import '../services/transfer_queue.dart';
 import '../services/upload_plan.dart';
 import '../theme.dart';
+import '../widgets/bookmark_sheet.dart';
 import '../widgets/transfer_panel.dart';
 import 'remote_directory_picker.dart';
 import 'remote_editor_screen.dart';
@@ -67,14 +70,19 @@ class TabDropPayload {
 /// [SessionController.sftp], so opening it costs one extra SSH channel and no
 /// extra credentials.
 class FileBrowserPane extends StatefulWidget {
-  const FileBrowserPane({
+  // Not const: the bookmarkStore fallback below is a static final, not a
+  // compile-time constant, so this constructor can no longer be one either.
+  // No call site in the app built this with `const` (its `session` argument
+  // never was), so nothing downstream is affected.
+  FileBrowserPane({
     super.key,
     required this.session,
     required this.settingsStore,
     this.sessions,
     this.sessionId,
     this.initialShowHidden = false,
-  });
+    BookmarkStore? bookmarkStore,
+  }) : bookmarkStore = bookmarkStore ?? BookmarkStore.instance;
 
   final SessionController session;
 
@@ -96,6 +104,13 @@ class FileBrowserPane extends StatefulWidget {
   /// toggle itself stays per-session after that — this only sets where it
   /// starts.
   final bool initialShowHidden;
+
+  /// Per-host saved paths, for the path bar's star toggle and its bookmarks
+  /// sheet. Defaults to the process-wide store — see
+  /// [BookmarkStore.instance] for why this is not threaded down from
+  /// `main.dart` instead. Tests hand in their own instance, backed by a temp
+  /// file, so runs do not share state with each other.
+  final BookmarkStore bookmarkStore;
 
   @override
   State<FileBrowserPane> createState() => _FileBrowserPaneState();
@@ -131,6 +146,12 @@ class _FileBrowserPaneState extends State<FileBrowserPane>
   /// refresh it triggers once the queue is quiet.
   bool _uploadLanded = false;
 
+  /// This host's saved paths, for the star toggle and the bookmarks sheet.
+  /// Loaded once in [initState] and kept in sync by hand after every add,
+  /// remove or rename — a session's host never changes mid-life, so there is
+  /// nothing to re-fetch this for beyond the pane's own edits.
+  List<PathBookmark> _bookmarks = const [];
+
   @override
   bool get wantKeepAlive => true;
 
@@ -145,6 +166,7 @@ class _FileBrowserPaneState extends State<FileBrowserPane>
         widget.session.transfers.changes.listen(_handleTransfers);
     _arrivals = widget.session.arrivals.listen(_handleArrival);
     unawaited(_openHome());
+    unawaited(_reloadBookmarks());
   }
 
   @override
@@ -271,6 +293,45 @@ class _FileBrowserPaneState extends State<FileBrowserPane>
   void _goUp() {
     final parent = RemotePath.parent(_path);
     if (parent != _path) unawaited(_navigate(parent));
+  }
+
+  // ------------------------------------------------------------- bookmarks
+
+  bool get _isBookmarked => _bookmarks.any((b) => b.path == _path);
+
+  Future<void> _reloadBookmarks() async {
+    final list =
+        await widget.bookmarkStore.bookmarksForHost(widget.session.host.id);
+    if (mounted) setState(() => _bookmarks = list);
+  }
+
+  /// Stars or un-stars the directory on screen. No dialog either way — a
+  /// bookmark is cheap to undo by tapping the same star again, unlike a
+  /// remove from inside the sheet, which is the one path that goes through
+  /// [showBookmarksSheet] and its per-row menu instead.
+  Future<void> _toggleBookmark() async {
+    final hostId = widget.session.host.id;
+    if (_isBookmarked) {
+      await widget.bookmarkStore.removeForPath(hostId, _path);
+    } else {
+      await widget.bookmarkStore.add(hostId, _path);
+    }
+    await _reloadBookmarks();
+  }
+
+  Future<void> _openBookmarks() async {
+    await showBookmarksSheet(
+      context,
+      store: widget.bookmarkStore,
+      hostId: widget.session.host.id,
+      currentPath: _path,
+      bookmarks: _bookmarks,
+      onJump: (path) => unawaited(_navigate(path)),
+    );
+    // The sheet can add, rename or remove rows on its own (rename/remove
+    // live entirely inside it) — reload once it closes rather than trying to
+    // keep two copies of "this host's bookmarks" in sync action by action.
+    await _reloadBookmarks();
   }
 
   // ------------------------------------------------------------- selection
@@ -994,6 +1055,9 @@ class _FileBrowserPaneState extends State<FileBrowserPane>
             path: _path,
             onNavigate: (target) => unawaited(_navigate(target)),
             onUp: _goUp,
+            isBookmarked: _isBookmarked,
+            onToggleBookmark: () => unawaited(_toggleBookmark()),
+            onOpenBookmarks: () => unawaited(_openBookmarks()),
           ),
           if (pending != null)
             _SharedFilesBanner(
@@ -1704,11 +1768,20 @@ class _PathBar extends StatelessWidget {
     required this.path,
     required this.onNavigate,
     required this.onUp,
+    required this.isBookmarked,
+    required this.onToggleBookmark,
+    required this.onOpenBookmarks,
   });
 
   final String path;
   final void Function(String path) onNavigate;
   final VoidCallback onUp;
+
+  /// Whether [path] itself — the directory on screen right now — is
+  /// bookmarked, for the star's filled/outline state.
+  final bool isBookmarked;
+  final VoidCallback onToggleBookmark;
+  final VoidCallback onOpenBookmarks;
 
   @override
   Widget build(BuildContext context) {
@@ -1766,6 +1839,22 @@ class _PathBar extends StatelessWidget {
                 ],
               ),
             ),
+          ),
+          IconButton(
+            tooltip: isBookmarked
+                ? 'Remove bookmark for this folder'
+                : 'Bookmark this folder',
+            icon: Icon(
+              isBookmarked ? Icons.star : Icons.star_border,
+              size: 20,
+              color: isBookmarked ? AppTheme.accent : null,
+            ),
+            onPressed: onToggleBookmark,
+          ),
+          IconButton(
+            tooltip: 'Bookmarks',
+            icon: const Icon(Icons.bookmarks_outlined, size: 20),
+            onPressed: onOpenBookmarks,
           ),
         ],
       ),
