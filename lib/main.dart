@@ -12,6 +12,8 @@ import 'services/session_manager.dart';
 import 'services/settings_store.dart';
 import 'services/ssh_service.dart';
 import 'services/terminal_workspace.dart';
+import 'services/tunnel_runtime.dart';
+import 'services/tunnel_store.dart';
 import 'theme.dart';
 
 void main() {
@@ -95,6 +97,61 @@ class _SecureShellGoAppState extends State<SecureShellGoApp> {
     ),
   );
 
+  // The saved port forwards, and whatever is currently listening for them.
+  //
+  // Built here for the same reason the sessions are, and more so: a tunnel
+  // exists precisely so that something else — a browser, a database client,
+  // a deploy script — can use it while the user is doing something entirely
+  // different in this app. Tying one to the screen that started it would
+  // mean closing that screen tore down the forward the user had just set up.
+  //
+  // A tunnel rides on a live session's transport when there is one (no
+  // second authentication, no second host-key prompt) and opens its own
+  // connection otherwise, through the ordinary `SshService.connect` — so
+  // jump chains, known-hosts checks and TOFU prompts are the same ones every
+  // other connection in the app goes through, not a second copy of them.
+  late final TunnelStore _tunnelStore = TunnelStore();
+  late final TunnelRuntime _tunnels = TunnelRuntime(
+    profiles: _tunnelStore,
+    support: TunnelSupport(
+      lookupHost: _hostStore.get,
+      loadCredentials: _credentialStore.load,
+      connect: ({
+        required host,
+        required credentials,
+        required verifyHostKey,
+      }) async =>
+          SshTunnelCarrier.dedicated(
+        await _sshService.connect(
+          host: host,
+          credentials: credentials,
+          verifyHostKey: verifyHostKey,
+        ),
+      ),
+      findSessionCarrier: _sessionCarrierFor,
+      // How a tunnel finds out that the session carrying it has reconnected:
+      // `SessionController.adoptTransport` notifies on its own change stream,
+      // which the manager folds into this one.
+      sessionChanges: _sessions.changes,
+    ),
+  );
+
+  /// A live session's transport for [hostId], dressed as something a tunnel
+  /// can forward over, or null when nothing is open on that host.
+  ///
+  /// Borrowed, never owned: stopping a tunnel must not hang up on the shell
+  /// the user is typing in. See [TunnelCarrier.release].
+  TunnelCarrier? _sessionCarrierFor(String hostId) {
+    for (final session in _sessions.sessions) {
+      if (session.host.id != hostId || session.isClosed) continue;
+      final transport = session.controller.connection;
+      if (transport is SshConnection) {
+        return SshTunnelCarrier.borrowed(transport.client);
+      }
+    }
+    return null;
+  }
+
   // The desktop split layout. Built here for the same reason the sessions are:
   // going back to the host list to open another server tears the sessions
   // screen down, and coming back must find the panes, the dividers and the
@@ -128,6 +185,9 @@ class _SecureShellGoAppState extends State<SecureShellGoApp> {
     // app going away is the one thing that ends a session the user did not
     // close themselves.
     unawaited(_sessions.dispose());
+    // Stops every listener and closes the connections the tunnels opened for
+    // themselves; the ones borrowed from sessions go with the sessions above.
+    unawaited(_tunnels.dispose());
     unawaited(_workspace.dispose());
     _settingsStore.dispose();
     super.dispose();
@@ -149,6 +209,7 @@ class _SecureShellGoAppState extends State<SecureShellGoApp> {
         settingsStore: _settingsStore,
         sessions: _sessions,
         workspace: _workspace,
+        tunnels: _tunnels,
       ),
     );
   }

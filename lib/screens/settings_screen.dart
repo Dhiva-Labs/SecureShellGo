@@ -3,12 +3,15 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import '../models/app_settings.dart';
+import '../services/host_store.dart';
 import '../services/known_hosts_service.dart';
 import '../services/settings_store.dart';
 import '../services/snippet_store.dart';
+import '../services/tunnel_runtime.dart';
 import '../theme.dart';
 import 'known_hosts_screen.dart';
 import 'snippets_screen.dart';
+import 'tunnels_screen.dart';
 
 /// Terminal look-and-feel, session behaviour, and the about box.
 ///
@@ -23,10 +26,18 @@ class SettingsScreen extends StatefulWidget {
     required this.settingsStore,
     required this.knownHosts,
     this.snippetStore,
+    this.tunnels,
+    this.hostStore,
   });
 
   final SettingsStore settingsStore;
   final KnownHostsService knownHosts;
+
+  /// Backs the "Tunnels" row. Both this and [hostStore] are needed to open
+  /// that screen at all — a tunnel is a profile plus the host that carries
+  /// it — so the row appears only when both were handed down.
+  final TunnelRuntime? tunnels;
+  final HostStore? hostStore;
 
   /// Backs the "Snippets" row below. Optional so a caller that does not
   /// care about snippets still gets a working screen, same reasoning as
@@ -82,6 +93,17 @@ class _SettingsScreenState extends State<SettingsScreen> {
     Navigator.of(context).push(
       MaterialPageRoute<void>(
         builder: (_) => SnippetsScreen(snippetStore: _snippetStore),
+      ),
+    );
+  }
+
+  void _openTunnels() {
+    final tunnels = widget.tunnels;
+    final hostStore = widget.hostStore;
+    if (tunnels == null || hostStore == null) return;
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => TunnelsScreen(tunnels: tunnels, hostStore: hostStore),
       ),
     );
   }
@@ -202,6 +224,19 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 trailing: const Icon(Icons.chevron_right),
                 onTap: _openSnippets,
               ),
+              if (widget.tunnels != null && widget.hostStore != null) ...[
+                const Divider(height: 32),
+                const _SectionHeader('Networking'),
+                ListTile(
+                  leading: const Icon(Icons.swap_horiz),
+                  title: const Text('Tunnels'),
+                  subtitle: const Text(
+                    'Forward ports over a saved host, or run a SOCKS5 proxy',
+                  ),
+                  trailing: const Icon(Icons.chevron_right),
+                  onTap: _openTunnels,
+                ),
+              ],
               const Divider(height: 32),
               const _SectionHeader('Security'),
               ListTile(

@@ -18,6 +18,7 @@ import '../services/share_intake.dart';
 import '../services/snippet_store.dart';
 import '../services/ssh_service.dart';
 import '../services/terminal_workspace.dart';
+import '../services/tunnel_runtime.dart';
 import '../theme.dart';
 import '../widgets/command_palette.dart';
 import '../widgets/host_color_dot.dart';
@@ -30,6 +31,7 @@ import 'session_screen.dart';
 import 'settings_screen.dart';
 import 'share_target_screen.dart';
 import 'ssh_config_import_screen.dart';
+import 'tunnels_screen.dart';
 
 /// Dropdown-free equivalent of `HostEditScreen`'s `_newGroupSentinel`: a
 /// group-picker dialog value meaning "prompt for a new name" rather than a
@@ -59,6 +61,7 @@ class HostListScreen extends StatefulWidget {
     this.workspace,
     this.shareIntake,
     this.snippetStore,
+    this.tunnels,
   });
 
   final HostStore hostStore;
@@ -91,6 +94,12 @@ class HostListScreen extends StatefulWidget {
   /// shared across every screen this one pushes so they never see a stale
   /// in-memory copy of each other's edits.
   final SnippetStore? snippetStore;
+
+  /// The saved port forwards and whatever is currently listening for them.
+  /// Held above this route, like [sessions] and [workspace], because a
+  /// running tunnel must survive going anywhere else in the app. Null hides
+  /// the Tunnels affordances entirely.
+  final TunnelRuntime? tunnels;
 
   @override
   State<HostListScreen> createState() => _HostListScreenState();
@@ -202,6 +211,7 @@ class _HostListScreenState extends State<HostListScreen> {
             onAddSession: () => Navigator.of(context).pop(),
             snippetStore: _snippetStore,
             autoOpenSnippetPicker: autoOpenSnippetPicker,
+            tunnels: widget.tunnels,
           ),
         ),
       );
@@ -777,9 +787,28 @@ class _HostListScreenState extends State<HostListScreen> {
           settingsStore: widget.settingsStore,
           knownHosts: widget.knownHosts,
           snippetStore: _snippetStore,
+          tunnels: widget.tunnels,
+          hostStore: widget.hostStore,
         ),
       ),
     );
+  }
+
+  /// The tunnel manager. Pushed rather than owned here, the same way the
+  /// sessions screen is: popping it comes back to this list with every
+  /// forward still listening.
+  Future<void> _openTunnels() async {
+    final tunnels = widget.tunnels;
+    if (tunnels == null) return;
+    await Navigator.of(context).push<void>(
+      MaterialPageRoute<void>(
+        builder: (_) => TunnelsScreen(
+          tunnels: tunnels,
+          hostStore: widget.hostStore,
+        ),
+      ),
+    );
+    if (mounted) setState(() {});
   }
 
   /// Desktop platforms — where `~/.ssh/config` and Ctrl+K both make sense.
@@ -872,6 +901,12 @@ class _HostListScreenState extends State<HostListScreen> {
           title: 'Import from ssh config',
           onSelect: () => unawaited(_importSshConfig()),
         ),
+      if (widget.tunnels != null)
+        PaletteItem(
+          kind: PaletteItemKind.action,
+          title: 'Tunnels',
+          onSelect: () => unawaited(_openTunnels()),
+        ),
       PaletteItem(
         kind: PaletteItemKind.action,
         title: 'Settings',
@@ -940,6 +975,12 @@ class _HostListScreenState extends State<HostListScreen> {
                         child: Text('Import from ~/.ssh/config'),
                       ),
                     ],
+                  ),
+                if (widget.tunnels != null)
+                  IconButton(
+                    tooltip: 'Tunnels',
+                    icon: const Icon(Icons.swap_horiz),
+                    onPressed: () => unawaited(_openTunnels()),
                   ),
                 IconButton(
                   tooltip: 'Settings',

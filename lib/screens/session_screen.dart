@@ -11,9 +11,11 @@ import '../services/settings_store.dart';
 import '../services/snippet_store.dart';
 import '../services/terminal_workspace.dart';
 import '../services/transfer_queue.dart';
+import '../services/tunnel_runtime.dart';
 import '../theme.dart';
 import '../widgets/snippet_picker.dart';
 import '../widgets/transfer_panel.dart';
+import '../widgets/tunnel_indicator.dart';
 import 'file_browser_pane.dart';
 import 'terminal_pane.dart';
 import 'workspace_view.dart';
@@ -52,6 +54,7 @@ class SessionsScreen extends StatefulWidget {
     this.workspace,
     this.snippetStore,
     this.autoOpenSnippetPicker = false,
+    this.tunnels,
     KeepAwakeController? keepAwake,
   }) : keepAwake = keepAwake ?? const MethodChannelKeepAwake();
 
@@ -81,6 +84,10 @@ class SessionsScreen extends StatefulWidget {
   /// `host_list_screen.dart`) lands on a session it had to push this whole
   /// screen to reach.
   final bool autoOpenSnippetPicker;
+
+  /// Backs the app bar's tunnel count chip. Null — every test, and any
+  /// build without the tunnel manager wired in — simply shows no chip.
+  final TunnelRuntime? tunnels;
 
   /// Test seam; production leaves this to the default channel-backed one.
   final KeepAwakeController keepAwake;
@@ -555,6 +562,11 @@ class _SessionsScreenState extends State<SessionsScreen> {
           ],
         ),
         actions: [
+          // A port forward keeps working while the user is in a shell with
+          // nothing on screen mentioning it, so it gets a standing reminder
+          // here. Renders nothing when no tunnel is running.
+          if (widget.tunnels != null)
+            TunnelIndicator(tunnels: widget.tunnels!),
           // First in the row, and impossible to miss once it is on: while
           // broadcasting, this is the single most important fact about what
           // the next keystroke is going to do.
