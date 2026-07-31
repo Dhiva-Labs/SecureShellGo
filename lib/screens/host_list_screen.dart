@@ -4,24 +4,32 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../models/host.dart';
+import '../models/snippet.dart';
 import '../services/credential_store.dart';
 import '../services/device_storage.dart';
 import '../services/host_grouping.dart';
 import '../services/host_store.dart';
 import '../services/known_hosts_service.dart';
 import '../services/layout_breakpoints.dart';
+import '../services/quick_connect_parser.dart';
 import '../services/session_manager.dart';
 import '../services/settings_store.dart';
 import '../services/share_intake.dart';
+import '../services/snippet_store.dart';
 import '../services/ssh_service.dart';
 import '../services/terminal_workspace.dart';
 import '../theme.dart';
+import '../widgets/command_palette.dart';
 import '../widgets/host_color_dot.dart';
 import '../widgets/host_key_dialog.dart';
+import '../widgets/quick_connect_bar.dart';
+import '../widgets/snippet_picker.dart' show runSnippetOnSession;
 import 'host_edit_screen.dart';
+import 'quick_connect_screen.dart';
 import 'session_screen.dart';
 import 'settings_screen.dart';
 import 'share_target_screen.dart';
+import 'ssh_config_import_screen.dart';
 
 /// Dropdown-free equivalent of `HostEditScreen`'s `_newGroupSentinel`: a
 /// group-picker dialog value meaning "prompt for a new name" rather than a
@@ -50,6 +58,7 @@ class HostListScreen extends StatefulWidget {
     required this.sessions,
     this.workspace,
     this.shareIntake,
+    this.snippetStore,
   });
 
   final HostStore hostStore;
@@ -76,6 +85,13 @@ class HostListScreen extends StatefulWidget {
   /// Test seam; production builds the channel-backed default.
   final ShareIntake? shareIntake;
 
+  /// Backs snippet management (Settings) and the lightning-bolt picker on
+  /// the sessions screen, plus the command palette's snippet results.
+  /// Optional, same reasoning as [shareIntake] — a single store instance is
+  /// shared across every screen this one pushes so they never see a stale
+  /// in-memory copy of each other's edits.
+  final SnippetStore? snippetStore;
+
   @override
   State<HostListScreen> createState() => _HostListScreenState();
 }
@@ -93,6 +109,7 @@ class _HostListScreenState extends State<HostListScreen> {
   bool _trustStoreReset = false;
 
   late final ShareIntake _shareIntake = widget.shareIntake ?? ShareIntake();
+  late final SnippetStore _snippetStore = widget.snippetStore ?? SnippetStore();
 
   /// So a second `shareAvailable` — or a cold-start share the warm listener
   /// also hears — cannot stack two pickers for the same files.
@@ -170,7 +187,7 @@ class _HostListScreenState extends State<HostListScreen> {
   /// Pushed from here rather than owned here: popping it comes back to this
   /// list with every session still connected, which is what makes "open a
   /// second server" possible at all.
-  Future<void> _showSessions() async {
+  Future<void> _showSessions({bool autoOpenSnippetPicker = false}) async {
     if (_sessionsOpen || widget.sessions.isEmpty) return;
     _sessionsOpen = true;
     try {
@@ -183,6 +200,8 @@ class _HostListScreenState extends State<HostListScreen> {
             // "New session" is a trip back to this list. Popping is exactly
             // that, and it keeps the sessions behind it alive.
             onAddSession: () => Navigator.of(context).pop(),
+            snippetStore: _snippetStore,
+            autoOpenSnippetPicker: autoOpenSnippetPicker,
           ),
         ),
       );
@@ -757,49 +776,210 @@ class _HostListScreenState extends State<HostListScreen> {
         builder: (_) => SettingsScreen(
           settingsStore: widget.settingsStore,
           knownHosts: widget.knownHosts,
+          snippetStore: _snippetStore,
         ),
       ),
     );
   }
 
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('SecureShell Go'),
-        actions: [
-          IconButton(
-            tooltip: 'Settings',
-            icon: const Icon(Icons.settings_outlined),
-            onPressed: _openSettings,
-          ),
-        ],
-      ),
-      body: SafeArea(
-        child: Column(
-          children: [
-            if (_trustStoreReset)
-              _TrustStoreResetBanner(
-                onDismiss: () => setState(() => _trustStoreReset = false),
-              ),
-            // Leaving the sessions screen keeps the connections up, which is
-            // what makes opening a second server possible — and would be an
-            // invisible state if this bar did not say so.
-            if (widget.sessions.isNotEmpty)
-              _OpenSessionsBar(
-                total: widget.sessions.length,
-                live: widget.sessions.liveCount,
-                onResume: () => unawaited(_showSessions()),
-              ),
-            _buildSearchField(),
-            Expanded(child: _buildHostList()),
-          ],
+  /// Desktop platforms — where `~/.ssh/config` and Ctrl+K both make sense.
+  /// Same check `file_browser_pane.dart` uses for its own desktop-only
+  /// affordances.
+  static bool _isDesktop(BuildContext context) {
+    switch (Theme.of(context).platform) {
+      case TargetPlatform.linux:
+      case TargetPlatform.macOS:
+      case TargetPlatform.windows:
+        return true;
+      case TargetPlatform.android:
+      case TargetPlatform.iOS:
+      case TargetPlatform.fuchsia:
+        return false;
+    }
+  }
+
+  /// FEATURE 2: parses to a target already, so this only has to prompt for
+  /// credentials and connect — see `quick_connect_screen.dart`. Mirrors
+  /// `_editForm`'s "did a session open while that screen was up" check,
+  /// since a quick connection also has no result value worth trusting on its
+  /// own (a plain back gesture pops with nothing either).
+  Future<void> _quickConnect(QuickConnectTarget target) async {
+    final before = widget.sessions.length;
+    await Navigator.of(context).push<void>(
+      MaterialPageRoute<void>(
+        builder: (_) => QuickConnectScreen(
+          target: target,
+          sshService: widget.sshService,
+          sessions: widget.sessions,
+          hostStore: widget.hostStore,
+          credentialStore: widget.credentialStore,
         ),
       ),
-      floatingActionButton: FloatingActionButton(
-        onPressed: _addHost,
-        tooltip: 'Add host',
-        child: const Icon(Icons.add),
+    );
+    if (!mounted) return;
+    if (widget.sessions.length > before) await _showSessions();
+  }
+
+  /// FEATURE 3: the overflow menu's "Import from ~/.ssh/config".
+  Future<void> _importSshConfig() async {
+    final imported = await Navigator.of(context).push<bool>(
+      MaterialPageRoute<bool>(
+        builder: (_) => SshConfigImportScreen(hostStore: widget.hostStore),
+      ),
+    );
+    if (!mounted) return;
+    if (imported == true) _refresh();
+  }
+
+  /// FEATURE 4: Ctrl+K / Cmd+K. Builds the full result set fresh each time
+  /// rather than caching it — hosts and snippets can change between two
+  /// palette opens, and neither list is ever long enough for that to cost
+  /// anything.
+  Future<void> _openCommandPalette() async {
+    final hosts = await _future;
+    final snippets = await _snippetStore.all();
+    if (!mounted) return;
+
+    final active = widget.sessions.active;
+    final sessionActive = active != null && !active.isClosed;
+    final desktop = _isDesktop(context);
+
+    final items = <PaletteItem>[
+      for (final host in hosts)
+        PaletteItem(
+          kind: PaletteItemKind.host,
+          title: host.displayName,
+          subtitle: host.target,
+          onSelect: () => unawaited(_connect(host)),
+        ),
+      for (final snippet in snippets)
+        PaletteItem(
+          kind: PaletteItemKind.snippet,
+          title: snippet.name,
+          subtitle: snippet.command,
+          enabled: sessionActive,
+          hint: sessionActive ? null : 'Open a session first',
+          onSelect: () => _runSnippetFromPalette(snippet),
+        ),
+      PaletteItem(
+        kind: PaletteItemKind.action,
+        title: 'New host',
+        onSelect: () => unawaited(_addHost()),
+      ),
+      if (desktop)
+        PaletteItem(
+          kind: PaletteItemKind.action,
+          title: 'Import from ssh config',
+          onSelect: () => unawaited(_importSshConfig()),
+        ),
+      PaletteItem(
+        kind: PaletteItemKind.action,
+        title: 'Settings',
+        onSelect: _openSettings,
+      ),
+    ];
+
+    if (!mounted) return;
+    unawaited(showCommandPalette(context, items: items));
+  }
+
+  /// A snippet chosen straight from the palette skips its own list UI (the
+  /// palette already was that search-and-pick step) and fires directly at
+  /// the active session, the same way `showSnippetPicker`'s list does.
+  void _runSnippetFromPalette(Snippet snippet) {
+    final active = widget.sessions.active;
+    if (active == null || active.isClosed) return;
+    unawaited(_showSessions());
+    unawaited(
+      runSnippetOnSession(context, snippet: snippet, session: active.controller),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final desktop = _isDesktop(context);
+
+    // Ctrl+K / Cmd+K (FEATURE 4), wired locally rather than in `main.dart` —
+    // `Focus(autofocus: true)` gives the shortcut something focused to
+    // bubble up from as soon as this screen appears, before the user has
+    // clicked anything.
+    return Shortcuts(
+      shortcuts: <LogicalKeySet, Intent>{
+        LogicalKeySet(LogicalKeyboardKey.control, LogicalKeyboardKey.keyK):
+            const _OpenPaletteIntent(),
+        LogicalKeySet(LogicalKeyboardKey.meta, LogicalKeyboardKey.keyK):
+            const _OpenPaletteIntent(),
+      },
+      child: Actions(
+        actions: <Type, Action<Intent>>{
+          _OpenPaletteIntent: CallbackAction<_OpenPaletteIntent>(
+            onInvoke: (intent) {
+              unawaited(_openCommandPalette());
+              return null;
+            },
+          ),
+        },
+        child: Focus(
+          autofocus: true,
+          child: Scaffold(
+            appBar: AppBar(
+              title: const Text('SecureShell Go'),
+              actions: [
+                if (desktop)
+                  PopupMenuButton<_HostListMenuAction>(
+                    tooltip: 'More',
+                    onSelected: (action) {
+                      switch (action) {
+                        case _HostListMenuAction.importSshConfig:
+                          unawaited(_importSshConfig());
+                      }
+                    },
+                    itemBuilder: (context) => const [
+                      PopupMenuItem(
+                        value: _HostListMenuAction.importSshConfig,
+                        child: Text('Import from ~/.ssh/config'),
+                      ),
+                    ],
+                  ),
+                IconButton(
+                  tooltip: 'Settings',
+                  icon: const Icon(Icons.settings_outlined),
+                  onPressed: _openSettings,
+                ),
+              ],
+            ),
+            body: SafeArea(
+              child: Column(
+                children: [
+                  if (_trustStoreReset)
+                    _TrustStoreResetBanner(
+                      onDismiss: () => setState(() => _trustStoreReset = false),
+                    ),
+                  // Leaving the sessions screen keeps the connections up,
+                  // which is what makes opening a second server possible —
+                  // and would be an invisible state if this bar did not say
+                  // so.
+                  if (widget.sessions.isNotEmpty)
+                    _OpenSessionsBar(
+                      total: widget.sessions.length,
+                      live: widget.sessions.liveCount,
+                      onResume: () => unawaited(_showSessions()),
+                    ),
+                  QuickConnectBar(
+                    onTarget: (target) => unawaited(_quickConnect(target)),
+                  ),
+                  _buildSearchField(),
+                  Expanded(child: _buildHostList()),
+                ],
+              ),
+            ),
+            floatingActionButton: FloatingActionButton(
+              onPressed: _addHost,
+              tooltip: 'Add host',
+              child: const Icon(Icons.add),
+            ),
+          ),
+        ),
       ),
     );
   }
@@ -1226,6 +1406,16 @@ class _HostCard extends StatelessWidget {
 
 /// What "connect" should mean when the host is already open.
 enum _ExistingSession { switchToIt, openAnother }
+
+/// The overflow menu's one entry today (FEATURE 3). An enum rather than a
+/// bare callback so `PopupMenuButton`'s `onSelected` stays a plain switch —
+/// the shape every other `PopupMenuButton` in Flutter code tends to take.
+enum _HostListMenuAction { importSshConfig }
+
+/// Ctrl+K / Cmd+K — see the `Shortcuts`/`Actions` pair in `build()`.
+class _OpenPaletteIntent extends Intent {
+  const _OpenPaletteIntent();
+}
 
 /// The way back to sessions that are still connected behind this list.
 class _OpenSessionsBar extends StatelessWidget {

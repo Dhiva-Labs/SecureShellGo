@@ -8,9 +8,11 @@ import '../services/layout_breakpoints.dart';
 import '../services/session_controller.dart';
 import '../services/session_manager.dart';
 import '../services/settings_store.dart';
+import '../services/snippet_store.dart';
 import '../services/terminal_workspace.dart';
 import '../services/transfer_queue.dart';
 import '../theme.dart';
+import '../widgets/snippet_picker.dart';
 import '../widgets/transfer_panel.dart';
 import 'file_browser_pane.dart';
 import 'terminal_pane.dart';
@@ -48,6 +50,8 @@ class SessionsScreen extends StatefulWidget {
     required this.settingsStore,
     this.onAddSession,
     this.workspace,
+    this.snippetStore,
+    this.autoOpenSnippetPicker = false,
     KeepAwakeController? keepAwake,
   }) : keepAwake = keepAwake ?? const MethodChannelKeepAwake();
 
@@ -66,6 +70,17 @@ class SessionsScreen extends StatefulWidget {
   /// Null builds a private one that lives and dies with this route, which is
   /// what tests (and mobile, which never reads it) get.
   final TerminalWorkspace? workspace;
+
+  /// Backs the lightning-bolt snippet picker. Optional, like `shareIntake`
+  /// on `HostListScreen`, so a caller that does not care just gets a fresh
+  /// store — see `_snippetStore` below.
+  final SnippetStore? snippetStore;
+
+  /// Opens the snippet picker for the active session as soon as this screen
+  /// is built — how the command palette's "Snippets…" result (wired in
+  /// `host_list_screen.dart`) lands on a session it had to push this whole
+  /// screen to reach.
+  final bool autoOpenSnippetPicker;
 
   /// Test seam; production leaves this to the default channel-backed one.
   final KeepAwakeController keepAwake;
@@ -104,6 +119,10 @@ class _SessionsScreenState extends State<SessionsScreen> {
   /// and re-open its SFTP channel.
   final Map<String, GlobalKey> _pageKeys = {};
 
+  /// Backs the lightning-bolt icon in the app bar. See the field doc on
+  /// `SessionsScreen.snippetStore`.
+  late final SnippetStore _snippetStore = widget.snippetStore ?? SnippetStore();
+
   @override
   void initState() {
     super.initState();
@@ -124,6 +143,11 @@ class _SessionsScreenState extends State<SessionsScreen> {
     });
     if (widget.settingsStore.current.keepScreenAwake) {
       unawaited(widget.keepAwake.setEnabled(true));
+    }
+    if (widget.autoOpenSnippetPicker) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _openSnippetPicker();
+      });
     }
   }
 
@@ -241,6 +265,20 @@ class _SessionsScreenState extends State<SessionsScreen> {
       return;
     }
     Navigator.of(context).pop();
+  }
+
+  /// Opens the snippet picker (FEATURE 1) over the active session — the
+  /// lightning-bolt app-bar icon, and where `autoOpenSnippetPicker` lands.
+  void _openSnippetPicker() {
+    final active = widget.sessions.active;
+    if (active == null) return;
+    unawaited(
+      showSnippetPicker(
+        context,
+        snippetStore: _snippetStore,
+        session: active.controller,
+      ),
+    );
   }
 
   void _show(SessionView view) {
@@ -581,6 +619,11 @@ class _SessionsScreenState extends State<SessionsScreen> {
                     : SessionView.terminal,
               ),
             ),
+          IconButton(
+            tooltip: 'Snippets',
+            icon: const Icon(Icons.bolt_outlined),
+            onPressed: _openSnippetPicker,
+          ),
           // With one session open this is the only sign that a second one is
           // possible, so it stays in the bar rather than living only in the
           // tab strip that has not appeared yet.

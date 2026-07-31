@@ -5,8 +5,10 @@ import 'package:flutter/material.dart';
 import '../models/app_settings.dart';
 import '../services/known_hosts_service.dart';
 import '../services/settings_store.dart';
+import '../services/snippet_store.dart';
 import '../theme.dart';
 import 'known_hosts_screen.dart';
+import 'snippets_screen.dart';
 
 /// Terminal look-and-feel, session behaviour, and the about box.
 ///
@@ -20,10 +22,16 @@ class SettingsScreen extends StatefulWidget {
     super.key,
     required this.settingsStore,
     required this.knownHosts,
+    this.snippetStore,
   });
 
   final SettingsStore settingsStore;
   final KnownHostsService knownHosts;
+
+  /// Backs the "Snippets" row below. Optional so a caller that does not
+  /// care about snippets still gets a working screen, same reasoning as
+  /// `HostListScreen.shareIntake`.
+  final SnippetStore? snippetStore;
 
   @override
   State<SettingsScreen> createState() => _SettingsScreenState();
@@ -31,6 +39,8 @@ class SettingsScreen extends StatefulWidget {
 
 class _SettingsScreenState extends State<SettingsScreen> {
   late AppSettings _settings;
+  late final SnippetStore _snippetStore =
+      widget.snippetStore ?? SnippetStore();
 
   @override
   void initState() {
@@ -64,6 +74,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
     Navigator.of(context).push(
       MaterialPageRoute<void>(
         builder: (_) => KnownHostsScreen(knownHosts: widget.knownHosts),
+      ),
+    );
+  }
+
+  void _openSnippets() {
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => SnippetsScreen(snippetStore: _snippetStore),
       ),
     );
   }
@@ -174,6 +192,15 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 onChanged: (value) => unawaited(
                   _apply((s) => s.copyWith(showHiddenFilesByDefault: value)),
                 ),
+              ),
+              const Divider(height: 32),
+              const _SectionHeader('Commands'),
+              ListTile(
+                leading: const Icon(Icons.bolt_outlined),
+                title: const Text('Snippets'),
+                subtitle: const Text('Saved commands you can send to any session'),
+                trailing: const Icon(Icons.chevron_right),
+                onTap: _openSnippets,
               ),
               const Divider(height: 32),
               const _SectionHeader('Security'),
