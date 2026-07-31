@@ -1,3 +1,17 @@
+secureshellgo (1.2.1~noble1) noble; urgency=medium
+
+  * Fix the running app showing the generic gear icon in the GNOME dock.
+    GNOME Shell matches a Wayland window to its launcher by looking up
+    <application-id>.desktop; the packaged entry was named
+    secureshellgo.desktop while the app identifies itself as
+    com.dhivalabs.secure_shell_go, so the running window never matched
+    and fell back to the generic executable icon. Rename the installed
+    desktop entry to com.dhivalabs.secure_shell_go.desktop and point
+    StartupWMClass at the real WM_CLASS (the runner sets prgname to the
+    application id, verified with xprop) so X11 sessions match as well.
+
+ -- Dhiva Labs <dhivakar1010@gmail.com>  Fri, 31 Jul 2026 14:20:00 +0530
+
 secureshellgo (1.2.0~noble8) noble; urgency=medium
 
   * The ~noble7 rootUri rewrite made every package share one root, and

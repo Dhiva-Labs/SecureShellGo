@@ -8,4 +8,4 @@ Icon=secureshellgo
 Terminal=false
 Categories=Network;RemoteAccess;
 Keywords=ssh;sftp;terminal;remote;
-StartupWMClass=secure_shell_go
+StartupWMClass=com.dhivalabs.secure_shell_go

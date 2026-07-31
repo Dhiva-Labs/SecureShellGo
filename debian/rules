@@ -134,7 +134,12 @@ override_dh_auto_install:
 	mkdir -p debian/secureshellgo/usr/bin
 	install -m 0755 debian/secureshellgo.wrapper debian/secureshellgo/usr/bin/secureshellgo
 	mkdir -p debian/secureshellgo/usr/share/applications
-	install -m 0644 linux/secureshellgo.desktop debian/secureshellgo/usr/share/applications/secureshellgo.desktop
+	# The desktop file MUST be named after the GTK application id
+	# (com.dhivalabs.secure_shell_go): GNOME Shell matches a running
+	# Wayland window to its launcher by looking up <app-id>.desktop,
+	# and with the old secureshellgo.desktop name the running app got
+	# the generic gear icon in the dock.
+	install -m 0644 linux/com.dhivalabs.secure_shell_go.desktop debian/secureshellgo/usr/share/applications/com.dhivalabs.secure_shell_go.desktop
 	mkdir -p debian/secureshellgo/usr/share/icons/hicolor/256x256/apps
 	install -m 0644 linux/secureshellgo-256.png debian/secureshellgo/usr/share/icons/hicolor/256x256/apps/secureshellgo.png
 

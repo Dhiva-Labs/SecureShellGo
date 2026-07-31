@@ -54,7 +54,7 @@ apps:
     # readability/documentation; nothing double-declares in the built snap.
     extensions:
       - gnome
-    desktop: usr/share/applications/secureshellgo.desktop
+    desktop: usr/share/applications/com.dhivalabs.secure_shell_go.desktop
     plugs:
       - home
       - removable-media
@@ -87,8 +87,10 @@ parts:
     plugin: dump
     source: linux
     organize:
-      secureshellgo.desktop: usr/share/applications/secureshellgo.desktop
+      # Named after the GTK application id so GNOME Shell can match the
+      # running Wayland window to this launcher entry.
+      com.dhivalabs.secure_shell_go.desktop: usr/share/applications/com.dhivalabs.secure_shell_go.desktop
       secureshellgo-256.png: usr/share/icons/hicolor/256x256/apps/secureshellgo.png
     stage:
-      - usr/share/applications/secureshellgo.desktop
+      - usr/share/applications/com.dhivalabs.secure_shell_go.desktop
       - usr/share/icons/hicolor/256x256/apps/secureshellgo.png
