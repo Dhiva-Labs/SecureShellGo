@@ -47,8 +47,7 @@ class MemoryUsage {
 ///
 /// [used] and [available] do not add up to [total] and that is not a bug:
 /// every unix filesystem reserves a slice for root, which `df` counts in the
-/// total but in neither of the other two. The bar is drawn from [used] over
-/// [total] so it matches what `df` itself calls the capacity percentage.
+/// total but in neither of the other two.
 class DiskUsage {
   const DiskUsage({
     required this.mountPoint,
@@ -62,9 +61,16 @@ class DiskUsage {
   final int used;
   final int available;
 
+  /// The capacity figure `df` prints, which is [used] over what the *user*
+  /// can actually occupy — used plus available — and not over [total].
+  /// Dividing by [total] instead counts the root reserve as free space and
+  /// reads several points lower than `df` (71% against df's 75% on the disk
+  /// this was caught on). Somebody checking the app against the server's own
+  /// tooling has to see the same number.
   double? get usedFraction {
-    if (total <= 0) return null;
-    final fraction = used / total;
+    final occupiable = used + available;
+    if (occupiable <= 0) return null;
+    final fraction = used / occupiable;
     if (fraction.isNaN || fraction < 0) return null;
     return fraction > 1 ? 1 : fraction;
   }

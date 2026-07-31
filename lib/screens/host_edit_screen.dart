@@ -112,6 +112,11 @@ class _HostEditScreenState extends State<HostEditScreen> {
   List<String> _groupNames = const [];
   bool _loadingGroups = true;
   String? _selectedGroup;
+
+  /// Bumped every time the "New group…" prompt closes, to force the group
+  /// dropdown's internal FormFieldState to be rebuilt from [_selectedGroup].
+  /// See [_pickGroup] for why cancelling needs that as much as creating does.
+  int _groupFieldEpoch = 0;
   HostColorLabel? _selectedColorLabel;
 
   /// Every other saved host, as jump-host candidates. Loaded for the same
@@ -504,36 +509,10 @@ class _HostEditScreenState extends State<HostEditScreen> {
   /// what to do with the result, so this stays reusable if group creation is
   /// ever offered from somewhere other than the dropdown.
   Future<String?> _promptNewGroupName() {
-    final controller = TextEditingController();
     return showDialog<String>(
       context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('New group'),
-        content: TextField(
-          controller: controller,
-          autofocus: true,
-          textCapitalization: TextCapitalization.words,
-          decoration: const InputDecoration(labelText: 'Group name'),
-          onSubmitted: (value) {
-            final trimmed = value.trim();
-            if (trimmed.isNotEmpty) Navigator.of(context).pop(trimmed);
-          },
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            onPressed: () {
-              final trimmed = controller.text.trim();
-              if (trimmed.isNotEmpty) Navigator.of(context).pop(trimmed);
-            },
-            child: const Text('Create'),
-          ),
-        ],
-      ),
-    ).whenComplete(controller.dispose);
+      builder: (context) => const _NewGroupDialog(),
+    );
   }
 
   /// Handles every selection the group dropdown can produce, including
@@ -545,8 +524,16 @@ class _HostEditScreenState extends State<HostEditScreen> {
       return;
     }
     final created = await _promptNewGroupName();
-    if (created == null || !mounted) return;
+    if (!mounted) return;
     setState(() {
+      // Bumped whether or not a name came back. The dropdown has already
+      // taken the sentinel as its own value by the time this runs, so a
+      // cancel that left [_selectedGroup] untouched would otherwise leave
+      // the field reading "New group…" as though it were the chosen group —
+      // and, once a real group existed under that value, trip
+      // DropdownButtonFormField's one-matching-item assertion.
+      _groupFieldEpoch++;
+      if (created == null) return;
       _selectedGroup = created;
       if (!_groupNames.contains(created)) {
         _groupNames = [..._groupNames, created]
@@ -571,7 +558,7 @@ class _HostEditScreenState extends State<HostEditScreen> {
       // widget — namely _pickGroup landing on a freshly created name after
       // intercepting _newGroupSentinel. DropdownButtonFormField otherwise
       // only reads its value once, at construction (`initialValue`).
-      key: ValueKey(_selectedGroup),
+      key: ValueKey('$_groupFieldEpoch:${_selectedGroup ?? ''}'),
       initialValue: _selectedGroup,
       decoration: const InputDecoration(
         labelText: 'Group (optional)',
@@ -1067,6 +1054,61 @@ class _ColorOption extends StatelessWidget {
           ),
         ),
       ),
+    );
+  }
+}
+
+/// The "New group" prompt, as a widget that owns its own controller.
+///
+/// The controller cannot be created by the caller and disposed from
+/// `showDialog(...).whenComplete(...)`: that future completes the moment the
+/// route is popped, while the dialog is still on screen animating out and its
+/// `TextField` is still reading the controller — which threw "A
+/// TextEditingController was used after being disposed" and took the whole
+/// screen down with it. Owning the controller here ties its life to the
+/// dialog's own element instead of to the route's future.
+class _NewGroupDialog extends StatefulWidget {
+  const _NewGroupDialog();
+
+  @override
+  State<_NewGroupDialog> createState() => _NewGroupDialogState();
+}
+
+class _NewGroupDialogState extends State<_NewGroupDialog> {
+  final _controller = TextEditingController();
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  void _submit(String value) {
+    final trimmed = value.trim();
+    if (trimmed.isNotEmpty) Navigator.of(context).pop(trimmed);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('New group'),
+      content: TextField(
+        controller: _controller,
+        autofocus: true,
+        textCapitalization: TextCapitalization.words,
+        decoration: const InputDecoration(labelText: 'Group name'),
+        onSubmitted: _submit,
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('Cancel'),
+        ),
+        FilledButton(
+          onPressed: () => _submit(_controller.text),
+          child: const Text('Create'),
+        ),
+      ],
     );
   }
 }
