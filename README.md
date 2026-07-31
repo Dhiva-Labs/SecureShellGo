@@ -56,6 +56,44 @@ host-key verification at the core.
   have open instead of asking you to sign in again
 - Hidden-files toggle, dirs-first sorting, breadcrumbs, pull-to-refresh
 
+### Desktop workspace
+- Split the terminal area into up to four resizable panes, each showing a
+  different server, with the tab strip holding whatever is not on screen
+- **Broadcast input**: type once and every visible pane's shell receives it,
+  behind a loud red indicator and off by default
+- Organise saved servers into collapsible groups with colour tags, and search
+  across all of them
+- **Ctrl+K command palette** over hosts, snippets and actions; quick-connect
+  bar for `user@host:port`; import servers from `~/.ssh/config`
+- Command snippets with `{placeholder}` prompts, per-host startup commands,
+  and ten terminal colour schemes
+
+### Connections that stay up
+- Automatic reconnection with keep-alive: a dropped network or a laptop
+  waking from sleep restores the shell in the same tab, and a changed host
+  key aborts rather than reconnecting quietly
+- **Jump hosts** (`ProxyJump`): reach a server through a bastion, with both
+  hops verified against known-hosts independently
+- **Tunnel manager**: saved local, remote and dynamic (SOCKS5) port forwards
+  with live byte counters, bound to loopback unless you say otherwise
+- Generate an ed25519 key in the app and install it on a server, and review
+  or forget trusted host keys from Settings
+
+### Editing and monitoring
+- **Built-in remote editor**: syntax highlighting for thirteen languages,
+  tabs, find and replace, and a save that re-checks the file first and
+  publishes through a verified temporary file, keeping the original's
+  permissions
+- Per-host path bookmarks and one transfer panel across every open session
+- Server stats (load, memory, disk, uptime), a live log viewer with filtering
+  and severity highlighting, and a systemd service and process manager
+
+### Locked down
+- Optional app lock behind your device's own authentication (Android)
+- **Encrypted backup**: export hosts, groups, settings, snippets, tunnels and
+  bookmarks to one passphrase-protected file — Argon2id and AES-256-GCM, with
+  saved passwords included only if you explicitly ask
+
 ### Every screen size
 - Material 3 window-size-class layouts: side-by-side terminal + file browser
   on tablets, Samsung DeX, and unfolded foldables; host grid on wide screens

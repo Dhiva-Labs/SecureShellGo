@@ -1,3 +1,29 @@
+secureshellgo (1.3.0~noble1) noble; urgency=medium
+
+  * Desktop workspace: split the terminal area into up to four resizable
+    panes each showing a different server, with broadcast input across
+    every visible pane, server groups with colour tags, a Ctrl+K command
+    palette, a quick-connect bar, ~/.ssh/config import, command snippets
+    and per-host startup commands.
+  * Connections: automatic reconnection with keep-alive, jump hosts
+    (ProxyJump) with both hops verified, and a tunnel manager for local,
+    remote and dynamic SOCKS5 forwards.
+  * Files: a built-in remote editor with syntax highlighting for thirteen
+    languages and a stat-guarded temp-then-rename save, path bookmarks,
+    and one transfer panel across every session.
+  * Monitoring: server stats, a live log viewer, and a systemd service and
+    process manager.
+  * Security: optional app lock, an encrypted backup format (Argon2id and
+    AES-256-GCM), in-app ed25519 key generation and installation, and a
+    known-hosts manager.
+  * Fixes the desktop icon regression from ~noble8 as 1.2.1 did, and two
+    faults found by driving the built application against a real server:
+    ordinary sessions no longer request SSH agent forwarding, which had
+    made every exec-based feature fail after the first command, and the
+    server-stats probe no longer collapses into a shell comment.
+
+ -- Dhiva Labs <dhivakar1010@gmail.com>  Thu, 31 Jul 2026 22:30:00 +0530
+
 secureshellgo (1.2.1~noble1) noble; urgency=medium
 
   * Fix the running app showing the generic gear icon in the GNOME dock.
