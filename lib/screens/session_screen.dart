@@ -19,6 +19,9 @@ import '../widgets/transfer_hub_panel.dart';
 import '../widgets/transfer_panel.dart';
 import '../widgets/tunnel_indicator.dart';
 import 'file_browser_pane.dart';
+import 'log_viewer_screen.dart';
+import 'server_stats_screen.dart';
+import 'services_screen.dart';
 import 'terminal_pane.dart';
 import 'workspace_view.dart';
 
@@ -100,6 +103,13 @@ class SessionsScreen extends StatefulWidget {
 
 /// What the app bar's split button can do to the focused pane.
 enum _WorkspaceAction { splitRight, splitDown, closePane }
+
+/// The monitoring views reachable from a session's overflow menu.
+///
+/// They live behind one menu rather than as three more icons because none of
+/// them is something the user reaches for mid-keystroke — the bar is already
+/// carrying everything that is.
+enum _MonitorAction { stats, services, tail }
 
 class _SessionsScreenState extends State<SessionsScreen> {
   StreamSubscription<void>? _changes;
@@ -270,6 +280,29 @@ class _SessionsScreenState extends State<SessionsScreen> {
         _workspace.splitFocused(WorkspaceAxis.column);
       case _WorkspaceAction.closePane:
         _workspace.closePane(_workspace.focusedPaneId);
+    }
+  }
+
+  /// Opens one of the monitoring views on [session].
+  ///
+  /// Each is a plain pushed route that borrows the session's already-
+  /// authenticated transport for exec channels; none of them owns the
+  /// session, and leaving one leaves the shell and any transfers untouched.
+  Future<void> _handleMonitorAction(
+    _MonitorAction action,
+    SessionController session,
+  ) async {
+    switch (action) {
+      case _MonitorAction.stats:
+        await openServerStats(context, session: session);
+      case _MonitorAction.services:
+        await openServicesScreen(context, session: session);
+      case _MonitorAction.tail:
+        await promptAndTailFile(
+          context,
+          session: session,
+          settingsStore: widget.settingsStore,
+        );
     }
   }
 
@@ -650,6 +683,29 @@ class _SessionsScreenState extends State<SessionsScreen> {
             tooltip: 'Snippets',
             icon: const Icon(Icons.bolt_outlined),
             onPressed: _openSnippetPicker,
+          ),
+          // Monitoring. Disabled on a closed session: all three run commands
+          // over the transport, and there is not one.
+          PopupMenuButton<_MonitorAction>(
+            tooltip: 'Monitor this server',
+            icon: const Icon(Icons.monitor_heart_outlined),
+            enabled: !closed,
+            onSelected: (action) =>
+                unawaited(_handleMonitorAction(action, active.controller)),
+            itemBuilder: (context) => const [
+              PopupMenuItem<_MonitorAction>(
+                value: _MonitorAction.stats,
+                child: Text('Server stats'),
+              ),
+              PopupMenuItem<_MonitorAction>(
+                value: _MonitorAction.services,
+                child: Text('Services & processes'),
+              ),
+              PopupMenuItem<_MonitorAction>(
+                value: _MonitorAction.tail,
+                child: Text('Tail a file…'),
+              ),
+            ],
           ),
           // With one session open this is the only sign that a second one is
           // possible, so it stays in the bar rather than living only in the

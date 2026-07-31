@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:typed_data';
 
 import '../models/host.dart';
+import 'shell_quote.dart';
 import 'ssh_service.dart';
 
 /// Which step of the `ssh-copy-id` contract failed, so the UI can say
@@ -85,13 +86,11 @@ class PublicKeyPushCommands {
     return 'LINE=$quoted; grep -qxF "\$LINE" ~/.ssh/authorized_keys';
   }
 
-  /// POSIX single-quoting: wrap [value] in single quotes, and turn any
-  /// embedded single quote into `'\''` (close the quote, an escaped literal
-  /// quote, reopen the quote). This is the only escaping a POSIX shell needs
-  /// for an arbitrary byte string — unlike double quotes, nothing inside a
-  /// single-quoted string is special except the quote character itself.
-  static String _singleQuote(String value) =>
-      "'${value.replaceAll("'", "'\\''")}'";
+  /// The one definition of POSIX single-quoting, now shared with the
+  /// monitoring features that quote remote paths — see `shell_quote.dart`.
+  /// Kept as a named indirection rather than inlining the call below so the
+  /// two call sites still read as one rule applied twice.
+  static String _singleQuote(String value) => posixSingleQuote(value);
 }
 
 /// Installs a public key on a server's `authorized_keys`, following the same

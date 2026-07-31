@@ -21,6 +21,7 @@ import '../services/upload_plan.dart';
 import '../theme.dart';
 import '../widgets/bookmark_sheet.dart';
 import '../widgets/transfer_panel.dart';
+import 'log_viewer_screen.dart';
 import 'remote_directory_picker.dart';
 import 'remote_editor_screen.dart';
 
@@ -897,6 +898,20 @@ class _FileBrowserPaneState extends State<FileBrowserPane>
     if (mounted && !_loading) unawaited(_refresh());
   }
 
+  /// Opens the live log viewer on [entry].
+  ///
+  /// Straight to the viewer with no SFTP round trip first: the tail runs over
+  /// an exec channel, not the filesystem, and the viewer does its own
+  /// readable check before it starts anything.
+  Future<void> _tail(RemoteEntry entry) async {
+    await openLogViewer(
+      context,
+      session: widget.session,
+      path: entry.path,
+      settingsStore: widget.settingsStore,
+    );
+  }
+
   /// Puts the remote path on the clipboard, so it can be pasted straight into
   /// the terminal pane next door.
   Future<void> _copyPath(RemoteEntry entry) async {
@@ -963,6 +978,20 @@ class _FileBrowserPaneState extends State<FileBrowserPane>
                 onTap: () {
                   Navigator.of(context).pop();
                   unawaited(_download([entry]));
+                },
+              ),
+            // Same predicate as Edit and Download: a regular file the server
+            // will let us read. `tail -F` on a directory follows nothing, and
+            // the viewer's own readable check would only refuse it a round
+            // trip later.
+            if (entry.isDownloadable)
+              ListTile(
+                leading: const Icon(Icons.subject),
+                title: const Text('Tail file'),
+                subtitle: const Text('Follows new lines as they are written'),
+                onTap: () {
+                  Navigator.of(context).pop();
+                  unawaited(_tail(entry));
                 },
               ),
             if (entry.isNavigable)
