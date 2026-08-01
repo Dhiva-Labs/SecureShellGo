@@ -4,7 +4,6 @@ import 'package:flutter/material.dart';
 
 import '../models/snippet.dart';
 import '../services/snippet_store.dart';
-import '../theme.dart';
 import 'snippet_edit_screen.dart';
 
 /// Lists every saved snippet and lets the user add, edit or delete one.
@@ -53,21 +52,27 @@ class _SnippetsScreenState extends State<SnippetsScreen> {
   Future<void> _deleteSnippet(Snippet snippet) async {
     final confirmed = await showDialog<bool>(
       context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Delete snippet?'),
-        content: Text('This removes "${snippet.name}". This cannot be undone.'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(false),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            style: FilledButton.styleFrom(backgroundColor: AppTheme.danger),
-            onPressed: () => Navigator.of(context).pop(true),
-            child: const Text('Delete'),
-          ),
-        ],
-      ),
+      builder: (context) {
+        final theme = Theme.of(context);
+        return AlertDialog(
+          title: const Text('Delete snippet?'),
+          content:
+              Text('This removes "${snippet.name}". This cannot be undone.'),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(false),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              style: FilledButton.styleFrom(
+                backgroundColor: theme.colorScheme.error,
+              ),
+              onPressed: () => Navigator.of(context).pop(true),
+              child: const Text('Delete'),
+            ),
+          ],
+        );
+      },
     );
     if (confirmed != true) return;
     await widget.snippetStore.delete(snippet.id);

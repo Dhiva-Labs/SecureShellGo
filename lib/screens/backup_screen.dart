@@ -9,7 +9,6 @@ import '../services/backup_passphrase.dart';
 import '../services/backup_payload.dart';
 import '../services/backup_service.dart';
 import '../services/device_storage.dart';
-import '../theme.dart';
 
 /// Export the app's configuration to an encrypted file, and import one back.
 ///
@@ -351,8 +350,12 @@ class _ExportDialogState extends State<_ExportDialog> {
                       PassphraseStrength.tooShort ||
                       PassphraseStrength.weak =>
                         theme.colorScheme.error,
-                      PassphraseStrength.fair => AppTheme.accent,
-                      PassphraseStrength.strong => Colors.greenAccent,
+                      // Tertiary/primary rather than a literal amber/green:
+                      // this meter needs three visually distinct steps up
+                      // from `error`, not specific hues, so it stays
+                      // coherent under every UI style's own palette.
+                      PassphraseStrength.fair => theme.colorScheme.tertiary,
+                      PassphraseStrength.strong => theme.colorScheme.primary,
                     },
                   ),
                 ),
@@ -595,7 +598,7 @@ class _NoteCard extends StatelessWidget {
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Icon(icon, size: 18, color: AppTheme.accent),
+          Icon(icon, size: 18, color: theme.colorScheme.primary),
           const SizedBox(width: 10),
           Expanded(
             child: Text(
@@ -621,7 +624,7 @@ class _SectionHeader extends StatelessWidget {
       child: Text(
         label,
         style: Theme.of(context).textTheme.labelLarge?.copyWith(
-              color: AppTheme.accent,
+              color: Theme.of(context).colorScheme.primary,
               fontWeight: FontWeight.w600,
             ),
       ),

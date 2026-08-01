@@ -95,6 +95,7 @@ class _KnownHostsScreenState extends State<KnownHostsScreen> {
             separatorBuilder: (_, _) => const Divider(height: 1),
             itemBuilder: (context, index) {
               final key = keys[index];
+              final theme = Theme.of(context);
               return Dismissible(
                 key: ValueKey(key.id),
                 direction: DismissDirection.endToStart,
@@ -103,10 +104,11 @@ class _KnownHostsScreenState extends State<KnownHostsScreen> {
                   return false; // _forget already refreshes the list.
                 },
                 background: Container(
-                  color: AppTheme.danger.withValues(alpha: 0.2),
+                  color: theme.colorScheme.error.withValues(alpha: 0.2),
                   alignment: Alignment.centerRight,
                   padding: const EdgeInsets.symmetric(horizontal: 20),
-                  child: const Icon(Icons.delete_outline, color: AppTheme.danger),
+                  child: Icon(Icons.delete_outline,
+                      color: theme.colorScheme.error),
                 ),
                 child: ListTile(
                   leading: const Icon(Icons.vpn_key_outlined),

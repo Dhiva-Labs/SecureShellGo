@@ -196,8 +196,8 @@ class _RemoteDirectoryPickerState extends State<RemoteDirectoryPicker> {
             if (failure != null)
               Material(
                 color: failure.isPermissionDenied
-                    ? AppTheme.surface
-                    : AppTheme.danger.withValues(alpha: 0.15),
+                    ? theme.colorScheme.surfaceContainerHigh
+                    : theme.colorScheme.error.withValues(alpha: 0.15),
                 child: Padding(
                   padding: const EdgeInsets.fromLTRB(14, 10, 14, 10),
                   child: Row(
@@ -207,8 +207,9 @@ class _RemoteDirectoryPickerState extends State<RemoteDirectoryPicker> {
                             ? Icons.lock_outline
                             : Icons.error_outline,
                         size: 18,
-                        color:
-                            failure.isPermissionDenied ? null : AppTheme.danger,
+                        color: failure.isPermissionDenied
+                            ? null
+                            : theme.colorScheme.error,
                       ),
                       const SizedBox(width: 10),
                       Expanded(
@@ -246,9 +247,9 @@ class _RemoteDirectoryPickerState extends State<RemoteDirectoryPicker> {
                           itemBuilder: (context, index) {
                             final entry = visible[index];
                             return ListTile(
-                              leading: const Icon(
+                              leading: Icon(
                                 Icons.folder,
-                                color: AppTheme.accent,
+                                color: theme.colorScheme.primary,
                               ),
                               title: Text(
                                 entry.name,
@@ -329,8 +330,9 @@ class _PickerPathBar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
     return Material(
-      color: AppTheme.surface,
+      color: theme.colorScheme.surfaceContainerHigh,
       child: Row(
         children: [
           IconButton(

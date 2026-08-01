@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../services/fuzzy_match.dart';
-import '../theme.dart';
 
 enum PaletteItemKind { host, snippet, action }
 
@@ -189,7 +188,9 @@ class _CommandPaletteDialogState extends State<_CommandPaletteDialog> {
                         final selected = index == _selected;
                         return Material(
                           color: selected
-                              ? AppTheme.accent.withValues(alpha: 0.16)
+                              ? theme.colorScheme.primary.withValues(
+                                  alpha: 0.16,
+                                )
                               : Colors.transparent,
                           child: ListTile(
                             dense: true,

@@ -486,21 +486,24 @@ class _HostEditScreenState extends State<HostEditScreen> {
   Future<void> _showKeyImportError(String? fileName, String message) {
     return showDialog<void>(
       context: context,
-      builder: (context) => AlertDialog(
-        icon: const Icon(Icons.error_outline, color: AppTheme.danger),
-        title: Text(
-          fileName == null
-              ? 'Could not import key'
-              : 'Could not import $fileName',
-        ),
-        content: Text(message, style: const TextStyle(height: 1.35)),
-        actions: [
-          FilledButton(
-            onPressed: () => Navigator.of(context).pop(),
-            child: const Text('OK'),
+      builder: (context) {
+        final theme = Theme.of(context);
+        return AlertDialog(
+          icon: Icon(Icons.error_outline, color: theme.colorScheme.error),
+          title: Text(
+            fileName == null
+                ? 'Could not import key'
+                : 'Could not import $fileName',
           ),
-        ],
-      ),
+          content: Text(message, style: const TextStyle(height: 1.35)),
+          actions: [
+            FilledButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text('OK'),
+            ),
+          ],
+        );
+      },
     );
   }
 

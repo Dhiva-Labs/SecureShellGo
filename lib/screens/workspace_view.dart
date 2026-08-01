@@ -154,7 +154,7 @@ class WorkspaceView extends StatelessWidget {
             color: receiving
                 ? AppTheme.danger
                 : focused
-                    ? AppTheme.accent
+                    ? Theme.of(context).colorScheme.primary
                     : Theme.of(context).colorScheme.outlineVariant,
           ),
         ),
@@ -280,8 +280,8 @@ class _PaneHeader extends StatelessWidget {
       color: receiving
           ? AppTheme.danger.withValues(alpha: focused ? 0.30 : 0.18)
           : focused
-              ? AppTheme.accent.withValues(alpha: 0.12)
-              : AppTheme.surface,
+              ? theme.colorScheme.primary.withValues(alpha: 0.12)
+              : theme.colorScheme.surfaceContainerHigh,
       child: SizedBox(
         height: 30,
         child: Row(
@@ -298,7 +298,9 @@ class _PaneHeader extends StatelessWidget {
               Icon(
                 Icons.circle,
                 size: 7,
-                color: session.isClosed ? AppTheme.danger : AppTheme.accent,
+                color: session.isClosed
+                    ? theme.colorScheme.error
+                    : theme.colorScheme.primary,
               ),
               const SizedBox(width: 7),
             ],
@@ -433,7 +435,7 @@ class _EmptyPane extends StatelessWidget {
     final theme = Theme.of(context);
 
     return ColoredBox(
-      color: AppTheme.terminalBackground,
+      color: theme.colorScheme.surfaceContainerHigh,
       child: Center(
         // Scrollable, because the pane this is offering to fill can be a
         // quarter of the window and the list of sessions to offer grows with

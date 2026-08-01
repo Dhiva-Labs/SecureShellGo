@@ -102,7 +102,7 @@ class TerminalKeyBar extends StatelessWidget {
     ];
 
     return Material(
-      color: AppTheme.surface,
+      color: Theme.of(context).colorScheme.surfaceContainerHigh,
       child: SizedBox(
         // 48dp minimum touch target for every key, plus a little breathing
         // room above/below so they do not touch the terminal or the keyboard.
@@ -176,6 +176,7 @@ class _KeyButtonState extends State<_KeyButton> {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
     Widget button = InkWell(
       onTap: _fire,
       borderRadius: BorderRadius.circular(6),
@@ -184,13 +185,13 @@ class _KeyButtonState extends State<_KeyButton> {
         padding: const EdgeInsets.symmetric(horizontal: 12),
         decoration: BoxDecoration(
           color: widget.active
-              ? AppTheme.accent.withValues(alpha: 0.25)
-              : AppTheme.terminalBackground,
+              ? theme.colorScheme.primary.withValues(alpha: 0.25)
+              : theme.colorScheme.surfaceContainerHighest,
           borderRadius: BorderRadius.circular(6),
           border: Border.all(
             color: widget.active
-                ? AppTheme.accent
-                : Colors.white.withValues(alpha: 0.12),
+                ? theme.colorScheme.primary
+                : theme.colorScheme.onSurface.withValues(alpha: 0.12),
           ),
         ),
         alignment: Alignment.center,
@@ -201,7 +202,7 @@ class _KeyButtonState extends State<_KeyButton> {
             fontFamilyFallback: AppTheme.monoFontFamilyFallback,
             fontSize: 13,
             height: 1,
-            color: widget.active ? AppTheme.accent : null,
+            color: widget.active ? theme.colorScheme.primary : null,
             fontWeight: widget.active ? FontWeight.w600 : FontWeight.normal,
           ),
         ),

@@ -259,12 +259,19 @@ class _WorkspaceHarnessState extends State<WorkspaceHarness> {
 }
 
 /// Every pane border the view drew in the focus colour.
+///
+/// The focus border now resolves through `Theme.of(context).colorScheme
+/// .primary` rather than the raw `AppTheme.accent` constant (v1.4.0's
+/// theming wave), so the expected colour has to come from the same place:
+/// `AppTheme.dark`'s own derived primary, not the seed literal it was built
+/// from.
 Iterable<DecoratedBox> focusBorders(WidgetTester tester) {
   final boxes = tester.widgetList<DecoratedBox>(find.byType(DecoratedBox));
+  final focusColor = AppTheme.dark.colorScheme.primary;
   return boxes.where((box) {
     final decoration = box.decoration;
     return decoration is BoxDecoration &&
-        decoration.border?.top.color == AppTheme.accent;
+        decoration.border?.top.color == focusColor;
   });
 }
 

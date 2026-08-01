@@ -4,7 +4,6 @@ import 'package:flutter/material.dart';
 
 import '../services/remote_path.dart';
 import '../services/transfer_queue.dart';
-import '../theme.dart';
 
 /// The icon for a direction, in one place so the summary bar and the row in
 /// the sheet cannot drift apart.
@@ -58,6 +57,7 @@ class TransferSummaryBar extends StatelessWidget {
       queue: queue,
       builder: (context, tasks) {
         if (tasks.isEmpty) return const SizedBox.shrink();
+        final theme = Theme.of(context);
 
         final active = tasks.where((t) => t.status.isActive).toList();
         final failed = tasks.where((t) => t.status == TransferStatus.failed);
@@ -81,7 +81,7 @@ class TransferSummaryBar extends StatelessWidget {
               ? '${failed.first.name} failed'
               : '${failed.length} transfers failed';
           icon = Icons.error_outline;
-          color = AppTheme.danger;
+          color = theme.colorScheme.error;
         } else {
           // Direction matters in the wording now that uploading is a
           // first-class flow: three files pushed to a server being reported
@@ -118,13 +118,13 @@ class TransferSummaryBar extends StatelessWidget {
             ].join(' · ');
           }
           icon = Icons.check_circle_outline;
-          color = AppTheme.accent;
+          color = theme.colorScheme.primary;
         }
 
         final progress = queue.aggregateProgress;
 
         return Material(
-          color: AppTheme.surface,
+          color: theme.colorScheme.surfaceContainerHigh,
           child: InkWell(
             onTap: onTap,
             child: Column(
@@ -179,9 +179,10 @@ Future<void> showTransfersSheet(
   TransferQueue queue, {
   Future<bool> Function(TransferTask task)? onOpen,
 }) {
+  final theme = Theme.of(context);
   return showModalBottomSheet<void>(
     context: context,
-    backgroundColor: AppTheme.surface,
+    backgroundColor: theme.colorScheme.surfaceContainerHigh,
     showDragHandle: true,
     isScrollControlled: true,
     builder: (context) => SafeArea(
@@ -293,8 +294,8 @@ class _TransferTile extends StatelessWidget {
           _ => iconForDirection(task.direction),
         },
         color: switch (task.status) {
-          TransferStatus.completed => AppTheme.accent,
-          TransferStatus.failed => AppTheme.danger,
+          TransferStatus.completed => theme.colorScheme.primary,
+          TransferStatus.failed => theme.colorScheme.error,
           _ => theme.colorScheme.onSurfaceVariant,
         },
       ),

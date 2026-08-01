@@ -561,6 +561,7 @@ class _SessionsScreenState extends State<SessionsScreen> {
     final canReceiveDrops = entries.length > 1;
 
     final closed = active.isClosed;
+    final theme = Theme.of(context);
 
     return Scaffold(
       appBar: AppBar(
@@ -588,7 +589,9 @@ class _SessionsScreenState extends State<SessionsScreen> {
                 Icon(
                   Icons.circle,
                   size: 8,
-                  color: closed ? AppTheme.danger : AppTheme.accent,
+                  color: closed
+                      ? theme.colorScheme.error
+                      : theme.colorScheme.primary,
                 ),
                 const SizedBox(width: 6),
                 Text(
@@ -718,7 +721,7 @@ class _SessionsScreenState extends State<SessionsScreen> {
           IconButton(
             tooltip: closed ? 'Close tab' : 'Disconnect',
             icon: Icon(closed ? Icons.close : Icons.power_settings_new),
-            color: closed ? null : AppTheme.danger,
+            color: closed ? null : theme.colorScheme.error,
             onPressed: () => unawaited(_closeActive()),
           ),
         ],
@@ -846,10 +849,11 @@ class _SessionPageState extends State<_SessionPage> {
     // is too short-lived a thing to be trusted with that.
     final reason = _session.takeDisconnectAnnouncement();
     if (reason == null) return;
+    final theme = Theme.of(context);
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(widget.active ? reason : '${widget.entry.host.displayName}: $reason'),
-        backgroundColor: AppTheme.danger,
+        backgroundColor: theme.colorScheme.error,
       ),
     );
   }
@@ -1022,8 +1026,9 @@ class SessionTabStrip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
     return Material(
-      color: AppTheme.surface,
+      color: theme.colorScheme.surfaceContainerHigh,
       child: SizedBox(
         height: compact ? 42 : 46,
         child: Row(
@@ -1100,12 +1105,12 @@ class _SessionTab extends StatelessWidget {
         padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 2),
         child: Material(
           color: selected
-              ? AppTheme.accent.withValues(alpha: 0.16)
+              ? theme.colorScheme.primary.withValues(alpha: 0.16)
               : Colors.transparent,
           borderRadius: hovering ? null : radius,
           shape: hovering
               ? RoundedRectangleBorder(
-                  side: const BorderSide(color: AppTheme.accent, width: 2),
+                  side: BorderSide(color: theme.colorScheme.primary, width: 2),
                   borderRadius: radius,
                 )
               : null,
@@ -1122,7 +1127,9 @@ class _SessionTab extends StatelessWidget {
                     Icon(
                       Icons.circle,
                       size: 8,
-                      color: closed ? AppTheme.danger : AppTheme.accent,
+                      color: closed
+                          ? theme.colorScheme.error
+                          : theme.colorScheme.primary,
                     ),
                     const SizedBox(width: 8),
                     Flexible(
@@ -1309,6 +1316,7 @@ class _TransferAction extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
     return TransferQueueBuilder(
       queue: queue,
       builder: (context, tasks) {
@@ -1321,7 +1329,8 @@ class _TransferAction extends StatelessWidget {
           onPressed: onTap,
           icon: Badge(
             isLabelVisible: active > 0 || failed,
-            backgroundColor: failed && active == 0 ? AppTheme.danger : null,
+            backgroundColor:
+                failed && active == 0 ? theme.colorScheme.error : null,
             label: active > 0 ? Text('$active') : null,
             child: const Icon(Icons.swap_vert),
           ),
@@ -1346,8 +1355,9 @@ class _ReconnectingBanner extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
     return Material(
-      color: AppTheme.accent.withValues(alpha: 0.13),
+      color: theme.colorScheme.primary.withValues(alpha: 0.13),
       child: Padding(
         padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
         child: Row(
@@ -1386,13 +1396,14 @@ class _DisconnectedBanner extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
     return Material(
-      color: AppTheme.danger.withValues(alpha: 0.15),
+      color: theme.colorScheme.error.withValues(alpha: 0.15),
       child: Padding(
         padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
         child: Row(
           children: [
-            const Icon(Icons.link_off, color: AppTheme.danger, size: 20),
+            Icon(Icons.link_off, color: theme.colorScheme.error, size: 20),
             const SizedBox(width: 10),
             Expanded(
               child: Text(

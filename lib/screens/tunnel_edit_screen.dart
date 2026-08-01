@@ -4,7 +4,6 @@ import 'package:flutter/services.dart';
 import '../models/host.dart';
 import '../models/tunnel_profile.dart';
 import '../services/tunnel_store.dart';
-import '../theme.dart';
 
 /// Add or edit a saved tunnel. [profile] null means "add".
 ///
@@ -243,7 +242,7 @@ class _TunnelEditScreenState extends State<TunnelEditScreen> {
                 Text(
                   _error!,
                   style: theme.textTheme.bodySmall
-                      ?.copyWith(color: AppTheme.danger),
+                      ?.copyWith(color: theme.colorScheme.error),
                 ),
               ],
             ],
@@ -435,12 +434,12 @@ class _Warning extends StatelessWidget {
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(8),
-        color: AppTheme.danger.withValues(alpha: 0.12),
+        color: theme.colorScheme.error.withValues(alpha: 0.12),
       ),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Icon(icon, size: 18, color: AppTheme.danger),
+          Icon(icon, size: 18, color: theme.colorScheme.error),
           const SizedBox(width: 10),
           Expanded(
             child: Text(

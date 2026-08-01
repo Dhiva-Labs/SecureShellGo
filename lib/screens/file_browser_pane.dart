@@ -709,9 +709,10 @@ class _FileBrowserPaneState extends State<FileBrowserPane>
     List<ManagedSession> destinations, {
     required bool move,
   }) {
+    final theme = Theme.of(context);
     return showModalBottomSheet<ManagedSession>(
       context: context,
-      backgroundColor: AppTheme.surface,
+      backgroundColor: theme.colorScheme.surfaceContainerHigh,
       builder: (context) => SafeArea(
         child: Column(
           mainAxisSize: MainAxisSize.min,
@@ -723,7 +724,8 @@ class _FileBrowserPaneState extends State<FileBrowserPane>
             const Divider(height: 1),
             for (final destination in destinations)
               ListTile(
-                leading: const Icon(Icons.dns_outlined, color: AppTheme.accent),
+                leading: Icon(Icons.dns_outlined,
+                    color: theme.colorScheme.primary),
                 title: Text(destination.host.displayName),
                 subtitle: Text(destination.host.target),
                 onTap: () => Navigator.of(context).pop(destination),
@@ -920,10 +922,11 @@ class _FileBrowserPaneState extends State<FileBrowserPane>
   }
 
   void _snack(String message, {bool isError = false}) {
+    final theme = Theme.of(context);
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(message),
-        backgroundColor: isError ? AppTheme.danger : null,
+        backgroundColor: isError ? theme.colorScheme.error : null,
       ),
     );
   }
@@ -944,10 +947,11 @@ class _FileBrowserPaneState extends State<FileBrowserPane>
             entry.kind == RemoteEntryKind.directory) &&
         _destinations.isNotEmpty;
     final isFolder = entry.kind == RemoteEntryKind.directory;
+    final theme = Theme.of(context);
 
     await showModalBottomSheet<void>(
       context: context,
-      backgroundColor: AppTheme.surface,
+      backgroundColor: theme.colorScheme.surfaceContainerHigh,
       builder: (context) => SafeArea(
         child: Column(
           mainAxisSize: MainAxisSize.min,
@@ -962,7 +966,8 @@ class _FileBrowserPaneState extends State<FileBrowserPane>
             const Divider(height: 1),
             if (entry.isDownloadable)
               ListTile(
-                leading: const Icon(Icons.edit_note, color: AppTheme.accent),
+                leading: Icon(Icons.edit_note,
+                    color: theme.colorScheme.primary),
                 title: const Text('Edit'),
                 subtitle: const Text('Opens on the server, saves back in place'),
                 onTap: () {
@@ -1399,9 +1404,11 @@ Future<void> sendEntriesToSession(
   if (plan.cancelled || !context.mounted) return;
 
   if (plan.isEmpty) {
+    final theme = Theme.of(context);
     messenger.showSnackBar(SnackBar(
       content: Text(_nothingSentMessage(plan)),
-      backgroundColor: plan.unsupported.isNotEmpty ? AppTheme.danger : null,
+      backgroundColor:
+          plan.unsupported.isNotEmpty ? theme.colorScheme.error : null,
     ));
     return;
   }
@@ -1445,9 +1452,10 @@ Future<void> sendEntriesToSession(
 }
 
 void _showErrorSnack(ScaffoldMessengerState messenger, String message) {
+  final theme = Theme.of(messenger.context);
   messenger.showSnackBar(SnackBar(
     content: Text(message),
-    backgroundColor: AppTheme.danger,
+    backgroundColor: theme.colorScheme.error,
   ));
 }
 
@@ -1743,13 +1751,14 @@ class _SharedFilesBanner extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final one = pending.count == 1;
+    final theme = Theme.of(context);
     return Material(
-      color: AppTheme.accent.withValues(alpha: 0.14),
+      color: theme.colorScheme.primary.withValues(alpha: 0.14),
       child: Padding(
         padding: const EdgeInsets.fromLTRB(14, 10, 4, 10),
         child: Row(
           children: [
-            const Icon(Icons.ios_share, size: 18, color: AppTheme.accent),
+            Icon(Icons.ios_share, size: 18, color: theme.colorScheme.primary),
             const SizedBox(width: 10),
             Expanded(
               child: Column(
@@ -1818,7 +1827,7 @@ class _PathBar extends StatelessWidget {
     final theme = Theme.of(context);
 
     return Material(
-      color: AppTheme.surface,
+      color: theme.colorScheme.surfaceContainerHigh,
       child: Row(
         children: [
           IconButton(
@@ -1876,7 +1885,7 @@ class _PathBar extends StatelessWidget {
             icon: Icon(
               isBookmarked ? Icons.star : Icons.star_border,
               size: 20,
-              color: isBookmarked ? AppTheme.accent : null,
+              color: isBookmarked ? theme.colorScheme.primary : null,
             ),
             onPressed: onToggleBookmark,
           ),
@@ -1977,9 +1986,10 @@ class _SelectionBar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final sendTo = onSendToServer;
+    final theme = Theme.of(context);
 
     return Material(
-      color: AppTheme.accent.withValues(alpha: 0.12),
+      color: theme.colorScheme.primary.withValues(alpha: 0.12),
       child: SizedBox(
         height: 48,
         child: Row(
@@ -2043,10 +2053,12 @@ class _DragFeedback extends StatelessWidget {
     final label = entries.length == 1
         ? entries.single.name
         : '${entries.length} files';
+    final theme = Theme.of(context);
     return Material(
-      // AppTheme.surface reads as "a card lifted off the list" against both
-      // the terminal background and the file browser's own surface.
-      color: AppTheme.surface,
+      // A raised container tone reads as "a card lifted off the list"
+      // against both the terminal background and the file browser's own
+      // surface.
+      color: theme.colorScheme.surfaceContainerHigh,
       elevation: 6,
       borderRadius: BorderRadius.circular(6),
       child: ConstrainedBox(
@@ -2061,7 +2073,7 @@ class _DragFeedback extends StatelessWidget {
                     ? Icons.insert_drive_file_outlined
                     : Icons.file_copy_outlined,
                 size: 16,
-                color: AppTheme.accent,
+                color: theme.colorScheme.primary,
               ),
               const SizedBox(width: 8),
               Flexible(
@@ -2115,12 +2127,12 @@ class _EntryTile extends StatelessWidget {
         // more here than screen density.
         contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
         selected: selected,
-        selectedTileColor: AppTheme.accent.withValues(alpha: 0.1),
+        selectedTileColor: theme.colorScheme.primary.withValues(alpha: 0.1),
         leading: selecting && entry.isDownloadable
             ? Icon(
                 selected ? Icons.check_circle : Icons.circle_outlined,
                 color: selected
-                    ? AppTheme.accent
+                    ? theme.colorScheme.primary
                     : theme.colorScheme.onSurfaceVariant,
               )
             : Icon(_iconFor(entry), color: _colourFor(entry, theme)),
@@ -2154,7 +2166,7 @@ class _EntryTile extends StatelessWidget {
 
   static Color? _colourFor(RemoteEntry entry, ThemeData theme) =>
       switch (entry.kind) {
-        RemoteEntryKind.directory => AppTheme.accent,
+        RemoteEntryKind.directory => theme.colorScheme.primary,
         RemoteEntryKind.symlink => theme.colorScheme.primary,
         _ => theme.colorScheme.onSurfaceVariant,
       };
@@ -2168,7 +2180,10 @@ class _FailureBanner extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final denied = failure.isPermissionDenied;
-    final color = denied ? AppTheme.surface : AppTheme.danger.withValues(alpha: 0.15);
+    final theme = Theme.of(context);
+    final color = denied
+        ? theme.colorScheme.surfaceContainerHigh
+        : theme.colorScheme.error.withValues(alpha: 0.15);
 
     return Material(
       color: color,
@@ -2180,7 +2195,7 @@ class _FailureBanner extends StatelessWidget {
             Icon(
               denied ? Icons.lock_outline : Icons.error_outline,
               size: 20,
-              color: denied ? null : AppTheme.danger,
+              color: denied ? null : theme.colorScheme.error,
             ),
             const SizedBox(width: 10),
             Expanded(

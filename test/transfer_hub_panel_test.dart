@@ -24,6 +24,11 @@ void main() {
 
   Future<void> pump(WidgetTester tester, TransferHub hub) => tester.pumpWidget(
         MaterialApp(
+          // The badge assertion below checks against `AppTheme.danger`,
+          // which only equals `Theme.of(context).colorScheme.error` under
+          // this theme — an unthemed `MaterialApp` resolves stock Material 3
+          // defaults instead, same fix as `workspace_view_test.dart`.
+          theme: AppTheme.dark,
           home: Scaffold(
             appBar: AppBar(
               actions: [TransferHubAction(hub: hub, onTap: () {})],

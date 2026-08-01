@@ -23,6 +23,8 @@ void main() {
       const settings = AppSettings();
       expect(settings.terminalFontSize, AppSettings.defaultFontSize);
       expect(settings.colorScheme, TerminalColorScheme.classic);
+      expect(settings.uiStyle, UiStyle.aurora);
+      expect(settings.themeBrightness, ThemeBrightness.dark);
       expect(settings.keepScreenAwake, isFalse);
       expect(settings.showHiddenFilesByDefault, isFalse);
     });
@@ -57,6 +59,8 @@ void main() {
       const settings = AppSettings(
         terminalFontSize: 20,
         colorScheme: TerminalColorScheme.monokai,
+        uiStyle: UiStyle.gcp,
+        themeBrightness: ThemeBrightness.light,
         keepScreenAwake: true,
         showHiddenFilesByDefault: true,
         collapsedGroups: {'Work', 'Home'},
@@ -64,16 +68,65 @@ void main() {
       final restored = AppSettings.fromJson(settings.toJson());
       expect(restored.terminalFontSize, 20);
       expect(restored.colorScheme, TerminalColorScheme.monokai);
+      expect(restored.uiStyle, UiStyle.gcp);
+      expect(restored.themeBrightness, ThemeBrightness.light);
       expect(restored.keepScreenAwake, isTrue);
       expect(restored.showHiddenFilesByDefault, isTrue);
       expect(restored.collapsedGroups, {'Work', 'Home'});
+    });
+
+    test('every UiStyle x ThemeBrightness combination round-trips through '
+        'JSON by name', () {
+      for (final style in UiStyle.values) {
+        for (final brightness in ThemeBrightness.values) {
+          final settings = AppSettings(
+            uiStyle: style,
+            themeBrightness: brightness,
+          );
+          final restored = AppSettings.fromJson(settings.toJson());
+          expect(restored.uiStyle, style);
+          expect(restored.themeBrightness, brightness);
+        }
+      }
     });
 
     test('fromJson falls back to defaults for missing fields', () {
       final settings = AppSettings.fromJson(const {});
       expect(settings.terminalFontSize, AppSettings.defaultFontSize);
       expect(settings.colorScheme, TerminalColorScheme.classic);
+      expect(settings.uiStyle, UiStyle.aurora);
+      expect(settings.themeBrightness, ThemeBrightness.dark);
       expect(settings.collapsedGroups, isEmpty);
+    });
+
+    test('settings.json written before v1.4.0 (no uiStyle/themeBrightness '
+        'keys) loads as aurora + dark — today\'s only look — not some other '
+        'style the user never chose', () {
+      final settings = AppSettings.fromJson(const {
+        'version': 1,
+        'terminalFontSize': 14.0,
+        'colorScheme': 'classic',
+        'keepScreenAwake': false,
+        'showHiddenFilesByDefault': false,
+        'collapsedGroups': ['Work'],
+        'appLockEnabled': false,
+        'appLockTimeout': 'oneMinute',
+      });
+      expect(settings.uiStyle, UiStyle.aurora);
+      expect(settings.themeBrightness, ThemeBrightness.dark);
+      // Confirms this is genuinely a partial-JSON test, not just defaults:
+      // every field that *was* present is still honoured.
+      expect(settings.collapsedGroups, {'Work'});
+    });
+
+    test('fromJson falls back to aurora/dark for unrecognised uiStyle or '
+        'themeBrightness ids', () {
+      final settings = AppSettings.fromJson(const {
+        'uiStyle': 'not-a-real-style',
+        'themeBrightness': 'not-a-real-brightness',
+      });
+      expect(settings.uiStyle, UiStyle.aurora);
+      expect(settings.themeBrightness, ThemeBrightness.dark);
     });
 
     test('settings.json written before v1.3.0 (no collapsedGroups key) '

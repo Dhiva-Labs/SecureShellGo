@@ -42,6 +42,16 @@ class SecureShellGoApp extends StatefulWidget {
 }
 
 class _SecureShellGoAppState extends State<SecureShellGoApp> {
+  // Rebuilds the app's ThemeData when the style or brightness setting
+  // changes. `AppSettings` itself is not `Listenable` — see
+  // `settings_store.dart` for why — so this mirrors the app-lock wiring in
+  // `initState` below: a stream subscription that calls `setState`, scoped
+  // to just the two theming fields so an unrelated settings change (font
+  // size, a collapsed group) does not repaint the whole app for nothing.
+  UiStyle _uiStyle = UiStyle.aurora;
+  ThemeBrightness _themeBrightness = ThemeBrightness.dark;
+  StreamSubscription<AppSettings>? _themeWatch;
+
   // Composition root. Services take their dependencies through constructors
   // and hold no globals, so there is no service locator here — see
   // ARCHITECTURE.md.
@@ -238,17 +248,33 @@ class _SecureShellGoAppState extends State<SecureShellGoApp> {
     // not show a spinner on a cold start.
     _knownHosts.ensureLoaded();
     _hostStore.ensureLoaded();
-    // The lock has to be decided from the *loaded* settings, not the defaults
-    // the store reads as before its first disk read completes — otherwise a
-    // user with the lock on would get one unguarded frame of their host list
-    // on every cold start.
+    // Same reasoning as the lock below: the *loaded* settings, not the
+    // defaults the store reads as before its first disk read completes,
+    // otherwise a user on `aws`+light would get one frame of aurora dark on
+    // every cold start.
+    _uiStyle = _settingsStore.current.uiStyle;
+    _themeBrightness = _settingsStore.current.themeBrightness;
     unawaited(
       _settingsStore.ensureLoaded().then((_) {
         if (!mounted) return;
+        setState(() {
+          _uiStyle = _settingsStore.current.uiStyle;
+          _themeBrightness = _settingsStore.current.themeBrightness;
+        });
         unawaited(_appLock.start(_settingsStore.current));
       }),
     );
     _settingsWatch = _settingsStore.changes.listen(_appLock.applySettings);
+    _themeWatch = _settingsStore.changes.listen((settings) {
+      if (settings.uiStyle == _uiStyle &&
+          settings.themeBrightness == _themeBrightness) {
+        return;
+      }
+      setState(() {
+        _uiStyle = settings.uiStyle;
+        _themeBrightness = settings.themeBrightness;
+      });
+    });
   }
 
   @override
@@ -262,6 +288,7 @@ class _SecureShellGoAppState extends State<SecureShellGoApp> {
     unawaited(_tunnels.dispose());
     unawaited(_workspace.dispose());
     unawaited(_settingsWatch?.cancel());
+    unawaited(_themeWatch?.cancel());
     _appLock.dispose();
     _settingsStore.dispose();
     super.dispose();
@@ -272,9 +299,9 @@ class _SecureShellGoAppState extends State<SecureShellGoApp> {
     return MaterialApp(
       title: 'SecureShell Go',
       debugShowCheckedModeBanner: false,
-      themeMode: ThemeMode.dark,
-      theme: AppTheme.dark,
-      darkTheme: AppTheme.dark,
+      themeMode: AppTheme.themeModeFor(_themeBrightness),
+      theme: AppTheme.themeFor(_uiStyle, Brightness.light),
+      darkTheme: AppTheme.themeFor(_uiStyle, Brightness.dark),
       // `builder`, so the gate is inserted *above* the Navigator rather than
       // inside it. Nothing the app pushes can end up on top of the lock, and
       // there is no lock route for a back gesture to pop.

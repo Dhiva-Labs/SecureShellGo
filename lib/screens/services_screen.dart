@@ -6,7 +6,6 @@ import '../services/process_table.dart';
 import '../services/remote_exec.dart';
 import '../services/session_controller.dart';
 import '../services/systemd_units.dart';
-import '../theme.dart';
 
 /// systemd services and the process table, on one screen with two tabs.
 ///
@@ -139,6 +138,7 @@ class _ServicesTabState extends State<_ServicesTab>
   /// Every action is confirmed first, by name, with the sudo warning — there
   /// is no path from a tap to a running `systemctl` that skips this.
   Future<void> _act(ServiceAction action, ServiceUnit unit) async {
+    final theme = Theme.of(context);
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
@@ -180,7 +180,9 @@ class _ServicesTabState extends State<_ServicesTab>
           ),
           FilledButton(
             style: action == ServiceAction.stop
-                ? FilledButton.styleFrom(backgroundColor: AppTheme.danger)
+                ? FilledButton.styleFrom(
+                    backgroundColor: theme.colorScheme.error,
+                  )
                 : null,
             onPressed: () => Navigator.of(context).pop(true),
             child: Text(action.verb),
@@ -212,10 +214,11 @@ class _ServicesTabState extends State<_ServicesTab>
   }
 
   void _snack(String message, {bool isError = false}) {
+    final theme = Theme.of(context);
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(message),
-        backgroundColor: isError ? AppTheme.danger : null,
+        backgroundColor: isError ? theme.colorScheme.error : null,
         duration: Duration(seconds: isError ? 6 : 3),
       ),
     );
@@ -303,11 +306,12 @@ class _ServiceRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
     final colour = unit.isFailed
-        ? AppTheme.danger
+        ? theme.colorScheme.error
         : unit.isRunning
-            ? AppTheme.accent
-            : Theme.of(context).colorScheme.onSurfaceVariant;
+            ? theme.colorScheme.primary
+            : theme.colorScheme.onSurfaceVariant;
 
     return ListTile(
       dense: true,
@@ -413,6 +417,7 @@ class _ProcessesTabState extends State<_ProcessesTab>
   /// deliberate second choice. PID 1 never reaches here — the row does not
   /// offer the action.
   Future<void> _kill(RemoteProcess process) async {
+    final theme = Theme.of(context);
     final force = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
@@ -452,7 +457,9 @@ class _ProcessesTabState extends State<_ProcessesTab>
             child: const Text('Cancel'),
           ),
           TextButton(
-            style: TextButton.styleFrom(foregroundColor: AppTheme.danger),
+            style: TextButton.styleFrom(
+              foregroundColor: theme.colorScheme.error,
+            ),
             onPressed: () => Navigator.of(context).pop(true),
             child: const Text('Force kill (KILL)'),
           ),
@@ -483,10 +490,11 @@ class _ProcessesTabState extends State<_ProcessesTab>
   }
 
   void _snack(String message, {bool isError = false}) {
+    final theme = Theme.of(context);
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(message),
-        backgroundColor: isError ? AppTheme.danger : null,
+        backgroundColor: isError ? theme.colorScheme.error : null,
         duration: Duration(seconds: isError ? 6 : 3),
       ),
     );
@@ -581,6 +589,7 @@ class _ProcessHeader extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
     Widget cell(
       String label,
       ProcessSort column, {
@@ -603,8 +612,8 @@ class _ProcessHeader extends StatelessWidget {
                     fontSize: 11,
                     fontWeight: active ? FontWeight.w700 : FontWeight.w500,
                     color: active
-                        ? AppTheme.accent
-                        : Theme.of(context).colorScheme.onSurfaceVariant,
+                        ? theme.colorScheme.primary
+                        : theme.colorScheme.onSurfaceVariant,
                   ),
                 ),
               ),
@@ -612,7 +621,7 @@ class _ProcessHeader extends StatelessWidget {
                 Icon(
                   descending ? Icons.arrow_drop_down : Icons.arrow_drop_up,
                   size: 16,
-                  color: AppTheme.accent,
+                  color: theme.colorScheme.primary,
                 ),
             ],
           ),
@@ -652,7 +661,8 @@ class _ProcessRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final dim = Theme.of(context).colorScheme.onSurfaceVariant;
+    final theme = Theme.of(context);
+    final dim = theme.colorScheme.onSurfaceVariant;
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 12),
       child: Row(
@@ -688,7 +698,8 @@ class _ProcessRow extends StatelessWidget {
               process.cpuPercent.toStringAsFixed(1),
               style: TextStyle(
                 fontSize: 12,
-                color: process.cpuPercent >= 50 ? AppTheme.danger : null,
+                color:
+                    process.cpuPercent >= 50 ? theme.colorScheme.error : null,
               ),
             ),
           ),

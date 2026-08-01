@@ -95,6 +95,17 @@ class _SettingsScreenState extends State<SettingsScreen> {
     await widget.settingsStore.save(next);
   }
 
+  /// Which of a [UiStyle]'s two variants the style previews below — and the
+  /// running app, once [ThemeBrightness.system] is chosen — should render
+  /// right now.
+  Brightness _effectiveBrightness(BuildContext context) {
+    return switch (_settings.themeBrightness) {
+      ThemeBrightness.light => Brightness.light,
+      ThemeBrightness.dark => Brightness.dark,
+      ThemeBrightness.system => MediaQuery.platformBrightnessOf(context),
+    };
+  }
+
   void _previewFontSize(double size) {
     setState(
       () => _settings = _settings.copyWith(terminalFontSize: size),
@@ -262,6 +273,58 @@ class _SettingsScreenState extends State<SettingsScreen> {
           constraints: const BoxConstraints(maxWidth: 600),
           child: ListView(
             children: [
+              const _SectionHeader('Appearance'),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 4, 16, 4),
+                child: Text('UI style', style: theme.textTheme.bodyLarge),
+              ),
+              RadioGroup<UiStyle>(
+                groupValue: _settings.uiStyle,
+                onChanged: (value) {
+                  if (value != null) {
+                    unawaited(_apply((s) => s.copyWith(uiStyle: value)));
+                  }
+                },
+                child: Column(
+                  children: [
+                    for (final style in UiStyle.values)
+                      RadioListTile<UiStyle>(
+                        value: style,
+                        title: Text(style.label),
+                        secondary: _UiStylePreview(
+                          style: style,
+                          brightness: _effectiveBrightness(context),
+                        ),
+                        dense: true,
+                      ),
+                  ],
+                ),
+              ),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
+                child: Text('Brightness', style: theme.textTheme.bodyLarge),
+              ),
+              RadioGroup<ThemeBrightness>(
+                groupValue: _settings.themeBrightness,
+                onChanged: (value) {
+                  if (value != null) {
+                    unawaited(
+                      _apply((s) => s.copyWith(themeBrightness: value)),
+                    );
+                  }
+                },
+                child: Column(
+                  children: [
+                    for (final brightness in ThemeBrightness.values)
+                      RadioListTile<ThemeBrightness>(
+                        value: brightness,
+                        title: Text(brightness.label),
+                        dense: true,
+                      ),
+                  ],
+                ),
+              ),
+              const Divider(height: 32),
               const _SectionHeader('Terminal'),
               _TerminalPreview(settings: _settings),
               Padding(
@@ -406,7 +469,7 @@ class _SectionHeader extends StatelessWidget {
       child: Text(
         label,
         style: Theme.of(context).textTheme.labelLarge?.copyWith(
-              color: AppTheme.accent,
+              color: Theme.of(context).colorScheme.primary,
               fontWeight: FontWeight.w600,
             ),
       ),
@@ -433,7 +496,12 @@ class _TerminalPreview extends StatelessWidget {
         decoration: BoxDecoration(
           color: palette.background,
           borderRadius: BorderRadius.circular(10),
-          border: Border.all(color: Colors.white.withValues(alpha: 0.08)),
+          // The palette's own foreground, not a fixed white — a light
+          // scheme like Solarized Light needs a dark hairline here, not an
+          // invisible one.
+          border: Border.all(
+            color: palette.foreground.withValues(alpha: 0.18),
+          ),
         ),
         child: Text.rich(
           TextSpan(
@@ -484,11 +552,107 @@ class _SchemeSwatch extends StatelessWidget {
       clipBehavior: Clip.antiAlias,
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(6),
-        border: Border.all(color: Colors.white.withValues(alpha: 0.15)),
+        // Same reasoning as `_TerminalPreview` above — the swatch strip's
+        // own background varies per scheme, so its frame has to too.
+        border: Border.all(
+          color: palette.foreground.withValues(alpha: 0.2),
+        ),
       ),
       child: Row(
         children: [
           for (final color in strip) Expanded(child: ColoredBox(color: color)),
+        ],
+      ),
+    );
+  }
+}
+
+/// A miniature mock-up of one [UiStyle] + [Brightness] combination — an
+/// app-bar strip, a card in that style's own corner radius and
+/// border/shadow treatment, and the style's accent as a dot — so the radio
+/// list previews the actual look rather than naming it and hoping.
+///
+/// Built straight from the real [ThemeData] `AppTheme.themeFor` returns
+/// (not a second hand-copied palette), so this can never drift from what
+/// choosing the option actually applies.
+class _UiStylePreview extends StatelessWidget {
+  const _UiStylePreview({required this.style, required this.brightness});
+
+  final UiStyle style;
+  final Brightness brightness;
+
+  @override
+  Widget build(BuildContext context) {
+    final previewTheme = AppTheme.themeFor(style, brightness);
+    final scheme = previewTheme.colorScheme;
+    final cardShape = previewTheme.cardTheme.shape;
+    final cardRadius = cardShape is RoundedRectangleBorder
+        ? cardShape.borderRadius
+        : const BorderRadius.all(Radius.circular(4));
+    final cardBorder = cardShape is RoundedRectangleBorder &&
+            cardShape.side != BorderSide.none
+        ? Border.fromBorderSide(cardShape.side)
+        : null;
+    final cardElevated = (previewTheme.cardTheme.elevation ?? 0) > 0;
+
+    return Container(
+      width: 72,
+      height: 52,
+      clipBehavior: Clip.antiAlias,
+      decoration: BoxDecoration(
+        color: previewTheme.scaffoldBackgroundColor,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: scheme.outlineVariant),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Mock app bar.
+          Container(
+            height: 14,
+            color: previewTheme.appBarTheme.backgroundColor ?? scheme.surface,
+          ),
+          Expanded(
+            child: Padding(
+              padding: const EdgeInsets.all(6),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  // Mock card, in the style's own corner radius and
+                  // border-vs-shadow treatment.
+                  Expanded(
+                    child: DecoratedBox(
+                      decoration: BoxDecoration(
+                        color: previewTheme.cardTheme.color ?? scheme.surface,
+                        borderRadius: cardRadius,
+                        border: cardBorder,
+                        boxShadow: cardElevated
+                            ? const [
+                                BoxShadow(
+                                  color: Color(0x40000000),
+                                  blurRadius: 3,
+                                  offset: Offset(0, 1),
+                                ),
+                              ]
+                            : null,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 5),
+                  // The style's accent.
+                  Container(
+                    width: 10,
+                    height: 10,
+                    margin: const EdgeInsets.only(top: 2),
+                    decoration: BoxDecoration(
+                      color: scheme.primary,
+                      shape: BoxShape.circle,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
         ],
       ),
     );

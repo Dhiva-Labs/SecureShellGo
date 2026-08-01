@@ -86,6 +86,7 @@ class _SnippetEditScreenState extends State<SnippetEditScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
     return Scaffold(
       appBar: AppBar(
         title: Text(widget.isEditing ? 'Edit snippet' : 'Add snippet'),
@@ -151,7 +152,7 @@ class _SnippetEditScreenState extends State<SnippetEditScreen> {
                       const SizedBox(height: 16),
                       Text(
                         _error!,
-                        style: const TextStyle(color: AppTheme.danger),
+                        style: TextStyle(color: theme.colorScheme.error),
                       ),
                     ],
                     const SizedBox(height: 24),

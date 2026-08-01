@@ -28,9 +28,11 @@ class _ErrorBannerState extends State<ErrorBanner> {
       width: double.infinity,
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        color: AppTheme.danger.withValues(alpha: 0.12),
+        color: theme.colorScheme.error.withValues(alpha: 0.12),
         borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: AppTheme.danger.withValues(alpha: 0.5)),
+        border: Border.all(
+          color: theme.colorScheme.error.withValues(alpha: 0.5),
+        ),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -38,7 +40,11 @@ class _ErrorBannerState extends State<ErrorBanner> {
           Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const Icon(Icons.error_outline, color: AppTheme.danger, size: 20),
+              Icon(
+                Icons.error_outline,
+                color: theme.colorScheme.error,
+                size: 20,
+              ),
               const SizedBox(width: 10),
               Expanded(
                 child: Text(

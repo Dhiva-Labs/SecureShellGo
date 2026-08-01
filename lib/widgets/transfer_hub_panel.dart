@@ -3,7 +3,6 @@ import 'package:flutter/material.dart';
 import '../services/remote_path.dart';
 import '../services/transfer_hub.dart';
 import '../services/transfer_queue.dart';
-import '../theme.dart';
 import 'transfer_panel.dart' show iconForDirection;
 
 /// Rebuilds [builder] whenever [hub]'s merged list changes — the
@@ -47,6 +46,7 @@ class TransferHubAction extends StatelessWidget {
       hub: hub,
       builder: (context, items) {
         if (items.isEmpty) return const SizedBox.shrink();
+        final theme = Theme.of(context);
         final active = items.where((i) => i.task.status.isActive).length;
         final failed =
             items.any((i) => i.task.status == TransferStatus.failed);
@@ -56,7 +56,8 @@ class TransferHubAction extends StatelessWidget {
           onPressed: onTap,
           icon: Badge(
             isLabelVisible: active > 0 || failed,
-            backgroundColor: failed && active == 0 ? AppTheme.danger : null,
+            backgroundColor:
+                failed && active == 0 ? theme.colorScheme.error : null,
             label: active > 0 ? Text('$active') : null,
             child: const Icon(Icons.swap_calls),
           ),
@@ -69,9 +70,10 @@ class TransferHubAction extends StatelessWidget {
 /// The unified transfer list, as a bottom sheet: every session's uploads,
 /// downloads and server-to-server copies, newest first, in one place.
 Future<void> showTransferHubSheet(BuildContext context, TransferHub hub) {
+  final theme = Theme.of(context);
   return showModalBottomSheet<void>(
     context: context,
-    backgroundColor: AppTheme.surface,
+    backgroundColor: theme.colorScheme.surfaceContainerHigh,
     showDragHandle: true,
     isScrollControlled: true,
     builder: (context) => SafeArea(
@@ -160,8 +162,8 @@ class _HubTile extends StatelessWidget {
           _ => iconForDirection(task.direction),
         },
         color: switch (task.status) {
-          TransferStatus.completed => AppTheme.accent,
-          TransferStatus.failed => AppTheme.danger,
+          TransferStatus.completed => theme.colorScheme.primary,
+          TransferStatus.failed => theme.colorScheme.error,
           _ => theme.colorScheme.onSurfaceVariant,
         },
       ),

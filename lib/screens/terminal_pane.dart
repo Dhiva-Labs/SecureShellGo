@@ -210,7 +210,7 @@ class _TerminalPaneState extends State<TerminalPane>
     final lines = ClipboardPaste.lineCount(text);
     final result = await showModalBottomSheet<bool>(
       context: context,
-      backgroundColor: AppTheme.surface,
+      backgroundColor: Theme.of(context).colorScheme.surfaceContainerHigh,
       builder: (context) => SafeArea(
         child: Padding(
           padding: const EdgeInsets.fromLTRB(20, 20, 20, 12),
@@ -401,10 +401,15 @@ class _TerminalPaneState extends State<TerminalPane>
                   ),
                 ),
                 if (!ready && !closed)
-                  const Positioned.fill(
+                  Positioned.fill(
+                    // The live TerminalView underneath already renders in
+                    // `terminalThemeFor(_colorScheme)` — this loading cover
+                    // matches that background rather than the app's chrome
+                    // background, so there is no flash when the shell
+                    // becomes ready and the cover is removed.
                     child: ColoredBox(
-                      color: AppTheme.terminalBackground,
-                      child: Center(
+                      color: AppTheme.terminalThemeFor(_colorScheme).background,
+                      child: const Center(
                         child: Column(
                           mainAxisSize: MainAxisSize.min,
                           children: [
@@ -473,14 +478,19 @@ class _SelectionToolbar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
     return Material(
-      color: AppTheme.accent.withValues(alpha: 0.12),
+      color: theme.colorScheme.primary.withValues(alpha: 0.12),
       child: SizedBox(
         height: 44,
         child: Row(
           children: [
             const SizedBox(width: 12),
-            const Icon(Icons.highlight_alt, size: 16, color: AppTheme.accent),
+            Icon(
+              Icons.highlight_alt,
+              size: 16,
+              color: theme.colorScheme.primary,
+            ),
             const SizedBox(width: 8),
             const Text('Selected', style: TextStyle(fontSize: 12.5)),
             const Spacer(),

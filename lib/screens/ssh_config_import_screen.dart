@@ -7,7 +7,6 @@ import '../models/host.dart';
 import '../services/host_store.dart';
 import '../services/quick_connect_parser.dart' show defaultQuickConnectUsername;
 import '../services/ssh_config_parser.dart';
-import '../theme.dart';
 
 /// Reads `~/.ssh/config`, previews every concrete `Host` block it (and one
 /// level of `Include`) contains, and adds the checked ones to [hostStore].
@@ -281,10 +280,11 @@ class _Badge extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
       decoration: BoxDecoration(
-        color: AppTheme.accent.withValues(alpha: 0.16),
+        color: theme.colorScheme.primary.withValues(alpha: 0.16),
         borderRadius: BorderRadius.circular(4),
       ),
       child: Text(label, style: const TextStyle(fontSize: 11)),

@@ -3,7 +3,6 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import '../services/tunnel_runtime.dart';
-import '../theme.dart';
 
 /// The sessions screen's "something is listening" chip.
 ///
@@ -46,22 +45,23 @@ class _TunnelIndicatorState extends State<TunnelIndicator> {
   Widget build(BuildContext context) {
     final count = widget.tunnels.activeCount;
     if (count == 0) return const SizedBox.shrink();
+    final theme = Theme.of(context);
 
     final chip = Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(20),
-        color: AppTheme.accent.withValues(alpha: 0.16),
+        color: theme.colorScheme.primary.withValues(alpha: 0.16),
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          const Icon(Icons.swap_horiz, size: 15, color: AppTheme.accent),
+          Icon(Icons.swap_horiz, size: 15, color: theme.colorScheme.primary),
           const SizedBox(width: 4),
           Text(
             '$count',
-            style: const TextStyle(
-              color: AppTheme.accent,
+            style: TextStyle(
+              color: theme.colorScheme.primary,
               fontSize: 12,
               fontWeight: FontWeight.w600,
             ),

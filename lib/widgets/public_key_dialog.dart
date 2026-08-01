@@ -34,7 +34,7 @@ Future<void> showGeneratedPublicKeyDialog(
             width: double.infinity,
             padding: const EdgeInsets.all(10),
             decoration: BoxDecoration(
-              color: AppTheme.terminalBackground,
+              color: Theme.of(context).colorScheme.surfaceContainerHighest,
               borderRadius: BorderRadius.circular(6),
             ),
             child: SelectableText(

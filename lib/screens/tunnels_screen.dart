@@ -109,25 +109,30 @@ class _TunnelsScreenState extends State<TunnelsScreen> {
   Future<void> _deleteTunnel(TunnelProfile profile) async {
     final confirmed = await showDialog<bool>(
       context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Delete tunnel?'),
-        content: Text(
-          'This removes "${profile.displayName}". If it is running it will be '
-          'stopped first.',
-          style: const TextStyle(height: 1.35),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(false),
-            child: const Text('Cancel'),
+      builder: (context) {
+        final theme = Theme.of(context);
+        return AlertDialog(
+          title: const Text('Delete tunnel?'),
+          content: Text(
+            'This removes "${profile.displayName}". If it is running it '
+            'will be stopped first.',
+            style: const TextStyle(height: 1.35),
           ),
-          FilledButton(
-            style: FilledButton.styleFrom(backgroundColor: AppTheme.danger),
-            onPressed: () => Navigator.of(context).pop(true),
-            child: const Text('Delete'),
-          ),
-        ],
-      ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(false),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              style: FilledButton.styleFrom(
+                backgroundColor: theme.colorScheme.error,
+              ),
+              onPressed: () => Navigator.of(context).pop(true),
+              child: const Text('Delete'),
+            ),
+          ],
+        );
+      },
     );
     if (confirmed != true) return;
 
@@ -257,7 +262,7 @@ class _GroupHeader extends StatelessWidget {
             group.isBroken ? Icons.error_outline : Icons.dns_outlined,
             size: 16,
             color: group.isBroken
-                ? AppTheme.danger
+                ? theme.colorScheme.error
                 : theme.colorScheme.onSurfaceVariant,
           ),
           const SizedBox(width: 8),
@@ -266,7 +271,7 @@ class _GroupHeader extends StatelessWidget {
             style: theme.textTheme.labelSmall?.copyWith(
               letterSpacing: 1.1,
               color: group.isBroken
-                  ? AppTheme.danger
+                  ? theme.colorScheme.error
                   : theme.colorScheme.onSurfaceVariant,
             ),
           ),
@@ -340,7 +345,7 @@ class _TunnelTile extends StatelessWidget {
             Text(
               binding.brokenMessage!,
               style: theme.textTheme.bodySmall?.copyWith(
-                color: AppTheme.danger,
+                color: theme.colorScheme.error,
                 height: 1.3,
               ),
             )
@@ -409,7 +414,7 @@ class _StatusLine extends StatelessWidget {
       return Text(
         message ?? 'Stopped after an error.',
         style: theme.textTheme.bodySmall?.copyWith(
-          color: AppTheme.danger,
+          color: theme.colorScheme.error,
           height: 1.3,
         ),
       );
@@ -441,7 +446,9 @@ class _StatusLine extends StatelessWidget {
       children: [
         Text(
           parts.join(' · '),
-          style: theme.textTheme.bodySmall?.copyWith(color: AppTheme.accent),
+          style: theme.textTheme.bodySmall?.copyWith(
+            color: theme.colorScheme.primary,
+          ),
         ),
         // A note about one failed connection, on a tunnel that is otherwise
         // perfectly alive.
@@ -467,9 +474,10 @@ class _TypeBadge extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
     final color = running
-        ? AppTheme.accent
-        : Theme.of(context).colorScheme.onSurfaceVariant;
+        ? theme.colorScheme.primary
+        : theme.colorScheme.onSurfaceVariant;
     return Tooltip(
       message: '${type.label} (ssh ${type.sshFlag})',
       child: Container(

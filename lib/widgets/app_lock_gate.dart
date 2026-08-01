@@ -3,7 +3,6 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import '../services/app_lock_controller.dart';
-import '../theme.dart';
 
 /// The full-screen gate that covers the app while it is locked.
 ///
@@ -214,7 +213,11 @@ class _LockCover extends StatelessWidget {
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  Icon(Icons.lock_outline, size: 56, color: AppTheme.accent),
+                  Icon(
+                    Icons.lock_outline,
+                    size: 56,
+                    color: theme.colorScheme.primary,
+                  ),
                   const SizedBox(height: 20),
                   Text(
                     'SecureShell Go is locked',

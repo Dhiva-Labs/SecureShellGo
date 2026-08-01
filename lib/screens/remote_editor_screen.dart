@@ -258,9 +258,10 @@ class _RemoteEditorScreenState extends State<RemoteEditorScreen> {
       return;
     }
 
+    final theme = Theme.of(context);
     final picked = await showModalBottomSheet<RemoteEntry>(
       context: context,
-      backgroundColor: AppTheme.surface,
+      backgroundColor: theme.colorScheme.surfaceContainerHigh,
       builder: (context) => SafeArea(
         child: Column(
           mainAxisSize: MainAxisSize.min,
@@ -291,7 +292,7 @@ class _RemoteEditorScreenState extends State<RemoteEditorScreen> {
                           ? Icons.description_outlined
                           : Icons.insert_drive_file_outlined,
                       size: 18,
-                      color: textish ? AppTheme.accent : null,
+                      color: textish ? theme.colorScheme.primary : null,
                     ),
                     title: Text(
                       entry.name,
@@ -797,10 +798,11 @@ class _RemoteEditorScreenState extends State<RemoteEditorScreen> {
   }
 
   void _snack(String message, {bool isError = false}) {
+    final theme = Theme.of(context);
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(message),
-        backgroundColor: isError ? AppTheme.danger : null,
+        backgroundColor: isError ? theme.colorScheme.error : null,
       ),
     );
   }
@@ -859,6 +861,7 @@ class _RemoteEditorScreenState extends State<RemoteEditorScreen> {
   Widget _title(_EditorTab? tab) {
     if (tab == null) return const Text('Editor');
     final host = widget.hostLabel;
+    final theme = Theme.of(context);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       mainAxisSize: MainAxisSize.min,
@@ -882,8 +885,8 @@ class _RemoteEditorScreenState extends State<RemoteEditorScreen> {
               Container(
                 width: 8,
                 height: 8,
-                decoration: const BoxDecoration(
-                  color: AppTheme.accent,
+                decoration: BoxDecoration(
+                  color: theme.colorScheme.primary,
                   shape: BoxShape.circle,
                 ),
               ),
@@ -1030,17 +1033,18 @@ class _RemoteEditorScreenState extends State<RemoteEditorScreen> {
         itemBuilder: (context, i) {
           final tab = _tabs[i];
           final active = i == _active;
+          final colorScheme = Theme.of(context).colorScheme;
           return InkWell(
             onTap: () => setState(() => _active = i),
             child: Container(
               padding: const EdgeInsets.symmetric(horizontal: 10),
               decoration: BoxDecoration(
                 color: active
-                    ? AppTheme.accent.withValues(alpha: 0.14)
+                    ? colorScheme.primary.withValues(alpha: 0.14)
                     : Colors.transparent,
                 border: Border(
                   bottom: BorderSide(
-                    color: active ? AppTheme.accent : Colors.transparent,
+                    color: active ? colorScheme.primary : Colors.transparent,
                     width: 2,
                   ),
                 ),
@@ -1060,8 +1064,8 @@ class _RemoteEditorScreenState extends State<RemoteEditorScreen> {
                     Container(
                       width: 6,
                       height: 6,
-                      decoration: const BoxDecoration(
-                        color: AppTheme.accent,
+                      decoration: BoxDecoration(
+                        color: colorScheme.primary,
                         shape: BoxShape.circle,
                       ),
                     ),
@@ -1087,14 +1091,15 @@ class _RemoteEditorScreenState extends State<RemoteEditorScreen> {
   }
 
   Widget _encodingBanner(_EditorTab tab) {
+    final theme = Theme.of(context);
     return Material(
-      color: AppTheme.danger.withValues(alpha: 0.14),
+      color: theme.colorScheme.error.withValues(alpha: 0.14),
       child: Padding(
         padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
         child: Row(
           children: [
-            const Icon(Icons.warning_amber_outlined,
-                size: 18, color: AppTheme.danger),
+            Icon(Icons.warning_amber_outlined,
+                size: 18, color: theme.colorScheme.error),
             const SizedBox(width: 10),
             const Expanded(
               child: Text(
@@ -1118,8 +1123,9 @@ class _RemoteEditorScreenState extends State<RemoteEditorScreen> {
             : '${_currentMatch + 1} of ${_matches.length}'
                 '${_matches.length >= editorMaxMatches ? '+' : ''}';
 
+    final colorScheme = Theme.of(context).colorScheme;
     return Material(
-      color: AppTheme.surface,
+      color: colorScheme.surfaceContainerHigh,
       child: Padding(
         padding: const EdgeInsets.fromLTRB(8, 6, 4, 6),
         child: Column(
@@ -1250,11 +1256,12 @@ class _RemoteEditorScreenState extends State<RemoteEditorScreen> {
     required VoidCallback? onPressed,
     bool selected = false,
   }) {
+    final theme = Theme.of(context);
     return IconButton(
       tooltip: tooltip,
       icon: child,
       isSelected: selected,
-      color: selected ? AppTheme.accent : null,
+      color: selected ? theme.colorScheme.primary : null,
       visualDensity: VisualDensity.compact,
       padding: EdgeInsets.zero,
       constraints: const BoxConstraints(minWidth: 34, minHeight: 34),
@@ -1269,8 +1276,9 @@ class _RemoteEditorScreenState extends State<RemoteEditorScreen> {
         : 1;
     final total = '\n'.allMatches(tab.controller.text).length + 1;
 
+    final colorScheme = Theme.of(context).colorScheme;
     return Material(
-      color: AppTheme.surface,
+      color: colorScheme.surfaceContainerHigh,
       child: SizedBox(
         height: 26,
         child: Row(

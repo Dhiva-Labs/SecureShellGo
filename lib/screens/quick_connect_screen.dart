@@ -309,12 +309,14 @@ class _QuickConnectScreenState extends State<QuickConnectScreen> {
   }
 
   Widget _buildConnectedOffer(Host host) {
+    final theme = Theme.of(context);
     return Padding(
       padding: const EdgeInsets.all(24),
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          const Icon(Icons.check_circle_outline, color: AppTheme.accent, size: 48),
+          Icon(Icons.check_circle_outline,
+              color: theme.colorScheme.primary, size: 48),
           const SizedBox(height: 16),
           Text(
             'Connected to ${host.target}',

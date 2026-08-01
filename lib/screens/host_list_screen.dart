@@ -424,43 +424,46 @@ class _HostListScreenState extends State<HostListScreen> {
   }) {
     return showDialog<void>(
       context: context,
-      builder: (context) => AlertDialog(
-        icon: const Icon(Icons.error_outline, color: AppTheme.danger),
-        title: const Text('Could not connect'),
-        content: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(message, style: const TextStyle(height: 1.35)),
-              if (details != null) ...[
-                const SizedBox(height: 12),
-                Text(
-                  details,
-                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                        fontFamily: AppTheme.monoFontFamily,
-                        fontFamilyFallback: AppTheme.monoFontFamilyFallback,
-                      ),
-                ),
+      builder: (context) {
+        final theme = Theme.of(context);
+        return AlertDialog(
+          icon: Icon(Icons.error_outline, color: theme.colorScheme.error),
+          title: const Text('Could not connect'),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(message, style: const TextStyle(height: 1.35)),
+                if (details != null) ...[
+                  const SizedBox(height: 12),
+                  Text(
+                    details,
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                          fontFamily: AppTheme.monoFontFamily,
+                          fontFamilyFallback: AppTheme.monoFontFamilyFallback,
+                        ),
+                  ),
+                ],
               ],
-            ],
-          ),
-        ),
-        actions: [
-          if (onEdit != null)
-            TextButton(
-              onPressed: () {
-                Navigator.of(context).pop();
-                onEdit();
-              },
-              child: const Text('Edit host'),
             ),
-          FilledButton(
-            onPressed: () => Navigator.of(context).pop(),
-            child: const Text('OK'),
           ),
-        ],
-      ),
+          actions: [
+            if (onEdit != null)
+              TextButton(
+                onPressed: () {
+                  Navigator.of(context).pop();
+                  onEdit();
+                },
+                child: const Text('Edit host'),
+              ),
+            FilledButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text('OK'),
+            ),
+          ],
+        );
+      },
     );
   }
 
@@ -478,65 +481,74 @@ class _HostListScreenState extends State<HostListScreen> {
   void _showHostActions(Host host) {
     showModalBottomSheet<void>(
       context: context,
-      builder: (context) => SafeArea(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            ListTile(
-              leading: const Icon(Icons.folder_outlined),
-              title: const Text('Browse files'),
-              subtitle: const Text('Connects straight into the file browser'),
-              onTap: () {
-                Navigator.of(context).pop();
-                _connect(host, view: SessionView.files);
-              },
-            ),
-            ListTile(
-              leading: const Icon(Icons.edit_outlined),
-              title: const Text('Edit'),
-              onTap: () {
-                Navigator.of(context).pop();
-                _editHost(host);
-              },
-            ),
-            ListTile(
-              leading: const Icon(Icons.drive_file_move_outline),
-              title: const Text('Move to group…'),
-              subtitle: Text(host.group ?? 'Ungrouped'),
-              onTap: () {
-                Navigator.of(context).pop();
-                unawaited(_reassignGroup(host));
-              },
-            ),
-            ListTile(
-              leading: const Icon(Icons.copy_all_outlined),
-              title: const Text('Copy user@host'),
-              subtitle: Text(host.target),
-              onTap: () {
-                Navigator.of(context).pop();
-                unawaited(_copyTarget(host));
-              },
-            ),
-            ListTile(
-              leading: const Icon(Icons.key_off_outlined),
-              title: const Text('Forget host keys'),
-              subtitle: const Text('Undoes trust-on-first-use for this server'),
-              onTap: () {
-                Navigator.of(context).pop();
-                _forgetHostKeys(host);
-              },
-            ),
-            ListTile(
-              leading: const Icon(Icons.delete_outline, color: AppTheme.danger),
-              title: const Text('Delete', style: TextStyle(color: AppTheme.danger)),
-              onTap: () {
-                Navigator.of(context).pop();
-                _deleteHost(host);
-              },
-            ),
-          ],
-        ),
-      ),
+      builder: (context) {
+        final theme = Theme.of(context);
+        return SafeArea(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              ListTile(
+                leading: const Icon(Icons.folder_outlined),
+                title: const Text('Browse files'),
+                subtitle:
+                    const Text('Connects straight into the file browser'),
+                onTap: () {
+                  Navigator.of(context).pop();
+                  _connect(host, view: SessionView.files);
+                },
+              ),
+              ListTile(
+                leading: const Icon(Icons.edit_outlined),
+                title: const Text('Edit'),
+                onTap: () {
+                  Navigator.of(context).pop();
+                  _editHost(host);
+                },
+              ),
+              ListTile(
+                leading: const Icon(Icons.drive_file_move_outline),
+                title: const Text('Move to group…'),
+                subtitle: Text(host.group ?? 'Ungrouped'),
+                onTap: () {
+                  Navigator.of(context).pop();
+                  unawaited(_reassignGroup(host));
+                },
+              ),
+              ListTile(
+                leading: const Icon(Icons.copy_all_outlined),
+                title: const Text('Copy user@host'),
+                subtitle: Text(host.target),
+                onTap: () {
+                  Navigator.of(context).pop();
+                  unawaited(_copyTarget(host));
+                },
+              ),
+              ListTile(
+                leading: const Icon(Icons.key_off_outlined),
+                title: const Text('Forget host keys'),
+                subtitle:
+                    const Text('Undoes trust-on-first-use for this server'),
+                onTap: () {
+                  Navigator.of(context).pop();
+                  _forgetHostKeys(host);
+                },
+              ),
+              ListTile(
+                leading:
+                    Icon(Icons.delete_outline, color: theme.colorScheme.error),
+                title: Text(
+                  'Delete',
+                  style: TextStyle(color: theme.colorScheme.error),
+                ),
+                onTap: () {
+                  Navigator.of(context).pop();
+                  _deleteHost(host);
+                },
+              ),
+            ],
+          ),
+        );
+      },
     );
   }
 
@@ -651,25 +663,30 @@ class _HostListScreenState extends State<HostListScreen> {
   Future<void> _deleteGroup(String name) async {
     final confirmed = await showDialog<bool>(
       context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Delete group?'),
-        content: Text(
-          'Removes "$name". Its hosts move to Ungrouped — nothing is '
-          'deleted.',
-          style: const TextStyle(height: 1.35),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(false),
-            child: const Text('Cancel'),
+      builder: (context) {
+        final theme = Theme.of(context);
+        return AlertDialog(
+          title: const Text('Delete group?'),
+          content: Text(
+            'Removes "$name". Its hosts move to Ungrouped — nothing is '
+            'deleted.',
+            style: const TextStyle(height: 1.35),
           ),
-          FilledButton(
-            style: FilledButton.styleFrom(backgroundColor: AppTheme.danger),
-            onPressed: () => Navigator.of(context).pop(true),
-            child: const Text('Delete'),
-          ),
-        ],
-      ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(false),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              style: FilledButton.styleFrom(
+                backgroundColor: theme.colorScheme.error,
+              ),
+              onPressed: () => Navigator.of(context).pop(true),
+              child: const Text('Delete'),
+            ),
+          ],
+        );
+      },
     );
     if (confirmed != true) return;
 
@@ -742,42 +759,47 @@ class _HostListScreenState extends State<HostListScreen> {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => StatefulBuilder(
-        builder: (context, setDialogState) => AlertDialog(
-          title: const Text('Delete host?'),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                'This removes "${host.displayName}" and its saved password '
-                'or key. This cannot be undone.',
-                style: const TextStyle(height: 1.35),
-              ),
-              CheckboxListTile(
-                value: forgetKeys,
-                onChanged: (value) =>
-                    setDialogState(() => forgetKeys = value ?? false),
-                contentPadding: EdgeInsets.zero,
-                controlAffinity: ListTileControlAffinity.leading,
-                title: const Text(
-                  'Also forget its trusted host key(s)',
-                  style: TextStyle(fontSize: 13),
+        builder: (context, setDialogState) {
+          final theme = Theme.of(context);
+          return AlertDialog(
+            title: const Text('Delete host?'),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'This removes "${host.displayName}" and its saved password '
+                  'or key. This cannot be undone.',
+                  style: const TextStyle(height: 1.35),
                 ),
+                CheckboxListTile(
+                  value: forgetKeys,
+                  onChanged: (value) =>
+                      setDialogState(() => forgetKeys = value ?? false),
+                  contentPadding: EdgeInsets.zero,
+                  controlAffinity: ListTileControlAffinity.leading,
+                  title: const Text(
+                    'Also forget its trusted host key(s)',
+                    style: TextStyle(fontSize: 13),
+                  ),
+                ),
+              ],
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(context).pop(false),
+                child: const Text('Cancel'),
+              ),
+              FilledButton(
+                style: FilledButton.styleFrom(
+                  backgroundColor: theme.colorScheme.error,
+                ),
+                onPressed: () => Navigator.of(context).pop(true),
+                child: const Text('Delete'),
               ),
             ],
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(context).pop(false),
-              child: const Text('Cancel'),
-            ),
-            FilledButton(
-              style: FilledButton.styleFrom(backgroundColor: AppTheme.danger),
-              onPressed: () => Navigator.of(context).pop(true),
-              child: const Text('Delete'),
-            ),
-          ],
-        ),
+          );
+        },
       ),
     );
 
@@ -1172,7 +1194,7 @@ class _HostListScreenState extends State<HostListScreen> {
               horizontal: 16,
               vertical: 10,
             ),
-            leading: _hostAvatar(host, radius: 22),
+            leading: _hostAvatar(context, host, radius: 22),
             title: Text(
               host.displayName,
               style: const TextStyle(fontWeight: FontWeight.w600),
@@ -1259,6 +1281,7 @@ class _GroupPickOption extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
     return SimpleDialogOption(
       onPressed: onTap,
       child: Row(
@@ -1266,7 +1289,7 @@ class _GroupPickOption extends StatelessWidget {
           SizedBox(
             width: 24,
             child: selected
-                ? const Icon(Icons.check, size: 18, color: AppTheme.accent)
+                ? Icon(Icons.check, size: 18, color: theme.colorScheme.primary)
                 : null,
           ),
           const SizedBox(width: 8),
@@ -1399,7 +1422,7 @@ class _HostCard extends StatelessWidget {
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                _hostAvatar(host, radius: 18),
+                _hostAvatar(context, host, radius: 18),
                 const SizedBox(width: 10),
                 Expanded(
                   child: Column(
@@ -1486,6 +1509,7 @@ class _OpenSessionsBar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
     // A tab whose transport has dropped is still a tab, and saying "2
     // connected" when one of them is dead would be the sort of small lie that
     // costs a user a command.
@@ -1496,7 +1520,7 @@ class _OpenSessionsBar extends StatelessWidget {
             '${dropped > 0 ? ' · $dropped dropped' : ''}';
 
     return Material(
-      color: AppTheme.accent.withValues(alpha: 0.12),
+      color: theme.colorScheme.primary.withValues(alpha: 0.12),
       child: InkWell(
         onTap: onResume,
         child: Padding(
@@ -1506,7 +1530,9 @@ class _OpenSessionsBar extends StatelessWidget {
               Icon(
                 Icons.terminal,
                 size: 18,
-                color: live == 0 ? AppTheme.danger : AppTheme.accent,
+                color: live == 0
+                    ? theme.colorScheme.error
+                    : theme.colorScheme.primary,
               ),
               const SizedBox(width: 10),
               Expanded(
@@ -1535,14 +1561,15 @@ class _TrustStoreResetBanner extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
     return Material(
-      color: AppTheme.danger.withValues(alpha: 0.15),
+      color: theme.colorScheme.error.withValues(alpha: 0.15),
       child: Padding(
         padding: const EdgeInsets.fromLTRB(14, 12, 6, 12),
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Icon(Icons.gpp_maybe, color: AppTheme.danger, size: 20),
+            Icon(Icons.gpp_maybe, color: theme.colorScheme.error, size: 20),
             const SizedBox(width: 10),
             const Expanded(
               child: Text(
@@ -1642,10 +1669,15 @@ class _NoSearchResults extends StatelessWidget {
 /// top-level function (not a method on either call site) since both
 /// `_buildListSliver`'s `ListTile.leading` and `_HostCard` need the exact
 /// same thing.
-Widget _hostAvatar(Host host, {required double radius}) {
+Widget _hostAvatar(
+  BuildContext context,
+  Host host, {
+  required double radius,
+}) {
+  final theme = Theme.of(context);
   final avatar = CircleAvatar(
     radius: radius,
-    backgroundColor: AppTheme.surface,
+    backgroundColor: theme.colorScheme.surfaceContainerHigh,
     child: Icon(
       host.authMethod == SshAuthMethod.password ? Icons.password : Icons.key,
       size: radius,
@@ -1666,9 +1698,9 @@ Widget _hostAvatar(Host host, {required double radius}) {
         // the (also warm) default avatar background nearly disappears.
         child: Container(
           padding: const EdgeInsets.all(2),
-          decoration: const BoxDecoration(
+          decoration: BoxDecoration(
             shape: BoxShape.circle,
-            color: AppTheme.terminalBackground,
+            color: theme.colorScheme.surfaceContainerHighest,
           ),
           child: HostColorDot(colorLabel: host.colorLabel, size: radius * 0.64),
         ),

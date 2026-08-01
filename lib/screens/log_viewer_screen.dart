@@ -164,7 +164,9 @@ class _LogViewerScreenState extends State<LogViewerScreen> {
           IconButton(
             tooltip: _buffer.isPaused ? 'Resume' : 'Pause',
             icon: Icon(_buffer.isPaused ? Icons.play_arrow : Icons.pause),
-            color: _buffer.isPaused ? AppTheme.accent : null,
+            color: _buffer.isPaused
+                ? Theme.of(context).colorScheme.primary
+                : null,
             onPressed: _error != null ? null : _togglePause,
           ),
           IconButton(
@@ -221,7 +223,11 @@ class _LogViewerScreenState extends State<LogViewerScreen> {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              const Icon(Icons.error_outline, size: 40, color: AppTheme.danger),
+              Icon(
+                Icons.error_outline,
+                size: 40,
+                color: Theme.of(context).colorScheme.error,
+              ),
               const SizedBox(height: 12),
               Text(error, textAlign: TextAlign.center),
             ],
@@ -357,9 +363,10 @@ class _PausedBanner extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
     return Container(
       width: double.infinity,
-      color: AppTheme.accent.withValues(alpha: 0.15),
+      color: theme.colorScheme.primary.withValues(alpha: 0.15),
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
       child: Row(
         children: [

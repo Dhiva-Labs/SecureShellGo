@@ -50,12 +50,12 @@ class _HostKeyDialogState extends State<_HostKeyDialog> {
     return AlertDialog(
       icon: Icon(
         _isChanged ? Icons.gpp_maybe : Icons.vpn_key_outlined,
-        color: _isChanged ? AppTheme.danger : theme.colorScheme.primary,
+        color: _isChanged ? theme.colorScheme.error : theme.colorScheme.primary,
         size: 32,
       ),
       title: Text(
         _isChanged ? 'Host key has CHANGED' : 'Unknown host',
-        style: TextStyle(color: _isChanged ? AppTheme.danger : null),
+        style: TextStyle(color: _isChanged ? theme.colorScheme.error : null),
       ),
       content: SingleChildScrollView(
         child: Column(
@@ -67,10 +67,10 @@ class _HostKeyDialogState extends State<_HostKeyDialog> {
                 width: double.infinity,
                 padding: const EdgeInsets.all(12),
                 decoration: BoxDecoration(
-                  color: AppTheme.danger.withValues(alpha: 0.12),
+                  color: theme.colorScheme.error.withValues(alpha: 0.12),
                   borderRadius: BorderRadius.circular(8),
                   border: Border.all(
-                    color: AppTheme.danger.withValues(alpha: 0.5),
+                    color: theme.colorScheme.error.withValues(alpha: 0.5),
                   ),
                 ),
                 child: const Text(
@@ -114,7 +114,7 @@ class _HostKeyDialogState extends State<_HostKeyDialog> {
               _FingerprintBlock(
                 label: 'Offered now',
                 fingerprint: prompt.fingerprint,
-                color: AppTheme.danger,
+                color: theme.colorScheme.error,
               ),
             ] else ...[
               const SizedBox(height: 12),
@@ -149,7 +149,7 @@ class _HostKeyDialogState extends State<_HostKeyDialog> {
         if (_isChanged)
           FilledButton(
             style: FilledButton.styleFrom(
-              backgroundColor: AppTheme.danger,
+              backgroundColor: theme.colorScheme.error,
               minimumSize: const Size(0, 48),
             ),
             onPressed: _acknowledgedRisk
@@ -226,6 +226,7 @@ class _FingerprintBlock extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -243,7 +244,7 @@ class _FingerprintBlock extends StatelessWidget {
             width: double.infinity,
             padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
             decoration: BoxDecoration(
-              color: AppTheme.terminalBackground,
+              color: theme.colorScheme.surfaceContainerHighest,
               borderRadius: BorderRadius.circular(6),
               border: Border.all(color: color.withValues(alpha: 0.4)),
             ),

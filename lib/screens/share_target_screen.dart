@@ -173,10 +173,11 @@ class _ShareTargetScreenState extends State<ShareTargetScreen> {
     String? details,
     VoidCallback? onEdit,
   }) {
+    final theme = Theme.of(context);
     return showDialog<void>(
       context: context,
       builder: (context) => AlertDialog(
-        icon: const Icon(Icons.error_outline, color: AppTheme.danger),
+        icon: Icon(Icons.error_outline, color: theme.colorScheme.error),
         title: const Text('Could not connect'),
         content: SingleChildScrollView(
           child: Column(
@@ -250,6 +251,7 @@ class _ShareTargetScreenState extends State<ShareTargetScreen> {
             final host = hosts[index];
             final connecting = _connectingHostId == host.id;
             final live = widget.sessions.liveForHost(host.id).isNotEmpty;
+            final theme = Theme.of(context);
 
             return ListTile(
               contentPadding: const EdgeInsets.symmetric(
@@ -258,7 +260,7 @@ class _ShareTargetScreenState extends State<ShareTargetScreen> {
               ),
               leading: CircleAvatar(
                 radius: 20,
-                backgroundColor: AppTheme.surface,
+                backgroundColor: theme.colorScheme.surfaceContainerHigh,
                 child: Icon(
                   host.authMethod == SshAuthMethod.password
                       ? Icons.password
@@ -275,7 +277,7 @@ class _ShareTargetScreenState extends State<ShareTargetScreen> {
                 style: TextStyle(
                   fontSize: 12.5,
                   color: live
-                      ? AppTheme.accent
+                      ? theme.colorScheme.primary
                       : Theme.of(context).colorScheme.onSurfaceVariant,
                 ),
               ),
@@ -310,12 +312,12 @@ class _SharedFilesSummary extends StatelessWidget {
 
     return Container(
       width: double.infinity,
-      color: AppTheme.surface,
+      color: theme.colorScheme.surfaceContainerHigh,
       padding: const EdgeInsets.fromLTRB(16, 14, 16, 14),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Icon(Icons.ios_share, size: 20, color: AppTheme.accent),
+          Icon(Icons.ios_share, size: 20, color: theme.colorScheme.primary),
           const SizedBox(width: 12),
           Expanded(
             child: Column(

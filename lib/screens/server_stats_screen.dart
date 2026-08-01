@@ -5,7 +5,6 @@ import 'package:flutter/material.dart';
 import '../services/remote_path.dart';
 import '../services/server_probe.dart';
 import '../services/session_controller.dart';
-import '../theme.dart';
 
 /// One server's vital signs, polled while this screen is on top.
 ///
@@ -174,17 +173,18 @@ class _StaleBanner extends StatelessWidget {
   Widget build(BuildContext context) {
     final at = this.at;
     final age = at == null ? null : DateTime.now().difference(at);
+    final theme = Theme.of(context);
     return Container(
       margin: const EdgeInsets.only(bottom: 12),
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        color: AppTheme.danger.withValues(alpha: 0.12),
+        color: theme.colorScheme.error.withValues(alpha: 0.12),
         borderRadius: BorderRadius.circular(8),
       ),
       child: Row(
         children: [
-          const Icon(Icons.warning_amber_outlined,
-              size: 18, color: AppTheme.danger),
+          Icon(Icons.warning_amber_outlined,
+              size: 18, color: theme.colorScheme.error),
           const SizedBox(width: 10),
           Expanded(
             child: Text(
@@ -215,7 +215,7 @@ class _Card extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
-        color: AppTheme.surface,
+        color: Theme.of(context).colorScheme.surfaceContainerHigh,
         borderRadius: BorderRadius.circular(10),
       ),
       child: Column(
@@ -389,7 +389,7 @@ class _LoadCard extends StatelessWidget {
                     child: CustomPaint(
                       painter: SparklinePainter(
                         values: history,
-                        color: AppTheme.accent,
+                        color: Theme.of(context).colorScheme.primary,
                       ),
                     ),
                   ),
@@ -432,7 +432,7 @@ class _LoadValue extends StatelessWidget {
             style: TextStyle(
               fontSize: 20,
               fontWeight: FontWeight.w600,
-              color: saturated ? AppTheme.danger : null,
+              color: saturated ? Theme.of(context).colorScheme.error : null,
             ),
           ),
           Text(
@@ -510,16 +510,19 @@ class _UsageBar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
     final fraction = this.fraction;
     // 90% is the point at which a full disk stops being a statistic and
-    // becomes tonight's problem.
+    // becomes tonight's problem. Tertiary is the warm middle step between
+    // primary (fine) and error (critical) — see the same three-tier
+    // reasoning in `backup_screen.dart`'s passphrase-strength meter.
     final colour = fraction == null
-        ? AppTheme.accent
+        ? theme.colorScheme.primary
         : fraction >= 0.9
-            ? AppTheme.danger
+            ? theme.colorScheme.error
             : fraction >= 0.75
-                ? const Color(0xFFD29922)
-                : AppTheme.accent;
+                ? theme.colorScheme.tertiary
+                : theme.colorScheme.primary;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -557,7 +560,8 @@ class _UsageBar extends StatelessWidget {
           child: LinearProgressIndicator(
             value: fraction,
             minHeight: 8,
-            backgroundColor: Colors.white.withValues(alpha: 0.08),
+            backgroundColor:
+                theme.colorScheme.onSurface.withValues(alpha: 0.08),
             valueColor: AlwaysStoppedAnimation<Color>(colour),
           ),
         ),

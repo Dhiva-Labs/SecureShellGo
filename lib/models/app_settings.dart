@@ -35,6 +35,58 @@ enum TerminalColorScheme {
       );
 }
 
+/// The overall chrome look the user can pick in Settings > Appearance:
+/// palette family, corner radius, elevation and app-bar treatment. Separate
+/// from [ThemeBrightness] — every style has both a light and a dark variant,
+/// see `theme.dart`'s `AppTheme.themeFor`.
+///
+/// `aws`/`gcp`/`azure` evoke those consoles' visual language with an
+/// original palette; they are not the vendors' own colours or marks, hence
+/// "-inspired" in the label rather than a claim of affiliation.
+enum UiStyle {
+  aurora,
+  aws,
+  gcp,
+  azure;
+
+  String get label => switch (this) {
+        UiStyle.aurora => 'Aurora (default)',
+        UiStyle.aws => 'AWS-inspired',
+        UiStyle.gcp => 'Google Cloud-inspired',
+        UiStyle.azure => 'Azure-inspired',
+      };
+
+  /// Unrecognised or absent reads as [aurora] — today's only look, and the
+  /// safe fallback for a settings file written before this field existed.
+  static UiStyle fromName(String? name) => UiStyle.values.firstWhere(
+        (s) => s.name == name,
+        orElse: () => UiStyle.aurora,
+      );
+}
+
+/// Which of [UiStyle]'s two variants to render, or [system] to follow the
+/// OS setting.
+enum ThemeBrightness {
+  system,
+  light,
+  dark;
+
+  String get label => switch (this) {
+        ThemeBrightness.system => 'Match system',
+        ThemeBrightness.light => 'Light',
+        ThemeBrightness.dark => 'Dark',
+      };
+
+  /// Unrecognised or absent reads as [dark] — the app has only ever rendered
+  /// dark, so a settings file written before this field existed must not
+  /// suddenly flip a user into light mode.
+  static ThemeBrightness fromName(String? name) =>
+      ThemeBrightness.values.firstWhere(
+        (b) => b.name == name,
+        orElse: () => ThemeBrightness.dark,
+      );
+}
+
 /// How long the app may sit in the background before the app lock asks for
 /// the device credential again.
 ///
@@ -81,6 +133,8 @@ class AppSettings {
   const AppSettings({
     this.terminalFontSize = defaultFontSize,
     this.colorScheme = TerminalColorScheme.classic,
+    this.uiStyle = UiStyle.aurora,
+    this.themeBrightness = ThemeBrightness.dark,
     this.keepScreenAwake = false,
     this.showHiddenFilesByDefault = false,
     this.collapsedGroups = const <String>{},
@@ -94,6 +148,11 @@ class AppSettings {
 
   final double terminalFontSize;
   final TerminalColorScheme colorScheme;
+
+  /// The UI chrome style; see [UiStyle]. Independent of [colorScheme], which
+  /// only names the *terminal's* palette.
+  final UiStyle uiStyle;
+  final ThemeBrightness themeBrightness;
   final bool keepScreenAwake;
   final bool showHiddenFilesByDefault;
 
@@ -128,6 +187,8 @@ class AppSettings {
   AppSettings copyWith({
     double? terminalFontSize,
     TerminalColorScheme? colorScheme,
+    UiStyle? uiStyle,
+    ThemeBrightness? themeBrightness,
     bool? keepScreenAwake,
     bool? showHiddenFilesByDefault,
     Set<String>? collapsedGroups,
@@ -137,6 +198,8 @@ class AppSettings {
     return AppSettings(
       terminalFontSize: clampFontSize(terminalFontSize ?? this.terminalFontSize),
       colorScheme: colorScheme ?? this.colorScheme,
+      uiStyle: uiStyle ?? this.uiStyle,
+      themeBrightness: themeBrightness ?? this.themeBrightness,
       keepScreenAwake: keepScreenAwake ?? this.keepScreenAwake,
       showHiddenFilesByDefault:
           showHiddenFilesByDefault ?? this.showHiddenFilesByDefault,
@@ -150,6 +213,8 @@ class AppSettings {
         'version': 1,
         'terminalFontSize': terminalFontSize,
         'colorScheme': colorScheme.name,
+        'uiStyle': uiStyle.name,
+        'themeBrightness': themeBrightness.name,
         'keepScreenAwake': keepScreenAwake,
         'showHiddenFilesByDefault': showHiddenFilesByDefault,
         'collapsedGroups': collapsedGroups.toList(),
@@ -163,6 +228,13 @@ class AppSettings {
         ),
         colorScheme: TerminalColorScheme.fromName(
           json['colorScheme'] as String?,
+        ),
+        // Absent on every settings.json written before v1.4.0 — reads as
+        // aurora + dark, exactly today's look, so an upgrade never changes
+        // anyone's UI out from under them.
+        uiStyle: UiStyle.fromName(json['uiStyle'] as String?),
+        themeBrightness: ThemeBrightness.fromName(
+          json['themeBrightness'] as String?,
         ),
         keepScreenAwake: json['keepScreenAwake'] as bool? ?? false,
         showHiddenFilesByDefault:

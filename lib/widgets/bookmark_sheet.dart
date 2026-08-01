@@ -4,7 +4,6 @@ import 'package:flutter/material.dart';
 
 import '../models/path_bookmark.dart';
 import '../services/bookmark_store.dart';
-import '../theme.dart';
 
 /// The bottom sheet listing one host's saved paths. Tapping a row jumps the
 /// file browser there; each row also offers rename and remove without
@@ -23,9 +22,10 @@ Future<void> showBookmarksSheet(
   required List<PathBookmark> bookmarks,
   required ValueChanged<String> onJump,
 }) {
+  final theme = Theme.of(context);
   return showModalBottomSheet<void>(
     context: context,
-    backgroundColor: AppTheme.surface,
+    backgroundColor: theme.colorScheme.surfaceContainerHigh,
     showDragHandle: true,
     isScrollControlled: true,
     builder: (context) => SafeArea(
@@ -139,8 +139,9 @@ class _BookmarksSheetBodyState extends State<_BookmarksSheetBody> {
               itemBuilder: (context, index) {
                 final bookmark = _bookmarks[index];
                 final here = bookmark.path == widget.currentPath;
+                final theme = Theme.of(context);
                 return ListTile(
-                  leading: const Icon(Icons.star, color: AppTheme.accent),
+                  leading: Icon(Icons.star, color: theme.colorScheme.primary),
                   title: Text(
                     bookmark.displayLabel,
                     maxLines: 1,

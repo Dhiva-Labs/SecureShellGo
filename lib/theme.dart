@@ -25,7 +25,36 @@ class AppTheme {
     'Droid Sans Mono',
   ];
 
-  static ThemeData get dark {
+  /// Pre-1.4.0 call sites (and `theme_test.dart`'s exact-constant assertions)
+  /// go through here; it is [UiStyle.aurora] + dark, unchanged.
+  static ThemeData get dark => _auroraDark();
+
+  /// Resolves a [UiStyle] + [Brightness] pair to the [ThemeData] for it — the
+  /// one entry point `main.dart` and the settings previews use, so all 8
+  /// combinations are built in exactly one place each.
+  static ThemeData themeFor(UiStyle style, Brightness brightness) {
+    final isDark = brightness == Brightness.dark;
+    return switch (style) {
+      UiStyle.aurora => isDark ? _auroraDark() : _auroraLight(),
+      UiStyle.aws => isDark ? _awsDark() : _awsLight(),
+      UiStyle.gcp => isDark ? _gcpDark() : _gcpLight(),
+      UiStyle.azure => isDark ? _azureDark() : _azureLight(),
+    };
+  }
+
+  /// The [ThemeMode] a [ThemeBrightness] setting maps to.
+  static ThemeMode themeModeFor(ThemeBrightness brightness) =>
+      switch (brightness) {
+        ThemeBrightness.system => ThemeMode.system,
+        ThemeBrightness.light => ThemeMode.light,
+        ThemeBrightness.dark => ThemeMode.dark,
+      };
+
+  /// [UiStyle.aurora], dark — today's only look, byte-for-byte. Kept as its
+  /// own method (not folded into [_consoleStyle] below) precisely so nothing
+  /// here can move: `theme_test.dart` asserts the exact key colours a future
+  /// palette edit could otherwise change without anyone noticing.
+  static ThemeData _auroraDark() {
     final scheme = ColorScheme.fromSeed(
       seedColor: accent,
       brightness: Brightness.dark,
@@ -67,6 +96,258 @@ class AppTheme {
         constraints: BoxConstraints(minWidth: 280, maxWidth: 560),
       ),
       cardTheme: const CardThemeData(color: surface),
+      snackBarTheme: const SnackBarThemeData(
+        behavior: SnackBarBehavior.floating,
+      ),
+    );
+  }
+
+  /// Aurora's light half. Aurora has no console to evoke — it is the app's
+  /// own look — so this just carries the dark variant's green accent and
+  /// shape language onto light-neutral surfaces rather than inventing a
+  /// second identity.
+  static const Color _auroraLightBackground = Color(0xFFF6F8FA);
+  static const Color _auroraLightSurface = Color(0xFFFFFFFF);
+
+  static ThemeData _auroraLight() {
+    final scheme = ColorScheme.fromSeed(
+      seedColor: accent,
+      brightness: Brightness.light,
+    ).copyWith(
+      surface: _auroraLightSurface,
+      error: danger,
+    );
+
+    return ThemeData(
+      useMaterial3: true,
+      brightness: Brightness.light,
+      colorScheme: scheme,
+      scaffoldBackgroundColor: _auroraLightBackground,
+      appBarTheme: const AppBarTheme(
+        backgroundColor: _auroraLightSurface,
+        surfaceTintColor: Colors.transparent,
+        centerTitle: false,
+      ),
+      inputDecorationTheme: const InputDecorationTheme(
+        border: OutlineInputBorder(),
+        filled: true,
+        fillColor: _auroraLightSurface,
+      ),
+      filledButtonTheme: FilledButtonThemeData(
+        style: FilledButton.styleFrom(
+          minimumSize: const Size.fromHeight(48),
+        ),
+      ),
+      dialogTheme: const DialogThemeData(
+        backgroundColor: _auroraLightSurface,
+        constraints: BoxConstraints(minWidth: 280, maxWidth: 560),
+      ),
+      cardTheme: const CardThemeData(color: _auroraLightSurface),
+      snackBarTheme: const SnackBarThemeData(
+        behavior: SnackBarBehavior.floating,
+      ),
+    );
+  }
+
+  // ---- AWS-inspired: warm orange on dark navy/slate, square-ish corners,
+  // hairline borders, dense. An original palette evoking that console's
+  // visual language, not its brand hex values. ----
+  static const Color _awsAccent = Color(0xFFE8890C);
+  static const Color _awsDarkBackground = Color(0xFF121A2B);
+  static const Color _awsDarkSurface = Color(0xFF1B2436);
+  static const Color _awsLightBackground = Color(0xFFF2F3F3);
+  static const Color _awsLightSurface = Color(0xFFFFFFFF);
+
+  static ThemeData _awsDark() => _consoleStyle(
+        brightness: Brightness.dark,
+        seed: _awsAccent,
+        background: _awsDarkBackground,
+        surfaceColor: _awsDarkSurface,
+        radius: 4,
+        hairlineBorder: true,
+        cardElevation: 0,
+        density: VisualDensity.compact,
+        dense: true,
+        titleWeight: FontWeight.w600,
+        crispDividers: true,
+      );
+
+  static ThemeData _awsLight() => _consoleStyle(
+        brightness: Brightness.light,
+        seed: _awsAccent,
+        background: _awsLightBackground,
+        surfaceColor: _awsLightSurface,
+        radius: 4,
+        hairlineBorder: true,
+        cardElevation: 0,
+        density: VisualDensity.compact,
+        dense: true,
+        titleWeight: FontWeight.w600,
+        crispDividers: true,
+      );
+
+  // ---- GCP-inspired: light-first, blue accent, generous whitespace, soft
+  // rounded cards with a subtle shadow instead of a border. ----
+  static const Color _gcpAccent = Color(0xFF2C6CE0);
+  static const Color _gcpLightBackground = Color(0xFFF7F9FC);
+  static const Color _gcpLightSurface = Color(0xFFFFFFFF);
+  static const Color _gcpDarkBackground = Color(0xFF14181F);
+  static const Color _gcpDarkSurface = Color(0xFF1E2430);
+
+  static ThemeData _gcpLight() => _consoleStyle(
+        brightness: Brightness.light,
+        seed: _gcpAccent,
+        background: _gcpLightBackground,
+        surfaceColor: _gcpLightSurface,
+        radius: 12,
+        hairlineBorder: false,
+        cardElevation: 2,
+        density: VisualDensity.standard,
+        dense: false,
+        titleWeight: FontWeight.w500,
+        crispDividers: false,
+      );
+
+  static ThemeData _gcpDark() => _consoleStyle(
+        brightness: Brightness.dark,
+        seed: _gcpAccent,
+        background: _gcpDarkBackground,
+        surfaceColor: _gcpDarkSurface,
+        radius: 12,
+        hairlineBorder: false,
+        cardElevation: 2,
+        density: VisualDensity.standard,
+        dense: false,
+        titleWeight: FontWeight.w500,
+        crispDividers: false,
+      );
+
+  // ---- Azure-inspired: cooler teal-blue accent, flat surfaces, medium
+  // corners, crisp dividers instead of shadow or hairline borders. ----
+  static const Color _azureAccent = Color(0xFF1AA3C9);
+  static const Color _azureLightBackground = Color(0xFFF5F8FA);
+  static const Color _azureLightSurface = Color(0xFFFFFFFF);
+  static const Color _azureDarkBackground = Color(0xFF10161F);
+  static const Color _azureDarkSurface = Color(0xFF1A222E);
+
+  static ThemeData _azureLight() => _consoleStyle(
+        brightness: Brightness.light,
+        seed: _azureAccent,
+        background: _azureLightBackground,
+        surfaceColor: _azureLightSurface,
+        radius: 8,
+        hairlineBorder: false,
+        cardElevation: 0,
+        density: VisualDensity.standard,
+        dense: false,
+        titleWeight: FontWeight.w500,
+        crispDividers: true,
+      );
+
+  static ThemeData _azureDark() => _consoleStyle(
+        brightness: Brightness.dark,
+        seed: _azureAccent,
+        background: _azureDarkBackground,
+        surfaceColor: _azureDarkSurface,
+        radius: 8,
+        hairlineBorder: false,
+        cardElevation: 0,
+        density: VisualDensity.standard,
+        dense: false,
+        titleWeight: FontWeight.w500,
+        crispDividers: true,
+      );
+
+  /// Shared builder behind the three console-inspired styles. Aurora is not
+  /// built through this — see [_auroraDark]'s doc comment for why — but the
+  /// three below all vary the same knobs: seed colour, surface tones, corner
+  /// radius, elevation/border treatment, app-bar weight, button shape and
+  /// density, which is exactly the set wave 1 promises to differ on.
+  static ThemeData _consoleStyle({
+    required Brightness brightness,
+    required Color seed,
+    required Color background,
+    required Color surfaceColor,
+    required double radius,
+    required bool hairlineBorder,
+    required double cardElevation,
+    required VisualDensity density,
+    required bool dense,
+    required FontWeight titleWeight,
+    required bool crispDividers,
+  }) {
+    final scheme = ColorScheme.fromSeed(
+      seedColor: seed,
+      brightness: brightness,
+    ).copyWith(surface: surfaceColor);
+
+    final cardShape = RoundedRectangleBorder(
+      borderRadius: BorderRadius.circular(radius),
+      side: hairlineBorder
+          ? BorderSide(color: scheme.outlineVariant)
+          : BorderSide.none,
+    );
+    final buttonShape =
+        RoundedRectangleBorder(borderRadius: BorderRadius.circular(radius));
+
+    return ThemeData(
+      useMaterial3: true,
+      brightness: brightness,
+      colorScheme: scheme,
+      visualDensity: density,
+      scaffoldBackgroundColor: background,
+      appBarTheme: AppBarTheme(
+        backgroundColor: surfaceColor,
+        surfaceTintColor: Colors.transparent,
+        centerTitle: false,
+        // Flat-with-border styles get a zero-elevation bar (the hairline
+        // divider below does the separating); the shadow styles get a hint
+        // of elevation instead so the bar reads as sitting above the page.
+        elevation: hairlineBorder ? 0 : 1,
+        titleTextStyle: TextStyle(
+          color: scheme.onSurface,
+          fontSize: 20,
+          fontWeight: titleWeight,
+        ),
+      ),
+      inputDecorationTheme: InputDecorationTheme(
+        border: OutlineInputBorder(borderRadius: BorderRadius.circular(radius)),
+        filled: true,
+        fillColor: surfaceColor,
+      ),
+      filledButtonTheme: FilledButtonThemeData(
+        style: FilledButton.styleFrom(
+          minimumSize: const Size.fromHeight(48),
+          shape: buttonShape,
+        ),
+      ),
+      outlinedButtonTheme: OutlinedButtonThemeData(
+        style: OutlinedButton.styleFrom(shape: buttonShape),
+      ),
+      textButtonTheme: TextButtonThemeData(
+        style: TextButton.styleFrom(shape: buttonShape),
+      ),
+      // Same dialog-width reasoning as `_auroraDark` above — every style
+      // shares that constraint regardless of its own shape language.
+      dialogTheme: DialogThemeData(
+        backgroundColor: surfaceColor,
+        shape: cardShape,
+        constraints: const BoxConstraints(minWidth: 280, maxWidth: 560),
+      ),
+      cardTheme: CardThemeData(
+        color: surfaceColor,
+        elevation: cardElevation,
+        shape: cardShape,
+      ),
+      dividerTheme: DividerThemeData(
+        color: crispDividers ? scheme.outline : scheme.outlineVariant,
+        thickness: crispDividers ? 1 : 0.5,
+        space: dense ? 24 : 32,
+      ),
+      listTileTheme: ListTileThemeData(
+        contentPadding: EdgeInsets.symmetric(horizontal: dense ? 12 : 16),
+        dense: dense,
+      ),
       snackBarTheme: const SnackBarThemeData(
         behavior: SnackBarBehavior.floating,
       ),
