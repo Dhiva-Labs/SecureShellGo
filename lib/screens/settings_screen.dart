@@ -594,6 +594,11 @@ class _SchemeSwatch extends StatelessWidget {
         ),
       ),
       child: Row(
+        // Without this the bands vanish: a childless ColoredBox has no
+        // intrinsic height, and the default centre alignment hands it loose
+        // cross-axis constraints, so each band lays out zero pixels tall and
+        // the swatch renders as an empty outline.
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           for (final color in strip) Expanded(child: ColoredBox(color: color)),
         ],
