@@ -12,7 +12,6 @@ import '../services/device_storage.dart';
 import '../services/host_grouping.dart';
 import '../services/host_store.dart';
 import '../services/known_hosts_service.dart';
-import '../services/layout_breakpoints.dart';
 import '../services/quick_connect_parser.dart';
 import '../services/session_manager.dart';
 import '../services/settings_store.dart';
@@ -23,8 +22,8 @@ import '../services/terminal_workspace.dart';
 import '../services/tunnel_runtime.dart';
 import '../theme.dart';
 import '../widgets/command_palette.dart';
-import '../widgets/host_color_dot.dart';
 import '../widgets/host_key_dialog.dart';
+import '../widgets/host_list_presentation.dart';
 import '../widgets/quick_connect_bar.dart';
 import '../widgets/snippet_picker.dart' show runSnippetOnSession;
 import 'host_edit_screen.dart';
@@ -841,6 +840,7 @@ class _HostListScreenState extends State<HostListScreen> {
         builder: (_) => TunnelsScreen(
           tunnels: tunnels,
           hostStore: widget.hostStore,
+          uiStyle: widget.settingsStore.current.uiStyle,
         ),
       ),
     );
@@ -1087,11 +1087,7 @@ class _HostListScreenState extends State<HostListScreen> {
   }
 
   Widget _buildHostList() {
-    // Only the widest class gets the grid — a phone in split-screen or a
-    // narrow tablet window (medium) still reads better as a single column.
     final width = MediaQuery.sizeOf(context).width;
-    final expandedLayout =
-        WindowSizeClass.forWidth(width) == WindowSizeClass.expanded;
 
     return FutureBuilder<List<Host>>(
       future: _future,
@@ -1101,6 +1097,11 @@ class _HostListScreenState extends State<HostListScreen> {
         }
         final hosts = snapshot.data!;
         final sections = HostGrouping.buildSections(hosts, query: _query);
+        // While searching, every section still on screen already matched the
+        // query — auto-expanding it is what surfaces the hit without the
+        // user having to also go find and tap its (possibly collapsed)
+        // header.
+        final searching = _query.trim().isNotEmpty;
 
         // A CustomScrollView with AlwaysScrollableScrollPhysics — rather than
         // gating RefreshIndicator's child on hosts.isEmpty — is what lets
@@ -1122,147 +1123,33 @@ class _HostListScreenState extends State<HostListScreen> {
                   child: _NoSearchResults(query: _query.trim()),
                 )
               else
-                for (final section in sections)
-                  _buildSection(section, expandedLayout: expandedLayout),
+                // The structural layout — grouped grid, dense table, airy
+                // cards or a flat list — is chosen entirely inside this call,
+                // by the active UiStyle and the window's breakpoint. This
+                // screen only ever hands over data and callbacks; see
+                // `widgets/host_list_presentation.dart` for the four idioms.
+                ...HostListPresentation.buildSectionSlivers(
+                  sections: sections,
+                  style: widget.settingsStore.current.uiStyle,
+                  width: width,
+                  searching: searching,
+                  isCollapsed: (section) =>
+                      !searching &&
+                      widget.settingsStore.current.collapsedGroups
+                          .contains(section.settingsKey),
+                  connectingHostId: _connectingHostId,
+                  actions: HostListActions(
+                    onToggleSection: _toggleSection,
+                    onRenameGroup: _renameGroup,
+                    onDeleteGroup: _deleteGroup,
+                    onConnect: _connect,
+                    onHostMenu: _showHostActions,
+                  ),
+                ),
             ],
           ),
         );
       },
-    );
-  }
-
-  /// One group section: its header, and (unless collapsed) its hosts as
-  /// either the compact/medium list or the expanded grid. Grouped into a
-  /// single [SliverMainAxisGroup] so the pair can carry one bottom margin
-  /// without a separate sliver-padding entry per section leaking into the
-  /// flat `slivers` list `CustomScrollView` wants.
-  Widget _buildSection(HostSection section, {required bool expandedLayout}) {
-    // While searching, every section still on screen already matched the
-    // query — auto-expanding it is what surfaces the hit without the user
-    // having to also go find and tap its (possibly collapsed) header.
-    final searching = _query.trim().isNotEmpty;
-    final collapsed = !searching &&
-        widget.settingsStore.current.collapsedGroups
-            .contains(section.settingsKey);
-
-    return SliverPadding(
-      padding: const EdgeInsets.only(bottom: 6),
-      sliver: SliverMainAxisGroup(
-        slivers: [
-          SliverToBoxAdapter(
-            child: _GroupHeader(
-              section: section,
-              collapsed: collapsed,
-              onToggle: searching ? null : () => _toggleSection(section),
-              onRename: section.isUngrouped
-                  ? null
-                  : () => _renameGroup(section.group!),
-              onDelete: section.isUngrouped
-                  ? null
-                  : () => _deleteGroup(section.group!),
-            ),
-          ),
-          if (!collapsed)
-            if (expandedLayout)
-              _buildGridSliver(section.hosts)
-            else
-              _buildListSliver(section.hosts),
-        ],
-      ),
-    );
-  }
-
-  /// Compact and medium: the plain one-column list, unchanged in shape from
-  /// before Phase 8 — now built per section instead of once for every host.
-  Widget _buildListSliver(List<Host> hosts) {
-    return SliverList.separated(
-      itemCount: hosts.length,
-      separatorBuilder: (_, _) => const Divider(height: 1),
-      itemBuilder: (context, index) {
-        final host = hosts[index];
-        final connecting = _connectingHostId == host.id;
-        // ListTile has no onSecondaryTap of its own, so wrap it: on desktop
-        // right-click opens the same action sheet long-press opens on touch
-        // devices. Behind the tile so the ink and hover effects still come
-        // from the tile itself, not a bare GestureDetector — same pattern as
-        // file_browser_pane.dart's _EntryTile.
-        return GestureDetector(
-          behavior: HitTestBehavior.opaque,
-          onSecondaryTap: connecting ? null : () => _showHostActions(host),
-          child: ListTile(
-            contentPadding: const EdgeInsets.symmetric(
-              horizontal: 16,
-              vertical: 10,
-            ),
-            leading: _hostAvatar(context, host, radius: 22),
-            title: Text(
-              host.displayName,
-              style: const TextStyle(fontWeight: FontWeight.w600),
-            ),
-            subtitle: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                const SizedBox(height: 2),
-                Text(host.target),
-                if (host.lastConnectedAt != null)
-                  Text(
-                    'Last connected '
-                    '${_formatLastConnected(host.lastConnectedAt!)}',
-                    style: TextStyle(
-                      fontSize: 11,
-                      color: Theme.of(context).colorScheme.onSurfaceVariant,
-                    ),
-                  ),
-              ],
-            ),
-            trailing: connecting
-                ? const SizedBox(
-                    width: 20,
-                    height: 20,
-                    child: CircularProgressIndicator(strokeWidth: 2),
-                  )
-                : IconButton(
-                    tooltip: 'More',
-                    icon: const Icon(Icons.more_vert),
-                    onPressed: () => _showHostActions(host),
-                  ),
-            onTap: connecting ? null : () => _connect(host),
-            onLongPress: connecting ? null : () => _showHostActions(host),
-          ),
-        );
-      },
-    );
-  }
-
-  /// Expanded: a 2-column grid of host cards, same actions as the list —
-  /// tap to connect, "more" for the same bottom sheet, long-press (or
-  /// right-click on desktop) as a shortcut to it. A wide window has room to
-  /// show more hosts at once without the list stretching into an
-  /// uncomfortably long single line per row.
-  Widget _buildGridSliver(List<Host> hosts) {
-    return SliverPadding(
-      padding: const EdgeInsets.all(12),
-      sliver: SliverGrid(
-        gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-          crossAxisCount: 2,
-          mainAxisSpacing: 12,
-          crossAxisSpacing: 12,
-          mainAxisExtent: 104,
-        ),
-        delegate: SliverChildBuilderDelegate(
-          (context, index) {
-            final host = hosts[index];
-            return _HostCard(
-              host: host,
-              connecting: _connectingHostId == host.id,
-              onTap: () => _connect(host),
-              onMore: () => _showHostActions(host),
-            );
-          },
-          childCount: hosts.length,
-        ),
-      ),
     );
   }
 }
@@ -1295,188 +1182,6 @@ class _GroupPickOption extends StatelessWidget {
           const SizedBox(width: 8),
           Expanded(child: Text(label)),
         ],
-      ),
-    );
-  }
-}
-
-/// The header row of one collapsible group section: chevron, name, host
-/// count, and — for a named group, never for Ungrouped — the overflow menu
-/// that renames or deletes it.
-class _GroupHeader extends StatelessWidget {
-  const _GroupHeader({
-    required this.section,
-    required this.collapsed,
-    required this.onToggle,
-    this.onRename,
-    this.onDelete,
-  });
-
-  final HostSection section;
-  final bool collapsed;
-  final VoidCallback? onToggle;
-  final VoidCallback? onRename;
-  final VoidCallback? onDelete;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final name = section.group ?? 'Ungrouped';
-    final count = section.hosts.length;
-
-    return Material(
-      color: theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.4),
-      child: InkWell(
-        onTap: onToggle,
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(8, 8, 4, 8),
-          child: Row(
-            children: [
-              Icon(
-                collapsed ? Icons.chevron_right : Icons.expand_more,
-                size: 20,
-                color: theme.colorScheme.onSurfaceVariant,
-              ),
-              const SizedBox(width: 4),
-              Expanded(
-                child: Text(
-                  name,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: theme.textTheme.labelLarge
-                      ?.copyWith(fontWeight: FontWeight.w700),
-                ),
-              ),
-              Text(
-                '$count',
-                style: theme.textTheme.bodySmall?.copyWith(
-                  color: theme.colorScheme.onSurfaceVariant,
-                ),
-              ),
-              if (onRename != null || onDelete != null)
-                PopupMenuButton<_GroupMenuAction>(
-                  tooltip: 'Group actions',
-                  icon: const Icon(Icons.more_vert, size: 20),
-                  onSelected: (action) => switch (action) {
-                    _GroupMenuAction.rename => onRename?.call(),
-                    _GroupMenuAction.delete => onDelete?.call(),
-                  },
-                  itemBuilder: (context) => const [
-                    PopupMenuItem(
-                      value: _GroupMenuAction.rename,
-                      child: Text('Rename group'),
-                    ),
-                    PopupMenuItem(
-                      value: _GroupMenuAction.delete,
-                      child: Text('Delete group'),
-                    ),
-                  ],
-                )
-              else
-                // Keeps the count aligned across sections regardless of
-                // whether this one has an overflow menu.
-                const SizedBox(width: 48),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-enum _GroupMenuAction { rename, delete }
-
-/// One host, as a card in the expanded grid — the same information and
-/// actions as a list row, laid out for a fixed-size grid cell instead of a
-/// full-width tile.
-class _HostCard extends StatelessWidget {
-  const _HostCard({
-    required this.host,
-    required this.connecting,
-    required this.onTap,
-    required this.onMore,
-  });
-
-  final Host host;
-  final bool connecting;
-  final VoidCallback onTap;
-  final VoidCallback onMore;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    // Same desktop right-click affordance as the list tile — see
-    // _buildListSliver — wrapped around the Card rather than the InkWell so
-    // the card's own ink and hover effects are untouched.
-    return GestureDetector(
-      behavior: HitTestBehavior.opaque,
-      onSecondaryTap: connecting ? null : onMore,
-      child: Card(
-        margin: EdgeInsets.zero,
-        clipBehavior: Clip.antiAlias,
-        child: InkWell(
-          onTap: connecting ? null : onTap,
-          onLongPress: connecting ? null : onMore,
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(14, 12, 8, 12),
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                _hostAvatar(context, host, radius: 18),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Text(
-                        host.displayName,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(fontWeight: FontWeight.w600),
-                      ),
-                      const SizedBox(height: 2),
-                      Text(
-                        host.target,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: theme.textTheme.bodySmall,
-                      ),
-                      if (host.lastConnectedAt != null)
-                        Padding(
-                          padding: const EdgeInsets.only(top: 4),
-                          child: Text(
-                            _formatLastConnected(host.lastConnectedAt!),
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: TextStyle(
-                              fontSize: 11,
-                              color: theme.colorScheme.onSurfaceVariant,
-                            ),
-                          ),
-                        ),
-                    ],
-                  ),
-                ),
-                connecting
-                    ? const Padding(
-                        padding: EdgeInsets.all(8),
-                        child: SizedBox(
-                          width: 18,
-                          height: 18,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        ),
-                      )
-                    : IconButton(
-                        tooltip: 'More',
-                        icon: const Icon(Icons.more_vert, size: 20),
-                        onPressed: onMore,
-                        visualDensity: VisualDensity.compact,
-                      ),
-              ],
-            ),
-          ),
-        ),
       ),
     );
   }
@@ -1664,68 +1369,3 @@ class _NoSearchResults extends StatelessWidget {
   }
 }
 
-/// The leading avatar for a host tile or card: the auth-method icon, plus a
-/// small badge in the corner for [Host.colorLabel] when it has one. A
-/// top-level function (not a method on either call site) since both
-/// `_buildListSliver`'s `ListTile.leading` and `_HostCard` need the exact
-/// same thing.
-Widget _hostAvatar(
-  BuildContext context,
-  Host host, {
-  required double radius,
-}) {
-  final theme = Theme.of(context);
-  final avatar = CircleAvatar(
-    radius: radius,
-    backgroundColor: theme.colorScheme.surfaceContainerHigh,
-    child: Icon(
-      host.authMethod == SshAuthMethod.password ? Icons.password : Icons.key,
-      size: radius,
-    ),
-  );
-
-  if (host.colorLabel == null) return avatar;
-
-  return Stack(
-    clipBehavior: Clip.none,
-    children: [
-      avatar,
-      Positioned(
-        right: -1,
-        bottom: -1,
-        // The backdrop is what keeps the badge legible against an avatar
-        // background close to it in hue — without it a red tag on top of
-        // the (also warm) default avatar background nearly disappears.
-        child: Container(
-          padding: const EdgeInsets.all(2),
-          decoration: BoxDecoration(
-            shape: BoxShape.circle,
-            color: theme.colorScheme.surfaceContainerHighest,
-          ),
-          child: HostColorDot(colorLabel: host.colorLabel, size: radius * 0.64),
-        ),
-      ),
-    ],
-  );
-}
-
-/// `today at 14:32`, `26 Jul at 14:32` this year, `26 Jul 2024` before that —
-/// the same progressive-detail rule the file browser's timestamps use.
-String _formatLastConnected(DateTime time) {
-  final local = time.toLocal();
-  const months = [
-    'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
-    'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
-  ];
-  final now = DateTime.now();
-  final hh = local.hour.toString().padLeft(2, '0');
-  final mm = local.minute.toString().padLeft(2, '0');
-
-  if (local.year == now.year && local.month == now.month && local.day == now.day) {
-    return 'today at $hh:$mm';
-  }
-  if (local.year == now.year) {
-    return '${local.day} ${months[local.month - 1]} at $hh:$mm';
-  }
-  return '${local.day} ${months[local.month - 1]} ${local.year}';
-}

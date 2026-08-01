@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
+import '../models/app_settings.dart';
 import '../models/tunnel_profile.dart';
 import '../services/host_store.dart';
 import '../services/remote_path.dart';
@@ -22,6 +23,7 @@ class TunnelsScreen extends StatefulWidget {
     super.key,
     required this.tunnels,
     required this.hostStore,
+    this.uiStyle = UiStyle.aurora,
   });
 
   /// Owns the running tunnels *and* the saved profiles. Built in `main.dart`,
@@ -30,6 +32,12 @@ class TunnelsScreen extends StatefulWidget {
   final TunnelRuntime tunnels;
 
   final HostStore hostStore;
+
+  /// Chrome only — see `theme.dart`'s `AppTheme.sectionHeaderChromeFor`,
+  /// applied to this screen's own [_GroupHeader]. Defaults to aurora (today's
+  /// look, unchanged) so a caller that has not been updated — this screen's
+  /// own tests included — still gets exactly what it got before.
+  final UiStyle uiStyle;
 
   @override
   State<TunnelsScreen> createState() => _TunnelsScreenState();
@@ -187,7 +195,7 @@ class _TunnelsScreenState extends State<TunnelsScreen> {
               padding: const EdgeInsets.only(bottom: 88),
               children: [
                 for (final group in groups) ...[
-                  _GroupHeader(group: group),
+                  _GroupHeader(group: group, uiStyle: widget.uiStyle),
                   for (final binding in group.bindings)
                     _TunnelTile(
                       binding: binding,
@@ -247,37 +255,57 @@ class _EmptyTunnels extends StatelessWidget {
 }
 
 class _GroupHeader extends StatelessWidget {
-  const _GroupHeader({required this.group});
+  const _GroupHeader({required this.group, this.uiStyle = UiStyle.aurora});
 
   final TunnelGroup group;
+  final UiStyle uiStyle;
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 20, 16, 4),
-      child: Row(
-        children: [
-          Icon(
-            group.isBroken ? Icons.error_outline : Icons.dns_outlined,
-            size: 16,
-            color: group.isBroken
-                ? theme.colorScheme.error
-                : theme.colorScheme.onSurfaceVariant,
-          ),
+    final chrome = AppTheme.sectionHeaderChromeFor(uiStyle, theme.colorScheme);
+    final color = group.isBroken
+        ? theme.colorScheme.error
+        : theme.colorScheme.onSurfaceVariant;
+
+    final row = Row(
+      children: [
+        if (chrome.leftAccent != null) ...[
+          Container(width: 3, height: 14, color: chrome.leftAccent),
           const SizedBox(width: 8),
-          Text(
-            group.hostLabel.toUpperCase(),
-            style: theme.textTheme.labelSmall?.copyWith(
-              letterSpacing: 1.1,
-              color: group.isBroken
-                  ? theme.colorScheme.error
-                  : theme.colorScheme.onSurfaceVariant,
-            ),
-          ),
         ],
-      ),
+        Icon(
+          group.isBroken ? Icons.error_outline : Icons.dns_outlined,
+          size: 16,
+          color: color,
+        ),
+        const SizedBox(width: 8),
+        Text(
+          group.hostLabel.toUpperCase(),
+          style: theme.textTheme.labelSmall?.copyWith(
+            letterSpacing: 1.1,
+            color: color,
+          ),
+        ),
+      ],
     );
+
+    final content = Padding(
+      padding: EdgeInsets.fromLTRB(
+        chrome.leftAccent != null ? 13 : 16,
+        chrome.tight
+            ? 10
+            : chrome.airy
+                ? 26
+                : 20,
+        16,
+        4,
+      ),
+      child: row,
+    );
+
+    if (chrome.background == null) return content;
+    return ColoredBox(color: chrome.background!, child: content);
   }
 }
 

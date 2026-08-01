@@ -5,6 +5,33 @@ import 'models/app_settings.dart';
 import 'models/host.dart';
 import 'models/syntax_token.dart';
 
+/// What [AppTheme.sectionHeaderChromeFor] resolves a [UiStyle] to: purely
+/// presentational knobs a header widget layers over its own existing
+/// content (icon, text, menu) rather than a widget itself, so a call site's
+/// own composition never has to change shape to pick this up.
+class SectionHeaderChrome {
+  const SectionHeaderChrome({
+    this.background,
+    this.leftAccent,
+    this.tight = false,
+    this.airy = false,
+  });
+
+  /// A tinted bar behind the header (aws's tight console bar). Null for no
+  /// tint.
+  final Color? background;
+
+  /// Azure's left accent stripe colour, or null for none.
+  final Color? leftAccent;
+
+  /// Tighter vertical padding — aws's tight-bar density.
+  final bool tight;
+
+  /// More top padding instead of a background tint — gcp's "light section
+  /// title, room above it" idiom.
+  final bool airy;
+}
+
 /// Terminal-appropriate Material 3 dark theme.
 ///
 /// The palette is deliberately close to a Linux terminal: near-black surfaces,
@@ -49,6 +76,29 @@ class AppTheme {
         ThemeBrightness.light => ThemeMode.light,
         ThemeBrightness.dark => ThemeMode.dark,
       };
+
+  /// Section/group header chrome for [style]: a tinted bar, a left accent
+  /// stripe, or extra whitespace instead of either — the same knobs
+  /// `widgets/host_list_presentation.dart`'s own group headers vary by,
+  /// shared here so Settings' `_SectionHeader` and the Tunnels screen's
+  /// per-host header can read as the same system without each re-deriving
+  /// the decision from `style` on its own. Aurora is the "do nothing" case:
+  /// both of those headers keep their exact pre-1.4.0 look, aurora being the
+  /// default and the regression risk everywhere, not just the host list.
+  static SectionHeaderChrome sectionHeaderChromeFor(
+    UiStyle style,
+    ColorScheme scheme,
+  ) {
+    return switch (style) {
+      UiStyle.aurora => const SectionHeaderChrome(),
+      UiStyle.aws => SectionHeaderChrome(
+          background: scheme.surfaceContainerHigh,
+          tight: true,
+        ),
+      UiStyle.gcp => const SectionHeaderChrome(airy: true),
+      UiStyle.azure => SectionHeaderChrome(leftAccent: scheme.primary),
+    };
+  }
 
   /// [UiStyle.aurora], dark — today's only look, byte-for-byte. Kept as its
   /// own method (not folded into [_consoleStyle] below) precisely so nothing
@@ -276,10 +326,29 @@ class AppTheme {
     required FontWeight titleWeight,
     required bool crispDividers,
   }) {
-    final scheme = ColorScheme.fromSeed(
-      seedColor: seed,
-      brightness: brightness,
-    ).copyWith(surface: surfaceColor);
+    final rawScheme = ColorScheme.fromSeed(seedColor: seed, brightness: brightness);
+
+    // `ColorScheme.fromSeed` only has `surfaceColor` below to work with — it
+    // still derives `outlineVariant` from the seed's own tonal palette, which
+    // (measured, not assumed) lands at roughly 1.65:1 against every one of
+    // this file's hand-picked dark surfaces. That is invisible for aws's
+    // hairline card/dialog border — the one visual trait its whole "hairline
+    // borders, dense" description promises — for gcp's soft divider, and for
+    // `workspace_view.dart`'s split-pane border/drag-handle, which reads this
+    // same role. `outline` (~4.9:1) reads as a much stronger line than
+    // "hairline" wants, so this splits the difference: blended 42% of the way
+    // from surface to onSurface, every dark variant lands at 3.1-3.3:1 —
+    // clears the 3:1 UI-component contrast floor with room, short of
+    // `outline`'s full weight. Overridden on the scheme itself, not just at
+    // one call site, so every reader gets the fix. Light keeps the seed's own
+    // `outlineVariant`: it was checked on screen already and was not the
+    // reported problem.
+    final scheme = rawScheme.copyWith(
+      surface: surfaceColor,
+      outlineVariant: brightness == Brightness.dark
+          ? Color.lerp(surfaceColor, rawScheme.onSurface, 0.42)
+          : null,
+    );
 
     final cardShape = RoundedRectangleBorder(
       borderRadius: BorderRadius.circular(radius),

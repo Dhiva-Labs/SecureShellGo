@@ -140,7 +140,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
     if (tunnels == null || hostStore == null) return;
     Navigator.of(context).push(
       MaterialPageRoute<void>(
-        builder: (_) => TunnelsScreen(tunnels: tunnels, hostStore: hostStore),
+        builder: (_) => TunnelsScreen(
+          tunnels: tunnels,
+          hostStore: hostStore,
+          uiStyle: _settings.uiStyle,
+        ),
       ),
     );
   }
@@ -273,7 +277,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
           constraints: const BoxConstraints(maxWidth: 600),
           child: ListView(
             children: [
-              const _SectionHeader('Appearance'),
+              _SectionHeader('Appearance', style: _settings.uiStyle),
               Padding(
                 padding: const EdgeInsets.fromLTRB(16, 4, 16, 4),
                 child: Text('UI style', style: theme.textTheme.bodyLarge),
@@ -325,7 +329,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 ),
               ),
               const Divider(height: 32),
-              const _SectionHeader('Terminal'),
+              _SectionHeader('Terminal', style: _settings.uiStyle),
               _TerminalPreview(settings: _settings),
               Padding(
                 padding: const EdgeInsets.fromLTRB(16, 14, 16, 0),
@@ -378,7 +382,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 ),
               ),
               const Divider(height: 32),
-              const _SectionHeader('Session'),
+              _SectionHeader('Session', style: _settings.uiStyle),
               SwitchListTile(
                 title: const Text('Keep screen awake'),
                 subtitle: const Text(
@@ -400,7 +404,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 ),
               ),
               const Divider(height: 32),
-              const _SectionHeader('Commands'),
+              _SectionHeader('Commands', style: _settings.uiStyle),
               ListTile(
                 leading: const Icon(Icons.bolt_outlined),
                 title: const Text('Snippets'),
@@ -410,7 +414,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
               ),
               if (widget.tunnels != null && widget.hostStore != null) ...[
                 const Divider(height: 32),
-                const _SectionHeader('Networking'),
+                _SectionHeader('Networking', style: _settings.uiStyle),
                 ListTile(
                   leading: const Icon(Icons.swap_horiz),
                   title: const Text('Tunnels'),
@@ -422,7 +426,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 ),
               ],
               const Divider(height: 32),
-              const _SectionHeader('Security'),
+              _SectionHeader('Security', style: _settings.uiStyle),
               if (widget.appLock != null) ..._appLockRows(theme),
               ListTile(
                 leading: const Icon(Icons.vpn_key_outlined),
@@ -457,23 +461,54 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 }
 
+/// A settings section title. Picks up [SectionHeaderChrome] for [style] —
+/// aws's tinted bar, gcp's extra whitespace, azure's left accent stripe — so
+/// Settings reads as the same system as the host list's own group headers,
+/// not just a name in the app's stock text colour regardless of style.
 class _SectionHeader extends StatelessWidget {
-  const _SectionHeader(this.label);
+  const _SectionHeader(this.label, {this.style = UiStyle.aurora});
 
   final String label;
+  final UiStyle style;
 
   @override
   Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 20, 16, 4),
-      child: Text(
-        label,
-        style: Theme.of(context).textTheme.labelLarge?.copyWith(
-              color: Theme.of(context).colorScheme.primary,
-              fontWeight: FontWeight.w600,
-            ),
+    final theme = Theme.of(context);
+    final chrome = AppTheme.sectionHeaderChromeFor(style, theme.colorScheme);
+
+    final text = Text(
+      label,
+      style: theme.textTheme.labelLarge?.copyWith(
+        color: theme.colorScheme.primary,
+        fontWeight: FontWeight.w600,
       ),
     );
+
+    final content = Padding(
+      padding: EdgeInsets.fromLTRB(
+        chrome.leftAccent != null ? 13 : 16,
+        chrome.tight
+            ? 10
+            : chrome.airy
+                ? 26
+                : 20,
+        16,
+        4,
+      ),
+      child: chrome.leftAccent == null
+          ? text
+          : Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Container(width: 3, height: 14, color: chrome.leftAccent),
+                const SizedBox(width: 10),
+                text,
+              ],
+            ),
+    );
+
+    if (chrome.background == null) return content;
+    return ColoredBox(color: chrome.background!, child: content);
   }
 }
 
@@ -567,14 +602,19 @@ class _SchemeSwatch extends StatelessWidget {
   }
 }
 
-/// A miniature mock-up of one [UiStyle] + [Brightness] combination — an
-/// app-bar strip, a card in that style's own corner radius and
-/// border/shadow treatment, and the style's accent as a dot — so the radio
-/// list previews the actual look rather than naming it and hoping.
+/// A miniature mock-up of one [UiStyle] + [Brightness] combination: an
+/// app-bar strip, a tiny group header and two rows/cards laid out in that
+/// style's own structural idiom — the same four idioms
+/// `widgets/host_list_presentation.dart` renders full-size on the host list —
+/// so the radio list previews the actual shape of the difference, not just a
+/// colour swatch that leaves it a surprise until the host list is reopened.
 ///
-/// Built straight from the real [ThemeData] `AppTheme.themeFor` returns
-/// (not a second hand-copied palette), so this can never drift from what
-/// choosing the option actually applies.
+/// Colours, corner radius and border-vs-shadow treatment are built straight
+/// from the real [ThemeData] `AppTheme.themeFor` returns (not a second
+/// hand-copied palette), so only those can never drift from what choosing
+/// the option actually applies; the header/row/card *arrangement* below is
+/// necessarily this widget's own miniature of that layout logic, the same
+/// way the layout logic itself cannot be colour data.
 class _UiStylePreview extends StatelessWidget {
   const _UiStylePreview({required this.style, required this.brightness});
 
@@ -594,10 +634,44 @@ class _UiStylePreview extends StatelessWidget {
         ? Border.fromBorderSide(cardShape.side)
         : null;
     final cardElevated = (previewTheme.cardTheme.elevation ?? 0) > 0;
+    final cardColor = previewTheme.cardTheme.color ?? scheme.surface;
+    final dividerColor =
+        previewTheme.dividerTheme.color ?? scheme.outlineVariant;
+
+    final Widget header;
+    final Widget body;
+    switch (style) {
+      case UiStyle.aurora:
+        header = _headerBar(
+          scheme,
+          background: scheme.surfaceContainerHighest.withValues(alpha: 0.4),
+        );
+        body = _cardGrid(scheme, cardColor, cardRadius, cardBorder, cardElevated);
+      case UiStyle.aws:
+        header = _headerBar(
+          scheme,
+          background: scheme.surfaceContainerHigh,
+          dense: true,
+        );
+        body = _tableRows(scheme, dividerColor);
+      case UiStyle.gcp:
+        header = _headerBar(scheme, background: null, airy: true);
+        body = _cardGrid(
+          scheme,
+          cardColor,
+          cardRadius,
+          cardBorder,
+          cardElevated,
+          gap: 6,
+        );
+      case UiStyle.azure:
+        header = _headerBar(scheme, background: null, stripe: scheme.primary);
+        body = _flatRows(scheme, dividerColor);
+    }
 
     return Container(
-      width: 72,
-      height: 52,
+      width: 88,
+      height: 66,
       clipBehavior: Clip.antiAlias,
       decoration: BoxDecoration(
         color: previewTheme.scaffoldBackgroundColor,
@@ -605,56 +679,154 @@ class _UiStylePreview extends StatelessWidget {
         border: Border.all(color: scheme.outlineVariant),
       ),
       child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          // Mock app bar.
           Container(
-            height: 14,
+            height: 9,
             color: previewTheme.appBarTheme.backgroundColor ?? scheme.surface,
           ),
+          header,
           Expanded(
             child: Padding(
-              padding: const EdgeInsets.all(6),
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  // Mock card, in the style's own corner radius and
-                  // border-vs-shadow treatment.
-                  Expanded(
-                    child: DecoratedBox(
-                      decoration: BoxDecoration(
-                        color: previewTheme.cardTheme.color ?? scheme.surface,
-                        borderRadius: cardRadius,
-                        border: cardBorder,
-                        boxShadow: cardElevated
-                            ? const [
-                                BoxShadow(
-                                  color: Color(0x40000000),
-                                  blurRadius: 3,
-                                  offset: Offset(0, 1),
-                                ),
-                              ]
-                            : null,
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 5),
-                  // The style's accent.
-                  Container(
-                    width: 10,
-                    height: 10,
-                    margin: const EdgeInsets.only(top: 2),
-                    decoration: BoxDecoration(
-                      color: scheme.primary,
-                      shape: BoxShape.circle,
-                    ),
-                  ),
-                ],
-              ),
+              padding: const EdgeInsets.fromLTRB(4, 3, 4, 4),
+              child: body,
             ),
           ),
         ],
       ),
+    );
+  }
+
+  /// A miniature of `_StyledGroupHeader` (`host_list_presentation.dart`):
+  /// chevron dot, a bar standing in for the group name, a smaller one for
+  /// the count. [stripe] draws azure's left accent; [dense] tightens the bar
+  /// the way aws's tight bar does; [airy] (gcp) adds top breathing room
+  /// instead of a background tint.
+  Widget _headerBar(
+    ColorScheme scheme, {
+    required Color? background,
+    bool dense = false,
+    bool airy = false,
+    Color? stripe,
+  }) {
+    return Container(
+      color: background,
+      padding: EdgeInsets.fromLTRB(4, airy ? 5 : 2, 4, dense ? 2 : 3),
+      child: Row(
+        children: [
+          if (stripe != null) ...[
+            Container(width: 2, height: 7, color: stripe),
+            const SizedBox(width: 3),
+          ],
+          Container(
+            width: 4,
+            height: 4,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              color: scheme.onSurfaceVariant,
+            ),
+          ),
+          const SizedBox(width: 3),
+          Expanded(
+            child: Container(
+              height: 3,
+              color: scheme.onSurface.withValues(alpha: 0.7),
+            ),
+          ),
+          const SizedBox(width: 3),
+          Container(width: 6, height: 3, color: scheme.onSurfaceVariant),
+        ],
+      ),
+    );
+  }
+
+  /// Two cards side by side, in the style's own corner radius and
+  /// border-vs-shadow treatment — aurora's tight grid and gcp's airier one
+  /// (wider [gap], gcp's own larger radius already does the rest).
+  Widget _cardGrid(
+    ColorScheme scheme,
+    Color cardColor,
+    BorderRadiusGeometry cardRadius,
+    BoxBorder? cardBorder,
+    bool cardElevated, {
+    double gap = 3,
+  }) {
+    Widget card() => Expanded(
+          child: DecoratedBox(
+            decoration: BoxDecoration(
+              color: cardColor,
+              borderRadius: cardRadius,
+              border: cardBorder,
+              boxShadow: cardElevated
+                  ? const [
+                      BoxShadow(
+                        color: Color(0x40000000),
+                        blurRadius: 3,
+                        offset: Offset(0, 1),
+                      ),
+                    ]
+                  : null,
+            ),
+          ),
+        );
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [card(), SizedBox(width: gap), card()],
+    );
+  }
+
+  /// aws's dense table: two single-line rows, each split into three aligned
+  /// blocks standing in for name/target/last-connected, with a hairline
+  /// separator — the one idiom with actual columns to preview.
+  Widget _tableRows(ColorScheme scheme, Color dividerColor) {
+    Widget row() => Row(
+          children: [
+            Expanded(
+              flex: 3,
+              child: Container(
+                height: 3,
+                color: scheme.onSurface.withValues(alpha: 0.7),
+              ),
+            ),
+            const SizedBox(width: 3),
+            Expanded(
+              flex: 3,
+              child: Container(height: 3, color: scheme.onSurfaceVariant),
+            ),
+            const SizedBox(width: 3),
+            Expanded(
+              flex: 2,
+              child: Container(height: 3, color: scheme.onSurfaceVariant),
+            ),
+          ],
+        );
+    return Column(
+      mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+      children: [
+        row(),
+        Container(height: 1, color: dividerColor),
+        row(),
+      ],
+    );
+  }
+
+  /// azure's flat list: two plain single-block rows with a divider between —
+  /// no columns (that is aws's trait) and no card (no elevation, per azure's
+  /// own description).
+  Widget _flatRows(ColorScheme scheme, Color dividerColor) {
+    // Two rows plus the divider have to fit the preview's 10px inner height;
+    // at 5 apiece they came to 11 and overflowed by exactly one pixel.
+    Widget row() => Container(
+          height: 4,
+          color: scheme.onSurface.withValues(alpha: 0.55),
+        );
+    return Column(
+      mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+      children: [
+        row(),
+        Container(height: 1, color: dividerColor),
+        row(),
+      ],
     );
   }
 }
