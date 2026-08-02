@@ -68,6 +68,17 @@ host-key verification at the core.
 - Command snippets with `{placeholder}` prompts, per-host startup commands,
   and ten terminal colour schemes
 
+### Look and feel
+- Four UI styles — the app's own look, plus AWS-, Google Cloud- and
+  Azure-inspired palettes — each with a light and dark half, switched live
+  from Settings with no restart
+- On desktop, each style also lays the saved-hosts list out its own way: a
+  console-style table, an airy card grid, or a flat accented list; phones
+  always keep the simple layout and pick up only the palette
+- Select multiple saved hosts and **push a file to all of them at once**,
+  with bounded concurrency, a per-host pass/fail result, and retry for just
+  the ones that failed
+
 ### Connections that stay up
 - Automatic reconnection with keep-alive: a dropped network or a laptop
   waking from sleep restores the shell in the same tab, and a changed host

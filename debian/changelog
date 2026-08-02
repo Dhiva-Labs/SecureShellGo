@@ -1,3 +1,18 @@
+secureshellgo (1.4.0~noble1) noble; urgency=medium
+
+  * Four switchable UI styles (the app's own look, plus AWS-, Google Cloud-
+    and Azure-inspired palettes), each with a light and dark half chosen
+    live in Settings with no restart. On desktop each style also lays the
+    saved-hosts list out its own way — a console table, an airy card grid,
+    or a flat accented list; phones keep the simple layout and pick up only
+    the palette. Fixes the terminal colour-scheme swatches, which rendered
+    as empty outlines for every scheme.
+  * Multi-select on the host list and a fleet-wide "push a file to many
+    servers at once" action: bounded concurrency, a per-host result with
+    its own failure reason, and retry for just the hosts that failed.
+
+ -- Dhiva Labs <dhivakar1010@gmail.com>  Sat, 01 Aug 2026 19:20:00 +0530
+
 secureshellgo (1.3.0~noble1) noble; urgency=medium
 
   * Desktop workspace: split the terminal area into up to four resizable
