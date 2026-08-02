@@ -10,6 +10,7 @@ import 'services/app_lock_controller.dart';
 import 'services/backup_service.dart';
 import 'services/bookmark_store.dart';
 import 'services/credential_store.dart';
+import 'services/fleet_push_run_registry.dart';
 import 'services/host_store.dart';
 import 'services/known_hosts_integrity.dart';
 import 'services/known_hosts_service.dart';
@@ -240,6 +241,12 @@ class _SecureShellGoAppState extends State<SecureShellGoApp> {
     },
   );
 
+  // Where a running fleet push (push-to-many-hosts) stays reachable after
+  // its own setup screen is left — built here, alongside `_sessions`, so
+  // both the host list (which starts one) and every sessions screen (whose
+  // transfer panel offers a way back into it) share the one instance.
+  final FleetPushRunRegistry _fleetPushRegistry = FleetPushRunRegistry();
+
   @override
   void initState() {
     super.initState();
@@ -287,6 +294,7 @@ class _SecureShellGoAppState extends State<SecureShellGoApp> {
     // themselves; the ones borrowed from sessions go with the sessions above.
     unawaited(_tunnels.dispose());
     unawaited(_workspace.dispose());
+    _fleetPushRegistry.dispose();
     unawaited(_settingsWatch?.cancel());
     unawaited(_themeWatch?.cancel());
     _appLock.dispose();
@@ -321,6 +329,7 @@ class _SecureShellGoAppState extends State<SecureShellGoApp> {
         snippetStore: _snippetStore,
         appLock: _appLock,
         backupService: _backupService,
+        fleetPushRegistry: _fleetPushRegistry,
       ),
     );
   }

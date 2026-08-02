@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import '../services/broadcast_input.dart';
+import '../services/fleet_push_run_registry.dart';
 import '../services/keep_awake.dart';
 import '../services/layout_breakpoints.dart';
 import '../services/session_controller.dart';
@@ -19,6 +20,7 @@ import '../widgets/transfer_hub_panel.dart';
 import '../widgets/transfer_panel.dart';
 import '../widgets/tunnel_indicator.dart';
 import 'file_browser_pane.dart';
+import 'fleet_push_screen.dart';
 import 'log_viewer_screen.dart';
 import 'server_stats_screen.dart';
 import 'services_screen.dart';
@@ -60,6 +62,7 @@ class SessionsScreen extends StatefulWidget {
     this.snippetStore,
     this.autoOpenSnippetPicker = false,
     this.tunnels,
+    this.fleetPushRegistry,
     KeepAwakeController? keepAwake,
   }) : keepAwake = keepAwake ?? const MethodChannelKeepAwake();
 
@@ -93,6 +96,13 @@ class SessionsScreen extends StatefulWidget {
   /// Backs the app bar's tunnel count chip. Null — every test, and any
   /// build without the tunnel manager wired in — simply shows no chip.
   final TunnelRuntime? tunnels;
+
+  /// The one place a running fleet push can be found again once its own
+  /// setup screen has been left — surfaced as a banner in the "all
+  /// transfers" sheet, see `widgets/transfer_hub_panel.dart`. Null (every
+  /// test, and any build without it wired in) just means that sheet never
+  /// shows the banner.
+  final FleetPushRunRegistry? fleetPushRegistry;
 
   /// Test seam; production leaves this to the default channel-backed one.
   final KeepAwakeController keepAwake;
@@ -661,7 +671,29 @@ class _SessionsScreenState extends State<SessionsScreen> {
           // stays put — and its badge counted — whichever tab is in front.
           TransferHubAction(
             hub: _hub,
-            onTap: () => showTransferHubSheet(context, _hub),
+            onTap: () {
+              // Captured before the sheet opens: once its banner is tapped,
+              // the sheet itself is popped first, and a `Navigator` handle
+              // stays valid across that in a way a `BuildContext` from
+              // inside the (about to be torn down) sheet does not.
+              final navigator = Navigator.of(context);
+              showTransferHubSheet(
+                context,
+                _hub,
+                fleetPush: widget.fleetPushRegistry,
+                onOpenFleetPush: (sheetContext, service) {
+                  Navigator.of(sheetContext).pop();
+                  navigator.push<void>(
+                    MaterialPageRoute<void>(
+                      builder: (_) => FleetPushResultsScreen(
+                        service: service,
+                        registry: widget.fleetPushRegistry,
+                      ),
+                    ),
+                  );
+                },
+              );
+            },
           ),
           // Both panes are already on screen side by side in the wide layout,
           // so a toggle between them means nothing there — except in a split

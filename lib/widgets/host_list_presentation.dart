@@ -18,6 +18,8 @@ class HostListActions {
     required this.onDeleteGroup,
     required this.onConnect,
     required this.onHostMenu,
+    this.onToggleSelect,
+    this.onSelectAllInGroup,
   });
 
   final void Function(HostSection section) onToggleSection;
@@ -25,6 +27,17 @@ class HostListActions {
   final void Function(String group) onDeleteGroup;
   final void Function(Host host) onConnect;
   final void Function(Host host) onHostMenu;
+
+  /// Flips one host's checked state while selection mode is on. Null (the
+  /// default) is what every existing caller gets, and is indistinguishable
+  /// from "selection mode is off" as far as this file's widgets are
+  /// concerned — see [HostListPresentation.buildSectionSlivers]'s
+  /// `selectionMode` parameter, which is the actual gate.
+  final void Function(Host host)? onToggleSelect;
+
+  /// The group header's own checkbox: select (or clear) every host in that
+  /// section at once.
+  final void Function(HostSection section)? onSelectAllInGroup;
 }
 
 /// Chooses and builds the saved-hosts list's per-section slivers.
@@ -49,6 +62,12 @@ class HostListPresentation {
     required bool Function(HostSection section) isCollapsed,
     required String? connectingHostId,
     required HostListActions actions,
+    /// Whether the list is showing checkboxes instead of connect-on-tap.
+    /// False everywhere except while a fleet push is being set up — see
+    /// `host_list_screen.dart`. Every existing caller leaves this at the
+    /// default, which renders identically to before this parameter existed.
+    bool selectionMode = false,
+    Set<String> selectedHostIds = const <String>{},
   }) {
     final windowClass = WindowSizeClass.forWidth(width);
 
@@ -62,6 +81,8 @@ class HostListPresentation {
             searching: searching,
             connectingHostId: connectingHostId,
             actions: actions,
+            selectionMode: selectionMode,
+            selectedHostIds: selectedHostIds,
           ),
       ];
     }
@@ -77,6 +98,8 @@ class HostListPresentation {
                     searching: searching,
                     connectingHostId: connectingHostId,
                     actions: actions,
+                    selectionMode: selectionMode,
+                    selectedHostIds: selectedHostIds,
                   )
                 : _listSection(
                     section: section,
@@ -85,6 +108,8 @@ class HostListPresentation {
                     searching: searching,
                     connectingHostId: connectingHostId,
                     actions: actions,
+                    selectionMode: selectionMode,
+                    selectedHostIds: selectedHostIds,
                   ),
         ],
       UiStyle.aws => [
@@ -95,6 +120,8 @@ class HostListPresentation {
               searching: searching,
               connectingHostId: connectingHostId,
               actions: actions,
+              selectionMode: selectionMode,
+              selectedHostIds: selectedHostIds,
             ),
         ],
       UiStyle.gcp => [
@@ -105,6 +132,8 @@ class HostListPresentation {
               searching: searching,
               connectingHostId: connectingHostId,
               actions: actions,
+              selectionMode: selectionMode,
+              selectedHostIds: selectedHostIds,
             ),
         ],
       UiStyle.azure => [
@@ -117,6 +146,8 @@ class HostListPresentation {
               connectingHostId: connectingHostId,
               actions: actions,
               headerVariant: _HeaderVariant.azure,
+              selectionMode: selectionMode,
+              selectedHostIds: selectedHostIds,
             ),
         ],
     };
@@ -176,6 +207,8 @@ Widget _listSection({
   required String? connectingHostId,
   required HostListActions actions,
   _HeaderVariant headerVariant = _HeaderVariant.aurora,
+  bool selectionMode = false,
+  Set<String> selectedHostIds = const <String>{},
 }) {
   return _sectionSliver(
     header: _StyledGroupHeader(
@@ -189,6 +222,9 @@ Widget _listSection({
       onDelete: section.isUngrouped
           ? null
           : () => actions.onDeleteGroup(section.group!),
+      selectionMode: selectionMode,
+      selectedHostIds: selectedHostIds,
+      onSelectAll: actions.onSelectAllInGroup,
     ),
     collapsed: collapsed,
     body: () => SliverList.separated(
@@ -196,11 +232,16 @@ Widget _listSection({
       separatorBuilder: (_, _) => const Divider(height: 1),
       itemBuilder: (context, index) {
         final host = section.hosts[index];
+        final selected = selectedHostIds.contains(host.id);
         return _ListHostRow(
           host: host,
           connecting: connectingHostId == host.id,
           dense: dense,
-          onTap: () => actions.onConnect(host),
+          selectionMode: selectionMode,
+          selected: selected,
+          onTap: selectionMode
+              ? () => actions.onToggleSelect?.call(host)
+              : () => actions.onConnect(host),
           onMore: () => actions.onHostMenu(host),
         );
       },
@@ -215,6 +256,8 @@ Widget _gridSection({
   required bool searching,
   required String? connectingHostId,
   required HostListActions actions,
+  bool selectionMode = false,
+  Set<String> selectedHostIds = const <String>{},
 }) {
   return _sectionSliver(
     header: _StyledGroupHeader(
@@ -228,6 +271,9 @@ Widget _gridSection({
       onDelete: section.isUngrouped
           ? null
           : () => actions.onDeleteGroup(section.group!),
+      selectionMode: selectionMode,
+      selectedHostIds: selectedHostIds,
+      onSelectAll: actions.onSelectAllInGroup,
     ),
     collapsed: collapsed,
     body: () => SliverPadding(
@@ -242,10 +288,15 @@ Widget _gridSection({
         delegate: SliverChildBuilderDelegate(
           (context, index) {
             final host = section.hosts[index];
+            final selected = selectedHostIds.contains(host.id);
             return _AuroraHostCard(
               host: host,
               connecting: connectingHostId == host.id,
-              onTap: () => actions.onConnect(host),
+              selectionMode: selectionMode,
+              selected: selected,
+              onTap: selectionMode
+                  ? () => actions.onToggleSelect?.call(host)
+                  : () => actions.onConnect(host),
               onMore: () => actions.onHostMenu(host),
             );
           },
@@ -267,6 +318,8 @@ Widget _awsSection({
   required bool searching,
   required String? connectingHostId,
   required HostListActions actions,
+  bool selectionMode = false,
+  Set<String> selectedHostIds = const <String>{},
 }) {
   return _sectionSliver(
     header: _StyledGroupHeader(
@@ -280,6 +333,9 @@ Widget _awsSection({
       onDelete: section.isUngrouped
           ? null
           : () => actions.onDeleteGroup(section.group!),
+      selectionMode: selectionMode,
+      selectedHostIds: selectedHostIds,
+      onSelectAll: actions.onSelectAllInGroup,
     ),
     collapsed: collapsed,
     body: () => SliverList.separated(
@@ -287,10 +343,15 @@ Widget _awsSection({
       separatorBuilder: (_, _) => const Divider(height: 1),
       itemBuilder: (context, index) {
         final host = section.hosts[index];
+        final selected = selectedHostIds.contains(host.id);
         return _AwsHostRow(
           host: host,
           connecting: connectingHostId == host.id,
-          onTap: () => actions.onConnect(host),
+          selectionMode: selectionMode,
+          selected: selected,
+          onTap: selectionMode
+              ? () => actions.onToggleSelect?.call(host)
+              : () => actions.onConnect(host),
           onMore: () => actions.onHostMenu(host),
         );
       },
@@ -307,12 +368,16 @@ class _AwsHostRow extends StatelessWidget {
     required this.connecting,
     required this.onTap,
     required this.onMore,
+    this.selectionMode = false,
+    this.selected = false,
   });
 
   final Host host;
   final bool connecting;
   final VoidCallback onTap;
   final VoidCallback onMore;
+  final bool selectionMode;
+  final bool selected;
 
   @override
   Widget build(BuildContext context) {
@@ -328,20 +393,26 @@ class _AwsHostRow extends StatelessWidget {
       color: Colors.transparent,
       child: GestureDetector(
         behavior: HitTestBehavior.opaque,
-        onSecondaryTap: connecting ? null : onMore,
+        onSecondaryTap: connecting || selectionMode ? null : onMore,
         child: InkWell(
           onTap: connecting ? null : onTap,
-          onLongPress: connecting ? null : onMore,
+          onLongPress: connecting || selectionMode ? null : onMore,
           child: Padding(
             padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
             child: Row(
               children: [
-                SizedBox(
-                  width: 18,
-                  child: host.colorLabel == null
-                      ? null
-                      : HostColorDot(colorLabel: host.colorLabel, size: 8),
-                ),
+                if (selectionMode)
+                  Checkbox(
+                    value: selected,
+                    onChanged: (_) => onTap(),
+                  )
+                else
+                  SizedBox(
+                    width: 18,
+                    child: host.colorLabel == null
+                        ? null
+                        : HostColorDot(colorLabel: host.colorLabel, size: 8),
+                  ),
                 Icon(
                   host.authMethod == SshAuthMethod.password
                       ? Icons.password
@@ -384,19 +455,21 @@ class _AwsHostRow extends StatelessWidget {
                 SizedBox(
                   width: 28,
                   height: 28,
-                  child: connecting
-                      ? const Padding(
-                          padding: EdgeInsets.all(5),
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        )
-                      : IconButton(
-                          tooltip: 'More',
-                          padding: EdgeInsets.zero,
-                          iconSize: 17,
-                          visualDensity: VisualDensity.compact,
-                          icon: const Icon(Icons.more_vert),
-                          onPressed: onMore,
-                        ),
+                  child: selectionMode
+                      ? null
+                      : connecting
+                          ? const Padding(
+                              padding: EdgeInsets.all(5),
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            )
+                          : IconButton(
+                              tooltip: 'More',
+                              padding: EdgeInsets.zero,
+                              iconSize: 17,
+                              visualDensity: VisualDensity.compact,
+                              icon: const Icon(Icons.more_vert),
+                              onPressed: onMore,
+                            ),
                 ),
               ],
             ),
@@ -419,6 +492,8 @@ Widget _gcpSection({
   required bool searching,
   required String? connectingHostId,
   required HostListActions actions,
+  bool selectionMode = false,
+  Set<String> selectedHostIds = const <String>{},
 }) {
   return _sectionSliver(
     header: _StyledGroupHeader(
@@ -432,6 +507,9 @@ Widget _gcpSection({
       onDelete: section.isUngrouped
           ? null
           : () => actions.onDeleteGroup(section.group!),
+      selectionMode: selectionMode,
+      selectedHostIds: selectedHostIds,
+      onSelectAll: actions.onSelectAllInGroup,
     ),
     collapsed: collapsed,
     body: () => SliverPadding(
@@ -450,10 +528,15 @@ Widget _gcpSection({
         delegate: SliverChildBuilderDelegate(
           (context, index) {
             final host = section.hosts[index];
+            final selected = selectedHostIds.contains(host.id);
             return _GcpHostCard(
               host: host,
               connecting: connectingHostId == host.id,
-              onTap: () => actions.onConnect(host),
+              selectionMode: selectionMode,
+              selected: selected,
+              onTap: selectionMode
+                  ? () => actions.onToggleSelect?.call(host)
+                  : () => actions.onConnect(host),
               onMore: () => actions.onHostMenu(host),
             );
           },
@@ -472,31 +555,37 @@ class _GcpHostCard extends StatelessWidget {
     required this.connecting,
     required this.onTap,
     required this.onMore,
+    this.selectionMode = false,
+    this.selected = false,
   });
 
   final Host host;
   final bool connecting;
   final VoidCallback onTap;
   final VoidCallback onMore;
+  final bool selectionMode;
+  final bool selected;
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     return GestureDetector(
       behavior: HitTestBehavior.opaque,
-      onSecondaryTap: connecting ? null : onMore,
+      onSecondaryTap: connecting || selectionMode ? null : onMore,
       child: Card(
         margin: EdgeInsets.zero,
         clipBehavior: Clip.antiAlias,
         child: InkWell(
           onTap: connecting ? null : onTap,
-          onLongPress: connecting ? null : onMore,
+          onLongPress: connecting || selectionMode ? null : onMore,
           child: Padding(
             padding: const EdgeInsets.all(18),
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                _hostAvatar(context, host, radius: 22),
+                selectionMode
+                    ? Checkbox(value: selected, onChanged: (_) => onTap())
+                    : _hostAvatar(context, host, radius: 22),
                 const SizedBox(width: 14),
                 Expanded(
                   child: Column(
@@ -535,21 +624,24 @@ class _GcpHostCard extends StatelessWidget {
                     ],
                   ),
                 ),
-                connecting
-                    ? const Padding(
-                        padding: EdgeInsets.all(8),
-                        child: SizedBox(
-                          width: 18,
-                          height: 18,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        ),
-                      )
-                    : IconButton(
-                        tooltip: 'More',
-                        icon: const Icon(Icons.more_vert, size: 20),
-                        onPressed: onMore,
-                        visualDensity: VisualDensity.compact,
-                      ),
+                if (selectionMode)
+                  const SizedBox.shrink()
+                else if (connecting)
+                  const Padding(
+                    padding: EdgeInsets.all(8),
+                    child: SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    ),
+                  )
+                else
+                  IconButton(
+                    tooltip: 'More',
+                    icon: const Icon(Icons.more_vert, size: 20),
+                    onPressed: onMore,
+                    visualDensity: VisualDensity.compact,
+                  ),
               ],
             ),
           ),
@@ -573,6 +665,9 @@ class _StyledGroupHeader extends StatelessWidget {
     required this.onToggle,
     this.onRename,
     this.onDelete,
+    this.selectionMode = false,
+    this.selectedHostIds = const <String>{},
+    this.onSelectAll,
   });
 
   final HostSection section;
@@ -581,6 +676,14 @@ class _StyledGroupHeader extends StatelessWidget {
   final VoidCallback? onToggle;
   final VoidCallback? onRename;
   final VoidCallback? onDelete;
+
+  /// While true, [onSelectAll] is offered as a tristate checkbox in place of
+  /// the collapse chevron's usual neighbour — checked when every host in
+  /// this section is selected, indeterminate when only some are, and
+  /// unchecked when none are.
+  final bool selectionMode;
+  final Set<String> selectedHostIds;
+  final void Function(HostSection section)? onSelectAll;
 
   @override
   Widget build(BuildContext context) {
@@ -638,6 +741,9 @@ class _StyledGroupHeader extends StatelessWidget {
         name = rawName;
     }
 
+    final selectedCount =
+        section.hosts.where((h) => selectedHostIds.contains(h.id)).length;
+
     final row = Row(
       children: [
         if (leftAccent != null) ...[
@@ -649,11 +755,26 @@ class _StyledGroupHeader extends StatelessWidget {
           ),
           const SizedBox(width: 10),
         ],
-        Icon(
-          collapsed ? Icons.chevron_right : Icons.expand_more,
-          size: chevronSize,
-          color: scheme.onSurfaceVariant,
-        ),
+        if (selectionMode)
+          SizedBox(
+            width: 32,
+            height: 32,
+            child: Checkbox(
+              value: selectedCount == 0
+                  ? false
+                  : selectedCount == section.hosts.length
+                      ? true
+                      : null, // indeterminate: some, not all, selected
+              tristate: true,
+              onChanged: (_) => onSelectAll?.call(section),
+            ),
+          )
+        else
+          Icon(
+            collapsed ? Icons.chevron_right : Icons.expand_more,
+            size: chevronSize,
+            color: scheme.onSurfaceVariant,
+          ),
         const SizedBox(width: 4),
         Expanded(
           child: Text(
@@ -735,6 +856,8 @@ class _ListHostRow extends StatelessWidget {
     required this.dense,
     required this.onTap,
     required this.onMore,
+    this.selectionMode = false,
+    this.selected = false,
   });
 
   final Host host;
@@ -742,6 +865,8 @@ class _ListHostRow extends StatelessWidget {
   final bool dense;
   final VoidCallback onTap;
   final VoidCallback onMore;
+  final bool selectionMode;
+  final bool selected;
 
   @override
   Widget build(BuildContext context) {
@@ -752,13 +877,15 @@ class _ListHostRow extends StatelessWidget {
     // file_browser_pane.dart's _EntryTile.
     return GestureDetector(
       behavior: HitTestBehavior.opaque,
-      onSecondaryTap: connecting ? null : onMore,
+      onSecondaryTap: connecting || selectionMode ? null : onMore,
       child: ListTile(
         contentPadding: EdgeInsets.symmetric(
           horizontal: 16,
           vertical: dense ? 6 : 10,
         ),
-        leading: _hostAvatar(context, host, radius: 22),
+        leading: selectionMode
+            ? Checkbox(value: selected, onChanged: (_) => onTap())
+            : _hostAvatar(context, host, radius: 22),
         title: Text(
           host.displayName,
           style: const TextStyle(fontWeight: FontWeight.w600),
@@ -780,7 +907,9 @@ class _ListHostRow extends StatelessWidget {
               ),
           ],
         ),
-        trailing: connecting
+        trailing: selectionMode
+            ? null
+            : connecting
             ? const SizedBox(
                 width: 20,
                 height: 20,
@@ -792,7 +921,7 @@ class _ListHostRow extends StatelessWidget {
                 onPressed: onMore,
               ),
         onTap: connecting ? null : onTap,
-        onLongPress: connecting ? null : onMore,
+        onLongPress: connecting || selectionMode ? null : onMore,
       ),
     );
   }
@@ -806,31 +935,37 @@ class _AuroraHostCard extends StatelessWidget {
     required this.connecting,
     required this.onTap,
     required this.onMore,
+    this.selectionMode = false,
+    this.selected = false,
   });
 
   final Host host;
   final bool connecting;
   final VoidCallback onTap;
   final VoidCallback onMore;
+  final bool selectionMode;
+  final bool selected;
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     return GestureDetector(
       behavior: HitTestBehavior.opaque,
-      onSecondaryTap: connecting ? null : onMore,
+      onSecondaryTap: connecting || selectionMode ? null : onMore,
       child: Card(
         margin: EdgeInsets.zero,
         clipBehavior: Clip.antiAlias,
         child: InkWell(
           onTap: connecting ? null : onTap,
-          onLongPress: connecting ? null : onMore,
+          onLongPress: connecting || selectionMode ? null : onMore,
           child: Padding(
             padding: const EdgeInsets.fromLTRB(14, 12, 8, 12),
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                _hostAvatar(context, host, radius: 18),
+                selectionMode
+                    ? Checkbox(value: selected, onChanged: (_) => onTap())
+                    : _hostAvatar(context, host, radius: 18),
                 const SizedBox(width: 10),
                 Expanded(
                   child: Column(
@@ -866,21 +1001,24 @@ class _AuroraHostCard extends StatelessWidget {
                     ],
                   ),
                 ),
-                connecting
-                    ? const Padding(
-                        padding: EdgeInsets.all(8),
-                        child: SizedBox(
-                          width: 18,
-                          height: 18,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        ),
-                      )
-                    : IconButton(
-                        tooltip: 'More',
-                        icon: const Icon(Icons.more_vert, size: 20),
-                        onPressed: onMore,
-                        visualDensity: VisualDensity.compact,
-                      ),
+                if (selectionMode)
+                  const SizedBox.shrink()
+                else if (connecting)
+                  const Padding(
+                    padding: EdgeInsets.all(8),
+                    child: SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    ),
+                  )
+                else
+                  IconButton(
+                    tooltip: 'More',
+                    icon: const Icon(Icons.more_vert, size: 20),
+                    onPressed: onMore,
+                    visualDensity: VisualDensity.compact,
+                  ),
               ],
             ),
           ),

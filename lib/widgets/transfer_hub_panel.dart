@@ -1,5 +1,9 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
+import '../services/fleet_push_run_registry.dart';
+import '../services/fleet_push_service.dart';
 import '../services/remote_path.dart';
 import '../services/transfer_hub.dart';
 import '../services/transfer_queue.dart';
@@ -69,7 +73,20 @@ class TransferHubAction extends StatelessWidget {
 
 /// The unified transfer list, as a bottom sheet: every session's uploads,
 /// downloads and server-to-server copies, newest first, in one place.
-Future<void> showTransferHubSheet(BuildContext context, TransferHub hub) {
+///
+/// [fleetPush], when given, adds a banner above the list whenever it is
+/// holding a push — running or just finished — naming [onOpenFleetPush] as
+/// what a tap on it does. Passing one without the other renders nothing: a
+/// registry to watch and nowhere to send a tap is not a usable affordance.
+/// This is the "reachable again" side of a fan-out push whose own setup
+/// screen has already been left — see `screens/fleet_push_screen.dart`.
+Future<void> showTransferHubSheet(
+  BuildContext context,
+  TransferHub hub, {
+  FleetPushRunRegistry? fleetPush,
+  void Function(BuildContext context, FleetPushService service)?
+      onOpenFleetPush,
+}) {
   final theme = Theme.of(context);
   return showModalBottomSheet<void>(
     context: context,
@@ -116,6 +133,11 @@ Future<void> showTransferHubSheet(BuildContext context, TransferHub hub) {
                     ],
                   ),
                 ),
+                if (fleetPush != null && onOpenFleetPush != null)
+                  _FleetPushBanner(
+                    registry: fleetPush,
+                    onOpen: (service) => onOpenFleetPush(context, service),
+                  ),
                 if (items.isEmpty)
                   const Padding(
                     padding: EdgeInsets.symmetric(vertical: 32),
@@ -139,6 +161,100 @@ Future<void> showTransferHubSheet(BuildContext context, TransferHub hub) {
       ),
     ),
   );
+}
+
+/// A tappable strip naming whatever fleet push [registry] is currently
+/// holding — "Pushing to 5 hosts…" while it runs, "6 of 8 succeeded" once it
+/// stops — or nothing at all when it is holding none.
+///
+/// Two streams, not one: [FleetPushRunRegistry.changes] fires when *which*
+/// push is current changes (a new one started, or the old one was cleared),
+/// and [FleetPushService.changes] fires on that push's own progress. Losing
+/// either one would mean this either misses a brand-new push replacing an
+/// old one, or freezes on whatever the first push's state was.
+class _FleetPushBanner extends StatefulWidget {
+  const _FleetPushBanner({required this.registry, required this.onOpen});
+
+  final FleetPushRunRegistry registry;
+  final void Function(FleetPushService service) onOpen;
+
+  @override
+  State<_FleetPushBanner> createState() => _FleetPushBannerState();
+}
+
+class _FleetPushBannerState extends State<_FleetPushBanner> {
+  StreamSubscription<void>? _registrySub;
+  StreamSubscription<List<FleetHostProgress>>? _serviceSub;
+  FleetPushService? _watching;
+
+  @override
+  void initState() {
+    super.initState();
+    _registrySub = widget.registry.changes.listen((_) => _resync());
+    _resync();
+  }
+
+  @override
+  void dispose() {
+    unawaited(_registrySub?.cancel());
+    unawaited(_serviceSub?.cancel());
+    super.dispose();
+  }
+
+  void _resync() {
+    final current = widget.registry.current;
+    if (identical(current, _watching)) return;
+    unawaited(_serviceSub?.cancel());
+    _watching = current;
+    _serviceSub = current?.changes.listen((_) {
+      if (mounted) setState(() {});
+    });
+    if (mounted) setState(() {});
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final service = widget.registry.current;
+    if (service == null) return const SizedBox.shrink();
+
+    final theme = Theme.of(context);
+    final label = service.isRunning
+        ? 'Pushing to ${service.totalCount} '
+            'host${service.totalCount == 1 ? '' : 's'}…'
+        : service.summary;
+
+    return Material(
+      color: theme.colorScheme.primary.withValues(alpha: 0.12),
+      child: InkWell(
+        onTap: () => widget.onOpen(service),
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(16, 10, 12, 10),
+          child: Row(
+            children: [
+              Icon(
+                service.isRunning ? Icons.dns_outlined : Icons.dns,
+                size: 18,
+                color: theme.colorScheme.primary,
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  label,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+              const Icon(Icons.chevron_right, size: 18),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
 }
 
 class _HubTile extends StatelessWidget {

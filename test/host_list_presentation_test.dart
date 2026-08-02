@@ -20,6 +20,7 @@ import 'package:secure_shell_go/widgets/host_list_presentation.dart';
 /// drives it.
 class _Harness extends StatefulWidget {
   const _Harness({
+    super.key,
     required this.hosts,
     required this.style,
     required this.width,
@@ -30,6 +31,9 @@ class _Harness extends StatefulWidget {
     this.onHostMenu,
     this.onRename,
     this.onDelete,
+    this.selectionMode = false,
+    this.initialSelected = const <String>{},
+    this.onSelectionChanged,
   });
 
   final List<Host> hosts;
@@ -43,17 +47,30 @@ class _Harness extends StatefulWidget {
   final ValueChanged<String>? onRename;
   final ValueChanged<String>? onDelete;
 
+  /// Whether the harness starts in selection mode — the tests below never
+  /// need a toggle-in-from-normal-mode affordance, since that lives on
+  /// `host_list_screen.dart`, not in the presentation layer this harness
+  /// pumps.
+  final bool selectionMode;
+  final Set<String> initialSelected;
+
+  /// Reports the selected-id set after every toggle, so a test can assert on
+  /// it without reaching into the harness's own State.
+  final ValueChanged<Set<String>>? onSelectionChanged;
+
   @override
   State<_Harness> createState() => _HarnessState();
 }
 
 class _HarnessState extends State<_Harness> {
   final Set<String> _collapsed = {};
+  late final Set<String> _selected;
 
   @override
   void initState() {
     super.initState();
     _collapsed.addAll(widget.initialCollapsed);
+    _selected = {...widget.initialSelected};
   }
 
   @override
@@ -73,6 +90,8 @@ class _HarnessState extends State<_Harness> {
             isCollapsed: (s) =>
                 !searching && _collapsed.contains(s.settingsKey),
             connectingHostId: widget.connectingHostId,
+            selectionMode: widget.selectionMode,
+            selectedHostIds: _selected,
             actions: HostListActions(
               onToggleSection: (s) => setState(() {
                 if (!_collapsed.remove(s.settingsKey)) {
@@ -83,6 +102,22 @@ class _HarnessState extends State<_Harness> {
               onDeleteGroup: (g) => widget.onDelete?.call(g),
               onConnect: (h) => widget.onConnect?.call(h),
               onHostMenu: (h) => widget.onHostMenu?.call(h),
+              onToggleSelect: (h) => setState(() {
+                if (!_selected.remove(h.id)) _selected.add(h.id);
+                widget.onSelectionChanged?.call({..._selected});
+              }),
+              onSelectAllInGroup: (section) => setState(() {
+                final allSelected =
+                    section.hosts.every((h) => _selected.contains(h.id));
+                for (final h in section.hosts) {
+                  if (allSelected) {
+                    _selected.remove(h.id);
+                  } else {
+                    _selected.add(h.id);
+                  }
+                }
+                widget.onSelectionChanged?.call({..._selected});
+              }),
             ),
           ),
         ),
@@ -431,5 +466,131 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.byType(HostColorDot), findsOneWidget);
+  });
+
+  group('selection mode', () {
+    testWidgets(
+      'checkboxes appear per host and per group, tapping a row selects '
+      'instead of connecting, and the count tracks it (aurora list)',
+      (tester) async {
+        Host? connected;
+        Set<String> selection = const {};
+        await tester.pumpWidget(
+          _Harness(
+            hosts: twoHosts,
+            style: UiStyle.aurora,
+            width: mediumWidth, // the plain list, not aurora's grid
+            selectionMode: true,
+            onConnect: (h) => connected = h,
+            onSelectionChanged: (s) => selection = s,
+          ),
+        );
+        await tester.pumpAndSettle();
+
+        // One checkbox per host, plus the group header's own select-all.
+        expect(find.byType(Checkbox), findsNWidgets(3));
+
+        await tester.tap(find.textContaining('Alpha box'));
+        await tester.pumpAndSettle();
+
+        expect(connected, isNull, reason: 'a tap selects, it does not connect');
+        expect(selection, {'a'});
+
+        await tester.tap(find.textContaining('Beta box'));
+        await tester.pumpAndSettle();
+        expect(selection, {'a', 'b'});
+      },
+    );
+
+    testWidgets(
+      'the group header checkbox selects, then clears, every host in that '
+      'section (aws table)',
+      (tester) async {
+        Set<String> selection = const {};
+        await tester.pumpWidget(
+          _Harness(
+            hosts: twoHosts,
+            style: UiStyle.aws,
+            width: desktopWidth,
+            selectionMode: true,
+            onSelectionChanged: (s) => selection = s,
+          ),
+        );
+        await tester.pumpAndSettle();
+
+        // The first checkbox in document order is the group header's own.
+        await tester.tap(find.byType(Checkbox).first);
+        await tester.pumpAndSettle();
+        expect(selection, {'a', 'b'});
+
+        await tester.tap(find.byType(Checkbox).first);
+        await tester.pumpAndSettle();
+        expect(selection, isEmpty);
+      },
+    );
+
+    testWidgets(
+      'the "more" button is hidden while selecting, for every style '
+      '(nothing to route a per-host menu to once several rows are checked)',
+      (tester) async {
+        for (final style in UiStyle.values) {
+          await tester.pumpWidget(
+            _Harness(
+              hosts: [host('solo', label: 'Solo box', group: 'Work')],
+              style: style,
+              width: desktopWidth,
+              selectionMode: true,
+            ),
+          );
+          await tester.pumpAndSettle();
+
+          expect(find.byTooltip('More'), findsNothing, reason: style.name);
+          expect(find.byType(Checkbox), findsNWidgets(2), reason: style.name);
+        }
+      },
+    );
+
+    testWidgets(
+      'leaving selection mode restores connect-on-tap and the "more" '
+      'button, with nothing left checked (aurora list)',
+      (tester) async {
+        Host? connected;
+        final key = GlobalKey();
+
+        await tester.pumpWidget(
+          _Harness(
+            key: key,
+            hosts: [host('solo', label: 'Solo box', group: 'Work')],
+            style: UiStyle.aurora,
+            width: mediumWidth,
+            selectionMode: true,
+            initialSelected: const {'solo'},
+            onConnect: (h) => connected = h,
+          ),
+        );
+        await tester.pumpAndSettle();
+        expect(find.byType(Checkbox), findsWidgets);
+
+        // A fresh, non-selecting harness is what `host_list_screen.dart`
+        // rebuilds into once the contextual app bar's close button is
+        // pressed — this stands in for that transition.
+        await tester.pumpWidget(
+          _Harness(
+            hosts: [host('solo', label: 'Solo box', group: 'Work')],
+            style: UiStyle.aurora,
+            width: mediumWidth,
+            onConnect: (h) => connected = h,
+          ),
+        );
+        await tester.pumpAndSettle();
+
+        expect(find.byType(Checkbox), findsNothing);
+        expect(find.byTooltip('More'), findsOneWidget);
+
+        await tester.tap(find.textContaining('Solo box'));
+        await tester.pumpAndSettle();
+        expect(connected?.id, 'solo');
+      },
+    );
   });
 }

@@ -9,6 +9,7 @@ import '../services/app_lock_controller.dart';
 import '../services/backup_service.dart';
 import '../services/credential_store.dart';
 import '../services/device_storage.dart';
+import '../services/fleet_push_run_registry.dart';
 import '../services/host_grouping.dart';
 import '../services/host_store.dart';
 import '../services/known_hosts_service.dart';
@@ -26,6 +27,7 @@ import '../widgets/host_key_dialog.dart';
 import '../widgets/host_list_presentation.dart';
 import '../widgets/quick_connect_bar.dart';
 import '../widgets/snippet_picker.dart' show runSnippetOnSession;
+import 'fleet_push_screen.dart';
 import 'host_edit_screen.dart';
 import 'quick_connect_screen.dart';
 import 'session_screen.dart';
@@ -65,6 +67,7 @@ class HostListScreen extends StatefulWidget {
     this.tunnels,
     this.appLock,
     this.backupService,
+    this.fleetPushRegistry,
   });
 
   final HostStore hostStore;
@@ -112,6 +115,14 @@ class HostListScreen extends StatefulWidget {
   /// Backs the Backup row in Settings. Null hides it.
   final BackupService? backupService;
 
+  /// Where a running fleet push is kept reachable once its own setup screen
+  /// is left — held above this route like [sessions], so both this screen
+  /// (which starts one) and [SessionsScreen] (whose transfer panel offers a
+  /// way back into it) share the same instance. Null hides that affordance
+  /// entirely; a push started with no registry simply runs to completion
+  /// unobserved once its screen is popped.
+  final FleetPushRunRegistry? fleetPushRegistry;
+
   @override
   State<HostListScreen> createState() => _HostListScreenState();
 }
@@ -127,6 +138,13 @@ class _HostListScreenState extends State<HostListScreen> {
   /// was dropped. Re-prompting for every host with no explanation would look
   /// like a bug; this says what actually happened.
   bool _trustStoreReset = false;
+
+  /// Whether the list is showing checkboxes instead of connect-on-tap, for a
+  /// fleet-wide "Push file…". Entered from the toolbar toggle or a host's own
+  /// "Select" menu entry; left via the contextual app bar's close button or
+  /// Escape.
+  bool _selectionMode = false;
+  final Set<String> _selectedHostIds = {};
 
   late final ShareIntake _shareIntake = widget.shareIntake ?? ShareIntake();
   late final SnippetStore _snippetStore = widget.snippetStore ?? SnippetStore();
@@ -223,6 +241,7 @@ class _HostListScreenState extends State<HostListScreen> {
             snippetStore: _snippetStore,
             autoOpenSnippetPicker: autoOpenSnippetPicker,
             tunnels: widget.tunnels,
+            fleetPushRegistry: widget.fleetPushRegistry,
           ),
         ),
       );
@@ -487,6 +506,15 @@ class _HostListScreenState extends State<HostListScreen> {
             mainAxisSize: MainAxisSize.min,
             children: [
               ListTile(
+                leading: const Icon(Icons.checklist_outlined),
+                title: const Text('Select'),
+                subtitle: const Text('Pick more hosts for a fleet-wide action'),
+                onTap: () {
+                  Navigator.of(context).pop();
+                  _enterSelectionMode(host);
+                },
+              ),
+              ListTile(
                 leading: const Icon(Icons.folder_outlined),
                 title: const Text('Browse files'),
                 subtitle:
@@ -549,6 +577,76 @@ class _HostListScreenState extends State<HostListScreen> {
         );
       },
     );
+  }
+
+  // ------------------------------------------------------------ selection
+
+  /// Turns on selection mode: checkboxes replace connect-on-tap across every
+  /// presentation (see `widgets/host_list_presentation.dart`), and the app
+  /// bar becomes contextual. [initial], when given, starts already checked —
+  /// how the host's own "Select" menu entry begins a selection with itself
+  /// in it rather than empty.
+  void _enterSelectionMode([Host? initial]) {
+    setState(() {
+      _selectionMode = true;
+      _selectedHostIds.clear();
+      if (initial != null) _selectedHostIds.add(initial.id);
+    });
+  }
+
+  void _exitSelectionMode() {
+    if (!_selectionMode) return;
+    setState(() {
+      _selectionMode = false;
+      _selectedHostIds.clear();
+    });
+  }
+
+  void _toggleHostSelected(Host host) {
+    setState(() {
+      if (!_selectedHostIds.remove(host.id)) _selectedHostIds.add(host.id);
+    });
+  }
+
+  /// The group header's own checkbox: select every host in [section] at
+  /// once, or clear all of them if every one was already checked.
+  void _toggleSelectAllInGroup(HostSection section) {
+    setState(() {
+      final allSelected =
+          section.hosts.every((h) => _selectedHostIds.contains(h.id));
+      for (final host in section.hosts) {
+        if (allSelected) {
+          _selectedHostIds.remove(host.id);
+        } else {
+          _selectedHostIds.add(host.id);
+        }
+      }
+    });
+  }
+
+  /// "Push file…" in the contextual app bar: resolves the checked ids back
+  /// to [Host] values (the presentation layer only ever hands back ids) and
+  /// pushes the fan-out flow.
+  Future<void> _openFleetPush() async {
+    if (_selectedHostIds.isEmpty) return;
+    final hosts = await _future;
+    if (!mounted) return;
+    final selected =
+        hosts.where((h) => _selectedHostIds.contains(h.id)).toList();
+    if (selected.isEmpty) return;
+
+    await Navigator.of(context).push<void>(
+      MaterialPageRoute<void>(
+        builder: (_) => FleetPushScreen(
+          hosts: selected,
+          sessions: widget.sessions,
+          credentialStore: widget.credentialStore,
+          sshService: widget.sshService,
+          registry: widget.fleetPushRegistry,
+        ),
+      ),
+    );
+    if (mounted) _exitSelectionMode();
   }
 
   /// The group-picker used by the host's own "Move to group…" action. A
@@ -980,6 +1078,10 @@ class _HostListScreenState extends State<HostListScreen> {
             const _OpenPaletteIntent(),
         LogicalKeySet(LogicalKeyboardKey.meta, LogicalKeyboardKey.keyK):
             const _OpenPaletteIntent(),
+        // A no-op outside selection mode — `_exitSelectionMode` already
+        // guards on `_selectionMode` — so this binding is safe to leave
+        // active the whole time this screen is up.
+        LogicalKeySet(LogicalKeyboardKey.escape): const _ExitSelectionIntent(),
       },
       child: Actions(
         actions: <Type, Action<Intent>>{
@@ -989,42 +1091,55 @@ class _HostListScreenState extends State<HostListScreen> {
               return null;
             },
           ),
+          _ExitSelectionIntent: CallbackAction<_ExitSelectionIntent>(
+            onInvoke: (intent) {
+              _exitSelectionMode();
+              return null;
+            },
+          ),
         },
         child: Focus(
           autofocus: true,
           child: Scaffold(
-            appBar: AppBar(
-              title: const Text('SecureShell Go'),
-              actions: [
-                if (desktop)
-                  PopupMenuButton<_HostListMenuAction>(
-                    tooltip: 'More',
-                    onSelected: (action) {
-                      switch (action) {
-                        case _HostListMenuAction.importSshConfig:
-                          unawaited(_importSshConfig());
-                      }
-                    },
-                    itemBuilder: (context) => const [
-                      PopupMenuItem(
-                        value: _HostListMenuAction.importSshConfig,
-                        child: Text('Import from ~/.ssh/config'),
+            appBar: _selectionMode
+                ? _buildSelectionAppBar()
+                : AppBar(
+                    title: const Text('SecureShell Go'),
+                    actions: [
+                      IconButton(
+                        tooltip: 'Select hosts',
+                        icon: const Icon(Icons.checklist_outlined),
+                        onPressed: () => _enterSelectionMode(),
+                      ),
+                      if (desktop)
+                        PopupMenuButton<_HostListMenuAction>(
+                          tooltip: 'More',
+                          onSelected: (action) {
+                            switch (action) {
+                              case _HostListMenuAction.importSshConfig:
+                                unawaited(_importSshConfig());
+                            }
+                          },
+                          itemBuilder: (context) => const [
+                            PopupMenuItem(
+                              value: _HostListMenuAction.importSshConfig,
+                              child: Text('Import from ~/.ssh/config'),
+                            ),
+                          ],
+                        ),
+                      if (widget.tunnels != null)
+                        IconButton(
+                          tooltip: 'Tunnels',
+                          icon: const Icon(Icons.swap_horiz),
+                          onPressed: () => unawaited(_openTunnels()),
+                        ),
+                      IconButton(
+                        tooltip: 'Settings',
+                        icon: const Icon(Icons.settings_outlined),
+                        onPressed: _openSettings,
                       ),
                     ],
                   ),
-                if (widget.tunnels != null)
-                  IconButton(
-                    tooltip: 'Tunnels',
-                    icon: const Icon(Icons.swap_horiz),
-                    onPressed: () => unawaited(_openTunnels()),
-                  ),
-                IconButton(
-                  tooltip: 'Settings',
-                  icon: const Icon(Icons.settings_outlined),
-                  onPressed: _openSettings,
-                ),
-              ],
-            ),
             body: SafeArea(
               child: Column(
                 children: [
@@ -1042,22 +1157,47 @@ class _HostListScreenState extends State<HostListScreen> {
                       live: widget.sessions.liveCount,
                       onResume: () => unawaited(_showSessions()),
                     ),
-                  QuickConnectBar(
-                    onTarget: (target) => unawaited(_quickConnect(target)),
-                  ),
+                  if (!_selectionMode)
+                    QuickConnectBar(
+                      onTarget: (target) => unawaited(_quickConnect(target)),
+                    ),
                   _buildSearchField(),
                   Expanded(child: _buildHostList()),
                 ],
               ),
             ),
-            floatingActionButton: FloatingActionButton(
-              onPressed: _addHost,
-              tooltip: 'Add host',
-              child: const Icon(Icons.add),
-            ),
+            floatingActionButton: _selectionMode
+                ? null
+                : FloatingActionButton(
+                    onPressed: _addHost,
+                    tooltip: 'Add host',
+                    child: const Icon(Icons.add),
+                  ),
           ),
         ),
       ),
+    );
+  }
+
+  /// The contextual app bar shown while [_selectionMode] is on: a close
+  /// button in place of the title's usual leading space, a live count, and
+  /// the one action this mode exists for.
+  AppBar _buildSelectionAppBar() {
+    final count = _selectedHostIds.length;
+    return AppBar(
+      leading: IconButton(
+        tooltip: 'Cancel selection',
+        icon: const Icon(Icons.close),
+        onPressed: _exitSelectionMode,
+      ),
+      title: Text(count == 0 ? 'Select hosts' : '$count selected'),
+      actions: [
+        IconButton(
+          tooltip: 'Push file…',
+          icon: const Icon(Icons.upload_file_outlined),
+          onPressed: count == 0 ? null : () => unawaited(_openFleetPush()),
+        ),
+      ],
     );
   }
 
@@ -1138,12 +1278,16 @@ class _HostListScreenState extends State<HostListScreen> {
                       widget.settingsStore.current.collapsedGroups
                           .contains(section.settingsKey),
                   connectingHostId: _connectingHostId,
+                  selectionMode: _selectionMode,
+                  selectedHostIds: _selectedHostIds,
                   actions: HostListActions(
                     onToggleSection: _toggleSection,
                     onRenameGroup: _renameGroup,
                     onDeleteGroup: _deleteGroup,
                     onConnect: _connect,
                     onHostMenu: _showHostActions,
+                    onToggleSelect: _toggleHostSelected,
+                    onSelectAllInGroup: _toggleSelectAllInGroup,
                   ),
                 ),
             ],
@@ -1198,6 +1342,12 @@ enum _HostListMenuAction { importSshConfig }
 /// Ctrl+K / Cmd+K — see the `Shortcuts`/`Actions` pair in `build()`.
 class _OpenPaletteIntent extends Intent {
   const _OpenPaletteIntent();
+}
+
+/// Escape — leaves selection mode. See the `Shortcuts`/`Actions` pair in
+/// `build()`.
+class _ExitSelectionIntent extends Intent {
+  const _ExitSelectionIntent();
 }
 
 /// The way back to sessions that are still connected behind this list.
