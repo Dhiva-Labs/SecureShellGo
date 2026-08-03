@@ -1,3 +1,24 @@
+secureshellgo (1.4.1~noble1) noble; urgency=medium
+
+  * Saving a password or key no longer dead-ends where no system keyring
+    answers. Credentials can instead be protected by an app passphrase,
+    encrypted into the app's own private file with the same Argon2id and
+    AES-256-GCM container the backup format uses; the passphrase wraps a
+    random key, so the slow key derivation runs once per unlock rather
+    than on every read and write. The keyring is still preferred whenever
+    it answers, and there is deliberately no path that silently moves an
+    install that has a working keyring onto the passphrase vault.
+  * Recommends gnome-keyring, so an install on a desktop without a Secret
+    Service daemon gets one instead of failing to save. libsecret-1-0 is
+    only the client side of that API and pulled in no provider on its own.
+  * Inside a snap, names the exact `snap connect` command that grants
+    access to the keyring rather than suggesting software the user
+    already has. The advice no longer claims no keyring is installed: the
+    platform reports one error code for three different situations, and
+    which of them occurred is not knowable from inside the app.
+
+ -- Dhiva Labs <dhivakar1010@gmail.com>  Mon, 03 Aug 2026 15:05:00 +0530
+
 secureshellgo (1.4.0~noble1) noble; urgency=medium
 
   * Four switchable UI styles (the app's own look, plus AWS-, Google Cloud-
