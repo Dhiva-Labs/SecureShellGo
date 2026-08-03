@@ -157,6 +157,39 @@ sudo snap install secureshellgo
 
 See `packaging/SNAP.md` for how the snap itself is built and published.
 
+### Saving passwords and keys on Linux
+
+Credentials are handed to the desktop's own encrypted store (the Secret
+Service API — GNOME Keyring or KWallet) and never written anywhere in
+plaintext. If no such store is reachable, saving a credential fails
+rather than silently downgrading, so the app needs one present and
+unlocked:
+
+```bash
+sudo apt install gnome-keyring
+```
+
+The PPA package pulls this in on its own. If you installed a downloaded
+`.deb` with `dpkg -i`, it did not — `dpkg` ignores `Recommends`, so
+install the file with `apt` instead and the dependency comes along:
+
+```bash
+sudo apt install ./secureshellgo_*.deb
+```
+
+Snap users need to grant access to the keyring once, because snapd does
+not connect this interface automatically:
+
+```bash
+sudo snap connect secureshellgo:password-manager-service
+```
+
+If you would rather not use the desktop keyring at all — a headless box,
+a minimal window manager, or a login keyring you never unlock — the app
+can protect credentials with an app passphrase instead, encrypting them
+into its own private file. It will offer this the first time saving to
+the keyring fails.
+
 ## Privacy
 
 SecureShell Go collects nothing: no analytics, no ads, no account, and no

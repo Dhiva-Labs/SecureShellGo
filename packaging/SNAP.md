@@ -140,3 +140,47 @@ sudo snap remove secureshellgo   # clean up afterwards
 
 `--dangerous` is required for a locally-built, unsigned `.snap`; it's not
 needed once the snap is installed normally from the Store.
+
+## Credential storage: `password-manager-service`
+
+Saving a host password or key passphrase writes to the host's Secret
+Service (GNOME Keyring / KWallet) over D-Bus. Under strict confinement
+that crosses the sandbox boundary, so it needs the
+`password-manager-service` interface — declared as a plug on the app in
+`snapcraft.yaml`.
+
+**Declaring the plug is not enough.** snapd does not auto-connect
+`password-manager-service`; it is not in the default auto-connect set,
+because an app that can talk to the Secret Service can read *every*
+secret stored there, not just its own. So on a fresh install the plug
+sits unconnected and every attempt to save a credential fails with "no
+system keyring is available", which reads to the user as a broken app.
+
+Check the current state:
+
+```bash
+snap connections secureshellgo
+```
+
+A `-` in the Slot column means unconnected. A slot with the note `manual`
+means someone connected it by hand — which is itself the proof that
+snapd did not do it automatically. Connect it with:
+
+```bash
+sudo snap connect secureshellgo:password-manager-service
+```
+
+### Getting it auto-connected
+
+The only real fix is a store-side grant, which has to be requested by the
+snap's publisher in the `store-requests` category of
+https://forum.snapcraft.io — ask for `password-manager-service`
+auto-connect for `secureshellgo`, stating that the app stores SSH
+credentials in the system keyring and holds no plaintext fallback. A
+reviewer decides; it is not something the packaging in this repo can
+grant itself.
+
+Until that is granted, users either run the `snap connect` above, or use
+the in-app passphrase vault, which needs no interface at all because it
+only writes an app-private encrypted file inside the snap's own data
+directory.

@@ -18,6 +18,7 @@ import '../widgets/error_banner.dart';
 import '../widgets/host_color_dot.dart';
 import '../widgets/host_key_dialog.dart';
 import '../widgets/public_key_dialog.dart';
+import '../widgets/vault_passphrase_dialog.dart';
 
 /// Dropdown value for "New group…". Every real group name is the trimmed
 /// result of a user-typed name (see `_promptNewGroupName` and
@@ -104,6 +105,11 @@ class _HostEditScreenState extends State<HostEditScreen> {
   bool _installingKey = false;
   String? _error;
   String? _errorDetails;
+
+  /// What the last secure-storage failure leaves the user able to do, if
+  /// anything. Drives the button under the error banner — see
+  /// [_remedyAction].
+  SecureStorageRemedy _remedy = SecureStorageRemedy.none;
 
   /// Every group name currently in use, for the group dropdown. Loaded async
   /// (unlike the host fields above, which come straight off [widget.host])
@@ -239,6 +245,7 @@ class _HostEditScreenState extends State<HostEditScreen> {
       _saving = true;
       _error = null;
       _errorDetails = null;
+      _remedy = SecureStorageRemedy.none;
     });
 
     final host = _buildHost();
@@ -270,6 +277,12 @@ class _HostEditScreenState extends State<HostEditScreen> {
         _saving = false;
         _error = 'Saved the host, but not the password or key.';
         _errorDetails = e.message;
+        // Only offer what this build can actually carry out: a fake or a
+        // bare keyring backend has no vault behind it, and a button that
+        // throws is worse than no button.
+        _remedy = widget.credentialStore.supportsPassphraseVault
+            ? e.remedy
+            : SecureStorageRemedy.none;
       });
     } catch (e) {
       if (!mounted) return;
@@ -281,6 +294,73 @@ class _HostEditScreenState extends State<HostEditScreen> {
     }
   }
 
+  /// The button under the error banner, or null when the failure genuinely
+  /// leaves nothing to do here.
+  _RemedyAction? get _remedyAction => switch (_remedy) {
+        SecureStorageRemedy.offerVault => _RemedyAction(
+            label: 'Protect with an app passphrase instead',
+            icon: Icons.lock_outline,
+            onPressed: _setUpVaultAndRetry,
+          ),
+        SecureStorageRemedy.unlockVault => _RemedyAction(
+            label: 'Unlock saved credentials',
+            icon: Icons.key_outlined,
+            onPressed: _unlockVaultAndRetry,
+          ),
+        // A keyring that has worked here before is not answered with a
+        // vault — see `composite_secure_storage.dart`. The banner already
+        // says to unlock it, and only the user can do that.
+        SecureStorageRemedy.unlockKeyring ||
+        SecureStorageRemedy.none =>
+          null,
+      };
+
+  /// Sets an app passphrase, then saves again — so the user ends up where
+  /// they were trying to get to rather than back at the form with a vault
+  /// and still no saved password.
+  Future<void> _setUpVaultAndRetry() async {
+    final passphrase = await showSetVaultPassphraseDialog(context);
+    if (passphrase == null || !mounted) return;
+    try {
+      await widget.credentialStore.createPassphraseVault(passphrase);
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _error = 'Could not set up the credential vault.';
+        _errorDetails = e.toString();
+        _remedy = SecureStorageRemedy.none;
+      });
+      return;
+    }
+    if (!mounted) return;
+    await _save();
+  }
+
+  Future<void> _unlockVaultAndRetry() async {
+    String? error;
+    // Two attempts, then out. A loop the user cannot leave is not a prompt,
+    // and a mistyped passphrase deserves at least one retry without losing
+    // the form.
+    for (var attempt = 0; attempt < 2; attempt++) {
+      if (!mounted) return;
+      final passphrase = await showUnlockVaultDialog(context, error: error);
+      if (passphrase == null || !mounted) return;
+      try {
+        await widget.credentialStore.unlockPassphraseVault(passphrase);
+        if (!mounted) return;
+        await _save();
+        return;
+      } on SecretVaultException catch (e) {
+        error = e.message;
+      }
+    }
+    if (!mounted) return;
+    setState(() {
+      _error = 'Saved the host, but not the password or key.';
+      _errorDetails = error;
+    });
+  }
+
   Future<void> _connectWithoutSaving() async {
     if (_saving || _connecting) return;
     if (!(_formKey.currentState?.validate() ?? false)) return;
@@ -290,6 +370,7 @@ class _HostEditScreenState extends State<HostEditScreen> {
       _connecting = true;
       _error = null;
       _errorDetails = null;
+      _remedy = SecureStorageRemedy.none;
     });
 
     final host = _buildHost();
@@ -994,6 +1075,20 @@ class _HostEditScreenState extends State<HostEditScreen> {
         if (_error != null) ...[
           const SizedBox(height: 16),
           ErrorBanner(message: _error!, details: _errorDetails),
+          // The way forward out of "no keyring". Without this the screen is a
+          // dead end: the host is saved, the password is not, and nothing the
+          // user can do from here changes that.
+          if (_remedyAction != null) ...[
+            const SizedBox(height: 8),
+            Align(
+              alignment: Alignment.centerLeft,
+              child: FilledButton.tonalIcon(
+                onPressed: busy ? null : _remedyAction!.onPressed,
+                icon: Icon(_remedyAction!.icon),
+                label: Text(_remedyAction!.label),
+              ),
+            ),
+          ],
         ],
         const SizedBox(height: 24),
         FilledButton.icon(
@@ -1114,4 +1209,17 @@ class _NewGroupDialogState extends State<_NewGroupDialog> {
       ],
     );
   }
+}
+
+/// One button offered under the error banner: what it says, and what it does.
+class _RemedyAction {
+  const _RemedyAction({
+    required this.label,
+    required this.icon,
+    required this.onPressed,
+  });
+
+  final String label;
+  final IconData icon;
+  final VoidCallback onPressed;
 }

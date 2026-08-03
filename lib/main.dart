@@ -9,6 +9,7 @@ import 'services/app_lock.dart';
 import 'services/app_lock_controller.dart';
 import 'services/backup_service.dart';
 import 'services/bookmark_store.dart';
+import 'services/composite_secure_storage.dart';
 import 'services/credential_store.dart';
 import 'services/fleet_push_run_registry.dart';
 import 'services/host_store.dart';
@@ -23,6 +24,7 @@ import 'services/tunnel_runtime.dart';
 import 'services/tunnel_store.dart';
 import 'theme.dart';
 import 'widgets/app_lock_gate.dart';
+import 'widgets/vault_passphrase_dialog.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -56,13 +58,45 @@ class _SecureShellGoAppState extends State<SecureShellGoApp> {
   // Composition root. Services take their dependencies through constructors
   // and hold no globals, so there is no service locator here — see
   // ARCHITECTURE.md.
-  late final SecureStorageBackend _secureStorage = FlutterSecureStorageBackend();
+  late final FlutterSecureStorageBackend _keyring =
+      FlutterSecureStorageBackend();
+
+  // Where credentials go when the OS has no keyring to put them in. The
+  // vault is only ever *reached* through the composite backend, which owns
+  // the decision — see `composite_secure_storage.dart` for the rule that
+  // stops a working keyring being traded for a passphrase file.
+  late final SecretVault _secretVault = SecretVault();
+  late final SecureStorageBackend _secureStorage =
+      CompositeSecureStorageBackend(
+    keyring: _keyring,
+    vault: _secretVault,
+    keyringAvailable: _keyring.isAvailable,
+    requestUnlockPassphrase: _promptVaultPassphrase,
+  );
+
+  /// Lets the sealed vault ask for its passphrase the first time something
+  /// actually needs a credential, from wherever that turns out to be. The
+  /// same shape as `SshService`'s host-key prompt: the service decides when
+  /// to ask, this layer knows how.
+  Future<String?> _promptVaultPassphrase() async {
+    final context = _navigatorKey.currentContext;
+    if (context == null) return null;
+    return showUnlockVaultDialog(context);
+  }
+
+  final GlobalKey<NavigatorState> _navigatorKey = GlobalKey<NavigatorState>();
 
   // known_hosts.json is sealed with an HMAC whose key lives in the Keystore.
   // Fingerprints are public, so this is not about secrecy — it is about a
   // rewritten file being unable to silence the MITM warning.
+  //
+  // Deliberately the bare keyring, not the composite: this key is read
+  // during startup, long before the user has asked for anything, and routing
+  // it through the vault would put a passphrase prompt in front of a cold
+  // start. A machine with no keyring is exactly as protected here as it was
+  // before the vault existed — no better, and no worse.
   late final KnownHostsService _knownHosts = KnownHostsService(
-    integrityKey: KnownHostsIntegrityKey(_secureStorage),
+    integrityKey: KnownHostsIntegrityKey(_keyring),
   );
   // The jump-host resolver turns a saved host's `jumpHostId` into the hop's
   // own record and its own credentials, so every bastion in a chain is
@@ -306,6 +340,7 @@ class _SecureShellGoAppState extends State<SecureShellGoApp> {
   Widget build(BuildContext context) {
     return MaterialApp(
       title: 'SecureShell Go',
+      navigatorKey: _navigatorKey,
       debugShowCheckedModeBanner: false,
       themeMode: AppTheme.themeModeFor(_themeBrightness),
       theme: AppTheme.themeFor(_uiStyle, Brightness.light),

@@ -21,6 +21,19 @@ Rules-Requires-Root: no
 Package: secureshellgo
 Architecture: amd64
 Depends: ${shlibs:Depends}, ${misc:Depends}, libsecret-1-0, libgtk-3-0
+# libsecret-1-0 is only the *client* of the Secret Service API — it needs a
+# daemon on the other end of D-Bus to actually store anything. Without one,
+# saving a password fails with "no system keyring is available", which reads
+# to the user as a broken app rather than a missing component.
+#
+# gnome-keyring is listed first because it is what actually ships
+# /usr/share/dbus-1/services/org.freedesktop.secrets.service on Ubuntu, and
+# apt satisfies an alternation with the first available option — so a plain
+# desktop install gets a working provider without being asked. The rest are
+# there so a machine that already runs one of them is not made to pull GNOME
+# bits in as well: on KDE the daemon is kwalletd, not the kwalletmanager GUI,
+# which only administers wallets and registers nothing on D-Bus.
+Recommends: gnome-keyring | kwalletd6 | kwalletd5 | keepassxc
 Description: SSH terminal and SFTP client with strict host-key verification
  SecureShell Go is a fast, security-first SSH terminal and SFTP client for
  Linux servers. Run a real interactive xterm-256color shell and transfer

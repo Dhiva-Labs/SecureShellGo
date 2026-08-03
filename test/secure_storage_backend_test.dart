@@ -47,5 +47,62 @@ void main() {
       );
       expect(exception.toString(), 'could not save this credential');
     });
+
+    test('defaults to offering nothing, so a caller must opt in to a button',
+        () {
+      const exception = SecureStorageUnavailableException('nope');
+      expect(exception.remedy, SecureStorageRemedy.none);
+    });
+  });
+
+  group('isRunningAsSnap', () {
+    test('either snapd variable is enough', () {
+      expect(isRunningAsSnap(environment: {'SNAP': '/snap/x/12'}), isTrue);
+      expect(isRunningAsSnap(environment: {'SNAP_NAME': 'x'}), isTrue);
+    });
+
+    test('an empty value is not a snap', () {
+      expect(isRunningAsSnap(environment: {'SNAP': ''}), isFalse);
+      expect(isRunningAsSnap(environment: const {}), isFalse);
+    });
+  });
+
+  group('keyringUnavailableMessage', () {
+    test('a snap is told the one command that fixes it', () {
+      final message = keyringUnavailableMessage(
+        environment: {'SNAP_NAME': 'secureshellgo'},
+      );
+
+      expect(message, contains(snapKeyringConnectCommand));
+      expect(
+        snapKeyringConnectCommand,
+        'snap connect secureshellgo:password-manager-service',
+      );
+      // Pointing a snap user at an installer is the wrong advice: they
+      // almost certainly have a keyring, just no interface to it.
+      expect(message, isNot(contains('GNOME Keyring')));
+    });
+
+    test('every other Linux install keeps the generic advice', () {
+      final message = keyringUnavailableMessage(environment: const {});
+
+      expect(message, contains('GNOME Keyring'));
+      expect(message, isNot(contains('snap ')));
+    });
+
+    test('neither claims a keyring is missing when it may only be locked',
+        () {
+      // The Linux plugin raises one code for "nothing reachable", "no default
+      // collection" and "locked", so any wording that asserts one of the
+      // three will be wrong for the other two.
+      for (final message in [
+        keyringUnavailableMessage(environment: const {}),
+        keyringUnavailableMessage(environment: {'SNAP': '/snap/x/12'}),
+      ]) {
+        expect(message, contains('could not be reached or unlocked'));
+        expect(message, isNot(contains('is not installed')));
+        expect(message, contains('unprotected'));
+      }
+    });
   });
 }

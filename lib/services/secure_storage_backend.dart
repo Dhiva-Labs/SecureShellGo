@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:flutter/services.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
@@ -27,6 +29,35 @@ abstract class SecureStorageBackend {
   Future<void> delete(String key);
 }
 
+/// What the user can actually *do* about a failed write, so a screen can
+/// offer a button instead of only an apology.
+///
+/// This exists because the original failure was a dead end: "no keyring"
+/// with nowhere to go left the user unable to save a credential at all, on
+/// every snap install and every desktop with no Secret Service daemon
+/// running. Which remedy applies is a decision only
+/// `CompositeSecureStorageBackend` can make — see its selection rule — so it
+/// travels on the exception rather than being re-derived by each screen.
+enum SecureStorageRemedy {
+  /// Nothing specific to offer: show the message and stop.
+  none,
+
+  /// No OS keyring has ever worked on this install and no vault exists yet.
+  /// The caller may offer to set an app passphrase and keep secrets in the
+  /// passphrase vault instead.
+  offerVault,
+
+  /// A passphrase vault exists but is sealed for this session. The caller
+  /// should ask for its passphrase, not offer to make a new one.
+  unlockVault,
+
+  /// The OS keyring has worked on this install before, so it is installed
+  /// and merely locked right now. The fix is to unlock it. Deliberately
+  /// *not* [offerVault]: see `CompositeSecureStorageBackend` for why a
+  /// working keyring is never quietly traded for a vault.
+  unlockKeyring,
+}
+
 /// Thrown by [FlutterSecureStorageBackend.write] when the platform could not
 /// protect the secret — a locked or absent Linux keyring being the case this
 /// project treats as certain rather than hypothetical: a headless box, a
@@ -35,9 +66,14 @@ abstract class SecureStorageBackend {
 ///
 /// There is deliberately no plaintext-fallback path anywhere near this type:
 /// its entire purpose is to make that failure loud instead of quiet. Callers
-/// should show [message] to the user rather than swallow this.
+/// should show [message] to the user rather than swallow this, and offer
+/// whatever [remedy] names.
 class SecureStorageUnavailableException implements Exception {
-  const SecureStorageUnavailableException(this.message, {this.code});
+  const SecureStorageUnavailableException(
+    this.message, {
+    this.code,
+    this.remedy = SecureStorageRemedy.none,
+  });
 
   /// A message fit for a dialog: what happened, and — where known — what to
   /// do about it.
@@ -47,8 +83,60 @@ class SecureStorageUnavailableException implements Exception {
   /// platform reported one. Null otherwise.
   final String? code;
 
+  /// The way forward this failure leaves open, if any.
+  final SecureStorageRemedy remedy;
+
   @override
   String toString() => message;
+}
+
+/// The exact command a snap user has to run. snapd does not auto-connect
+/// `password-manager-service` for anything but brand-store snaps, so a
+/// freshly installed snap has the interface declared and unconnected, and
+/// every keyring call fails until this is run once.
+const String snapKeyringConnectCommand =
+    'snap connect secureshellgo:password-manager-service';
+
+/// Whether this process is running from inside a snap package.
+///
+/// snapd sets `SNAP` (the mount point of the squashfs) and `SNAP_NAME` for
+/// everything it launches; either being present is enough, and neither is
+/// set for a deb, a tarball or a `flutter run` build. [environment] is for
+/// tests — nothing else should pass it, since [Platform.environment] is the
+/// only honest answer at runtime.
+bool isRunningAsSnap({Map<String, String>? environment}) {
+  final env = environment ?? Platform.environment;
+  return (env['SNAP'] ?? '').isNotEmpty || (env['SNAP_NAME'] ?? '').isNotEmpty;
+}
+
+/// The "the keyring did not answer" message, with the *actionable* half
+/// chosen for where this build is actually running.
+///
+/// Telling a snap user to "install GNOME Keyring" is worse than useless:
+/// they almost certainly have one running, and the real reason the write
+/// failed is that the snap's interface to it is not connected. So the snap
+/// case names the one command that fixes it, and every other Linux install
+/// keeps the generic advice.
+///
+/// Neither half claims no keyring is *installed*. The Linux plugin raises
+/// one code, `KeyringLocked`, for three different situations — no Secret
+/// Service provider reachable at all, a provider running with no collection
+/// aliased "default", and a default collection that simply would not
+/// unlock — and nothing on the Dart side can tell them apart. "Could not be
+/// reached or unlocked" is the strongest claim that is true in all three.
+String keyringUnavailableMessage({Map<String, String>? environment}) {
+  if (isRunningAsSnap(environment: environment)) {
+    return 'Your system keyring could not be reached or unlocked. This snap '
+        'has not been granted access to it — snapd does not connect that '
+        'interface automatically. Run:\n\n'
+        '    $snapKeyringConnectCommand\n\n'
+        'then try again. SecureShell Go will not store this credential '
+        'unprotected.';
+  }
+  return 'Your system keyring could not be reached or unlocked. It may not '
+      'be running, or it may be locked — start or unlock a Secret Service '
+      'provider (GNOME Keyring, KWallet) and try again. SecureShell Go will '
+      'not store this credential unprotected.';
 }
 
 /// Maps a [PlatformException] thrown by the `flutter_secure_storage` write
@@ -57,13 +145,12 @@ class SecureStorageUnavailableException implements Exception {
 /// without a platform channel: constructing a [PlatformException] by hand and
 /// checking the mapped message needs no plugin binding at all.
 SecureStorageUnavailableException mapSecureStorageWriteError(
-  PlatformException e,
-) {
+  PlatformException e, {
+  Map<String, String>? environment,
+}) {
   if (e.code == 'KeyringLocked') {
     return SecureStorageUnavailableException(
-      'No system keyring is available or unlocked. Install and unlock a '
-      'Secret Service provider (GNOME Keyring, KWallet) and try again — '
-      'SecureShell Go will not save this credential unprotected.',
+      keyringUnavailableMessage(environment: environment),
       code: e.code,
     );
   }

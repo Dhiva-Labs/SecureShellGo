@@ -1,12 +1,17 @@
 import 'dart:convert';
 
 import '../models/host.dart';
+import 'composite_secure_storage.dart';
+import 'secret_vault.dart';
 import 'secure_storage_backend.dart';
 
+export 'secret_vault.dart'
+    show SecretVault, SecretVaultAuthException, SecretVaultException;
 export 'secure_storage_backend.dart'
     show
         SecureStorageBackend,
         FlutterSecureStorageBackend,
+        SecureStorageRemedy,
         SecureStorageUnavailableException;
 
 /// Saves and loads [SshCredentials] for a saved host, keyed by [Host.id].
@@ -75,6 +80,35 @@ class CredentialStore {
   Future<bool> isAvailable() async {
     final backend = _backend;
     if (backend is FlutterSecureStorageBackend) return backend.isAvailable();
+    if (backend is CompositeSecureStorageBackend) return backend.isAvailable();
     return true;
+  }
+
+  /// Whether this build can offer the passphrase vault as a way out of "no
+  /// keyring" — false for a test fake or a bare keyring backend, in which
+  /// case a screen should show the error and no button.
+  bool get supportsPassphraseVault =>
+      _backend is CompositeSecureStorageBackend;
+
+  /// Sets up the passphrase vault. Only valid when saving failed with
+  /// [SecureStorageRemedy.offerVault]; the backend refuses otherwise, which
+  /// is what keeps a merely-locked keyring from being answered with a vault.
+  Future<void> createPassphraseVault(String passphrase) async {
+    final backend = _backend;
+    if (backend is! CompositeSecureStorageBackend) {
+      throw StateError('This build has no passphrase vault.');
+    }
+    await backend.createVault(passphrase);
+  }
+
+  /// Opens an existing vault for this session. Throws
+  /// [SecretVaultAuthException] on a wrong passphrase, having changed nothing
+  /// on disk.
+  Future<void> unlockPassphraseVault(String passphrase) async {
+    final backend = _backend;
+    if (backend is! CompositeSecureStorageBackend) {
+      throw StateError('This build has no passphrase vault.');
+    }
+    await backend.unlockVault(passphrase);
   }
 }
