@@ -3,8 +3,11 @@ import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:secure_shell_go/services/composite_secure_storage.dart';
+import 'package:secure_shell_go/services/device_vault_key.dart';
 import 'package:secure_shell_go/services/secret_vault.dart';
 import 'package:secure_shell_go/services/secure_storage_backend.dart';
+
+import 'vault_fixture.dart';
 
 /// A keyring that is present and working, over a plain map.
 class _FakeKeyring implements SecureStorageBackend {
@@ -109,10 +112,24 @@ void main() {
         keyring: keyring,
         vault: vault,
         keyringAvailable: () async => keyringWorks,
+        deviceKey: DeviceVaultKey(
+          file: File('${dir.path}/${DeviceVaultKey.fileName}'),
+        ),
         state: SecureStorageState(
           file: File('${dir.path}/${SecureStorageState.fileName}'),
         ),
         requestUnlockPassphrase: requestUnlockPassphrase,
+      );
+    }
+
+    /// Plants a vault exactly as 1.4.1 left one: format version 1, sealed
+    /// with a typed passphrase. Nothing in the app creates these any more, so
+    /// a test that wants one has to write it — which is also the honest way
+    /// to test that they still open.
+    Future<void> plantLegacyVault(Map<String, String> secrets) async {
+      await File('${dir.path}/${SecretVault.fileName}').writeAsBytes(
+        await buildLegacyVaultFile(passphrase: passphrase, secrets: secrets),
+        flush: true,
       );
     }
 
@@ -139,29 +156,66 @@ void main() {
       );
     });
 
-    test('no keyring, and none ever, offers the vault as a way forward',
+    test('no keyring, and none ever: the write is encrypted, not refused',
         () async {
       keyringWorks = false;
 
-      await expectLater(
-        backend.write('credentials:host-1', 'secret'),
-        throwsA(
-          isA<SecureStorageUnavailableException>().having(
-            (e) => e.remedy,
-            'remedy',
-            SecureStorageRemedy.offerVault,
-          ),
-        ),
-      );
-
-      await backend.createVault(passphrase);
+      // Nothing thrown, nothing asked, nothing for a screen to apologise
+      // for. This is the whole revision: storing it encrypted is the floor.
       await backend.write('credentials:host-1', 'secret');
 
       expect(await backend.read('credentials:host-1'), 'secret');
-      // The point of the whole exercise: the secret went somewhere, and that
-      // somewhere was not the keyring and not a plaintext file.
+      expect(await vault.isDeviceWrapped(), isTrue);
+      // The secret went somewhere, and that somewhere was not the keyring
+      // and not a plaintext file.
       expect(keyring.data, isEmpty);
       expect(await backend.resolve(), SecureStorageChoice.vault);
+      final vaultBytes =
+          await File('${dir.path}/${SecretVault.fileName}').readAsBytes();
+      expect(String.fromCharCodes(vaultBytes), isNot(contains('secret')));
+    });
+
+    test('a device-encrypted secret round-trips across a restart', () async {
+      keyringWorks = false;
+      await backend.write('credentials:host-1', 'secret');
+
+      // A fresh launch, with nothing in memory and no way to prompt: the
+      // device opens its own vault.
+      final restarted = build(
+        requestUnlockPassphrase: () async =>
+            fail('a device-encrypted vault must never ask for a passphrase'),
+      );
+      expect(await restarted.read('credentials:host-1'), 'secret');
+    });
+
+    test('the device key file is private to its owner', () async {
+      keyringWorks = false;
+      await backend.write('credentials:host-1', 'secret');
+
+      final keyFile = File('${dir.path}/${DeviceVaultKey.fileName}');
+      expect(await keyFile.exists(), isTrue);
+      expect(
+        keyFile.statSync().mode & 0x1ff,
+        DeviceVaultKey.ownerOnlyMode,
+        reason: 'the key that opens the vault must be 0600',
+      );
+    }, skip: Platform.isWindows ? 'POSIX modes only' : null);
+
+    test('a device key that has gone missing fails closed', () async {
+      keyringWorks = false;
+      await backend.write('credentials:host-1', 'secret');
+      await File('${dir.path}/${DeviceVaultKey.fileName}').delete();
+
+      final restarted = build(
+        requestUnlockPassphrase: () async =>
+            fail('there is no passphrase to ask for in device mode'),
+      );
+      // Reads as "nothing saved", exactly like an unreachable keyring, and
+      // the vault is still on disk with nothing readable in it.
+      expect(await restarted.read('credentials:host-1'), isNull);
+      final vaultBytes =
+          await File('${dir.path}/${SecretVault.fileName}').readAsBytes();
+      expect(String.fromCharCodes(vaultBytes), isNot(contains('secret')));
     });
 
     test('a keyring seen working once is never downgraded to a vault',
@@ -174,22 +228,17 @@ void main() {
         backend.write('credentials:host-2', 'another'),
         throwsA(
           isA<SecureStorageUnavailableException>()
-              .having(
-                (e) => e.remedy,
-                'remedy',
-                SecureStorageRemedy.unlockKeyring,
-              )
               .having((e) => e.message, 'message', contains('unlock')),
         ),
       );
-      // Not even by asking directly: the only route into a vault is the
-      // state where no keyring has ever worked.
-      await expectLater(
-        backend.createVault(passphrase),
-        throwsA(isA<SecretVaultStateException>()),
-      );
+      // And the automatic device path did not fire either: the only route
+      // into a vault is the state where no keyring has ever worked.
       expect(
         await File('${dir.path}/${SecretVault.fileName}').exists(),
+        isFalse,
+      );
+      expect(
+        await File('${dir.path}/${DeviceVaultKey.fileName}').exists(),
         isFalse,
       );
     });
@@ -207,8 +256,7 @@ void main() {
     test('a sealed vault asks for its passphrase before it is read',
         () async {
       keyringWorks = false;
-      await backend.createVault(passphrase);
-      await backend.write('credentials:host-1', 'secret');
+      await plantLegacyVault(const {'credentials:host-1': 'secret'});
 
       var asked = 0;
       final restarted = build(
@@ -217,7 +265,6 @@ void main() {
           return passphrase;
         },
       );
-      expect(restarted.isVaultUnlocked, isFalse);
 
       expect(await restarted.read('credentials:host-1'), 'secret');
       expect(asked, 1);
@@ -229,9 +276,10 @@ void main() {
 
     test('concurrent reads share one unlock prompt, not one each', () async {
       keyringWorks = false;
-      await backend.createVault(passphrase);
-      await backend.write('credentials:host-1', 'secret');
-      await backend.write('credentials:host-2', 'other');
+      await plantLegacyVault(const {
+        'credentials:host-1': 'secret',
+        'credentials:host-2': 'other',
+      });
 
       var asked = 0;
       final restarted = build(
@@ -263,6 +311,9 @@ void main() {
           useIsolate: false,
         ),
         keyringAvailable: () async => true,
+        deviceKey: DeviceVaultKey(
+          file: File('${dir.path}/${DeviceVaultKey.fileName}'),
+        ),
         state: SecureStorageState(
           file: File('${dir.path}/${SecureStorageState.fileName}'),
         ),
@@ -271,11 +322,9 @@ void main() {
       await expectLater(
         backend.write('credentials:host-1', 'secret'),
         throwsA(
-          isA<SecureStorageUnavailableException>().having(
-            (e) => e.remedy,
-            'remedy',
-            SecureStorageRemedy.unlockKeyring,
-          ),
+          isA<SecureStorageUnavailableException>()
+              .having((e) => e.code, 'code', 'KeyringLocked')
+              .having((e) => e.message, 'message', contains('unlock')),
         ),
       );
     });
@@ -288,6 +337,9 @@ void main() {
           useIsolate: false,
         ),
         keyringAvailable: () async => true,
+        deviceKey: DeviceVaultKey(
+          file: File('${dir.path}/${DeviceVaultKey.fileName}'),
+        ),
         state: SecureStorageState(
           file: File('${dir.path}/${SecureStorageState.fileName}'),
         ),
@@ -298,7 +350,7 @@ void main() {
         throwsA(
           isA<SecureStorageUnavailableException>()
               .having((e) => e.code, 'code', 'Libsecret error')
-              .having((e) => e.remedy, 'remedy', SecureStorageRemedy.none),
+              .having((e) => e.message, 'message', 'nope'),
         ),
       );
     });
@@ -306,8 +358,7 @@ void main() {
     test('declining the unlock prompt fails closed rather than guessing',
         () async {
       keyringWorks = false;
-      await backend.createVault(passphrase);
-      await backend.write('credentials:host-1', 'secret');
+      await plantLegacyVault(const {'credentials:host-1': 'secret'});
 
       final restarted = build(requestUnlockPassphrase: () async => null);
 
@@ -315,19 +366,16 @@ void main() {
       await expectLater(
         restarted.write('credentials:host-2', 'nope'),
         throwsA(
-          isA<SecureStorageUnavailableException>().having(
-            (e) => e.remedy,
-            'remedy',
-            SecureStorageRemedy.unlockVault,
-          ),
+          isA<SecureStorageUnavailableException>()
+              .having((e) => e.message, 'message', contains('locked')),
         ),
       );
     });
 
     test('a vault stays the store even once a keyring turns up', () async {
       keyringWorks = false;
-      await backend.createVault(passphrase);
-      await backend.write('credentials:host-1', 'secret');
+      await plantLegacyVault(const {'credentials:host-1': 'secret'});
+      backend = build(requestUnlockPassphrase: () async => passphrase);
 
       // The user installs GNOME Keyring. Nothing is migrated — that is
       // deliberate, and switching back would make the saved credential look

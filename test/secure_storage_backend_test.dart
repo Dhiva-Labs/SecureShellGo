@@ -47,12 +47,6 @@ void main() {
       );
       expect(exception.toString(), 'could not save this credential');
     });
-
-    test('defaults to offering nothing, so a caller must opt in to a button',
-        () {
-      const exception = SecureStorageUnavailableException('nope');
-      expect(exception.remedy, SecureStorageRemedy.none);
-    });
   });
 
   group('isRunningAsSnap', () {

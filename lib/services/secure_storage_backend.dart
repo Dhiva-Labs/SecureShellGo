@@ -29,35 +29,6 @@ abstract class SecureStorageBackend {
   Future<void> delete(String key);
 }
 
-/// What the user can actually *do* about a failed write, so a screen can
-/// offer a button instead of only an apology.
-///
-/// This exists because the original failure was a dead end: "no keyring"
-/// with nowhere to go left the user unable to save a credential at all, on
-/// every snap install and every desktop with no Secret Service daemon
-/// running. Which remedy applies is a decision only
-/// `CompositeSecureStorageBackend` can make — see its selection rule — so it
-/// travels on the exception rather than being re-derived by each screen.
-enum SecureStorageRemedy {
-  /// Nothing specific to offer: show the message and stop.
-  none,
-
-  /// No OS keyring has ever worked on this install and no vault exists yet.
-  /// The caller may offer to set an app passphrase and keep secrets in the
-  /// passphrase vault instead.
-  offerVault,
-
-  /// A passphrase vault exists but is sealed for this session. The caller
-  /// should ask for its passphrase, not offer to make a new one.
-  unlockVault,
-
-  /// The OS keyring has worked on this install before, so it is installed
-  /// and merely locked right now. The fix is to unlock it. Deliberately
-  /// *not* [offerVault]: see `CompositeSecureStorageBackend` for why a
-  /// working keyring is never quietly traded for a vault.
-  unlockKeyring,
-}
-
 /// Thrown by [FlutterSecureStorageBackend.write] when the platform could not
 /// protect the secret — a locked or absent Linux keyring being the case this
 /// project treats as certain rather than hypothetical: a headless box, a
@@ -66,14 +37,12 @@ enum SecureStorageRemedy {
 ///
 /// There is deliberately no plaintext-fallback path anywhere near this type:
 /// its entire purpose is to make that failure loud instead of quiet. Callers
-/// should show [message] to the user rather than swallow this, and offer
-/// whatever [remedy] names.
+/// should show [message] to the user rather than swallow this — it is
+/// composed where the reason is actually known, which is the only place that
+/// can name the way out (a snap install gets the exact `snap connect` line),
+/// so a screen that substitutes its own wording only ever loses information.
 class SecureStorageUnavailableException implements Exception {
-  const SecureStorageUnavailableException(
-    this.message, {
-    this.code,
-    this.remedy = SecureStorageRemedy.none,
-  });
+  const SecureStorageUnavailableException(this.message, {this.code});
 
   /// A message fit for a dialog: what happened, and — where known — what to
   /// do about it.
@@ -82,9 +51,6 @@ class SecureStorageUnavailableException implements Exception {
   /// The platform's error code (e.g. `KeyringLocked` on Linux), when the
   /// platform reported one. Null otherwise.
   final String? code;
-
-  /// The way forward this failure leaves open, if any.
-  final SecureStorageRemedy remedy;
 
   @override
   String toString() => message;

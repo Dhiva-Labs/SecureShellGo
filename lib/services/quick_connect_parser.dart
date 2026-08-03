@@ -17,11 +17,20 @@ class QuickConnectTarget {
     required this.username,
     required this.hostname,
     required this.port,
+    this.hasExplicitPort = false,
   });
 
   final String username;
   final String hostname;
   final int port;
+
+  /// Whether [port] was in the input or is this parser's default of 22.
+  ///
+  /// Quick connect does not care — it dials [port] either way. The host edit
+  /// form does: it fills its own Port field from a pasted `host:port`, and
+  /// must not overwrite a port the user typed there with a 22 that came from
+  /// nowhere. See `host_field_input.dart`.
+  final bool hasExplicitPort;
 }
 
 enum QuickConnectStatus { ok, error }
@@ -89,6 +98,7 @@ QuickConnectParseResult parseQuickConnect(
     }
     final rest = remainder.substring(closeIndex + 1);
     var port = 22;
+    var explicit = false;
     if (rest.isNotEmpty) {
       if (!rest.startsWith(':')) {
         return QuickConnectParseResult.error('Unexpected text after "]".');
@@ -100,9 +110,15 @@ QuickConnectParseResult parseQuickConnect(
         );
       }
       port = parsedPort;
+      explicit = true;
     }
     return QuickConnectParseResult.ok(
-      QuickConnectTarget(username: username, hostname: hostname, port: port),
+      QuickConnectTarget(
+        username: username,
+        hostname: hostname,
+        port: port,
+        hasExplicitPort: explicit,
+      ),
     );
   }
 
@@ -134,6 +150,7 @@ QuickConnectParseResult parseQuickConnect(
         username: username,
         hostname: hostname,
         port: parsedPort,
+        hasExplicitPort: true,
       ),
     );
   }

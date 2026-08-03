@@ -718,8 +718,7 @@ class SessionController {
         const SftpFailure('The session has ended. Reconnect to browse files.'),
       );
     }
-    final open = _openFileSystem ??
-        () => connection.openSftp().then<RemoteFileSystem>(SftpService.new);
+    final open = _openFileSystem ?? _openVerifiedSftp;
     return _sftpOpening ??= open().then((service) {
       _sftp = service;
       return service;
@@ -733,6 +732,37 @@ class SessionController {
               details: error.toString(),
             );
     });
+  }
+
+  /// How long the readiness check below waits before calling the subsystem
+  /// dead. Generous enough for a slow link, short enough that nobody sits
+  /// watching a spinner wondering whether it is working.
+  static const Duration sftpReadyTimeout = Duration(seconds: 15);
+
+  /// Opens SFTP and confirms it actually answers before handing it back.
+  ///
+  /// `SSHClient.sftp()` does not wait to find out whether the server agreed
+  /// to start the subsystem — it returns a client as soon as the channel is
+  /// open, in single-digit milliseconds, even against a server with
+  /// `Subsystem sftp` disabled. The refusal only shows up on the first real
+  /// request, which never completes and never fails: measured against a
+  /// server with no sftp subsystem, `openSftp()` returned in 7 ms and the
+  /// first `listdir` was still hanging 20 seconds later. That left the file
+  /// panel spinning forever, and meant the "server refused an SFTP session"
+  /// message below could never be reached.
+  ///
+  /// One bounded REALPATH is the cheapest thing that proves the far side is
+  /// really speaking SFTP, and it turns a hang back into the error the
+  /// caller already knows how to show.
+  Future<RemoteFileSystem> _openVerifiedSftp() async {
+    final client = await connection.openSftp();
+    try {
+      await client.absolute('.').timeout(sftpReadyTimeout);
+    } catch (_) {
+      client.close();
+      rethrow;
+    }
+    return SftpService(client);
   }
 
   /// Dials a second, short-lived connection to *this session's own* server,

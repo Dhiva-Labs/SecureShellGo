@@ -6,6 +6,7 @@ import 'package:flutter/services.dart';
 import '../models/host.dart';
 import '../services/credential_store.dart';
 import '../services/device_storage.dart';
+import '../services/host_field_input.dart';
 import '../services/host_store.dart';
 import '../services/private_key_import.dart';
 import '../services/public_key_push.dart';
@@ -17,8 +18,8 @@ import '../theme.dart';
 import '../widgets/error_banner.dart';
 import '../widgets/host_color_dot.dart';
 import '../widgets/host_key_dialog.dart';
+import '../widgets/inline_hint.dart';
 import '../widgets/public_key_dialog.dart';
-import '../widgets/vault_passphrase_dialog.dart';
 
 /// Dropdown value for "New group…". Every real group name is the trimmed
 /// result of a user-typed name (see `_promptNewGroupName` and
@@ -75,6 +76,7 @@ class _HostEditScreenState extends State<HostEditScreen> {
   final _formKey = GlobalKey<FormState>();
   final _labelController = TextEditingController();
   final _hostController = TextEditingController();
+  final _hostFocusNode = FocusNode();
   final _portController = TextEditingController(text: '22');
   final _usernameController = TextEditingController();
   final _passwordController = TextEditingController();
@@ -106,10 +108,11 @@ class _HostEditScreenState extends State<HostEditScreen> {
   String? _error;
   String? _errorDetails;
 
-  /// What the last secure-storage failure leaves the user able to do, if
-  /// anything. Drives the button under the error banner — see
-  /// [_remedyAction].
-  SecureStorageRemedy _remedy = SecureStorageRemedy.none;
+  /// One neutral line about the credential, shown when the host saved and its
+  /// password did not. Deliberately not [_error]: the host is in the list,
+  /// the thing the user came here to do worked, and a red banner over a
+  /// success is what this screen used to get wrong.
+  String? _credentialNotice;
 
   /// Every group name currently in use, for the group dropdown. Loaded async
   /// (unlike the host fields above, which come straight off [widget.host])
@@ -136,6 +139,13 @@ class _HostEditScreenState extends State<HostEditScreen> {
   void initState() {
     super.initState();
     final host = widget.host;
+    // Pasting `example.com:2022` into the Host field is a normal thing to do
+    // and used to leave Port on 22, silently connecting somewhere else. The
+    // split happens as soon as the field is left, so the user sees the port
+    // land where they expect it rather than only finding out at connect time.
+    _hostFocusNode.addListener(() {
+      if (!_hostFocusNode.hasFocus) _splitHostAndPort();
+    });
     if (host != null) {
       _labelController.text = host.label;
       _hostController.text = host.hostname;
@@ -196,6 +206,7 @@ class _HostEditScreenState extends State<HostEditScreen> {
   void dispose() {
     _labelController.dispose();
     _hostController.dispose();
+    _hostFocusNode.dispose();
     _portController.dispose();
     _usernameController.dispose();
     _passwordController.dispose();
@@ -204,6 +215,26 @@ class _HostEditScreenState extends State<HostEditScreen> {
     _passphraseFocusNode.dispose();
     _startupCommandController.dispose();
     super.dispose();
+  }
+
+  /// Moves a pasted `user@host:port` into the fields it belongs in. A no-op
+  /// for anything that is only a host, including a bare IPv6 address — see
+  /// [parseHostField], which owns the rule and shares it with the
+  /// quick-connect bar.
+  void _splitHostAndPort() {
+    final entry = parseHostField(_hostController.text);
+    if (entry.hostname == _hostController.text && !entry.hasParts) return;
+    setState(() {
+      _hostController.text = entry.hostname;
+      final port = entry.port;
+      if (port != null) _portController.text = port.toString();
+      // Only into an empty Username field: a paste is more specific than a
+      // default, but not more specific than something the user typed.
+      final username = entry.username;
+      if (username != null && _usernameController.text.trim().isEmpty) {
+        _usernameController.text = username;
+      }
+    });
   }
 
   Host _buildHost() {
@@ -236,18 +267,31 @@ class _HostEditScreenState extends State<HostEditScreen> {
     );
   }
 
-  Future<void> _save() async {
-    if (_saving || _connecting) return;
-    if (!(_formKey.currentState?.validate() ?? false)) return;
-
+  /// The tidy-up and validation all three actions run first, so none of them
+  /// can act on a form the others would have refused. False means the form is
+  /// not fit to act on and the caller stops.
+  bool _prepare() {
+    if (_saving || _connecting) return false;
+    // Before validation, so a pasted `host:2022` is already two fields by the
+    // time the Port validator looks at it.
+    _splitHostAndPort();
+    if (!(_formKey.currentState?.validate() ?? false)) return false;
     FocusScope.of(context).unfocus();
     setState(() {
-      _saving = true;
       _error = null;
       _errorDetails = null;
-      _remedy = SecureStorageRemedy.none;
+      _credentialNotice = null;
     });
+    return true;
+  }
 
+  /// Writes the host and its credential, and returns the host that was
+  /// written — or null when the host record itself could not be, which is
+  /// the only genuine failure here and the only one that sets [_error].
+  ///
+  /// A credential that could not be kept is not one: the host is in the list
+  /// either way, and [_credentialNotice] says the rest calmly.
+  Future<Host?> _persistHost() async {
     final host = _buildHost();
     try {
       if (widget.isEditing || _savedHostId != null) {
@@ -265,117 +309,81 @@ class _HostEditScreenState extends State<HostEditScreen> {
       } else {
         await widget.credentialStore.save(host.id, _buildCredentials());
       }
-      if (!mounted) return;
-      Navigator.of(context).pop(true);
+      return host;
     } on SecureStorageUnavailableException catch (e) {
-      // The host itself is already saved by this point — only the secret
-      // could not be protected. "Could not save this host" would send the
-      // user looking for a host that is in fact sitting in the list, and
-      // there is deliberately no plaintext fallback to have used instead.
-      if (!mounted) return;
-      setState(() {
-        _saving = false;
-        _error = 'Saved the host, but not the password or key.';
-        _errorDetails = e.message;
-        // Only offer what this build can actually carry out: a fake or a
-        // bare keyring backend has no vault behind it, and a button that
-        // throws is worse than no button.
-        _remedy = widget.credentialStore.supportsPassphraseVault
-            ? e.remedy
-            : SecureStorageRemedy.none;
-      });
+      // Only the secret could not be protected, and an install with no
+      // keyring at all no longer gets here — it encrypts the credential and
+      // succeeds (see `composite_secure_storage.dart`). What is left is a
+      // store that exists and is shut: a keyring this machine has and has
+      // locked, or a 1.4.1 vault whose prompt was cancelled. Either way the
+      // host is saved, so this is one calm line and not a red banner.
+      //
+      // The message comes through verbatim because the backend composed it
+      // knowing things this screen does not — a snap install gets the exact
+      // `snap connect` command that fixes it, and re-writing that here as
+      // "your keyring is locked" is how a user loses the one line that would
+      // have helped.
+      if (mounted) {
+        setState(() {
+          _credentialNotice = 'Host saved, but its password was not: '
+              '${e.message}';
+        });
+      }
+      return host;
     } catch (e) {
-      if (!mounted) return;
-      setState(() {
-        _saving = false;
-        _error = 'Could not save this host.';
-        _errorDetails = e.toString();
-      });
+      if (mounted) {
+        setState(() {
+          _error = 'Could not save this host.';
+          _errorDetails = e.toString();
+        });
+      }
+      return null;
     }
   }
 
-  /// The button under the error banner, or null when the failure genuinely
-  /// leaves nothing to do here.
-  _RemedyAction? get _remedyAction => switch (_remedy) {
-        SecureStorageRemedy.offerVault => _RemedyAction(
-            label: 'Protect with an app passphrase instead',
-            icon: Icons.lock_outline,
-            onPressed: _setUpVaultAndRetry,
-          ),
-        SecureStorageRemedy.unlockVault => _RemedyAction(
-            label: 'Unlock saved credentials',
-            icon: Icons.key_outlined,
-            onPressed: _unlockVaultAndRetry,
-          ),
-        // A keyring that has worked here before is not answered with a
-        // vault — see `composite_secure_storage.dart`. The banner already
-        // says to unlock it, and only the user can do that.
-        SecureStorageRemedy.unlockKeyring ||
-        SecureStorageRemedy.none =>
-          null,
-      };
+  Future<void> _save() async {
+    if (!_prepare()) return;
+    setState(() => _saving = true);
+    final host = await _persistHost();
+    if (!mounted) return;
+    setState(() => _saving = false);
+    // Staying put when there is a line to read: the host is saved either way,
+    // and popping would take the explanation with it.
+    if (host == null || _credentialNotice != null) return;
+    Navigator.of(context).pop(true);
+  }
 
-  /// Sets an app passphrase, then saves again — so the user ends up where
-  /// they were trying to get to rather than back at the form with a vault
-  /// and still no saved password.
-  Future<void> _setUpVaultAndRetry() async {
-    final passphrase = await showSetVaultPassphraseDialog(context);
-    if (passphrase == null || !mounted) return;
-    try {
-      await widget.credentialStore.createPassphraseVault(passphrase);
-    } catch (e) {
-      if (!mounted) return;
-      setState(() {
-        _error = 'Could not set up the credential vault.';
-        _errorDetails = e.toString();
-        _remedy = SecureStorageRemedy.none;
-      });
+  Future<void> _saveAndConnect() async {
+    if (!_prepare()) return;
+    setState(() => _saving = true);
+    final host = await _persistHost();
+    if (!mounted) return;
+    if (host == null) {
+      setState(() => _saving = false);
       return;
     }
-    if (!mounted) return;
-    await _save();
-  }
-
-  Future<void> _unlockVaultAndRetry() async {
-    String? error;
-    // Two attempts, then out. A loop the user cannot leave is not a prompt,
-    // and a mistyped passphrase deserves at least one retry without losing
-    // the form.
-    for (var attempt = 0; attempt < 2; attempt++) {
-      if (!mounted) return;
-      final passphrase = await showUnlockVaultDialog(context, error: error);
-      if (passphrase == null || !mounted) return;
-      try {
-        await widget.credentialStore.unlockPassphraseVault(passphrase);
-        if (!mounted) return;
-        await _save();
-        return;
-      } on SecretVaultException catch (e) {
-        error = e.message;
-      }
-    }
-    if (!mounted) return;
     setState(() {
-      _error = 'Saved the host, but not the password or key.';
-      _errorDetails = error;
-    });
-  }
-
-  Future<void> _connectWithoutSaving() async {
-    if (_saving || _connecting) return;
-    if (!(_formKey.currentState?.validate() ?? false)) return;
-
-    FocusScope.of(context).unfocus();
-    setState(() {
+      _saving = false;
       _connecting = true;
-      _error = null;
-      _errorDetails = null;
-      _remedy = SecureStorageRemedy.none;
     });
+    await _openSession(host, _buildCredentials());
+  }
 
-    final host = _buildHost();
-    final credentials = _buildCredentials();
+  /// Connects on the values currently in the form and persists none of them.
+  ///
+  /// Nothing at all is written on this route: no host record, no credential,
+  /// and therefore nothing that could make the app decide how to protect
+  /// one — no keyring write, no vault, no notice. On an existing host it
+  /// means "try these edits without committing them", and the saved record is
+  /// left exactly as it was. The password lives in memory for as long as the
+  /// session does and goes no further.
+  Future<void> _connectWithoutSaving() async {
+    if (!_prepare()) return;
+    setState(() => _connecting = true);
+    await _openSession(_buildHost(), _buildCredentials());
+  }
 
+  Future<void> _openSession(Host host, SshCredentials credentials) async {
     try {
       final connection = await widget.sshService.connect(
         host: host,
@@ -396,7 +404,7 @@ class _HostEditScreenState extends State<HostEditScreen> {
       // Popping rather than pushing the sessions screen from here: the host
       // list below owns that route, and stacking a second copy of it over this
       // form is how a back gesture ends up somewhere nobody expects.
-      if (mounted) Navigator.of(context).pop();
+      if (mounted) Navigator.of(context).pop(true);
     } on SshConnectionException catch (e) {
       if (!mounted) return;
       setState(() {
@@ -806,6 +814,7 @@ class _HostEditScreenState extends State<HostEditScreen> {
               flex: 3,
               child: TextFormField(
                 controller: _hostController,
+                focusNode: _hostFocusNode,
                 decoration: const InputDecoration(
                   labelText: 'Host',
                   hintText: 'example.com or 192.168.1.10',
@@ -918,26 +927,11 @@ class _HostEditScreenState extends State<HostEditScreen> {
         // the private-key branch: agent auth has no field to show, because
         // there is deliberately nothing about it to store.
         else if (_authMethod == SshAuthMethod.agent)
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Icon(
-                Icons.info_outline,
-                size: 18,
-                color: theme.colorScheme.onSurfaceVariant,
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Text(
-                  'Signing is done by the operating system\'s SSH agent. No '
-                  'password or key is saved for this host, and the private '
-                  'key never leaves the agent.',
-                  style: theme.textTheme.bodySmall?.copyWith(
-                    color: theme.colorScheme.onSurfaceVariant,
-                  ),
-                ),
-              ),
-            ],
+          const InlineHint(
+            icon: Icons.info_outline,
+            text: 'Signing is done by the operating system\'s SSH agent. No '
+                'password or key is saved for this host, and the private key '
+                'never leaves the agent.',
           )
         else ...[
           Align(
@@ -1054,70 +1048,59 @@ class _HostEditScreenState extends State<HostEditScreen> {
           ),
         ),
         const SizedBox(height: 12),
-        Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Icon(
-              Icons.shield_outlined,
-              size: 16,
-              color: theme.colorScheme.onSurfaceVariant,
-            ),
-            const SizedBox(width: 8),
-            Expanded(
-              child: Text(
-                'Saved credentials are encrypted on-device by your '
-                "system's secure storage, not stored in plain text.",
-                style: theme.textTheme.bodySmall,
-              ),
-            ),
-          ],
+        const InlineHint(
+          icon: Icons.shield_outlined,
+          text: 'Saved credentials are encrypted on-device by your '
+              "system's secure storage, not stored in plain text.",
         ),
+        if (_credentialNotice != null) ...[
+          const SizedBox(height: 12),
+          InlineHint(icon: Icons.info_outline, text: _credentialNotice!),
+        ],
         if (_error != null) ...[
           const SizedBox(height: 16),
           ErrorBanner(message: _error!, details: _errorDetails),
-          // The way forward out of "no keyring". Without this the screen is a
-          // dead end: the host is saved, the password is not, and nothing the
-          // user can do from here changes that.
-          if (_remedyAction != null) ...[
-            const SizedBox(height: 8),
-            Align(
-              alignment: Alignment.centerLeft,
+        ],
+        const SizedBox(height: 24),
+        // Two equal-weight buttons side by side, and a quiet third below.
+        // Saving is what this screen is for, so it is never the one folded
+        // away into a menu — "Save & connect" leads only because it saves
+        // too and is the commoner intent.
+        Row(
+          children: [
+            Expanded(
+              child: FilledButton.icon(
+                onPressed: busy ? null : _saveAndConnect,
+                icon: _saving || _connecting
+                    ? const SizedBox(
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Icon(Icons.play_arrow),
+                label: const Text('Save & connect'),
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
               child: FilledButton.tonalIcon(
-                onPressed: busy ? null : _remedyAction!.onPressed,
-                icon: Icon(_remedyAction!.icon),
-                label: Text(_remedyAction!.label),
+                onPressed: busy ? null : _save,
+                icon: const Icon(Icons.save_outlined),
+                label: Text(
+                  widget.isEditing ? 'Save changes' : 'Save host',
+                ),
               ),
             ),
           ],
-        ],
-        const SizedBox(height: 24),
-        FilledButton.icon(
-          onPressed: busy ? null : _save,
-          icon: _saving
-              ? const SizedBox(
-                  width: 18,
-                  height: 18,
-                  child: CircularProgressIndicator(strokeWidth: 2),
-                )
-              : const Icon(Icons.save_outlined),
-          label: Text(_saving ? 'Saving…' : 'Save host'),
         ),
-        if (!widget.isEditing) ...[
-          const SizedBox(height: 12),
-          OutlinedButton.icon(
+        const SizedBox(height: 8),
+        Center(
+          child: TextButton.icon(
             onPressed: busy ? null : _connectWithoutSaving,
-            icon: _connecting
-                ? const SizedBox(
-                    width: 18,
-                    height: 18,
-                    child: CircularProgressIndicator(strokeWidth: 2),
-                  )
-                : const Icon(Icons.terminal),
-            label: Text(
-              _connecting ? 'Connecting…' : 'Connect without saving',
-            ),
+            icon: const Icon(Icons.terminal, size: 18),
+            label: const Text('Connect without saving'),
           ),
-        ],
+        ),
       ],
     );
   }
@@ -1209,17 +1192,4 @@ class _NewGroupDialogState extends State<_NewGroupDialog> {
       ],
     );
   }
-}
-
-/// One button offered under the error banner: what it says, and what it does.
-class _RemedyAction {
-  const _RemedyAction({
-    required this.label,
-    required this.icon,
-    required this.onPressed,
-  });
-
-  final String label;
-  final IconData icon;
-  final VoidCallback onPressed;
 }

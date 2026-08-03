@@ -428,10 +428,19 @@ class _SessionsScreenState extends State<SessionsScreen> {
       if (confirmed != true) return;
     }
 
-    await widget.sessions.close(entry.id);
     // The last tab closing takes the screen with it — there is nothing left
     // here to look at, and the host list is where a new session starts.
+    //
+    // The pop has to happen on the near side of the teardown. `close` drops
+    // the session from the list before its first await and only then waits
+    // on `controller.dispose()`, which closes the SSH transport and can take
+    // seconds against a server that has stopped answering. By then this
+    // screen has already rebuilt with nothing to show and fallen back to the
+    // empty Scaffold above, so awaiting the whole of `close` first left the
+    // user watching a blank window for the length of the disconnect.
+    final closing = widget.sessions.close(entry.id);
     if (mounted && widget.sessions.isEmpty) Navigator.of(context).pop();
+    await closing;
   }
 
   /// One session's page, with the identity that lets it be moved rather than

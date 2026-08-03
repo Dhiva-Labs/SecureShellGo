@@ -15,6 +15,7 @@ import 'services/fleet_push_run_registry.dart';
 import 'services/host_store.dart';
 import 'services/known_hosts_integrity.dart';
 import 'services/known_hosts_service.dart';
+import 'services/secret_vault.dart';
 import 'services/session_manager.dart';
 import 'services/settings_store.dart';
 import 'services/snippet_store.dart';
@@ -64,7 +65,9 @@ class _SecureShellGoAppState extends State<SecureShellGoApp> {
   // Where credentials go when the OS has no keyring to put them in. The
   // vault is only ever *reached* through the composite backend, which owns
   // the decision — see `composite_secure_storage.dart` for the rule that
-  // stops a working keyring being traded for a passphrase file.
+  // stops a working keyring being traded for a file, and for why an install
+  // with no keyring at all gets a device-encrypted vault without being asked
+  // rather than being refused the save.
   late final SecretVault _secretVault = SecretVault();
   late final SecureStorageBackend _secureStorage =
       CompositeSecureStorageBackend(
@@ -74,10 +77,11 @@ class _SecureShellGoAppState extends State<SecureShellGoApp> {
     requestUnlockPassphrase: _promptVaultPassphrase,
   );
 
-  /// Lets the sealed vault ask for its passphrase the first time something
-  /// actually needs a credential, from wherever that turns out to be. The
-  /// same shape as `SshService`'s host-key prompt: the service decides when
-  /// to ask, this layer knows how.
+  /// Lets a passphrase-sealed vault ask for its passphrase the first time
+  /// something actually needs a credential, from wherever that turns out to
+  /// be. The same shape as `SshService`'s host-key prompt: the service
+  /// decides when to ask, this layer knows how. A device-encrypted vault
+  /// never reaches this — it opens itself.
   Future<String?> _promptVaultPassphrase() async {
     final context = _navigatorKey.currentContext;
     if (context == null) return null;

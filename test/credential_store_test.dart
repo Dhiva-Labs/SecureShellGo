@@ -132,14 +132,6 @@ void main() {
     expect(await store.load('host-1'), isNull);
   });
 
-  test('isAvailable defaults to true for a backend it cannot introspect',
-      () async {
-    // The fake has no notion of a locked keyring; a backend this class does
-    // not recognise is assumed available rather than blocking the UI on a
-    // check it cannot actually perform.
-    expect(await store.isAvailable(), isTrue);
-  });
-
   test('save never swallows a locked-keyring failure into a silent success',
       () async {
     final store = CredentialStore(backend: UnavailableSecureStorageBackend());

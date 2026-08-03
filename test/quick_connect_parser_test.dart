@@ -122,4 +122,24 @@ void main() {
     expect(result.isOk, isTrue);
     expect(result.target!.hostname, 'example.com');
   });
+
+  group('whether the port was in the input', () {
+    QuickConnectTarget parse(String input) =>
+        parseQuickConnect(input, defaultUsername: 'me').target!;
+
+    test('an explicit port is marked as one', () {
+      expect(parse('example.com:2222').hasExplicitPort, isTrue);
+      expect(parse('[::1]:2222').hasExplicitPort, isTrue);
+      // Even when it happens to be the default.
+      expect(parse('example.com:22').hasExplicitPort, isTrue);
+    });
+
+    test('the default 22 is not', () {
+      // The host edit form fills its Port field from this, and must not
+      // overwrite a port the user typed with one that came from nowhere.
+      expect(parse('example.com').hasExplicitPort, isFalse);
+      expect(parse('example.com').port, 22);
+      expect(parse('[::1]').hasExplicitPort, isFalse);
+    });
+  });
 }

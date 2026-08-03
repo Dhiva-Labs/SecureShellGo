@@ -6,6 +6,7 @@ import '../services/process_table.dart';
 import '../services/remote_exec.dart';
 import '../services/session_controller.dart';
 import '../services/systemd_units.dart';
+import '../widgets/inline_hint.dart';
 
 /// systemd services and the process table, on one screen with two tabs.
 ///
@@ -153,23 +154,11 @@ class _ServicesTabState extends State<_ServicesTab>
               'on ${widget.session.host.displayName}.',
             ),
             const SizedBox(height: 12),
-            Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Icon(Icons.info_outline, size: 16),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: Text(
-                    'It may need sudo. If the server refuses it, run it from '
-                    'the terminal instead — this app never escalates on your '
-                    'behalf.',
-                    style: TextStyle(
-                      fontSize: 12.5,
-                      color: Theme.of(context).colorScheme.onSurfaceVariant,
-                    ),
-                  ),
-                ),
-              ],
+            const InlineHint(
+              icon: Icons.info_outline,
+              text: 'It may need sudo. If the server refuses it, run it from '
+                  'the terminal instead — this app never escalates on your '
+                  'behalf.',
             ),
           ],
         ),

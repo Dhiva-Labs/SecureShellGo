@@ -305,6 +305,49 @@ void main() {
       );
     });
   });
+
+  group('a name lookup that failed', () {
+    Host hostNamed(String hostname) => Host(
+          id: 'h1',
+          label: '',
+          hostname: hostname,
+          port: 22,
+          username: 'root',
+          authMethod: SshAuthMethod.password,
+        );
+
+    const lookupFailure = SocketException(
+      'Failed host lookup',
+      osError: OSError('Name or service not known', -2),
+    );
+
+    test('names the embedded port instead of blaming the spelling', () {
+      // The record the owner ended up with: the whole `host:port` went into
+      // the hostname, and the generic advice was misleading — the spelling
+      // was fine and it was already an IP address.
+      final message = describeSocketError(
+        lookupFailure,
+        hostNamed('127.0.0.1:22303'),
+      );
+      expect(message, contains('22303'));
+      expect(message, contains('Port'));
+      expect(message, isNot(contains('spelling')));
+    });
+
+    test('keeps the generic advice for an ordinary name', () {
+      final message = describeSocketError(
+        lookupFailure,
+        hostNamed('nosuchhost.example'),
+      );
+      expect(message, contains('nosuchhost.example'));
+      expect(message, contains('spelling'));
+    });
+
+    test('a bare IPv6 literal is not mistaken for one', () {
+      final message = describeSocketError(lookupFailure, hostNamed('fe80::1'));
+      expect(message, contains('spelling'));
+    });
+  });
 }
 
 Future<Map<String, String>> _generateKeys(Directory dir) async {

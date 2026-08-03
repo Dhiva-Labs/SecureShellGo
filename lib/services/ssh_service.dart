@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:dartssh2/dartssh2.dart';
 
 import '../models/host.dart';
+import 'host_field_input.dart';
 import 'host_key_policy.dart';
 import 'jump_host_chain.dart';
 import 'known_hosts_service.dart';
@@ -500,7 +501,7 @@ class SshService {
       return await SSHSocket.connect(host.hostname, host.port,
           timeout: timeout);
     } on SocketException catch (e) {
-      throw _reachError(host, _describeSocketError(e, host), e, asJumpHost);
+      throw _reachError(host, describeSocketError(e, host), e, asJumpHost);
     } on TimeoutException catch (e) {
       throw _reachError(
         host,
@@ -854,34 +855,6 @@ class SshService {
     }
   }
 
-  String _describeSocketError(SocketException e, Host host) {
-    final code = e.osError?.errorCode;
-    final message = (e.osError?.message ?? e.message).toLowerCase();
-
-    if (message.contains('failed host lookup') ||
-        message.contains('name or service not known') ||
-        message.contains('nodename nor servname')) {
-      return 'Could not find a host called "${host.hostname}". '
-          'Check the spelling, or use its IP address.';
-    }
-    if (code == 111 || message.contains('connection refused')) {
-      return 'Connection refused by ${host.hostname} on port ${host.port}. '
-          'Is the SSH server running and is that the right port?';
-    }
-    if (code == 113 || message.contains('no route to host')) {
-      return 'No route to ${host.hostname}. The host is unreachable from this '
-          'network.';
-    }
-    if (code == 101 || message.contains('network is unreachable')) {
-      return 'The network is unreachable. Check your Wi-Fi or mobile data.';
-    }
-    if (code == 110 || message.contains('timed out')) {
-      return 'Timed out connecting to ${host.hostname}:${host.port}. '
-          'A firewall may be dropping the connection.';
-    }
-    return 'Could not connect to ${host.hostname}:${host.port}.';
-  }
-
   String _describeSshError(Object error, Host host) {
     if (error is SSHAuthFailError) {
       return host.authMethod == SshAuthMethod.password
@@ -908,8 +881,49 @@ class SshService {
       return 'The server stopped responding during the SSH handshake.';
     }
     if (error is SocketException) {
-      return _describeSocketError(error, host);
+      return describeSocketError(error, host);
     }
     return 'Could not establish an SSH session with ${host.hostname}.';
   }
+}
+
+/// Turns a [SocketException] into a line fit to put in front of a person.
+///
+/// A free function rather than a method on [SshService], for the same reason
+/// `mapSecureStorageWriteError` is one: it is a pure mapping from an
+/// exception to a sentence, and it can then be tested by handing it a
+/// hand-made exception rather than by arranging for a real socket to fail in
+/// six different ways.
+String describeSocketError(SocketException e, Host host) {
+  final code = e.osError?.errorCode;
+  final message = (e.osError?.message ?? e.message).toLowerCase();
+
+  if (message.contains('failed host lookup') ||
+      message.contains('name or service not known') ||
+      message.contains('nodename nor servname')) {
+    // A hostname with a port or a username baked into it is the one cause of
+    // this the app can identify, and "check the spelling" is the wrong thing
+    // to tell someone whose spelling is fine and whose address is already an
+    // IP. See `host_field_input.dart`.
+    final misplaced = misplacedHostFieldAdvice(host.hostname);
+    if (misplaced != null) return misplaced;
+    return 'Could not find a host called "${host.hostname}". '
+        'Check the spelling, or use its IP address.';
+  }
+  if (code == 111 || message.contains('connection refused')) {
+    return 'Connection refused by ${host.hostname} on port ${host.port}. '
+        'Is the SSH server running and is that the right port?';
+  }
+  if (code == 113 || message.contains('no route to host')) {
+    return 'No route to ${host.hostname}. The host is unreachable from this '
+        'network.';
+  }
+  if (code == 101 || message.contains('network is unreachable')) {
+    return 'The network is unreachable. Check your Wi-Fi or mobile data.';
+  }
+  if (code == 110 || message.contains('timed out')) {
+    return 'Timed out connecting to ${host.hostname}:${host.port}. '
+        'A firewall may be dropping the connection.';
+  }
+  return 'Could not connect to ${host.hostname}:${host.port}.';
 }

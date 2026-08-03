@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'app_data_paths.dart';
+import 'device_vault_key.dart';
 import 'secret_vault.dart';
 import 'secure_storage_backend.dart';
 
@@ -10,7 +11,7 @@ enum SecureStorageChoice {
   /// The OS keyring, and it answered.
   keyring,
 
-  /// The passphrase vault, because this install has one.
+  /// The credential vault, because this install has one.
   vault,
 
   /// The OS keyring has worked here before and is not answering now, and no
@@ -18,12 +19,12 @@ enum SecureStorageChoice {
   /// and nothing is moved.
   keyringLocked,
 
-  /// No keyring has ever worked here and there is no vault yet. This is the
-  /// only state in which the app offers to make one.
+  /// No keyring has ever worked here and there is no vault yet. A write in
+  /// this state makes a device-encrypted vault and uses it.
   vaultSetupRequired,
 }
 
-/// Picks between the OS keyring and the passphrase vault, per operation.
+/// Picks between the OS keyring and the credential vault, per operation.
 ///
 /// ## The selection rule
 ///
@@ -40,22 +41,36 @@ enum SecureStorageChoice {
 ///  3. **The keyring has answered before but not now → [keyringLocked].**
 ///     This is the case the whole design exists to *not* mishandle. A user
 ///     whose keyring worked yesterday and is locked today has a keyring; the
-///     fix is to unlock it. Offering to move their secrets into a passphrase
-///     vault would be trading a keystore-backed store for a file, on the
-///     strength of a transient failure, and the user would very likely take
-///     the offer because it is the button in front of them. So this state
-///     refuses the write and says "unlock it" — the app cannot silently
-///     downgrade, because the only path into the vault runs through
-///     [vaultSetupRequired], which this install can never reach again once
-///     the keyring has been seen working even once.
+///     fix is to unlock it. Moving their secrets into a vault would be
+///     trading a keystore-backed store for a file, on the strength of a
+///     transient failure. So this state refuses the write and says "unlock
+///     it" — the app cannot downgrade, quietly or otherwise, because the only
+///     route into a vault is [vaultSetupRequired], which this install can
+///     never reach again once the keyring has been seen working even once.
 ///  4. **Neither → [vaultSetupRequired].** No keyring has ever worked here:
 ///     a snap with `password-manager-service` unconnected, a desktop with no
-///     Secret Service daemon, a headless box. This is the dead end the vault
-///     is for, and the only state where the UI offers to create one.
+///     Secret Service daemon, a headless box. A [write] in this state makes
+///     a device-encrypted vault on the spot and stores the credential in it.
 ///
 /// The "has ever worked" bit is persisted, not remembered for the session:
 /// a keyring that works only until the app restarts would otherwise be
 /// enough to reach step 4 on the next launch.
+///
+/// ## Why step 4 does not ask
+///
+/// It used to refuse the write and offer to set an app passphrase, which put
+/// a security decision in front of someone who had only wanted to add a
+/// server, and presented a host that had in fact saved as a failure. Storing
+/// the credential encrypted is the floor rather than something to opt into: a
+/// device-encrypted vault needs nothing typed, protects the credential
+/// against everything short of another process running as this same user, and
+/// is strictly better than the alternative it replaces, which was not saving
+/// the password at all. There is no mode to pick, nothing to set and nothing
+/// to dismiss.
+///
+/// This changes nothing about step 3. Automatic device encryption is for
+/// installs with no keyring at all, never a silent replacement for one that
+/// works.
 ///
 /// ## Not implemented on purpose
 ///
@@ -70,9 +85,9 @@ class CompositeSecureStorageBackend implements SecureStorageBackend {
     required SecureStorageBackend keyring,
     required SecretVault vault,
     required Future<bool> Function() keyringAvailable,
+    DeviceVaultKey? deviceKey,
     SecureStorageState? state,
     Future<String?> Function()? requestUnlockPassphrase,
-    Map<String, String>? environment,
   })  :
         // ignore: prefer_initializing_formals
         _keyring = keyring,
@@ -80,26 +95,25 @@ class CompositeSecureStorageBackend implements SecureStorageBackend {
         _vault = vault,
         // ignore: prefer_initializing_formals
         _keyringAvailable = keyringAvailable,
+        _deviceKey = deviceKey ?? DeviceVaultKey(),
         _state = state ?? SecureStorageState(),
         // ignore: prefer_initializing_formals
-        _requestUnlockPassphrase = requestUnlockPassphrase,
-        // ignore: prefer_initializing_formals
-        _environment = environment;
+        _requestUnlockPassphrase = requestUnlockPassphrase;
 
   final SecureStorageBackend _keyring;
   final SecretVault _vault;
   final Future<bool> Function() _keyringAvailable;
+  final DeviceVaultKey _deviceKey;
   final SecureStorageState _state;
 
-  /// How the vault asks for its passphrase when something needs a secret and
-  /// the vault is sealed. Supplied by the app layer (see `main.dart`), the
-  /// same shape as `SshService`'s `verifyHostKey` prompt: the service knows
-  /// *when* to ask, the UI knows *how*. Null in tests and on any build with
-  /// no way to prompt, in which case a sealed vault simply stays sealed.
+  /// How a 1.4.1 passphrase vault asks for its passphrase when something
+  /// needs a secret and the vault is sealed. Supplied by the app layer (see
+  /// `main.dart`), the same shape as `SshService`'s `verifyHostKey` prompt:
+  /// the service knows *when* to ask, the UI knows *how*. Null in tests and
+  /// on any build with no way to prompt, in which case a sealed vault simply
+  /// stays sealed. Never reached by a device-encrypted vault, which has no
+  /// passphrase for anyone to type.
   final Future<String?> Function()? _requestUnlockPassphrase;
-
-  /// Tests only — see [isRunningAsSnap].
-  final Map<String, String>? _environment;
 
   /// The pure decision, kept free of I/O so the rule above can be tested for
   /// what it is rather than through a filesystem. [resolve] is the thin
@@ -147,24 +161,21 @@ class CompositeSecureStorageBackend implements SecureStorageBackend {
           throw SecureStorageUnavailableException(
             keyringLockedMessage,
             code: e.code,
-            remedy: SecureStorageRemedy.unlockKeyring,
           );
         }
       case SecureStorageChoice.vault:
         await _requireUnlockedVault();
         await _vault.write(key, value);
       case SecureStorageChoice.keyringLocked:
-        throw SecureStorageUnavailableException(
+        throw const SecureStorageUnavailableException(
           keyringLockedMessage,
           code: 'KeyringLocked',
-          remedy: SecureStorageRemedy.unlockKeyring,
         );
       case SecureStorageChoice.vaultSetupRequired:
-        throw SecureStorageUnavailableException(
-          keyringUnavailableMessage(environment: _environment),
-          code: 'KeyringLocked',
-          remedy: SecureStorageRemedy.offerVault,
-        );
+        // No keyring, and none ever. Encrypt it here rather than refuse a
+        // save the user asked for — see "Why step 4 does not ask" above.
+        await _createDeviceVault();
+        await _vault.write(key, value);
     }
   }
 
@@ -173,8 +184,10 @@ class CompositeSecureStorageBackend implements SecureStorageBackend {
   /// caller ends up asking the user rather than connecting with a guess.
   ///
   /// A sealed vault is the one case worth an extra step first, because "there
-  /// is nothing saved" would be a lie about a file we can see: if the app
-  /// gave us a way to ask, ask. Declining the prompt still fails closed.
+  /// is nothing saved" would be a lie about a file we can see: it is opened
+  /// with this device's key if there is one, and otherwise with the app's
+  /// passphrase prompt if there is one. Declining the prompt, or a device key
+  /// that has gone missing, still fails closed.
   @override
   Future<String?> read(String key) async {
     switch (await resolve()) {
@@ -213,37 +226,6 @@ class CompositeSecureStorageBackend implements SecureStorageBackend {
     }
   }
 
-  /// Whether a [write] would currently land somewhere. Not authoritative —
-  /// the keyring can lock, and the vault can be sealed, between this call and
-  /// the next write.
-  Future<bool> isAvailable() async {
-    final choice = await resolve();
-    return choice == SecureStorageChoice.keyring ||
-        choice == SecureStorageChoice.vault;
-  }
-
-  /// Creates the passphrase vault. Only meaningful in
-  /// [SecureStorageChoice.vaultSetupRequired]; refuses otherwise, so a screen
-  /// cannot turn a locked keyring into a vault by asking twice.
-  Future<void> createVault(String passphrase) async {
-    final choice = await resolve();
-    if (choice != SecureStorageChoice.vaultSetupRequired) {
-      throw const SecretVaultStateException(
-        'This device already has somewhere to keep credentials.',
-      );
-    }
-    await _vault.create(passphrase);
-  }
-
-  /// Opens an existing vault for this session. Throws
-  /// [SecretVaultAuthException] on a wrong passphrase, having changed
-  /// nothing.
-  Future<void> unlockVault(String passphrase) => _vault.unlock(passphrase);
-
-  bool get isVaultUnlocked => _vault.isUnlocked;
-
-  Future<bool> vaultExists() => _vault.exists();
-
   /// The message for a keyring this install has seen working. Never mentions
   /// the vault: offering one here is precisely the downgrade the rule above
   /// exists to prevent.
@@ -260,12 +242,16 @@ class CompositeSecureStorageBackend implements SecureStorageBackend {
       'your desktop keyring, or start GNOME Keyring / KWallet) and save '
       'again.';
 
+  Future<void> _createDeviceVault() async {
+    final key = await _deviceKey.create();
+    await _vault.createWithKey(key);
+  }
+
   Future<void> _requireUnlockedVault() async {
     if (await _tryUnlockVault()) return;
     throw const SecureStorageUnavailableException(
       'The credential vault is locked. Enter its passphrase to save this '
       'credential.',
-      remedy: SecureStorageRemedy.unlockVault,
     );
   }
 
@@ -275,10 +261,10 @@ class CompositeSecureStorageBackend implements SecureStorageBackend {
   /// passphrase dialog.
   Future<bool>? _unlocking;
 
-  /// True if the vault is open, opening it via the app's prompt if there is
-  /// one. A wrong passphrase is not retried here — the caller surfaces it and
-  /// the user can try again — because a silent retry loop is how a prompt
-  /// becomes impossible to cancel.
+  /// True if the vault is open, opening it if it can be. A wrong passphrase
+  /// is not retried here — the caller surfaces it and the user can try
+  /// again — because a silent retry loop is how a prompt becomes impossible
+  /// to cancel.
   Future<bool> _tryUnlockVault() {
     if (_vault.isUnlocked) return Future<bool>.value(true);
     return _unlocking ??= _unlockVault().whenComplete(() {
@@ -287,6 +273,24 @@ class CompositeSecureStorageBackend implements SecureStorageBackend {
   }
 
   Future<bool> _unlockVault() async {
+    // This device's own key first, whenever there is one. Nothing records
+    // which mode the vault is in: a key file that opens it *is* the mode, and
+    // the vault's own header is the authority on the rest.
+    final key = await _deviceKey.read();
+    if (key != null) {
+      try {
+        await _vault.unlockWithKey(key);
+        return true;
+      } on SecretVaultException {
+        // Stale — left beside a 1.4.1 passphrase vault. Ask for that instead.
+      }
+    }
+    if (await _vault.isDeviceWrapped() ?? false) {
+      // Device-sealed with no usable key file. There is no passphrase anyone
+      // could type here, so this fails closed: reads come back empty and
+      // nothing is written anywhere unprotected.
+      return false;
+    }
     final prompt = _requestUnlockPassphrase;
     if (prompt == null) return false;
     final passphrase = await prompt();
@@ -300,13 +304,15 @@ class CompositeSecureStorageBackend implements SecureStorageBackend {
   }
 }
 
-/// The one fact the selection rule needs to remember across launches: has the
-/// OS keyring ever answered on this install.
+/// The one fact about *this install* that the selection rule has to remember
+/// across launches: whether the OS keyring has ever answered.
 ///
 /// A plain JSON file next to `hosts.json` in the app's private data
-/// directory. It holds no secret — only a boolean about the *platform* — so
+/// directory. It holds no secret — only whether a keyring was ever seen — so
 /// it deliberately does not go through secure storage, which would be
-/// circular anyway.
+/// circular anyway. Which protection is in use is *not* recorded here: that
+/// is derived from what is actually on disk, because a second copy of a fact
+/// is a second chance to be wrong about it.
 class SecureStorageState {
   /// [file] overrides the on-disk location; tests use it so they do not need
   /// the path_provider plugin.
@@ -323,33 +329,36 @@ class SecureStorageState {
     if (cached != null) return cached;
     try {
       final file = await _resolveFile();
-      if (!await file.exists()) return _cached = false;
-      final decoded = jsonDecode(await file.readAsString());
-      if (decoded is Map && decoded['keyringEverAvailable'] == true) {
-        return _cached = true;
+      if (await file.exists()) {
+        final decoded = jsonDecode(await file.readAsString());
+        if (decoded is Map) {
+          return _cached = decoded['keyringEverAvailable'] == true;
+        }
       }
     } catch (_) {
-      // An unreadable marker means "we do not know". Answering false here is
-      // the cautious direction only in the sense of not blocking a user who
-      // genuinely has no keyring; a user who does have one reaches step 2 of
-      // the rule and re-records it on the spot.
+      // An unreadable marker means "we do not know". Answering "never seen
+      // one" is the cautious direction only in the sense of not blocking a
+      // user who genuinely has no keyring; a user who does have one reaches
+      // step 2 of the rule and re-records it on the spot.
     }
     return _cached = false;
   }
 
   Future<void> recordKeyringAvailable() async {
-    if (_cached == true) return;
+    if (await keyringEverAvailable()) return;
+    // In memory first: losing the write only costs a re-record on the next
+    // launch, and the fact is true right now either way — not worth failing
+    // a save the user asked for.
     _cached = true;
     try {
       final file = await _resolveFile();
+      await file.parent.create(recursive: true);
       await file.writeAsString(
         jsonEncode(<String, dynamic>{'keyringEverAvailable': true}),
         flush: true,
       );
     } catch (_) {
-      // Losing this only costs a re-record on the next launch, and the
-      // keyring is working right now either way — not worth failing a save
-      // the user asked for.
+      // See above.
     }
   }
 

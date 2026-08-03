@@ -499,11 +499,18 @@ class _HostListScreenState extends State<HostListScreen> {
   void _showHostActions(Host host) {
     showModalBottomSheet<void>(
       context: context,
+      // Six actions, most of them two lines tall, come to more than the
+      // sheet's default allowance once the window is short — and a Column
+      // overflows rather than scrolling, so the last actions became
+      // unreachable behind a stripe of overflow warning. A shrink-wrapped
+      // list still sizes itself to the content when it fits, and scrolls
+      // when it does not.
+      isScrollControlled: true,
       builder: (context) {
         final theme = Theme.of(context);
         return SafeArea(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
+          child: ListView(
+            shrinkWrap: true,
             children: [
               ListTile(
                 leading: const Icon(Icons.checklist_outlined),

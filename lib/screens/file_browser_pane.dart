@@ -713,12 +713,18 @@ class _FileBrowserPaneState extends State<FileBrowserPane>
     return showModalBottomSheet<ManagedSession>(
       context: context,
       backgroundColor: theme.colorScheme.surfaceContainerHigh,
+      // One row per open session, so this list has no fixed height — enough
+      // servers and a Column would overflow instead of scrolling, hiding the
+      // destinations at the bottom. Shrink-wrapped so a short list still
+      // sizes itself to its content.
+      isScrollControlled: true,
       builder: (context) => SafeArea(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
+        child: ListView(
+          shrinkWrap: true,
           children: [
             ListTile(
-              title: Text(move ? 'Move to which server?' : 'Copy to which server?'),
+              title:
+                  Text(move ? 'Move to which server?' : 'Copy to which server?'),
               subtitle: const Text('The files never touch this device'),
             ),
             const Divider(height: 1),
