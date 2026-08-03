@@ -1,183 +1,23 @@
-secureshellgo (1.4.1~noble1) noble; urgency=medium
+secureshellgo (1.4.2~noble1) noble; urgency=medium
 
-  * Saving a password or key no longer dead-ends where no system keyring
-    answers. Credentials can instead be protected by an app passphrase,
-    encrypted into the app's own private file with the same Argon2id and
-    AES-256-GCM container the backup format uses; the passphrase wraps a
-    random key, so the slow key derivation runs once per unlock rather
-    than on every read and write. The keyring is still preferred whenever
-    it answers, and there is deliberately no path that silently moves an
-    install that has a working keyring onto the passphrase vault.
-  * Recommends gnome-keyring, so an install on a desktop without a Secret
-    Service daemon gets one instead of failing to save. libsecret-1-0 is
-    only the client side of that API and pulled in no provider on its own.
-  * Inside a snap, names the exact `snap connect` command that grants
-    access to the keyring rather than suggesting software the user
-    already has. The advice no longer claims no keyring is installed: the
-    platform reports one error code for three different situations, and
-    which of them occurred is not knowable from inside the app.
+  * Credential storage keeps one rule instead of a menu: the system keyring
+    when it answers, otherwise an encrypted file in the app's own data
+    directory, chosen automatically and without asking. Vaults written by
+    1.4.1 still open. Device encryption no longer runs the password-stretching
+    key derivation over a random key, which removes a pause of roughly a
+    second from the first save and from every start on machines with no
+    keyring.
+  * A server with the sftp subsystem disabled no longer leaves the file
+    browser spinning for ever. The subsystem is confirmed before the panel
+    waits on it, so a refusal is reported instead of hanging.
+  * Disconnecting the last session returns to the host list immediately
+    rather than showing an empty window until the connection has finished
+    closing.
+  * The host actions menu and the copy-to-server picker scroll when they are
+    taller than the window instead of overflowing and hiding their last
+    entries.
+  * A snap install is told the interface command that grants keyring access
+    again, rather than being told its keyring is locked.
 
- -- Dhiva Labs <dhivakar1010@gmail.com>  Mon, 03 Aug 2026 15:05:00 +0530
+ -- Dhiva Labs <dhivakar1010@gmail.com>  Tue, 04 Aug 2026 03:40:00 +0530
 
-secureshellgo (1.4.0~noble1) noble; urgency=medium
-
-  * Four switchable UI styles (the app's own look, plus AWS-, Google Cloud-
-    and Azure-inspired palettes), each with a light and dark half chosen
-    live in Settings with no restart. On desktop each style also lays the
-    saved-hosts list out its own way — a console table, an airy card grid,
-    or a flat accented list; phones keep the simple layout and pick up only
-    the palette. Fixes the terminal colour-scheme swatches, which rendered
-    as empty outlines for every scheme.
-  * Multi-select on the host list and a fleet-wide "push a file to many
-    servers at once" action: bounded concurrency, a per-host result with
-    its own failure reason, and retry for just the hosts that failed.
-
- -- Dhiva Labs <dhivakar1010@gmail.com>  Sat, 01 Aug 2026 19:20:00 +0530
-
-secureshellgo (1.3.0~noble1) noble; urgency=medium
-
-  * Desktop workspace: split the terminal area into up to four resizable
-    panes each showing a different server, with broadcast input across
-    every visible pane, server groups with colour tags, a Ctrl+K command
-    palette, a quick-connect bar, ~/.ssh/config import, command snippets
-    and per-host startup commands.
-  * Connections: automatic reconnection with keep-alive, jump hosts
-    (ProxyJump) with both hops verified, and a tunnel manager for local,
-    remote and dynamic SOCKS5 forwards.
-  * Files: a built-in remote editor with syntax highlighting for thirteen
-    languages and a stat-guarded temp-then-rename save, path bookmarks,
-    and one transfer panel across every session.
-  * Monitoring: server stats, a live log viewer, and a systemd service and
-    process manager.
-  * Security: optional app lock, an encrypted backup format (Argon2id and
-    AES-256-GCM), in-app ed25519 key generation and installation, and a
-    known-hosts manager.
-  * Fixes the desktop icon regression from ~noble8 as 1.2.1 did, and two
-    faults found by driving the built application against a real server:
-    ordinary sessions no longer request SSH agent forwarding, which had
-    made every exec-based feature fail after the first command, and the
-    server-stats probe no longer collapses into a shell comment.
-
- -- Dhiva Labs <dhivakar1010@gmail.com>  Thu, 31 Jul 2026 22:30:00 +0530
-
-secureshellgo (1.2.1~noble1) noble; urgency=medium
-
-  * Fix the running app showing the generic gear icon in the GNOME dock.
-    GNOME Shell matches a Wayland window to its launcher by looking up
-    <application-id>.desktop; the packaged entry was named
-    secureshellgo.desktop while the app identifies itself as
-    com.dhivalabs.secure_shell_go, so the running window never matched
-    and fell back to the generic executable icon. Rename the installed
-    desktop entry to com.dhivalabs.secure_shell_go.desktop and point
-    StartupWMClass at the real WM_CLASS (the runner sets prgname to the
-    application id, verified with xprop) so X11 sessions match as well.
-
- -- Dhiva Labs <dhivakar1010@gmail.com>  Fri, 31 Jul 2026 14:20:00 +0530
-
-secureshellgo (1.2.0~noble8) noble; urgency=medium
-
-  * The ~noble7 rootUri rewrite made every package share one root, and
-    the Dart VM rejects a package_config with duplicate roots when it
-    loads the file during the build — caught by the pristine local
-    rehearsal before upload. Rewrite instead points each entry at its
-    own generated stub directory (pubstubs/<name>/ with a real
-    pubspec.yaml), keeping the file parse-valid for the VM and
-    existence-valid for flutter_tools' staleness probe. Declares
-    python3 in Build-Depends for the rewrite.
-
- -- Dhiva Labs <dhivakar1010@gmail.com>  Fri, 31 Jul 2026 13:55:00 +0530
-
-secureshellgo (1.2.0~noble7) noble; urgency=medium
-
-  * Root cause of every offline-resolution failure since ~noble2, found
-    via the ~noble6 diagnostic build: the vendored SDK ships flutter_
-    tools/.dart_tool/package_config.json with absolute rootUris into
-    the scratch pub cache of the machine that produced the tarball.
-    flutter_tools' PubDependencies.isUpToDate validates those paths
-    exist; on any other machine they do not, the artifact reads as
-    stale, and the tool re-resolves its own package ONLINE (ignoring
-    our --offline), asking pub.dev for its dev dependency `test`.
-    Rewrite every rootUri to point at flutter_tools itself before the
-    build — the probe validates only that a pubspec.yaml exists, and
-    the tool runs from its AOT snapshot rather than this file.
-
- -- Dhiva Labs <dhivakar1010@gmail.com>  Fri, 31 Jul 2026 13:20:00 +0530
-
-secureshellgo (1.2.0~noble6) noble; urgency=medium
-
-  * Diagnostic build. Local network-isolated replicas of the ~noble5
-    source package (sanitized environment, tilde directory name,
-    HOME=/sbuild-nonexistent, zero network) build to completion, while
-    the Launchpad builder fails at `flutter pub get --offline` asking
-    for the un-vendored `test` package. Every machine-independent
-    difference has been eliminated, so this build has debian/rules
-    print the strip verification, cache shape, environment and the
-    verbose pub solver trace on the builder itself before running the
-    normal build steps.
-
- -- Dhiva Labs <dhivakar1010@gmail.com>  Thu, 30 Jul 2026 23:30:00 +0530
-
-secureshellgo (1.2.0~noble5) noble; urgency=medium
-
-  * Revert `dart pub get --enforce-lockfile --offline` back to
-    `flutter pub get --offline`. The dart CLI doesn't set up
-    FLUTTER_ROOT the way the flutter wrapper does, so `dart pub get`
-    can't resolve `flutter_test` (which comes from `sdk: flutter`,
-    not pub.dev) — ~noble4 failed with "the Flutter SDK is not
-    available." The extended strip that covers both .pub-cache and
-    .flutter/packages already stops the workspace expansion that
-    broke ~noble3; the enforce-lockfile flag was over-engineering.
-
- -- Dhiva Labs <dhivakar1010@gmail.com>  Thu, 30 Jul 2026 20:15:00 +0530
-
-secureshellgo (1.2.0~noble4) noble; urgency=medium
-
-  * Extend the `resolution: workspace` strip to include the vendored
-    Flutter SDK's own package pubspecs (flutter_test, flutter_
-    localizations, integration_test). The ~noble3 build got past the
-    `dart pub get --enforce-lockfile --offline` step but then failed
-    inside `flutter build linux --release --no-pub` with the same
-    socket error — the workspace declaration in flutter_test's
-    pubspec.yaml (which our app depends on as a dev dep) pulled its
-    dev_dependencies (`test`, `test_core`) into the resolution.
-
- -- Dhiva Labs <dhivakar1010@gmail.com>  Thu, 30 Jul 2026 19:40:00 +0530
-
-secureshellgo (1.2.0~noble3) noble; urgency=medium
-
-  * Fix offline pub resolution failing on Launchpad ("Got socket error
-    trying to find package test at https://pub.dev." under --offline).
-    Three defensive fixes because the root cause is Launchpad-specific
-    and would not reproduce locally:
-    - Touch pubspec.lock before pub get: dpkg-source preserves mtimes,
-      so a version bump can leave pubspec.yaml newer than pubspec.lock
-      and trigger pub's "lockfile stale" re-resolution.
-    - Strip `resolution: workspace` from every pubspec in the vendored
-      pub cache: ten transitive deps (test_api, meta, ffi, win32...)
-      declare it, which pulls each package's dev_dependencies (`test`,
-      `test_core`) as if they were monorepo members.
-    - Use `dart pub get --enforce-lockfile --offline` instead of
-      `flutter pub get --offline`: --enforce-lockfile forbids any
-      resolution that would change the lockfile, which forbids any
-      network fallback even under workspace expansion. Only exposed
-      through the dart CLI.
-
- -- Dhiva Labs <dhivakar1010@gmail.com>  Thu, 30 Jul 2026 13:30:00 +0530
-
-secureshellgo (1.2.0~noble2) noble; urgency=medium
-
-  * Vendor the Flutter SDK and pub cache under packaging/vendor/ so the
-    build no longer needs outbound network access — the previous
-    ~noble1 upload failed on Launchpad because debian/rules tried to
-    curl the Flutter SDK from storage.googleapis.com, which the build
-    farm blocks.
-  * Drop curl, unzip and ca-certificates from Build-Depends; nothing in
-    the build reaches the network any more.
-
- -- Dhiva Labs <dhivakar1010@gmail.com>  Thu, 30 Jul 2026 12:00:00 +0530
-
-secureshellgo (1.2.0~noble1) noble; urgency=medium
-
-  * Release for Ubuntu PPA
-
- -- Dhiva Labs <dhivakar1010@gmail.com>  Thu, 30 Jul 2026 03:38:20 +0530
