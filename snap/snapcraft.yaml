@@ -21,7 +21,7 @@
 name: secureshellgo
 title: SecureShell Go
 base: core22
-version: '1.4.2'
+version: '1.4.3'
 summary: SSH terminal and SFTP client with strict host-key verification
 description: |
   SecureShell Go is a fast, security-first SSH terminal and SFTP client for

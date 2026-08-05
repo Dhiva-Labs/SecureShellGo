@@ -1,23 +1,16 @@
-secureshellgo (1.4.2~noble1) noble; urgency=medium
+secureshellgo (1.4.3~noble1) noble; urgency=medium
 
-  * Credential storage keeps one rule instead of a menu: the system keyring
-    when it answers, otherwise an encrypted file in the app's own data
-    directory, chosen automatically and without asking. Vaults written by
-    1.4.1 still open. Device encryption no longer runs the password-stretching
-    key derivation over a random key, which removes a pause of roughly a
-    second from the first save and from every start on machines with no
-    keyring.
-  * A server with the sftp subsystem disabled no longer leaves the file
-    browser spinning for ever. The subsystem is confirmed before the panel
-    waits on it, so a refusal is reported instead of hanging.
-  * Disconnecting the last session returns to the host list immediately
-    rather than showing an empty window until the connection has finished
-    closing.
-  * The host actions menu and the copy-to-server picker scroll when they are
-    taller than the window instead of overflowing and hiding their last
-    entries.
-  * A snap install is told the interface command that grants keyring access
-    again, rather than being told its keyring is locked.
+  * Quick connect accepts a whole ssh command, of the kind a cloud console
+    gives you to copy. Pasting one previously made everything before the "@"
+    the username, so the server rejected an account named after the command
+    itself. Quoted key paths, -p, -l, bare switches, flag values, a trailing
+    remote command and ssh:// URLs are all understood.
+  * Quick connect can import a .pem or other key file from disk instead of
+    requiring the key to be pasted as text.
+  * After a connection succeeds, quick connect offers to save the host rather
+    than leaving a button to be noticed. The offer never delays the session.
+  * Fixes a layout failure that left the quick connect screen showing its
+    title bar over a blank page after a successful connection.
 
- -- Dhiva Labs <dhivakar1010@gmail.com>  Tue, 04 Aug 2026 03:40:00 +0530
+ -- Dhiva Labs <dhivakar1010@gmail.com>  Wed, 06 Aug 2026 04:10:00 +0530
 
