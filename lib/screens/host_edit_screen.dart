@@ -8,7 +8,6 @@ import '../services/credential_store.dart';
 import '../services/device_storage.dart';
 import '../services/host_field_input.dart';
 import '../services/host_store.dart';
-import '../services/private_key_import.dart';
 import '../services/public_key_push.dart';
 import '../services/session_manager.dart';
 import '../services/settings_store.dart';
@@ -18,6 +17,7 @@ import '../theme.dart';
 import '../widgets/error_banner.dart';
 import '../widgets/host_color_dot.dart';
 import '../widgets/host_key_dialog.dart';
+import '../widgets/import_key_file_button.dart';
 import '../widgets/inline_hint.dart';
 import '../widgets/public_key_dialog.dart';
 
@@ -102,7 +102,6 @@ class _HostEditScreenState extends State<HostEditScreen> {
   bool _saving = false;
   bool _connecting = false;
   bool _loadingCredentials = false;
-  bool _importingKey = false;
   bool _generatingKey = false;
   bool _installingKey = false;
   String? _error;
@@ -422,61 +421,6 @@ class _HostEditScreenState extends State<HostEditScreen> {
     }
   }
 
-  /// Opens the system file picker, reads whatever comes back as text (never
-  /// staging it to disk — see `DeviceStorage.pickTextFile`), and classifies
-  /// it through the same parser [SshService] uses at connect time
-  /// ([classifyPrivateKeyPem]) before trusting it enough to fill the form.
-  Future<void> _importKeyFile() async {
-    if (_importingKey) return;
-    setState(() => _importingKey = true);
-
-    try {
-      final picked = await _deviceStorage.pickTextFile(
-        maxBytes: kMaxPrivateKeyImportBytes,
-      );
-      if (!mounted) return;
-      if (picked == null) {
-        // User backed out of the picker.
-        return;
-      }
-
-      final result = classifyPrivateKeyPem(picked.content);
-      switch (result.status) {
-        case PrivateKeyImportStatus.valid:
-          setState(() => _keyController.text = picked.content);
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text('Imported ${picked.name} — ${result.keyType}'),
-            ),
-          );
-          break;
-        case PrivateKeyImportStatus.passphraseProtected:
-          setState(() => _keyController.text = picked.content);
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text(
-                'Imported ${picked.name} — ${result.keyType}, '
-                'passphrase required',
-              ),
-            ),
-          );
-          FocusScope.of(context).requestFocus(_passphraseFocusNode);
-          break;
-        case PrivateKeyImportStatus.invalid:
-          await _showKeyImportError(picked.name, result.message!);
-          break;
-      }
-    } on DeviceStorageException catch (e) {
-      if (!mounted) return;
-      await _showKeyImportError(null, e.message);
-    } catch (e) {
-      if (!mounted) return;
-      await _showKeyImportError(null, 'Could not read that file.');
-    } finally {
-      if (mounted) setState(() => _importingKey = false);
-    }
-  }
-
   /// Fills the key field with a freshly generated ed25519 key and shows its
   /// public half in a copyable dialog. The private half goes nowhere but this
   /// field — the same one the paste/import flow already fills, saved the
@@ -572,29 +516,12 @@ class _HostEditScreenState extends State<HostEditScreen> {
     }
   }
 
-  Future<void> _showKeyImportError(String? fileName, String message) {
-    return showDialog<void>(
-      context: context,
-      builder: (context) {
-        final theme = Theme.of(context);
-        return AlertDialog(
-          icon: Icon(Icons.error_outline, color: theme.colorScheme.error),
-          title: Text(
-            fileName == null
-                ? 'Could not import key'
-                : 'Could not import $fileName',
-          ),
-          content: Text(message, style: const TextStyle(height: 1.35)),
-          actions: [
-            FilledButton(
-              onPressed: () => Navigator.of(context).pop(),
-              child: const Text('OK'),
-            ),
-          ],
-        );
-      },
-    );
-  }
+  /// Thin alias kept so the "Install public key" error paths above read the
+  /// same as they always did — the dialog itself now lives in
+  /// `import_key_file_button.dart`, shared with [ImportKeyFileButton]'s own
+  /// rejections.
+  Future<void> _showKeyImportError(String? fileName, String message) =>
+      showKeyFileErrorDialog(context, fileName, message);
 
   /// Asks for a new group's name; null means the dialog was cancelled. Only
   /// trims and checks non-blank here — [_pickGroup] is the one that decides
@@ -934,21 +861,12 @@ class _HostEditScreenState extends State<HostEditScreen> {
                 'never leaves the agent.',
           )
         else ...[
-          Align(
-            alignment: Alignment.centerLeft,
-            child: OutlinedButton.icon(
-              onPressed: _importingKey ? null : _importKeyFile,
-              icon: _importingKey
-                  ? const SizedBox(
-                      width: 16,
-                      height: 16,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    )
-                  : const Icon(Icons.file_open_outlined, size: 18),
-              label: Text(
-                _importingKey ? 'Importing…' : 'Import key file',
-              ),
-            ),
+          ImportKeyFileButton(
+            deviceStorage: _deviceStorage,
+            onImported: (fileName, content, keyType) =>
+                setState(() => _keyController.text = content),
+            onPassphraseNeeded: () =>
+                FocusScope.of(context).requestFocus(_passphraseFocusNode),
           ),
           const SizedBox(height: 8),
           Align(

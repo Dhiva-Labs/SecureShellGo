@@ -2,6 +2,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:secure_shell_go/services/quick_connect_parser.dart';
 
 void main() {
+  _sshCommandTests();
   const defaultUser = 'root';
 
   QuickConnectParseResult parse(String input) =>
@@ -140,6 +141,102 @@ void main() {
       expect(parse('example.com').hasExplicitPort, isFalse);
       expect(parse('example.com').port, 22);
       expect(parse('[::1]').hasExplicitPort, isFalse);
+    });
+  });
+}
+
+void _sshCommandTests() {
+  QuickConnectTarget parse(String input) {
+    final r = parseQuickConnect(input, defaultUsername: 'fallback');
+    expect(r.isOk, isTrue, reason: 'failed: ${r.message} for "$input"');
+    return r.target!;
+  }
+
+  group('a pasted ssh command', () {
+    test('the AWS console form, quoted key and all', () {
+      final t = parse('ssh -i "Master-Mumbai.pem" '
+          'ubuntu@ec2-3-111-164-59.ap-south-1.compute.amazonaws.com');
+      expect(t.username, 'ubuntu');
+      expect(t.hostname, 'ec2-3-111-164-59.ap-south-1.compute.amazonaws.com');
+      expect(t.port, 22);
+      expect(t.identityFile, 'Master-Mumbai.pem');
+    });
+
+    test('an unquoted key path', () {
+      final t = parse('ssh -i ~/.ssh/aws.pem ec2-user@10.0.0.4');
+      expect(t.username, 'ec2-user');
+      expect(t.hostname, '10.0.0.4');
+      expect(t.identityFile, '~/.ssh/aws.pem');
+    });
+
+    test('a key path containing a space stays one token', () {
+      final t = parse('ssh -i "my keys/aws key.pem" ubuntu@example.com');
+      expect(t.identityFile, 'my keys/aws key.pem');
+      expect(t.hostname, 'example.com');
+    });
+
+    test('-p sets the port', () {
+      final t = parse('ssh -p 2222 ubuntu@example.com');
+      expect(t.port, 2222);
+      expect(t.hasExplicitPort, isTrue);
+    });
+
+    test('-l supplies the username when the operand has none', () {
+      final t = parse('ssh -l ubuntu example.com');
+      expect(t.username, 'ubuntu');
+      expect(t.hostname, 'example.com');
+    });
+
+    test('a user@ on the operand beats -l, as OpenSSH does', () {
+      final t = parse('ssh -l ignored ubuntu@example.com');
+      expect(t.username, 'ubuntu');
+    });
+
+    test('bare switches are skipped without eating the host', () {
+      final t = parse('ssh -v -A -T ubuntu@example.com');
+      expect(t.hostname, 'example.com');
+      expect(t.username, 'ubuntu');
+    });
+
+    test('a flag value is never mistaken for the host', () {
+      final t = parse('ssh -o StrictHostKeyChecking=no ubuntu@example.com');
+      expect(t.hostname, 'example.com');
+    });
+
+    test('a trailing remote command is ignored', () {
+      final t = parse('ssh ubuntu@example.com sudo reboot');
+      expect(t.hostname, 'example.com');
+      expect(t.username, 'ubuntu');
+    });
+
+    test('an ssh:// operand works', () {
+      final t = parse('ssh ssh://ubuntu@example.com:2200');
+      expect(t.hostname, 'example.com');
+      expect(t.port, 2200);
+    });
+
+    test('IPv6 keeps working with -p', () {
+      final t = parse('ssh -p 2222 ubuntu@[::1]');
+      expect(t.hostname, '::1');
+      expect(t.port, 2222);
+    });
+
+    test('an ssh command with no host is refused clearly', () {
+      final r = parseQuickConnect('ssh -v', defaultUsername: 'fallback');
+      expect(r.isOk, isFalse);
+      expect(r.message, contains('does not name a host'));
+    });
+
+    test('a plain host is still not treated as a command', () {
+      final t = parse('ubuntu@example.com');
+      expect(t.hostname, 'example.com');
+      expect(t.identityFile, isNull);
+    });
+
+    test('a host that merely starts with ssh is untouched', () {
+      final t = parse('ssh.example.com');
+      expect(t.hostname, 'ssh.example.com');
+      expect(t.identityFile, isNull);
     });
   });
 }

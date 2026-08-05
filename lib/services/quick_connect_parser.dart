@@ -18,11 +18,21 @@ class QuickConnectTarget {
     required this.hostname,
     required this.port,
     this.hasExplicitPort = false,
+    this.identityFile,
   });
 
   final String username;
   final String hostname;
   final int port;
+
+  /// The key file named by `-i` when the input was a whole `ssh` command,
+  /// exactly as it was written. Null otherwise.
+  ///
+  /// Not resolved to a path here: it is usually relative to whatever
+  /// directory the command was going to be run in, which this app has no way
+  /// to know. The screen uses it to say *which* file to import rather than
+  /// to open one behind the user's back.
+  final String? identityFile;
 
   /// Whether [port] was in the input or is this parser's default of 22.
   ///
@@ -64,6 +74,35 @@ QuickConnectParseResult parseQuickConnect(
   final trimmed = input.trim();
   if (trimmed.isEmpty) {
     return QuickConnectParseResult.error('Enter a host to connect to.');
+  }
+
+  // A whole `ssh …` command is the most likely thing to arrive here after
+  // `user@host`, because it is what a cloud console hands you to copy — AWS
+  // gives you `ssh -i "key.pem" ubuntu@ec2-….amazonaws.com` verbatim.
+  // Without this the flags are swallowed into the username and the server
+  // rejects an account called `ssh -i "key.pem" ubuntu`.
+  final command = _parseSshCommand(trimmed);
+  if (command != null) {
+    if (command.target == null) {
+      return QuickConnectParseResult.error(
+        'That ssh command does not name a host to connect to.',
+      );
+    }
+    final inner = parseQuickConnect(
+      command.normalizedTarget,
+      defaultUsername: command.username ?? defaultUsername,
+    );
+    if (!inner.isOk) return inner;
+    final t = inner.target!;
+    return QuickConnectParseResult.ok(
+      QuickConnectTarget(
+        username: t.username,
+        hostname: t.hostname,
+        port: t.port,
+        hasExplicitPort: t.hasExplicitPort,
+        identityFile: command.identityFile,
+      ),
+    );
   }
 
   var remainder = trimmed;
@@ -176,4 +215,136 @@ String defaultQuickConnectUsername() {
   final name = env['USER'] ?? env['USERNAME'];
   if (name == null || name.trim().isEmpty) return 'root';
   return name.trim();
+}
+
+/// The parts of an `ssh …` command line this app can act on.
+class _SshCommand {
+  const _SshCommand({
+    this.target,
+    this.identityFile,
+    this.port,
+    this.username,
+  });
+
+  /// The `[user@]host` operand.
+  final String? target;
+  final String? identityFile;
+  final int? port;
+
+  /// From `-l`, which loses to a `user@` on the operand itself — that is
+  /// what OpenSSH does too.
+  final String? username;
+
+  /// The command rewritten in the plain form the rest of this parser reads,
+  /// so all of its validation and its IPv6 handling still apply.
+  String get normalizedTarget {
+    var host = target!;
+    if (port == null) return host;
+    // A bare IPv6 operand has to be bracketed before a port can be appended
+    // to it, or the colons become ambiguous.
+    final at = host.lastIndexOf('@');
+    final userPart = at == -1 ? '' : host.substring(0, at + 1);
+    var hostPart = at == -1 ? host : host.substring(at + 1);
+    if (hostPart.contains(':') && !hostPart.startsWith('[')) {
+      hostPart = '[$hostPart]';
+    }
+    return '$userPart$hostPart:$port';
+  }
+}
+
+/// Recognises a pasted `ssh …` command, or returns null when [input] is not
+/// one and should be read as a plain `user@host`.
+///
+/// Only the flags that change where or as whom we connect are honoured;
+/// anything else OpenSSH accepts is skipped rather than refused, because a
+/// command that fails to parse here would otherwise be reported as a bad
+/// hostname. Flags that take a value are listed explicitly so their value is
+/// not mistaken for the host operand.
+_SshCommand? _parseSshCommand(String input) {
+  final tokens = _tokenize(input);
+  if (tokens.length < 2 || tokens.first.toLowerCase() != 'ssh') return null;
+
+  const takesValue = {
+    '-b', '-c', '-D', '-E', '-e', '-F', '-I', '-J', '-L', '-l', '-m',
+    '-O', '-o', '-p', '-Q', '-R', '-S', '-W', '-w', '-i',
+  };
+
+  String? target;
+  String? identityFile;
+  int? port;
+  String? username;
+
+  for (var i = 1; i < tokens.length; i++) {
+    final token = tokens[i];
+    if (token.startsWith('-') && token.length > 1) {
+      final value = i + 1 < tokens.length ? tokens[i + 1] : null;
+      if (takesValue.contains(token)) {
+        if (value == null) break;
+        switch (token) {
+          case '-i':
+            identityFile = value;
+          case '-p':
+            port = _parsePort(value);
+          case '-l':
+            username = value;
+        }
+        i++;
+      }
+      // Anything else is a bare switch (-v, -A, -T, …) and needs no value.
+      continue;
+    }
+    // The first non-flag operand is the destination; whatever follows it is
+    // a remote command, which this app does not run from here.
+    target = token;
+    break;
+  }
+
+  if (target == null) return const _SshCommand();
+  // `ssh://user@host:port` is also legal and carries its own port.
+  if (target.startsWith('ssh://')) {
+    target = target.substring('ssh://'.length);
+  }
+  return _SshCommand(
+    target: target,
+    identityFile: identityFile,
+    port: port,
+    username: username,
+  );
+}
+
+/// Splits a command line on whitespace, keeping quoted runs together — a key
+/// file with a space in its name arrives quoted, and AWS quotes it anyway.
+List<String> _tokenize(String input) {
+  final tokens = <String>[];
+  final buffer = StringBuffer();
+  String? quote;
+  var pending = false;
+
+  for (final rune in input.runes) {
+    final char = String.fromCharCode(rune);
+    if (quote != null) {
+      if (char == quote) {
+        quote = null;
+      } else {
+        buffer.write(char);
+      }
+      continue;
+    }
+    if (char == '"' || char == "'") {
+      quote = char;
+      pending = true;
+      continue;
+    }
+    if (char.trim().isEmpty) {
+      if (buffer.isNotEmpty || pending) {
+        tokens.add(buffer.toString());
+        buffer.clear();
+        pending = false;
+      }
+      continue;
+    }
+    buffer.write(char);
+  }
+  if (buffer.isNotEmpty || pending) tokens.add(buffer.toString());
+  return tokens;
 }
