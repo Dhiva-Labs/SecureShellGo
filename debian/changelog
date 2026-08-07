@@ -1,16 +1,18 @@
-secureshellgo (1.4.3~noble1) noble; urgency=medium
+secureshellgo (1.4.4~noble1) noble; urgency=medium
 
-  * Quick connect accepts a whole ssh command, of the kind a cloud console
-    gives you to copy. Pasting one previously made everything before the "@"
-    the username, so the server rejected an account named after the command
-    itself. Quoted key paths, -p, -l, bare switches, flag values, a trailing
-    remote command and ssh:// URLs are all understood.
-  * Quick connect can import a .pem or other key file from disk instead of
-    requiring the key to be pasted as text.
-  * After a connection succeeds, quick connect offers to save the host rather
-    than leaving a button to be noticed. The offer never delays the session.
-  * Fixes a layout failure that left the quick connect screen showing its
-    title bar over a blank page after a successful connection.
+  * Ctrl+L opens a location bar in the file browser: type or paste a path
+    and go straight there instead of tapping through folders. "~" expands, a
+    relative path resolves against the folder on screen, and a path to a file
+    opens it in the editor while leaving the browser among its siblings. A
+    path that cannot be reached reports the server's own message and leaves
+    the listing untouched. Chips for /etc and /var/log sit in the bar.
+  * The remote editor takes the keyboard when a file opens, so select all,
+    copy, paste, cut and undo work immediately rather than only after the
+    text has been clicked. An Edit menu and a keyboard-shortcuts dialog make
+    the same actions reachable without a keyboard at all.
+  * Clicking the file browser in the side-by-side layout now gives it the
+    keyboard, which the location bar needs; click the terminal to type there
+    again.
 
- -- Dhiva Labs <dhivakar1010@gmail.com>  Wed, 06 Aug 2026 04:10:00 +0530
+ -- Dhiva Labs <dhivakar1010@gmail.com>  Fri, 07 Aug 2026 22:15:00 +0530
 
