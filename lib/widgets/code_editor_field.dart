@@ -218,6 +218,8 @@ class CodeEditorField extends StatefulWidget {
     required this.fontSize,
     required this.softWrap,
     this.readOnly = false,
+    this.autofocus = false,
+    this.undoController,
   });
 
   final EditorHighlightController controller;
@@ -230,6 +232,17 @@ class CodeEditorField extends StatefulWidget {
   final bool softWrap;
 
   final bool readOnly;
+
+  /// Whether the field takes the keyboard as soon as it is built. Left to the
+  /// caller because it is a platform decision, not a field one: on a desktop
+  /// it is what makes Ctrl+A and friends work on the file you just opened,
+  /// and on a phone it would throw up the soft keyboard over half of it.
+  final bool autofocus;
+
+  /// A handle on the undo history the field already keeps, so a menu can
+  /// drive the same stack Ctrl+Z does. Optional — undo works either way; this
+  /// only makes it reachable without a keyboard.
+  final UndoHistoryController? undoController;
 
   @override
   State<CodeEditorField> createState() => _CodeEditorFieldState();
@@ -416,6 +429,8 @@ class _CodeEditorFieldState extends State<CodeEditorField> {
                     controller: widget.controller,
                     focusNode: widget.focusNode,
                     scrollController: _vertical,
+                    undoController: widget.undoController,
+                    autofocus: widget.autofocus,
                     readOnly: widget.readOnly,
                     maxLines: null,
                     expands: true,

@@ -153,6 +153,30 @@ class _FileBrowserPaneState extends State<FileBrowserPane>
   /// nothing to re-fetch this for beyond the pane's own edits.
   List<PathBookmark> _bookmarks = const [];
 
+  // ------------------------------------------------------- the location bar
+
+  /// Whether the path bar is showing its text field instead of breadcrumbs.
+  bool _jumping = false;
+  bool _jumpBusy = false;
+
+  /// The server's own refusal from the last failed jump, shown under the
+  /// field. Held here rather than in [_failure] because a jump that fails must
+  /// leave the listing — and the banner over it — exactly as it was.
+  String? _jumpError;
+
+  final TextEditingController _jumpController = TextEditingController();
+  final FocusNode _jumpFocus = FocusNode();
+
+  /// What Ctrl+L bubbles up from.
+  ///
+  /// `Shortcuts` only sees a key event on its way up from whatever holds the
+  /// primary focus, so the pane needs a focus node of its own for the binding
+  /// to be reachable. It deliberately does *not* autofocus: in the side-by-side
+  /// layout the terminal is built at the same moment and autofocusing here
+  /// would take the keyboard away from it. Clicking anywhere in the pane hands
+  /// it over instead, which is the point at which the user means the browser.
+  final FocusNode _paneFocus = FocusNode(debugLabel: 'file browser pane');
+
   @override
   bool get wantKeepAlive => true;
 
@@ -175,6 +199,9 @@ class _FileBrowserPaneState extends State<FileBrowserPane>
     _sessionChanges?.cancel();
     _transferChanges?.cancel();
     _arrivals?.cancel();
+    _jumpController.dispose();
+    _jumpFocus.dispose();
+    _paneFocus.dispose();
     super.dispose();
   }
 
@@ -295,6 +322,148 @@ class _FileBrowserPaneState extends State<FileBrowserPane>
     final parent = RemotePath.parent(_path);
     if (parent != _path) unawaited(_navigate(parent));
   }
+
+  // --------------------------------------------------------- go to a path
+
+  /// Swaps the breadcrumbs for the path field, seeded with where we are.
+  ///
+  /// Seeded and fully selected, browser-address-bar style: the common case is
+  /// typing somewhere else entirely (`/etc/nginx/sites-available/default`),
+  /// and the seed is still there for anyone who presses End and extends it.
+  void _openJump() {
+    final seed = _path == RemotePath.root ? _path : '$_path/';
+    setState(() {
+      _jumping = true;
+      _jumpError = null;
+      _jumpController.text = seed;
+      _jumpController.selection = TextSelection(
+        baseOffset: 0,
+        extentOffset: seed.length,
+      );
+    });
+    _jumpFocus.requestFocus();
+  }
+
+  void _closeJump() {
+    if (!_jumping) return;
+    setState(() {
+      _jumping = false;
+      _jumpError = null;
+    });
+    // Back to the pane, not to nothing: Ctrl+L has to still work after Esc.
+    _paneFocus.requestFocus();
+  }
+
+  /// Turns what was typed into an absolute remote path.
+  ///
+  /// `~` and `~/…` expand against the server's own home — the same realpath
+  /// the pane opens on — and anything not absolute is taken as relative to the
+  /// directory on screen, which is what a shell would do with it. All of the
+  /// arithmetic (trailing slashes, `..`, duplicate separators) is
+  /// [RemotePath.join]'s and [RemotePath.normalize]'s.
+  Future<String> _resolveJumpTarget(
+    RemoteFileSystem sftp,
+    String typed,
+  ) async {
+    if (typed == '~' || typed == '~/') return await sftp.home();
+    if (typed.startsWith('~/')) {
+      // Past the `~/`, not just the `~`: what is left has to stay relative or
+      // `join` would treat it as an absolute path and drop the home in front.
+      return RemotePath.join(await sftp.home(), typed.substring(2));
+    }
+    return RemotePath.join(_path, typed);
+  }
+
+  /// Goes wherever [raw] points: a directory is navigated to, a file is
+  /// opened in the editor.
+  ///
+  /// A file is at least as likely a target as a directory here — the whole
+  /// reason to type a path is knowing exactly which file you want — so what it
+  /// is gets asked of the server rather than guessed from the name.
+  ///
+  /// Nothing about the listing is touched until the answer is in hand. A path
+  /// that is not there, or that this account cannot read, leaves the browser
+  /// exactly where it was and reports the server's own words under the field.
+  Future<void> _jumpTo(String raw) async {
+    final typed = raw.trim();
+    if (typed.isEmpty || _jumpBusy) return;
+
+    setState(() {
+      _jumpBusy = true;
+      _jumpError = null;
+    });
+
+    try {
+      final sftp = await _client();
+      final target = await _resolveJumpTarget(sftp, typed);
+      if (!mounted) return;
+
+      // Something that stats as a non-directory is the file that was asked
+      // for by name. Everything else goes through `list`, whose refusal is
+      // the message worth showing when the path is wrong — `list` on a file
+      // reports "not there any more", which would be a lie.
+      if (!await sftp.isDirectory(target) && await sftp.exists(target)) {
+        if (!mounted) return;
+        setState(() {
+          _jumpBusy = false;
+          _jumping = false;
+        });
+        // Move the browser to the file's own folder on the way past. Closing
+        // the editor then leaves the user among the file's siblings rather
+        // than back wherever they happened to be standing beforehand — and a
+        // folder that will not list is no reason to withhold the file, which
+        // is the thing they actually asked for.
+        try {
+          final siblings = await sftp.list(RemotePath.parent(target));
+          if (!mounted) return;
+          setState(() {
+            _path = RemotePath.parent(target);
+            _entries = siblings;
+            _selected.clear();
+            _failure = null;
+          });
+        } on SftpFailure {
+          if (!mounted) return;
+        }
+        await _editPath(target);
+        return;
+      }
+
+      final entries = await sftp.list(target);
+      if (!mounted) return;
+      setState(() {
+        _path = RemotePath.normalize(target);
+        _entries = entries;
+        _selected.clear();
+        _failure = null;
+        _jumpBusy = false;
+        _jumping = false;
+        _jumpError = null;
+      });
+    } on SftpFailure catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _jumpBusy = false;
+        _jumpError = e.message;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _jumpBusy = false;
+        _jumpError = 'Could not open $typed.';
+      });
+    }
+  }
+
+  /// The two or three places config files actually live, one tap each.
+  ///
+  /// Only ever on screen while the location bar is open, so the ordinary path
+  /// bar keeps the width it had.
+  static const List<({String label, String path})> _quickDestinations = [
+    (label: '/etc', path: '/etc'),
+    (label: '/var/log', path: '/var/log'),
+    (label: 'Home', path: '~'),
+  ];
 
   // ------------------------------------------------------------- bookmarks
 
@@ -883,7 +1052,11 @@ class _FileBrowserPaneState extends State<FileBrowserPane>
   /// interaction with the transfer queue — an edit is a round trip, not a
   /// transfer. The refusals (binary, too large) belong to the editor, which
   /// is where the bytes are, so nothing is pre-judged from the row here.
-  Future<void> _edit(RemoteEntry entry) async {
+  Future<void> _edit(RemoteEntry entry) => _editPath(entry.path);
+
+  /// The same, for a path with no row behind it — what the location bar hands
+  /// over when what was typed turns out to be a file.
+  Future<void> _editPath(String path) async {
     final RemoteFileSystem sftp;
     try {
       sftp = await _client();
@@ -897,7 +1070,7 @@ class _FileBrowserPaneState extends State<FileBrowserPane>
       context,
       filesystem: sftp,
       settingsStore: widget.settingsStore,
-      paths: [entry.path],
+      paths: [path],
       hostLabel: widget.session.host.displayName,
     );
     // A save changes the size and the timestamp on the row behind the
@@ -1088,7 +1261,7 @@ class _FileBrowserPaneState extends State<FileBrowserPane>
     // belongs to the file list, sits above the transfer bar (which is this
     // Scaffold's bottom bar, so the two can never overlap), and stays clear
     // of the app bar's transfers badge.
-    return Scaffold(
+    final pane = Scaffold(
       body: Column(
         children: [
           _PathBar(
@@ -1098,6 +1271,20 @@ class _FileBrowserPaneState extends State<FileBrowserPane>
             isBookmarked: _isBookmarked,
             onToggleBookmark: () => unawaited(_toggleBookmark()),
             onOpenBookmarks: () => unawaited(_openBookmarks()),
+            jumping: _jumping,
+            jumpBusy: _jumpBusy,
+            jumpError: _jumpError,
+            jumpController: _jumpController,
+            jumpFocus: _jumpFocus,
+            quickDestinations: _quickDestinations,
+            onOpenJump: _openJump,
+            onCloseJump: _closeJump,
+            onJump: (target) => unawaited(_jumpTo(target)),
+            onJumpEdited: () {
+              // Only when there is something to clear: a setState per
+              // keystroke would rebuild the listing behind the bar for nothing.
+              if (_jumpError != null) setState(() => _jumpError = null);
+            },
           ),
           if (pending != null)
             _SharedFilesBanner(
@@ -1155,6 +1342,34 @@ class _FileBrowserPaneState extends State<FileBrowserPane>
           context,
           widget.session.transfers,
           onOpen: widget.session.openDownload,
+        ),
+      ),
+    );
+
+    // Escape is only bound while the bar is open. `CallbackShortcuts` reports
+    // a key as handled whenever it has a binding for it, and swallowing every
+    // Escape in the pane to run a no-op would be a bug waiting to be filed.
+    return CallbackShortcuts(
+      bindings: <ShortcutActivator, VoidCallback>{
+        const SingleActivator(LogicalKeyboardKey.keyL, control: true):
+            _openJump,
+        const SingleActivator(LogicalKeyboardKey.keyL, meta: true): _openJump,
+        if (_jumping)
+          const SingleActivator(LogicalKeyboardKey.escape): _closeJump,
+      },
+      child: Focus(
+        focusNode: _paneFocus,
+        // Out of the Tab order: this node exists to catch Ctrl+L, not to be
+        // a stop on the way to the buttons inside it.
+        skipTraversal: true,
+        child: Listener(
+          // Clicking into the browser is what makes it the keyboard's owner,
+          // and what puts Ctrl+L in reach — see [_paneFocus]. Never steals it
+          // from a descendant, so the path field keeps focus once it has it.
+          onPointerDown: (_) {
+            if (!_paneFocus.hasFocus) _paneFocus.requestFocus();
+          },
+          child: pane,
         ),
       ),
     );
@@ -1807,6 +2022,12 @@ class _SharedFilesBanner extends StatelessWidget {
   }
 }
 
+/// The bar above the listing: breadcrumbs most of the time, an editable path
+/// when the user asks for one.
+///
+/// The two are alternatives in the same strip rather than two strips, so the
+/// listing does not jump down the screen when the field opens. Breadcrumbs are
+/// unchanged and still the default way around.
 class _PathBar extends StatelessWidget {
   const _PathBar({
     required this.path,
@@ -1815,6 +2036,16 @@ class _PathBar extends StatelessWidget {
     required this.isBookmarked,
     required this.onToggleBookmark,
     required this.onOpenBookmarks,
+    required this.jumping,
+    required this.jumpBusy,
+    required this.jumpError,
+    required this.jumpController,
+    required this.jumpFocus,
+    required this.quickDestinations,
+    required this.onOpenJump,
+    required this.onCloseJump,
+    required this.onJump,
+    required this.onJumpEdited,
   });
 
   final String path;
@@ -1827,78 +2058,201 @@ class _PathBar extends StatelessWidget {
   final VoidCallback onToggleBookmark;
   final VoidCallback onOpenBookmarks;
 
+  final bool jumping;
+  final bool jumpBusy;
+
+  /// The server's reason for refusing the last jump, under the field.
+  final String? jumpError;
+
+  final TextEditingController jumpController;
+  final FocusNode jumpFocus;
+  final List<({String label, String path})> quickDestinations;
+  final VoidCallback onOpenJump;
+  final VoidCallback onCloseJump;
+  final void Function(String path) onJump;
+  final VoidCallback onJumpEdited;
+
   @override
   Widget build(BuildContext context) {
-    final crumbs = RemotePath.breadcrumbs(path);
     final theme = Theme.of(context);
 
     return Material(
       color: theme.colorScheme.surfaceContainerHigh,
-      child: Row(
-        children: [
-          IconButton(
-            tooltip: 'Up one level',
-            icon: const Icon(Icons.arrow_upward, size: 20),
-            onPressed: path == RemotePath.root ? null : onUp,
-          ),
-          Expanded(
-            child: SingleChildScrollView(
-              scrollDirection: Axis.horizontal,
-              reverse: true,
-              child: Row(
-                children: [
-                  for (var i = 0; i < crumbs.length; i++) ...[
-                    if (i > 0)
-                      Text(
-                        '/',
-                        style: theme.textTheme.bodySmall?.copyWith(
-                          color: theme.colorScheme.onSurfaceVariant,
-                        ),
-                      ),
-                    TextButton(
-                      onPressed: i == crumbs.length - 1
-                          ? null
-                          : () => onNavigate(crumbs[i].path),
-                      style: TextButton.styleFrom(
-                        minimumSize: Size.zero,
-                        padding: const EdgeInsets.symmetric(horizontal: 8),
-                        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                        disabledForegroundColor: theme.colorScheme.onSurface,
-                      ),
-                      child: Text(
-                        crumbs[i].label == RemotePath.root
-                            ? '/'
-                            : crumbs[i].label,
-                        style: TextStyle(
-                          fontFamily: AppTheme.monoFontFamily,
-                          fontFamilyFallback: AppTheme.monoFontFamilyFallback,
-                          fontSize: 13,
-                          fontWeight: i == crumbs.length - 1
-                              ? FontWeight.w600
-                              : FontWeight.normal,
-                        ),
+      child: jumping ? _location(context, theme) : _crumbs(context, theme),
+    );
+  }
+
+  Widget _crumbs(BuildContext context, ThemeData theme) {
+    final crumbs = RemotePath.breadcrumbs(path);
+
+    return Row(
+      children: [
+        IconButton(
+          tooltip: 'Up one level',
+          icon: const Icon(Icons.arrow_upward, size: 20),
+          onPressed: path == RemotePath.root ? null : onUp,
+        ),
+        // Beside the breadcrumbs it edits, and grouped with the other
+        // navigation control rather than with the bookmark ones on the right.
+        IconButton(
+          tooltip: 'Go to path (Ctrl+L)',
+          icon: const Icon(Icons.edit_location_alt_outlined, size: 20),
+          onPressed: onOpenJump,
+        ),
+        Expanded(
+          child: SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            reverse: true,
+            child: Row(
+              children: [
+                for (var i = 0; i < crumbs.length; i++) ...[
+                  if (i > 0)
+                    Text(
+                      '/',
+                      style: theme.textTheme.bodySmall?.copyWith(
+                        color: theme.colorScheme.onSurfaceVariant,
                       ),
                     ),
-                  ],
+                  TextButton(
+                    onPressed: i == crumbs.length - 1
+                        ? null
+                        : () => onNavigate(crumbs[i].path),
+                    style: TextButton.styleFrom(
+                      minimumSize: Size.zero,
+                      padding: const EdgeInsets.symmetric(horizontal: 8),
+                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                      disabledForegroundColor: theme.colorScheme.onSurface,
+                    ),
+                    child: Text(
+                      crumbs[i].label == RemotePath.root
+                          ? '/'
+                          : crumbs[i].label,
+                      style: TextStyle(
+                        fontFamily: AppTheme.monoFontFamily,
+                        fontFamilyFallback: AppTheme.monoFontFamilyFallback,
+                        fontSize: 13,
+                        fontWeight: i == crumbs.length - 1
+                            ? FontWeight.w600
+                            : FontWeight.normal,
+                      ),
+                    ),
+                  ),
                 ],
+              ],
+            ),
+          ),
+        ),
+        IconButton(
+          tooltip: isBookmarked
+              ? 'Remove bookmark for this folder'
+              : 'Bookmark this folder',
+          icon: Icon(
+            isBookmarked ? Icons.star : Icons.star_border,
+            size: 20,
+            color: isBookmarked ? theme.colorScheme.primary : null,
+          ),
+          onPressed: onToggleBookmark,
+        ),
+        IconButton(
+          tooltip: 'Bookmarks',
+          icon: const Icon(Icons.bookmarks_outlined, size: 20),
+          onPressed: onOpenBookmarks,
+        ),
+      ],
+    );
+  }
+
+  Widget _location(BuildContext context, ThemeData theme) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(8, 6, 4, 6),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: TextField(
+                  controller: jumpController,
+                  focusNode: jumpFocus,
+                  // A path is not prose: the phone keyboard must not
+                  // capitalise it or offer to correct it into a word.
+                  autocorrect: false,
+                  enableSuggestions: false,
+                  textCapitalization: TextCapitalization.none,
+                  style: const TextStyle(
+                    fontFamily: AppTheme.monoFontFamily,
+                    fontFamilyFallback: AppTheme.monoFontFamilyFallback,
+                    fontSize: 13,
+                  ),
+                  decoration: InputDecoration(
+                    isDense: true,
+                    labelText: 'Go to path',
+                    hintText: '/etc/nginx/nginx.conf',
+                    hintStyle: const TextStyle(fontSize: 12.5),
+                    errorText: jumpError,
+                    errorMaxLines: 3,
+                    errorStyle: const TextStyle(fontSize: 11),
+                    contentPadding: const EdgeInsets.symmetric(
+                      horizontal: 10,
+                      vertical: 8,
+                    ),
+                  ),
+                  onChanged: (_) => onJumpEdited(),
+                  onSubmitted: onJump,
+                ),
               ),
-            ),
+              if (jumpBusy)
+                const Padding(
+                  padding: EdgeInsets.symmetric(horizontal: 13),
+                  child: SizedBox(
+                    width: 18,
+                    height: 18,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  ),
+                )
+              else
+                IconButton(
+                  tooltip: 'Go',
+                  icon: const Icon(Icons.subdirectory_arrow_left, size: 20),
+                  onPressed: () => onJump(jumpController.text),
+                ),
+              IconButton(
+                tooltip: 'Close (Esc)',
+                icon: const Icon(Icons.close, size: 18),
+                onPressed: onCloseJump,
+              ),
+            ],
           ),
-          IconButton(
-            tooltip: isBookmarked
-                ? 'Remove bookmark for this folder'
-                : 'Bookmark this folder',
-            icon: Icon(
-              isBookmarked ? Icons.star : Icons.star_border,
-              size: 20,
-              color: isBookmarked ? theme.colorScheme.primary : null,
+          const SizedBox(height: 4),
+          // Where server config actually lives, one tap each. Only ever on
+          // screen while this bar is open, so the ordinary path bar keeps the
+          // width it had.
+          SizedBox(
+            // Tall enough for a compact chip's own height, so the row never
+            // squeezes one against its border on a narrow pane.
+            height: 34,
+            child: ListView(
+              scrollDirection: Axis.horizontal,
+              children: [
+                for (final destination in quickDestinations) ...[
+                  ActionChip(
+                    label: Text(
+                      destination.label,
+                      style: const TextStyle(fontSize: 12),
+                    ),
+                    visualDensity: VisualDensity.compact,
+                    materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                    onPressed: jumpBusy
+                        ? null
+                        : () {
+                            jumpController.text = destination.path;
+                            onJump(destination.path);
+                          },
+                  ),
+                  const SizedBox(width: 6),
+                ],
+              ],
             ),
-            onPressed: onToggleBookmark,
-          ),
-          IconButton(
-            tooltip: 'Bookmarks',
-            icon: const Icon(Icons.bookmarks_outlined, size: 20),
-            onPressed: onOpenBookmarks,
           ),
         ],
       ),

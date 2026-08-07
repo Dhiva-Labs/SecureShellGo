@@ -44,6 +44,10 @@ class _EditorTab {
   final EditorHighlightController controller;
   final FocusNode focusNode = FocusNode();
 
+  /// The field's own undo stack, held here so the Edit menu can undo and redo
+  /// without a keyboard — and so each tab keeps its own history.
+  final UndoHistoryController undo = UndoHistoryController();
+
   String savedText;
   LineEndingStyle lineEndings;
   bool hadInvalidUtf8;
@@ -63,6 +67,7 @@ class _EditorTab {
   void dispose() {
     controller.dispose();
     focusNode.dispose();
+    undo.dispose();
   }
 }
 
@@ -797,6 +802,194 @@ class _RemoteEditorScreenState extends State<RemoteEditorScreen> {
     tab.focusNode.requestFocus();
   }
 
+  // ------------------------------------------------------------ edit actions
+
+  /// Select all, cut, copy, paste and undo/redo, driven from the Edit menu.
+  ///
+  /// Every one of these is already bound to its usual chord by Flutter's own
+  /// text-editing shortcuts, and the field is a real `TextField`, so the
+  /// keyboard path needs nothing from this screen. These exist because a menu
+  /// is the only way to reach them on a touch build — and because a menu row
+  /// with the chord written next to it is how a desktop user finds out the
+  /// chord exists at all.
+  ///
+  /// They run against the controller rather than dispatching the framework's
+  /// intents: the controller *is* the document (see
+  /// [EditorHighlightController]), so this is the same edit the keyboard
+  /// makes, and it lands on the same undo stack.
+  void _selectAll() {
+    final tab = _tab;
+    if (tab == null) return;
+    tab.controller.selection = TextSelection(
+      baseOffset: 0,
+      extentOffset: tab.controller.text.length,
+    );
+    tab.focusNode.requestFocus();
+  }
+
+  Future<void> _copySelection({required bool cut}) async {
+    final tab = _tab;
+    if (tab == null) return;
+    final text = tab.controller.text;
+    final selection = tab.controller.selection;
+    if (!selection.isValid || selection.isCollapsed) {
+      _snack('Select some text first.');
+      return;
+    }
+
+    await Clipboard.setData(
+      ClipboardData(text: selection.textInside(text)),
+    );
+    if (!mounted) return;
+
+    if (cut) {
+      final at = selection.start;
+      tab.controller.value = TextEditingValue(
+        text: selection.textBefore(text) + selection.textAfter(text),
+        selection: TextSelection.collapsed(offset: at),
+      );
+    }
+    tab.focusNode.requestFocus();
+  }
+
+  Future<void> _paste() async {
+    final tab = _tab;
+    if (tab == null) return;
+    final data = await Clipboard.getData(Clipboard.kTextPlain);
+    final clip = data?.text;
+    if (!mounted) return;
+    if (clip == null || clip.isEmpty) {
+      _snack('There is nothing on the clipboard.');
+      return;
+    }
+
+    final text = tab.controller.text;
+    // An untouched tab has no selection at all yet; treat that as "at the
+    // end" rather than dropping the paste on the floor.
+    final selection = tab.controller.selection.isValid
+        ? tab.controller.selection
+        : TextSelection.collapsed(offset: text.length);
+    final before = selection.textBefore(text);
+    tab.controller.value = TextEditingValue(
+      text: before + clip + selection.textAfter(text),
+      selection: TextSelection.collapsed(offset: before.length + clip.length),
+    );
+    tab.focusNode.requestFocus();
+  }
+
+  void _undo() {
+    final tab = _tab;
+    if (tab == null) return;
+    tab.undo.undo();
+    tab.focusNode.requestFocus();
+  }
+
+  void _redo() {
+    final tab = _tab;
+    if (tab == null) return;
+    tab.undo.redo();
+    tab.focusNode.requestFocus();
+  }
+
+  /// Whether this platform spells the editing chords with Command.
+  bool get _isMac => Theme.of(context).platform == TargetPlatform.macOS;
+
+  /// Where a physical keyboard is the way in, so the field can take focus the
+  /// moment a file opens. Read through the theme, same as every other platform
+  /// check in this app, so a test can pick one by handing it a theme.
+  bool get _isDesktopPlatform {
+    switch (Theme.of(context).platform) {
+      case TargetPlatform.linux:
+      case TargetPlatform.macOS:
+      case TargetPlatform.windows:
+        return true;
+      case TargetPlatform.android:
+      case TargetPlatform.iOS:
+      case TargetPlatform.fuchsia:
+        return false;
+    }
+  }
+
+  /// `Ctrl+S` / `⌘S`, for the menu hints and the shortcut sheet.
+  String _chord(String key, {bool shift = false}) {
+    if (_isMac) return '${shift ? '⇧' : ''}⌘$key';
+    return 'Ctrl+${shift ? 'Shift+' : ''}$key';
+  }
+
+  Future<void> _showShortcuts() {
+    final theme = Theme.of(context);
+    final rows = <(String, String)>[
+      ('Save', _chord('S')),
+      ('Find', _chord('F')),
+      ('Replace', _chord('H')),
+      ('Go to line', _chord('G')),
+      ('Close the find bar', 'Esc'),
+      ('Select all', _chord('A')),
+      ('Copy', _chord('C')),
+      ('Cut', _chord('X')),
+      ('Paste', _chord('V')),
+      ('Undo', _chord('Z')),
+      ('Redo', _chord('Z', shift: true)),
+    ];
+
+    return showDialog<void>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Keyboard shortcuts'),
+        // Scrollable as a floor, not as a feature: eleven rows fit a laptop
+        // without moving, and a short window gets a scroll instead of an
+        // overflow.
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              for (final (label, keys) in rows)
+                Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 3),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          label,
+                          style: const TextStyle(fontSize: 13),
+                        ),
+                      ),
+                      const SizedBox(width: 16),
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 7,
+                          vertical: 3,
+                        ),
+                        decoration: BoxDecoration(
+                          color: theme.colorScheme.surfaceContainerHighest,
+                          borderRadius: BorderRadius.circular(4),
+                        ),
+                        child: Text(
+                          keys,
+                          style: TextStyle(
+                            fontFamily: AppTheme.monoFontFamily,
+                            fontFamilyFallback: AppTheme.monoFontFamilyFallback,
+                            fontSize: 12,
+                            color: theme.colorScheme.onSurfaceVariant,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('Close'),
+          ),
+        ],
+      ),
+    );
+  }
+
   void _snack(String message, {bool isError = false}) {
     final theme = Theme.of(context);
     ScaffoldMessenger.of(context).showSnackBar(
@@ -919,6 +1112,7 @@ class _RemoteEditorScreenState extends State<RemoteEditorScreen> {
         icon: const Icon(Icons.save_outlined, size: 20),
         onPressed: tab.isDirty ? () => unawaited(_save()) : null,
       ),
+      _editMenu(tab),
       PopupMenuButton<String>(
         tooltip: 'More',
         onSelected: (value) {
@@ -993,6 +1187,96 @@ class _RemoteEditorScreenState extends State<RemoteEditorScreen> {
     ];
   }
 
+  /// The editing actions, written out with the chord that already runs them.
+  ///
+  /// Not decoration: on a touch build this menu is the only way to select all,
+  /// cut, copy, paste or undo at all, and on a desktop it is where a user who
+  /// does not know the chord finds it.
+  Widget _editMenu(_EditorTab tab) {
+    return PopupMenuButton<String>(
+      tooltip: 'Edit',
+      icon: const Icon(Icons.edit_outlined, size: 20),
+      onSelected: (value) {
+        switch (value) {
+          case 'selectAll':
+            _selectAll();
+          case 'cut':
+            unawaited(_copySelection(cut: true));
+          case 'copy':
+            unawaited(_copySelection(cut: false));
+          case 'paste':
+            unawaited(_paste());
+          case 'undo':
+            _undo();
+          case 'redo':
+            _redo();
+          case 'shortcuts':
+            unawaited(_showShortcuts());
+        }
+      },
+      // Read when the menu opens, not when the bar was built: the undo stack
+      // pushes through a throttle, so an app bar rebuilt on the keystroke
+      // still thinks there is nothing to undo half a second later.
+      itemBuilder: (context) => [
+        _editItem('selectAll', 'Select all', Icons.select_all, _chord('A')),
+        _editItem('cut', 'Cut', Icons.content_cut, _chord('X')),
+        _editItem('copy', 'Copy', Icons.content_copy, _chord('C')),
+        _editItem('paste', 'Paste', Icons.content_paste, _chord('V')),
+        const PopupMenuDivider(),
+        _editItem(
+          'undo',
+          'Undo',
+          Icons.undo,
+          _chord('Z'),
+          enabled: tab.undo.value.canUndo,
+        ),
+        _editItem(
+          'redo',
+          'Redo',
+          Icons.redo,
+          _chord('Z', shift: true),
+          enabled: tab.undo.value.canRedo,
+        ),
+        const PopupMenuDivider(),
+        const PopupMenuItem(
+          value: 'shortcuts',
+          child: Text('Keyboard shortcuts…'),
+        ),
+      ],
+    );
+  }
+
+  PopupMenuItem<String> _editItem(
+    String value,
+    String label,
+    IconData icon,
+    String chord, {
+    bool enabled = true,
+  }) {
+    final theme = Theme.of(context);
+    return PopupMenuItem<String>(
+      value: value,
+      enabled: enabled,
+      child: Row(
+        children: [
+          Icon(icon, size: 17),
+          const SizedBox(width: 10),
+          Expanded(child: Text(label, overflow: TextOverflow.ellipsis)),
+          const SizedBox(width: 8),
+          Text(
+            chord,
+            style: TextStyle(
+              fontFamily: AppTheme.monoFontFamily,
+              fontFamilyFallback: AppTheme.monoFontFamilyFallback,
+              fontSize: 11,
+              color: theme.colorScheme.onSurfaceVariant,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _body(_EditorTab? tab, TerminalTheme theme) {
     if (_loading) {
       return const Center(child: CircularProgressIndicator());
@@ -1014,6 +1298,14 @@ class _RemoteEditorScreenState extends State<RemoteEditorScreen> {
             key: ValueKey(tab.path),
             controller: tab.controller,
             focusNode: tab.focusNode,
+            undoController: tab.undo,
+            // The field has to *hold* the keyboard for Ctrl+A, Ctrl+S and the
+            // rest to reach it, and until this it did not until the user
+            // clicked into the text — which is what "the shortcuts don't
+            // work" looks like from the other side. Desktop only: doing it on
+            // a phone would open the soft keyboard over the file the moment
+            // it appeared, before the user has decided to change anything.
+            autofocus: _isDesktopPlatform,
             theme: theme,
             fontSize: _settings.terminalFontSize,
             softWrap: _softWrap,

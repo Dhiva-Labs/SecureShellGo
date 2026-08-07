@@ -3,6 +3,7 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:secure_shell_go/models/remote_entry.dart';
 import 'package:secure_shell_go/screens/remote_editor_screen.dart';
@@ -158,14 +159,19 @@ class ScreenWriter implements RemoteFileWriter {
 }
 
 /// Pumps the editor behind a route, so its own `pop` has somewhere to go.
+///
+/// [platform] rides in on the theme because that is where the screen reads it
+/// from — the field only takes the keyboard on its own where there is a
+/// physical one.
 Future<void> pumpEditor(
   WidgetTester tester,
   ScreenFs fs,
-  List<String> paths,
-) async {
+  List<String> paths, {
+  TargetPlatform platform = TargetPlatform.android,
+}) async {
   final settings = SettingsStore(file: File('/nonexistent/settings.json'));
   await tester.pumpWidget(MaterialApp(
-    theme: AppTheme.dark,
+    theme: AppTheme.dark.copyWith(platform: platform),
     home: Scaffold(
       body: Builder(
         builder: (context) => TextButton(
@@ -186,6 +192,33 @@ Future<void> pumpEditor(
 }
 
 const String conf = 'server {\n  listen 80;\n}\n';
+
+/// Holds a modifier down across [key].
+Future<void> chord(
+  WidgetTester tester,
+  LogicalKeyboardKey key, {
+  bool shift = false,
+}) async {
+  await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
+  if (shift) await tester.sendKeyDownEvent(LogicalKeyboardKey.shiftLeft);
+  await tester.sendKeyEvent(key);
+  if (shift) await tester.sendKeyUpEvent(LogicalKeyboardKey.shiftLeft);
+  await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
+  await tester.pumpAndSettle();
+  await settleUndo(tester);
+}
+
+/// Lets the undo stack's throttled push land.
+///
+/// `EditableText` pushes a new undo entry through a 500ms throttle, and a
+/// bare timer does not schedule a frame — so `pumpAndSettle` returns before
+/// it fires and the edit that just happened is not yet undoable. Every test
+/// that expects an undo to have something to undo has to wait this out.
+Future<void> settleUndo(WidgetTester tester) =>
+    tester.pump(const Duration(milliseconds: 600));
+
+TextField fieldOf(WidgetTester tester) =>
+    tester.widget<TextField>(find.byType(TextField).first);
 
 void main() {
   testWidgets('opens a file and shows it with line numbers', (tester) async {
@@ -502,5 +535,304 @@ void main() {
 
     expect(find.text('SQL · LF'), findsOneWidget);
     expect(find.text('Plain text · LF'), findsNothing);
+  });
+
+  // ------------------------------------------------ selection and clipboard
+
+  group('editing actions', () {
+    final clipboard = <String, String?>{};
+
+    setUp(() {
+      clipboard.clear();
+      // `flutter_test` answers the platform channel with null, so a copy
+      // would go nowhere and a paste would come back empty. This is the
+      // smallest thing that behaves like a clipboard.
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(SystemChannels.platform, (call) async {
+        switch (call.method) {
+          case 'Clipboard.setData':
+            clipboard['text'] = (call.arguments as Map)['text'] as String?;
+            return null;
+          case 'Clipboard.getData':
+            return <String, dynamic>{'text': clipboard['text']};
+        }
+        return null;
+      });
+    });
+
+    tearDown(() {
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(SystemChannels.platform, null);
+    });
+
+    Future<void> pickFromEditMenu(WidgetTester tester, String label) async {
+      await tester.tap(find.byTooltip('Edit'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text(label));
+      await tester.pumpAndSettle();
+      await settleUndo(tester);
+    }
+
+    testWidgets('the field takes the keyboard on a desktop', (tester) async {
+      final fs = ScreenFs()..put('/etc/nginx.conf', conf);
+      await pumpEditor(tester, fs, ['/etc/nginx.conf'],
+          platform: TargetPlatform.linux);
+
+      // Without this, Ctrl+A on a freshly opened file does nothing at all
+      // until the user thinks to click into the text first.
+      expect(fieldOf(tester).focusNode?.hasFocus, isTrue);
+    });
+
+    testWidgets('on a phone it waits to be tapped', (tester) async {
+      final fs = ScreenFs()..put('/etc/nginx.conf', conf);
+      await pumpEditor(tester, fs, ['/etc/nginx.conf']);
+
+      // No soft keyboard thrown up over a file the user may only be reading.
+      expect(fieldOf(tester).focusNode?.hasFocus, isFalse);
+    });
+
+    testWidgets('Ctrl+A, C, X and V already work in the field',
+        (tester) async {
+      final fs = ScreenFs()..put('/etc/nginx.conf', conf);
+      await pumpEditor(tester, fs, ['/etc/nginx.conf'],
+          platform: TargetPlatform.linux);
+
+      await chord(tester, LogicalKeyboardKey.keyA);
+      expect(fieldOf(tester).controller?.selection,
+          const TextSelection(baseOffset: 0, extentOffset: 24));
+
+      await chord(tester, LogicalKeyboardKey.keyC);
+      expect(clipboard['text'], conf);
+
+      await chord(tester, LogicalKeyboardKey.keyX);
+      expect(fieldOf(tester).controller?.text, isEmpty);
+
+      await chord(tester, LogicalKeyboardKey.keyV);
+      expect(fieldOf(tester).controller?.text, conf);
+    });
+
+    testWidgets('Ctrl+Z and Ctrl+Shift+Z step the undo history',
+        (tester) async {
+      final fs = ScreenFs()..put('/etc/nginx.conf', conf);
+      await pumpEditor(tester, fs, ['/etc/nginx.conf'],
+          platform: TargetPlatform.linux);
+      // The file as opened is the first entry on the stack, and it lands
+      // through the same throttle as everything after it — type inside that
+      // window and the two edits coalesce into one.
+      await settleUndo(tester);
+
+      await tester.enterText(find.byType(TextField).first, 'rewritten\n');
+      await tester.pumpAndSettle();
+      await settleUndo(tester);
+
+      await chord(tester, LogicalKeyboardKey.keyZ);
+      expect(fieldOf(tester).controller?.text, conf);
+
+      await chord(tester, LogicalKeyboardKey.keyZ, shift: true);
+      expect(fieldOf(tester).controller?.text, 'rewritten\n');
+    });
+
+    testWidgets('the screen shortcuts do not swallow the editing ones',
+        (tester) async {
+      final fs = ScreenFs()..put('/etc/nginx.conf', conf);
+      await pumpEditor(tester, fs, ['/etc/nginx.conf'],
+          platform: TargetPlatform.linux);
+
+      // The bindings the screen owns still fire...
+      await chord(tester, LogicalKeyboardKey.keyF);
+      expect(find.widgetWithText(TextField, 'Find'), findsOneWidget);
+      await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+      await tester.pumpAndSettle();
+      expect(find.widgetWithText(TextField, 'Find'), findsNothing);
+
+      // ...and nothing they bind collides with select-all.
+      await chord(tester, LogicalKeyboardKey.keyA);
+      expect(fieldOf(tester).controller?.selection.isCollapsed, isFalse);
+    });
+
+    testWidgets('Select all, Copy and Paste run from the Edit menu',
+        (tester) async {
+      final fs = ScreenFs()..put('/etc/nginx.conf', conf);
+      await pumpEditor(tester, fs, ['/etc/nginx.conf']);
+
+      await pickFromEditMenu(tester, 'Select all');
+      expect(fieldOf(tester).controller?.selection,
+          const TextSelection(baseOffset: 0, extentOffset: 24));
+
+      await pickFromEditMenu(tester, 'Copy');
+      expect(clipboard['text'], conf);
+
+      // Paste over the whole selection replaces it — and the caret lands
+      // after what was pasted, not back at the top.
+      await pickFromEditMenu(tester, 'Select all');
+      await pickFromEditMenu(tester, 'Paste');
+      expect(fieldOf(tester).controller?.text, conf);
+      expect(fieldOf(tester).controller?.selection.baseOffset, conf.length);
+    });
+
+    testWidgets('Cut from the Edit menu takes the text with it',
+        (tester) async {
+      final fs = ScreenFs()..put('/etc/nginx.conf', conf);
+      await pumpEditor(tester, fs, ['/etc/nginx.conf']);
+
+      await pickFromEditMenu(tester, 'Select all');
+      await pickFromEditMenu(tester, 'Cut');
+
+      expect(clipboard['text'], conf);
+      expect(fieldOf(tester).controller?.text, isEmpty);
+      // Cut is an edit, so the file is now dirty.
+      expect(find.byTooltip('Save (Ctrl+S)'), findsOneWidget);
+    });
+
+    testWidgets('Copy with nothing selected says so instead of copying',
+        (tester) async {
+      final fs = ScreenFs()..put('/etc/nginx.conf', conf);
+      await pumpEditor(tester, fs, ['/etc/nginx.conf']);
+
+      await pickFromEditMenu(tester, 'Copy');
+      expect(find.text('Select some text first.'), findsOneWidget);
+      expect(clipboard['text'], isNull);
+    });
+
+    testWidgets('Undo and Redo run from the Edit menu', (tester) async {
+      final fs = ScreenFs()..put('/etc/nginx.conf', conf);
+      await pumpEditor(tester, fs, ['/etc/nginx.conf'],
+          platform: TargetPlatform.linux);
+      await settleUndo(tester);
+
+      await tester.enterText(find.byType(TextField).first, 'rewritten\n');
+      await tester.pumpAndSettle();
+      await settleUndo(tester);
+
+      await pickFromEditMenu(tester, 'Undo');
+      expect(fieldOf(tester).controller?.text, conf);
+
+      await pickFromEditMenu(tester, 'Redo');
+      expect(fieldOf(tester).controller?.text, 'rewritten\n');
+    });
+
+    testWidgets('Undo is greyed out until there is something to undo',
+        (tester) async {
+      final fs = ScreenFs()..put('/etc/nginx.conf', conf);
+      await pumpEditor(tester, fs, ['/etc/nginx.conf'],
+          platform: TargetPlatform.linux);
+      await settleUndo(tester);
+
+      await tester.tap(find.byTooltip('Edit'));
+      await tester.pumpAndSettle();
+      expect(
+        tester
+            .widget<PopupMenuItem<String>>(
+              find.widgetWithText(PopupMenuItem<String>, 'Undo'),
+            )
+            .enabled,
+        isFalse,
+      );
+      await tester.tap(find.text('Select all'));
+      await tester.pumpAndSettle();
+
+      await tester.enterText(find.byType(TextField).first, 'rewritten\n');
+      await tester.pumpAndSettle();
+      await settleUndo(tester);
+
+      await tester.tap(find.byTooltip('Edit'));
+      await tester.pumpAndSettle();
+      expect(
+        tester
+            .widget<PopupMenuItem<String>>(
+              find.widgetWithText(PopupMenuItem<String>, 'Undo'),
+            )
+            .enabled,
+        isTrue,
+      );
+    });
+
+    testWidgets('the Edit menu writes the chord beside every action',
+        (tester) async {
+      final fs = ScreenFs()..put('/etc/nginx.conf', conf);
+      await pumpEditor(tester, fs, ['/etc/nginx.conf'],
+          platform: TargetPlatform.linux);
+
+      await tester.tap(find.byTooltip('Edit'));
+      await tester.pumpAndSettle();
+
+      for (final hint in [
+        'Ctrl+A',
+        'Ctrl+X',
+        'Ctrl+C',
+        'Ctrl+V',
+        'Ctrl+Z',
+        'Ctrl+Shift+Z',
+      ]) {
+        expect(find.text(hint), findsOneWidget, reason: 'missing $hint');
+      }
+    });
+
+    testWidgets('the shortcut sheet lists every binding the screen has',
+        (tester) async {
+      final fs = ScreenFs()..put('/etc/nginx.conf', conf);
+      await pumpEditor(tester, fs, ['/etc/nginx.conf'],
+          platform: TargetPlatform.linux);
+
+      await pickFromEditMenu(tester, 'Keyboard shortcuts…');
+
+      expect(find.text('Keyboard shortcuts'), findsOneWidget);
+      for (final row in [
+        'Save',
+        'Find',
+        'Replace',
+        'Go to line',
+        'Close the find bar',
+        'Select all',
+        'Copy',
+        'Cut',
+        'Paste',
+        'Undo',
+        'Redo',
+      ]) {
+        expect(find.text(row), findsOneWidget, reason: 'missing $row');
+      }
+      expect(find.text('Ctrl+S'), findsOneWidget);
+      expect(find.text('Ctrl+G'), findsOneWidget);
+      expect(find.text('Esc'), findsOneWidget);
+      // One screen: nothing had to scroll to be found.
+      expect(tester.takeException(), isNull);
+
+      await tester.tap(find.text('Close'));
+      await tester.pumpAndSettle();
+      expect(find.text('Keyboard shortcuts'), findsNothing);
+    });
+
+    testWidgets('the app bar survives a phone-width window', (tester) async {
+      // Four actions and a two-line title on the narrowest screen this ships
+      // to. An overflow here is invisible in release and takes the body down
+      // with it, so it is worth a test of its own.
+      tester.view.physicalSize = const Size(360, 640);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+
+      final fs = ScreenFs()..put('/etc/nginx/sites-available/default', conf);
+      await pumpEditor(tester, fs, ['/etc/nginx/sites-available/default']);
+
+      expect(tester.takeException(), isNull);
+      expect(find.byTooltip('Edit'), findsOneWidget);
+
+      await tester.tap(find.byTooltip('Edit'));
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
+      expect(find.text('Select all'), findsOneWidget);
+    });
+
+    testWidgets('on macOS the chords are written with Command',
+        (tester) async {
+      final fs = ScreenFs()..put('/etc/nginx.conf', conf);
+      await pumpEditor(tester, fs, ['/etc/nginx.conf'],
+          platform: TargetPlatform.macOS);
+
+      await pickFromEditMenu(tester, 'Keyboard shortcuts…');
+      expect(find.text('⌘S'), findsOneWidget);
+      expect(find.text('⇧⌘Z'), findsOneWidget);
+      expect(find.text('Ctrl+S'), findsNothing);
+    });
   });
 }
