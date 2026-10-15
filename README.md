@@ -1,5 +1,9 @@
 # SecureShell Go
 
+[![ARM64 builds](https://github.com/Dhiva-Labs/SecureShellGo/actions/workflows/desktop-builds.yml/badge.svg?branch=main)](https://github.com/Dhiva-Labs/SecureShellGo/actions/workflows/desktop-builds.yml)
+![Linux x64 | arm64](https://img.shields.io/badge/Linux-x64%20%7C%20arm64-informational?logo=linux&logoColor=white)
+![Windows x64 | arm64](https://img.shields.io/badge/Windows-x64%20%7C%20arm64-informational?logo=windows&logoColor=white)
+
 A fast, security-first SSH terminal and SFTP client for Android. Connect to your
 Linux servers, run a real interactive shell, and transfer files — with strict
 host-key verification at the core.
@@ -122,9 +126,19 @@ install it (Android 7.0+).
 
 Tagged releases also attach desktop builds on the same
 [Releases](https://github.com/Dhiva-Labs/SecureShellGo/releases) page:
-`.tar.gz` for Linux, `.zip` for Windows, and `.zip` for macOS (containing
-the `.app`). They're built by GitHub Actions and haven't seen the testing
-the Android app has.
+
+| Platform | Asset |
+|---|---|
+| Linux x64 | `SecureShellGo-linux-x64.tar.gz` |
+| Linux arm64 | `SecureShellGo-linux-arm64.tar.gz` |
+| Windows x64 | `SecureShellGo-windows-x64.zip` |
+| Windows arm64 | `SecureShellGo-windows-arm64.zip` |
+| macOS | `SecureShellGo-macos.zip` (containing the `.app`) |
+
+The arm64 builds are native builds for ARM64 Linux and Windows on ARM. The
+Linux and Windows builds are made by GitHub Actions on a runner of their own
+architecture and started once there to check that they run, but they haven't
+seen the testing the Android app has.
 
 macOS builds are unsigned — there's no Apple Developer ID behind this
 project — so Gatekeeper will refuse to open the app and call it an
@@ -143,8 +157,9 @@ sudo apt install secureshellgo
 ```
 
 This tracks the same releases as the desktop `.tar.gz` above, built from the
-`debian/` packaging in this repository. See `packaging/PPA.md` for how the
-package itself is built and uploaded.
+`debian/` packaging in this repository. The PPA package is amd64 only for now;
+on ARM64 use the `linux-arm64` archive above. See `packaging/PPA.md` for how
+the package itself is built and uploaded.
 
 ### Install via snap
 
@@ -155,7 +170,9 @@ as well as Fedora, Arch, Manjaro, and any other distro with `snapd`:
 sudo snap install secureshellgo
 ```
 
-See `packaging/SNAP.md` for how the snap itself is built and published.
+See `packaging/SNAP.md` for how the snap itself is built and published. CI
+builds it for amd64 and arm64; the Store listing gets the arm64 build once it
+is uploaded.
 
 ### Saving passwords and keys on Linux
 
