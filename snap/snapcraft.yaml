@@ -46,6 +46,11 @@ source-code: https://github.com/Dhiva-Labs/SecureShellGo
 issues: https://github.com/Dhiva-Labs/SecureShellGo/issues
 contact: dhivakar1010@gmail.com
 
+# Built natively on each architecture: the Flutter plugin cannot cross-compile.
+architectures:
+  - build-on: amd64
+  - build-on: arm64
+
 apps:
   secureshellgo:
     command: secure_shell_go

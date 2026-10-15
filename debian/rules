@@ -1,11 +1,22 @@
 #!/usr/bin/make -f
 
+include /usr/share/dpkg/architecture.mk
+
 # Launchpad's PPA build farm has no outbound network access, so the Flutter
 # SDK and pub cache are vendored under packaging/vendor/ and extracted into
 # build-scoped directories here. See packaging/vendor/README for how the
 # tarballs are produced.
 FLUTTER_VERSION := 3.44.6
 FLUTTER_ENGINE_VERSION := 83675ed27633283e7fc296c8bca22e841224c096
+
+# Flutter names the build folder after the CPU: x64 or arm64. The vendored SDK
+# below only carries the x64 engine, so the package is still amd64-only (see
+# Architecture: in debian/control); arm64 needs an arm64 SDK tarball first.
+ifeq ($(DEB_HOST_ARCH),arm64)
+FLUTTER_ARCH := arm64
+else
+FLUTTER_ARCH := x64
+endif
 
 FLUTTER_ROOT := $(CURDIR)/.flutter
 FLUTTER_TARBALL := $(CURDIR)/packaging/vendor/flutter-$(FLUTTER_VERSION)-linux-slim.tar.xz
@@ -130,7 +141,7 @@ override_dh_strip:
 
 override_dh_auto_install:
 	mkdir -p debian/secureshellgo/opt/secureshellgo
-	cp -a build/linux/x64/release/bundle/. debian/secureshellgo/opt/secureshellgo/
+	cp -a build/linux/$(FLUTTER_ARCH)/release/bundle/. debian/secureshellgo/opt/secureshellgo/
 	mkdir -p debian/secureshellgo/usr/bin
 	install -m 0755 debian/secureshellgo.wrapper debian/secureshellgo/usr/bin/secureshellgo
 	mkdir -p debian/secureshellgo/usr/share/applications

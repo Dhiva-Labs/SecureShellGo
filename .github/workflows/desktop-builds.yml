@@ -1,15 +1,28 @@
 name: Desktop builds
 
-# Manual runs build and test on all three desktop platforms without
-# publishing anything. Pushing a `v*` tag does the same and then attaches
-# the packaged artifacts to the matching GitHub Release. Regular pushes to
-# main do NOT trigger this — desktop runners (especially macOS) are slow
-# and expensive, and every commit doesn't need one.
+# Builds and tests the desktop apps: Linux and Windows for x64 and arm64, and
+# macOS. Linux and Windows run on a native runner of each architecture because
+# Flutter cannot cross-compile either desktop target. The snap jobs build the
+# amd64 and arm64 snaps the same way and keep them as workflow artifacts only;
+# they are uploaded to the Snap Store by hand.
+#
+# Pushes to main, pull requests and manual runs build everything without
+# publishing anything. Pushing a `v*` tag does the same and then attaches the
+# packaged desktop artifacts to the matching GitHub Release.
 on:
   workflow_dispatch:
   push:
+    branches: [main]
     tags:
       - 'v*'
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   # Keep in sync with the Flutter used to develop this project locally
@@ -41,82 +54,326 @@ jobs:
         run: flutter test
 
   build-linux:
-    name: Build Linux
+    name: Build Linux ${{ matrix.arch }}
     needs: analyze
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x64
+            runner: ubuntu-24.04
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    env:
+      ARCH: ${{ matrix.arch }}
+      BUNDLE: build/linux/${{ matrix.arch }}/release/bundle
     steps:
       - name: Checkout
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
 
       # libsecret-1-dev is required: the app's credential storage links
       # against libsecret and the build fails without it.
+      # xvfb, xauth, xdotool, dbus-x11: the smoke run of the packaged build.
       - name: Install Linux build dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y \
             clang cmake ninja-build pkg-config \
-            libgtk-3-dev liblzma-dev libsecret-1-dev libjsoncpp-dev
+            libgtk-3-dev liblzma-dev libstdc++-12-dev \
+            libsecret-1-dev libjsoncpp-dev \
+            file xvfb xauth xdotool dbus-x11
 
-      - name: Set up Flutter
-        uses: subosito/flutter-action@v2
-        with:
-          channel: stable
-          flutter-version: ${{ env.FLUTTER_VERSION }}
-          cache: true
+      # There are no Flutter SDK archives for linux-arm64, so every
+      # architecture installs the SDK the same way: a shallow clone of the
+      # release tag.
+      - name: Install Flutter ${{ env.FLUTTER_VERSION }}
+        run: |
+          git clone --depth 1 --branch "$FLUTTER_VERSION" \
+            https://github.com/flutter/flutter.git "$RUNNER_TEMP/flutter"
+          echo "$RUNNER_TEMP/flutter/bin" >> "$GITHUB_PATH"
+
+      - name: Configure Flutter
+        run: |
+          uname -m
+          flutter config --no-analytics --enable-linux-desktop
+          flutter precache --linux
+          flutter --version
+          dart --version
 
       - name: Install dependencies
         run: flutter pub get
+
+      - name: Test
+        run: flutter test
 
       - name: Build Linux release
         run: flutter build linux --release
 
+      # Every ELF file in a bundle must be the CPU of the runner: an x64
+      # binary that ends up in the arm64 archive (or the reverse) would
+      # install fine and then not start.
+      - name: Assert every ELF file in the bundle is ${{ matrix.arch }}
+        run: |
+          case "$ARCH" in
+            x64) machine="x86-64" ;;
+            arm64) machine="ARM aarch64" ;;
+          esac
+          for f in secure_shell_go lib/libapp.so lib/libflutter_linux_gtk.so; do
+            [ -f "$BUNDLE/$f" ] || { echo "::error::missing $BUNDLE/$f"; exit 1; }
+          done
+          checked=0
+          bad=0
+          while IFS= read -r -d '' f; do
+            desc="$(file -b "$f")"
+            case "$desc" in ELF*) ;; *) continue ;; esac
+            echo "$f: $desc"
+            checked=$((checked + 1))
+            case "$desc" in
+              *"$machine"*) ;;
+              *) echo "::error file=$f::not $machine"; bad=1 ;;
+            esac
+          done < <(find "$BUNDLE" -type f -print0)
+          echo "checked $checked ELF files"
+          [ "$checked" -ge 3 ] && [ "$bad" -eq 0 ]
+
       - name: Package bundle
         run: |
-          cd build/linux/x64/release
-          mv bundle SecureShellGo-linux-x64
-          tar -czf "$GITHUB_WORKSPACE/SecureShellGo-linux-x64.tar.gz" SecureShellGo-linux-x64
+          cd "build/linux/$ARCH/release"
+          mv bundle "SecureShellGo-linux-$ARCH"
+          tar -czf "$GITHUB_WORKSPACE/SecureShellGo-linux-$ARCH.tar.gz" "SecureShellGo-linux-$ARCH"
+
+      - name: Check the archive
+        run: |
+          case "$ARCH" in
+            x64) machine="x86-64" ;;
+            arm64) machine="ARM aarch64" ;;
+          esac
+          ls -l "SecureShellGo-linux-$ARCH.tar.gz"
+          mkdir "$RUNNER_TEMP/tarball"
+          tar -xzf "SecureShellGo-linux-$ARCH.tar.gz" -C "$RUNNER_TEMP/tarball"
+          for f in secure_shell_go lib/libapp.so lib/libflutter_linux_gtk.so; do
+            file "$RUNNER_TEMP/tarball/SecureShellGo-linux-$ARCH/$f" | tee /dev/stderr | grep "$machine"
+          done
+
+      # Starts the app from the archive under Xvfb with an empty home. The
+      # native runner shows the window only after Flutter has drawn its first
+      # frame, and the Dart code creates the app's data folder on start-up,
+      # so a visible window plus that folder prove the AOT snapshot runs on
+      # this architecture.
+      - name: Smoke-run the archive (Xvfb)
+        timeout-minutes: 5
+        run: |
+          cat > "$RUNNER_TEMP/smoke.sh" <<'EOF'
+          export HOME="$RUNNER_TEMP/smoke-home"
+          rm -rf "$HOME"
+          mkdir -p "$HOME"
+          data="$HOME/.local/share/com.dhivalabs.secure_shell_go"
+          log="$RUNNER_TEMP/smoke.log"
+          "$RUNNER_TEMP/tarball/SecureShellGo-linux-$ARCH/secure_shell_go" > "$log" 2>&1 &
+          pid=$!
+          for i in $(seq 1 90); do
+            if xdotool search --onlyvisible --name '^SecureShell Go$' > /dev/null 2>&1 && [ -d "$data" ]; then
+              echo "window is up and $data exists after ${i}s"
+              sleep 5
+              kill -0 "$pid" || { echo "secure_shell_go died after showing its window"; cat "$log"; exit 1; }
+              kill "$pid"
+              cat "$log"
+              exit 0
+            fi
+            kill -0 "$pid" 2> /dev/null || { echo "secure_shell_go exited early"; cat "$log"; exit 1; }
+            sleep 1
+          done
+          echo "no window and data folder after 90s"
+          ls -R "$HOME" | head -50
+          cat "$log"
+          kill "$pid" 2> /dev/null
+          exit 1
+          EOF
+          xvfb-run -a -s "-screen 0 1280x800x24" dbus-run-session -- bash "$RUNNER_TEMP/smoke.sh"
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
-          name: SecureShellGo-linux-x64
-          path: SecureShellGo-linux-x64.tar.gz
+          name: SecureShellGo-linux-${{ matrix.arch }}
+          path: SecureShellGo-linux-${{ matrix.arch }}.tar.gz
           if-no-files-found: error
 
   build-windows:
-    name: Build Windows
+    name: Build Windows ${{ matrix.arch }}
     needs: analyze
-    runs-on: windows-latest
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x64
+            runner: windows-latest
+            pe_machine: '0x8664'
+            elf_machine: '0x3E'
+          - arch: arm64
+            runner: windows-11-arm
+            pe_machine: '0xAA64'
+            elf_machine: '0xB7'
+    # Explicit shell rather than relying on the runner default: these are
+    # PowerShell cmdlets and a cmd default would fail the whole job.
+    defaults:
+      run:
+        shell: pwsh
+    env:
+      ARCH: ${{ matrix.arch }}
+      RELEASE_DIR: build\windows\${{ matrix.arch }}\runner\Release
+      # PE COFF machine of every .exe/.dll, and ELF e_machine of the AOT
+      # snapshot (data\app.so is an ELF file on Windows too).
+      PE_MACHINE: ${{ matrix.pe_machine }}
+      ELF_MACHINE: ${{ matrix.elf_machine }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
 
-      - name: Set up Flutter
-        uses: subosito/flutter-action@v2
-        with:
-          channel: stable
-          flutter-version: ${{ env.FLUTTER_VERSION }}
-          cache: true
+      # On an ARM64 host (PROCESSOR_ARCHITECTURE=ARM64) the bootstrap fetches
+      # the arm64 Dart SDK and `flutter build windows` targets windows-arm64.
+      # There are no Flutter SDK archives for it, so every architecture
+      # installs the SDK as a shallow clone of the release tag.
+      - name: Install Flutter ${{ env.FLUTTER_VERSION }}
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $true
+          git clone --depth 1 --branch $env:FLUTTER_VERSION `
+            https://github.com/flutter/flutter.git "$env:RUNNER_TEMP\flutter"
+          Add-Content -Path $env:GITHUB_PATH -Value "$env:RUNNER_TEMP\flutter\bin"
+
+      - name: Configure Flutter
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $true
+          "PROCESSOR_ARCHITECTURE=$env:PROCESSOR_ARCHITECTURE"
+          flutter config --no-analytics --enable-windows-desktop
+          flutter precache --windows
+          flutter --version
+          dart --version
 
       - name: Install dependencies
         run: flutter pub get
 
+      # Four test files are left out on Windows because their tests assume
+      # Linux: POSIX paths and file modes (device_storage_test,
+      # public_key_push_test), the Linux "connection refused" text for a closed
+      # port (ssh_service_test), and a UTF-8 shell (log_tail_test). They fail
+      # on Windows x64 as well as arm64: the suite had only ever run on
+      # Linux, where it passes on x64 and arm64. Every other test file runs.
+      - name: Test
+        run: |
+          $linuxOnly = 'device_storage_test.dart', 'log_tail_test.dart', 'public_key_push_test.dart', 'ssh_service_test.dart'
+          $tests = Get-ChildItem test -Filter *_test.dart |
+            Where-Object { $linuxOnly -notcontains $_.Name } |
+            ForEach-Object { "test/$($_.Name)" }
+          "$($tests.Count) test files"
+          flutter test $tests
+
       - name: Build Windows release
         run: flutter build windows --release
 
-      # Explicit shell rather than relying on the runner default: these are
-      # PowerShell cmdlets and a cmd default would fail the whole job.
-      - name: Package bundle
-        shell: pwsh
+      - name: Assert every PE file is ${{ matrix.pe_machine }}
         run: |
-          Rename-Item -Path build\windows\x64\runner\Release -NewName SecureShellGo-windows-x64
-          Compress-Archive -Path build\windows\x64\runner\SecureShellGo-windows-x64 -DestinationPath SecureShellGo-windows-x64.zip
+          function Get-PeMachine([string]$Path) {
+            $fs = [IO.File]::OpenRead($Path)
+            try {
+              $br = New-Object IO.BinaryReader($fs)
+              $fs.Position = 0x3C
+              $fs.Position = $br.ReadInt32()
+              if ($br.ReadUInt32() -ne 0x4550) { throw "$Path is not a PE file" }
+              return $br.ReadUInt16()
+            } finally { $fs.Dispose() }
+          }
+          $expected = [Convert]::ToUInt16($env:PE_MACHINE, 16)
+          $files = Get-ChildItem -Path $env:RELEASE_DIR -Recurse -File -Include *.exe, *.dll
+          if (-not ($files.Name -contains 'secure_shell_go.exe') -or -not ($files.Name -contains 'flutter_windows.dll')) {
+            throw "secure_shell_go.exe or flutter_windows.dll missing from $env:RELEASE_DIR"
+          }
+          $bad = 0
+          foreach ($f in $files) {
+            $m = Get-PeMachine $f.FullName
+            '{0,-50} 0x{1:X4}' -f $f.Name, $m
+            if ($m -ne $expected) { Write-Host "::error file=$($f.FullName)::machine 0x$('{0:X4}' -f $m), expected $env:PE_MACHINE"; $bad++ }
+          }
+          $bytes = [IO.File]::ReadAllBytes("$env:RELEASE_DIR\data\app.so")
+          $elf = [BitConverter]::ToUInt16($bytes, 0x12)
+          'data\app.so ELF e_machine 0x{0:X2}' -f $elf
+          if ($elf -ne [Convert]::ToUInt16($env:ELF_MACHINE, 16)) { Write-Host "::error::app.so is not $env:ELF_MACHINE"; $bad++ }
+          "checked $($files.Count) PE files and app.so"
+          if ($bad) { throw "$bad file(s) are not built for $env:ARCH" }
+
+      # A window handle only exists once Flutter has drawn its first frame,
+      # and the Dart code creates the app's data folder on start-up, so both
+      # together prove the AOT snapshot runs on this architecture.
+      - name: Smoke-run the release build
+        timeout-minutes: 5
+        run: |
+          $dataDir = Join-Path $env:APPDATA 'com.dhivalabs\SecureShell Go'
+          if (Test-Path $dataDir) { Remove-Item -Recurse -Force $dataDir }
+          $p = Start-Process -FilePath "$env:RELEASE_DIR\secure_shell_go.exe" -PassThru
+          $up = $false
+          for ($i = 1; $i -le 90; $i++) {
+            Start-Sleep -Seconds 1
+            $p.Refresh()
+            if ($p.HasExited) { throw "secure_shell_go.exe exited early with code $($p.ExitCode)" }
+            if ($p.MainWindowHandle -ne 0 -and (Test-Path $dataDir)) {
+              "window '$($p.MainWindowTitle)' is up after ${i}s; data folder $dataDir exists"
+              $up = $true
+              break
+            }
+          }
+          if (-not $up) {
+            Stop-Process -Id $p.Id -Force
+            throw "no window or data folder after 90 s (window handle $($p.MainWindowHandle), data folder exists: $(Test-Path $dataDir))"
+          }
+          Start-Sleep -Seconds 5
+          $p.Refresh()
+          if ($p.HasExited) { throw "secure_shell_go.exe died after showing its window (code $($p.ExitCode))" }
+          Stop-Process -Id $p.Id -Force
+
+      # The zip holds one top-level folder, as before. CreateFromDirectory
+      # writes the forward slashes the zip format asks for.
+      - name: Package bundle
+        run: |
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
+          Rename-Item -Path $env:RELEASE_DIR -NewName "SecureShellGo-windows-$env:ARCH"
+          $folder = (Resolve-Path "build\windows\$env:ARCH\runner\SecureShellGo-windows-$env:ARCH").Path
+          $zip = Join-Path $env:GITHUB_WORKSPACE "SecureShellGo-windows-$env:ARCH.zip"
+          [IO.Compression.ZipFile]::CreateFromDirectory(
+            $folder, $zip, [IO.Compression.CompressionLevel]::Optimal, $true)
+
+      - name: Check the archive
+        run: |
+          function Get-PeMachine([string]$Path) {
+            $fs = [IO.File]::OpenRead($Path)
+            try {
+              $br = New-Object IO.BinaryReader($fs)
+              $fs.Position = 0x3C
+              $fs.Position = $br.ReadInt32()
+              if ($br.ReadUInt32() -ne 0x4550) { throw "$Path is not a PE file" }
+              return $br.ReadUInt16()
+            } finally { $fs.Dispose() }
+          }
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
+          $name = "SecureShellGo-windows-$env:ARCH"
+          $zip = [IO.Compression.ZipFile]::OpenRead((Resolve-Path "$name.zip"))
+          try {
+            $entry = $zip.GetEntry("$name/secure_shell_go.exe")
+            if (-not $entry) { throw "$name/secure_shell_go.exe not in the zip" }
+            $tmp = Join-Path $env:RUNNER_TEMP 'zip_secure_shell_go.exe'
+            [IO.Compression.ZipFileExtensions]::ExtractToFile($entry, $tmp, $true)
+            $m = Get-PeMachine $tmp
+            'zip: {0} entries, secure_shell_go.exe 0x{1:X4}' -f $zip.Entries.Count, $m
+            if ($m -ne [Convert]::ToUInt16($env:PE_MACHINE, 16)) { throw 'zip holds the wrong architecture' }
+          } finally { $zip.Dispose() }
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
-          name: SecureShellGo-windows-x64
-          path: SecureShellGo-windows-x64.zip
+          name: SecureShellGo-windows-${{ matrix.arch }}
+          path: SecureShellGo-windows-${{ matrix.arch }}.zip
           if-no-files-found: error
 
   build-macos:
@@ -156,21 +413,92 @@ jobs:
           path: SecureShellGo-macos.zip
           if-no-files-found: error
 
+  snap:
+    name: Snap ${{ matrix.arch }}
+    runs-on: ${{ matrix.runner }}
+    needs: analyze
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-24.04
+            elf_machine: x86-64
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+            elf_machine: ARM aarch64
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Build the snap
+        uses: snapcore/action-build@v1
+        id: build
+
+      - name: Assert the snap is ${{ matrix.arch }}
+        env:
+          SNAP_FILE: ${{ steps.build.outputs.snap }}
+          ELF_MACHINE: ${{ matrix.elf_machine }}
+        run: |
+          ls -l "$SNAP_FILE"
+          case "$SNAP_FILE" in
+            *_${{ matrix.arch }}.snap) ;;
+            *) echo "::error::unexpected snap file name $SNAP_FILE"; exit 1 ;;
+          esac
+          command -v unsquashfs > /dev/null || sudo apt-get install -y squashfs-tools
+          unsquashfs -q -d "$RUNNER_TEMP/snap" "$SNAP_FILE" meta/snap.yaml secure_shell_go
+          sed -n '/^architectures:/,/^[a-z]/p' "$RUNNER_TEMP/snap/meta/snap.yaml"
+          grep -qx -- '- ${{ matrix.arch }}' "$RUNNER_TEMP/snap/meta/snap.yaml"
+          file "$RUNNER_TEMP/snap/secure_shell_go" | tee /dev/stderr | grep -q "$ELF_MACHINE"
+
+      # Not published from here: the Snap Store upload is done by hand.
+      - name: Upload artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: snap-${{ matrix.arch }}
+          path: ${{ steps.build.outputs.snap }}
+          if-no-files-found: error
+
+  # Gathers the desktop archives on every run, so the set is checked on pull
+  # requests too, and attaches them to the release only for a `v*` tag.
   release:
     name: Attach release assets
     needs: [build-linux, build-windows, build-macos]
-    if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
+      # SecureShellGo-*: the snaps are workflow artifacts only.
       - name: Download artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
+          pattern: SecureShellGo-*
           path: dist
           merge-multiple: true
 
+      - name: Check the release assets
+        run: |
+          ls -l dist
+          printf '%s\n' \
+            SecureShellGo-linux-arm64.tar.gz \
+            SecureShellGo-linux-x64.tar.gz \
+            SecureShellGo-macos.zip \
+            SecureShellGo-windows-arm64.zip \
+            SecureShellGo-windows-x64.zip \
+            | LC_ALL=C sort > expected.txt
+          ls dist | LC_ALL=C sort > found.txt
+          if ! diff expected.txt found.txt; then
+            echo "::error::the release assets are not the expected set"
+            exit 1
+          fi
+
       - name: Publish release
+        if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v3
         with:
           files: dist/*
+          # Never replace an asset that is already on the release: a release
+          # that was published with only notes or only some assets gets the
+          # missing files added and the rest left alone.
+          overwrite_files: false

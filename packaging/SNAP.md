@@ -67,6 +67,22 @@ snapcraft release secureshellgo <revision> stable
 (`snapcraft status secureshellgo` shows the revision number once the upload
 finishes processing.)
 
+### ARM64
+
+`snap/snapcraft.yaml` lists both `amd64` and `arm64` under `architectures:`,
+and snapcraft builds the one matching the machine it runs on, so an arm64 snap
+has to be built on an ARM64 machine. The `Desktop builds` workflow does this
+on every pull request and push to main: its `Snap arm64` and `Snap amd64` jobs
+keep `secureshellgo_<version>_arm64.snap` and
+`secureshellgo_<version>_amd64.snap` as the `snap-arm64` and `snap-amd64`
+workflow artifacts. They are not uploaded to the Store from CI. Download the
+arm64 artifact and upload it to the same snap, which adds the architecture to
+the same channel:
+
+```bash
+snapcraft upload --release=stable ./secureshellgo_<version>_arm64.snap
+```
+
 ## 6. Once published: user install command
 
 ```bash

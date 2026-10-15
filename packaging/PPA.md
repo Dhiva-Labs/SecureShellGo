@@ -81,6 +81,12 @@ takes 15–30 minutes but can be longer under load. Watch progress at:
 https://launchpad.net/~dhiva-labs/+archive/ubuntu/apps/+packages
 ```
 
+This builds the `amd64` package only. arm64 is a follow-up: the vendored
+Flutter SDK below carries just the x64 engine, and `Architecture:` in
+`debian/control` is `amd64`. `debian/rules` already picks the Flutter bundle
+folder from the build architecture, so what is left is an arm64 SDK tarball
+and `Architecture: amd64 arm64`.
+
 ## Why the vendored Flutter SDK
 
 Launchpad's build farm has **no outbound network access** during a source
