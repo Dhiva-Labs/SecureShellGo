@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:dartssh2/dartssh2.dart';
 
 import '../models/host.dart';
+import '../models/known_host.dart';
 import 'host_field_input.dart';
 import 'host_key_policy.dart';
 import 'jump_host_chain.dart';
@@ -233,6 +234,17 @@ abstract class SessionTransport {
 }
 
 /// A live, authenticated SSH connection plus the host it belongs to.
+/// The host key a handshake presented, once the trust store accepted it.
+class VerifiedHostKey {
+  const VerifiedHostKey({required this.keyType, required this.fingerprint});
+
+  /// Canonical key type — see [KnownHostKey.canonicalKeyType].
+  final String keyType;
+
+  /// OpenSSH-style `SHA256:...` fingerprint.
+  final String fingerprint;
+}
+
 class SshConnection implements SessionTransport {
   SshConnection({
     required this.client,
@@ -240,6 +252,7 @@ class SshConnection implements SessionTransport {
     required this.socket,
     this.agentSlot,
     this.jumpLinks = const [],
+    this.hostKey,
   });
 
   final SSHClient client;
@@ -266,6 +279,15 @@ class SshConnection implements SessionTransport {
   /// into it and clears it again when the exec ends.
   @override
   final MutableSSHAgentHandler? agentSlot;
+
+  /// The host key this connection's handshake presented and the user's trust
+  /// store accepted. Null only for a connection built outside
+  /// [SshService.connect].
+  ///
+  /// A direct server-to-server copy pins the source's `sftp` to exactly this
+  /// key, so the source accepts the destination only if it is the machine
+  /// this device has verified — see `direct_remote_copy.dart`.
+  final VerifiedHostKey? hostKey;
 
   @override
   bool get isClosed => client.isClosed;
@@ -644,6 +666,7 @@ class SshService {
     // Set by the verify handler so we can distinguish "user said no" from a
     // genuine handshake failure once the client surfaces the error.
     var userRejectedKey = false;
+    VerifiedHostKey? verifiedKey;
 
     // Null unless the caller asked for forwarding, and the difference is not
     // cosmetic: dartssh2 decides per *client* whether to put an
@@ -669,14 +692,22 @@ class SshService {
           ? () => credentials.password
           : null,
       onVerifyHostKey: (type, fingerprintBytes) async {
+        final fingerprint = HostKeyPolicy.decodeFingerprint(fingerprintBytes);
         final accepted = await policy.evaluate(
           hostname: host.hostname,
           port: host.port,
           keyType: type,
-          fingerprint: HostKeyPolicy.decodeFingerprint(fingerprintBytes),
+          fingerprint: fingerprint,
           verify: verifyHostKey,
         );
-        if (!accepted) userRejectedKey = true;
+        if (accepted) {
+          verifiedKey = VerifiedHostKey(
+            keyType: KnownHostKey.canonicalKeyType(type),
+            fingerprint: fingerprint,
+          );
+        } else {
+          userRejectedKey = true;
+        }
         return accepted;
       },
       handshakeTimeout: timeout + hostKeyDecisionBudget,
@@ -716,6 +747,7 @@ class SshService {
       socket: socket,
       agentSlot: agentSlot,
       jumpLinks: jumpLinks,
+      hostKey: verifiedKey,
     );
   }
 

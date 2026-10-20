@@ -1702,7 +1702,10 @@ Future<TransferRoute?> _pickRoute(
   required _DirectRouteOffer offer,
   required bool move,
 }) async {
-  var useDirect = offer.eligible;
+  // Off until asked for: for the length of the transfer the source server
+  // can sign with the destination's key (see `direct_remote_copy.dart`), the
+  // same trade OpenSSH makes users opt into with ForwardAgent.
+  var useDirect = false;
   final go = await showDialog<bool>(
     context: context,
     builder: (context) => StatefulBuilder(
@@ -1732,8 +1735,11 @@ Future<TransferRoute?> _pickRoute(
                 offer.eligible
                     ? 'Bytes go from source server to destination server '
                         'on the network between them, bypassing this '
-                        'device. Falls back to the relay path if the '
-                        'servers cannot reach each other.'
+                        'device. While it runs, the source server can use '
+                        'your key for ${target.host.displayName} — only '
+                        'choose this if you trust the source server. Falls '
+                        'back to the relay path if the servers cannot '
+                        'reach each other.'
                     : offer.reason ??
                         'Direct transfer is not available for this '
                             'destination.',

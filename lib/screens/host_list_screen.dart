@@ -253,7 +253,10 @@ class _HostListScreenState extends State<HostListScreen> {
 
   Future<void> _checkTrustStore() async {
     await widget.knownHosts.ensureLoaded();
-    if (!mounted || !widget.knownHosts.integrityFailed) return;
+    final knownHosts = widget.knownHosts;
+    if (!mounted || !(knownHosts.integrityFailed || knownHosts.keyUnavailable)) {
+      return;
+    }
     setState(() => _trustStoreReset = true);
   }
 
@@ -1153,6 +1156,7 @@ class _HostListScreenState extends State<HostListScreen> {
                   if (_trustStoreReset)
                     _TrustStoreResetBanner(
                       onDismiss: () => setState(() => _trustStoreReset = false),
+                      keyringLocked: widget.knownHosts.keyUnavailable,
                     ),
                   // Leaving the sessions screen keeps the connections up,
                   // which is what makes opening a second server possible —
@@ -1415,11 +1419,19 @@ class _OpenSessionsBar extends StatelessWidget {
   }
 }
 
-/// Shown when known_hosts.json failed its HMAC check and was dropped.
+/// Shown when known_hosts.json failed its HMAC check and was dropped — or,
+/// with [keyringLocked], could not be checked at all this session.
 class _TrustStoreResetBanner extends StatelessWidget {
-  const _TrustStoreResetBanner({required this.onDismiss});
+  const _TrustStoreResetBanner({
+    required this.onDismiss,
+    required this.keyringLocked,
+  });
 
   final VoidCallback onDismiss;
+
+  /// The integrity key could not be read, so the store on disk is intact but
+  /// unusable until the keyring is — and nothing accepted now is saved.
+  final bool keyringLocked;
 
   @override
   Widget build(BuildContext context) {
@@ -1433,12 +1445,19 @@ class _TrustStoreResetBanner extends StatelessWidget {
           children: [
             Icon(Icons.gpp_maybe, color: theme.colorScheme.error, size: 20),
             const SizedBox(width: 10),
-            const Expanded(
+            Expanded(
               child: Text(
-                'The trusted host-key store failed its integrity check and '
-                'was reset. Every server will ask you to verify its key '
-                'again — compare each fingerprint against the server itself.',
-                style: TextStyle(fontSize: 12.5, height: 1.35),
+                keyringLocked
+                    ? 'The system keyring could not be read, so your trusted '
+                        'host keys cannot be checked this session. Every '
+                        'server will ask you to verify its key again, and '
+                        'keys you accept will not be saved until the keyring '
+                        'is unlocked and the app restarted.'
+                    : 'The trusted host-key store failed its integrity check '
+                        'and was reset. Every server will ask you to verify '
+                        'its key again — compare each fingerprint against the '
+                        'server itself.',
+                style: const TextStyle(fontSize: 12.5, height: 1.35),
               ),
             ),
             IconButton(

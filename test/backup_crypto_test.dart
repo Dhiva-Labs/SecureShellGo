@@ -315,6 +315,27 @@ void main() {
       );
     });
 
+    test('a header claiming an absurd Argon2 cost is refused', () async {
+      // The other direction: the header is read before anything is
+      // authenticated, so a crafted file asking for ~4 TiB of memory or 2³²
+      // passes would crash or hang the import. Refused before deriving.
+      for (final offset in [9, 13]) {
+        final costly = Uint8List.fromList(good);
+        ByteData.view(costly.buffer).setUint32(offset, 0xFFFFFFFF);
+        await expectLater(
+          _open(costly, passphrase),
+          throwsA(
+            isA<BackupFormatException>().having(
+              (e) => e.message,
+              'message',
+              contains('more work to open'),
+            ),
+          ),
+          reason: 'offset $offset',
+        );
+      }
+    });
+
     test('a bogus salt length is refused', () async {
       final odd = Uint8List.fromList(good)..[19] = 200;
       await expectLater(

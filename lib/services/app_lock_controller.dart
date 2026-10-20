@@ -103,6 +103,13 @@ class AppLockState {
 /// with no recovery path that is not "reinstall and lose the lot". A gate
 /// that can permanently separate users from their own data is a worse bug
 /// than a gate that opens when the lock is missing.
+///
+/// The open path is for *no credential to check*, not for *the sheet broke*.
+/// A platform that has a PIN or password behind it must fall back to another
+/// prompt for it rather than answer [AppLockOutcome.unavailable], or every
+/// way of breaking its preferred prompt becomes a way past the gate. Up to
+/// 1.4.4 the Android bridge lacked `USE_BIOMETRIC`, the prompt threw on every
+/// unlock, and the gate opened on a single tap of Unlock.
 class AppLockController {
   AppLockController({
     required AppLockAuthenticator authenticator,

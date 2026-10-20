@@ -4,6 +4,7 @@ import 'dart:io';
 
 import '../models/app_settings.dart';
 import 'app_data_paths.dart';
+import 'atomic_file.dart';
 
 /// Persistent store for user-editable preferences.
 ///
@@ -27,6 +28,9 @@ class SettingsStore {
   static const String fileName = 'settings.json';
 
   File? _file;
+
+  /// Saves land one at a time, in order — see [SerialFileWriter].
+  final SerialFileWriter _writer = SerialFileWriter();
   AppSettings _settings = const AppSettings();
 
   final _changes = StreamController<AppSettings>.broadcast();
@@ -74,15 +78,21 @@ class SettingsStore {
       // a secret or a trust decision, so — unlike KnownHostsService — there
       // is no reason to fail closed and surface a banner over it.
       _settings = const AppSettings();
+      await setAsideUnreadable(_file);
     } finally {
       _loaded = true;
     }
   }
 
-  Future<void> _persist() async {
+  Future<void> _persist() => _writer.run(_writeNow);
+
+  Future<void> _writeNow() async {
     final file = await _resolveFile();
     await file.parent.create(recursive: true);
-    await file.writeAsString(jsonEncode(_settings.toJson()), flush: true);
+    await atomicWrite(
+      file,
+      (temp) => temp.writeAsString(jsonEncode(_settings.toJson()), flush: true),
+    );
   }
 
   /// Replaces the stored settings and persists them.

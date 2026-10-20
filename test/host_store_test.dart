@@ -118,6 +118,49 @@ void main() {
     expect(await store.all(), isEmpty);
   });
 
+  test('a corrupt store is set aside, not overwritten by the next save',
+      () async {
+    await storeFile.writeAsString('{ not json, but someone\'s 40 hosts');
+    final store = HostStore(file: storeFile);
+    await store.add(host(id: 'new'));
+
+    final asideFiles = tempDir
+        .listSync()
+        .whereType<File>()
+        .where((f) => f.path.contains('hosts.json.corrupt-'))
+        .toList();
+    expect(asideFiles, hasLength(1));
+    expect(
+      await asideFiles.single.readAsString(),
+      '{ not json, but someone\'s 40 hosts',
+    );
+    // And the live file is the new, readable store.
+    expect((await HostStore(file: storeFile).all()).single.id, 'new');
+  });
+
+  test('overlapping saves land in order, so the newest state wins', () async {
+    final store = HostStore(file: storeFile);
+    await store.add(host(id: 'a', label: 'first'));
+
+    // Fire-and-forget, the way a connect stamps lastConnectedAt while the
+    // user is already editing: none of these is awaited before the next.
+    final pending = [
+      store.update(host(id: 'a', label: 'second')),
+      store.add(host(id: 'b')),
+      store.update(host(id: 'a', label: 'third')),
+    ];
+    await Future.wait(pending);
+
+    final reloaded = await HostStore(file: storeFile).all();
+    expect(reloaded.map((h) => h.id), ['a', 'b']);
+    expect(reloaded.first.label, 'third');
+    // No temp debris left beside the store.
+    expect(
+      tempDir.listSync().map((e) => e.path.split('/').last),
+      ['hosts.json'],
+    );
+  });
+
   test('a malformed entry is skipped without losing the rest of the store',
       () async {
     await storeFile.writeAsString('''

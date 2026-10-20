@@ -6,6 +6,7 @@ import 'dart:math';
 import '../models/host.dart';
 import '../models/tunnel_profile.dart';
 import 'app_data_paths.dart';
+import 'atomic_file.dart';
 
 /// Persistent store of saved port-forwarding tunnels.
 ///
@@ -23,6 +24,9 @@ class TunnelStore {
   static const String fileName = 'tunnels.json';
 
   File? _file;
+
+  /// Saves land one at a time, in order — see [SerialFileWriter].
+  final SerialFileWriter _writer = SerialFileWriter();
 
   /// Insertion order doubles as display order, same reasoning as [HostStore]'s
   /// own map.
@@ -76,19 +80,25 @@ class TunnelStore {
       // [HostStore] for the same reasoning. Starting empty means the tunnel
       // list looks empty; nothing is listening that the user cannot see.
       _profiles.clear();
+      await setAsideUnreadable(_file);
     } finally {
       _loaded = true;
     }
   }
 
-  Future<void> _persist() async {
+  Future<void> _persist() => _writer.run(_writeNow);
+
+  Future<void> _writeNow() async {
     final file = await _resolveFile();
     final payload = <String, dynamic>{
       'version': 1,
       'tunnels': [for (final profile in _profiles.values) profile.toJson()],
     };
     await file.parent.create(recursive: true);
-    await file.writeAsString(jsonEncode(payload), flush: true);
+    await atomicWrite(
+      file,
+      (temp) => temp.writeAsString(jsonEncode(payload), flush: true),
+    );
   }
 
   /// A fresh id for a new tunnel: timestamp plus a random suffix, same scheme

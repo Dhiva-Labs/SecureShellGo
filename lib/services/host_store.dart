@@ -5,6 +5,7 @@ import 'dart:math';
 
 import '../models/host.dart';
 import 'app_data_paths.dart';
+import 'atomic_file.dart';
 
 /// Persistent store of saved hosts.
 ///
@@ -22,6 +23,9 @@ class HostStore {
   static const String fileName = 'hosts.json';
 
   File? _file;
+
+  /// Saves land one at a time, in order — see [SerialFileWriter].
+  final SerialFileWriter _writer = SerialFileWriter();
 
   /// Insertion order doubles as display order: a plain [Map] in Dart is a
   /// [LinkedHashMap], so updating an existing key in place does not move it.
@@ -76,19 +80,25 @@ class HostStore {
       // KnownHostsService for the same reasoning. Starting empty just means
       // the host list looks empty; nothing is trusted or connected silently.
       _hosts.clear();
+      await setAsideUnreadable(_file);
     } finally {
       _loaded = true;
     }
   }
 
-  Future<void> _persist() async {
+  Future<void> _persist() => _writer.run(_writeNow);
+
+  Future<void> _writeNow() async {
     final file = await _resolveFile();
     final payload = <String, dynamic>{
       'version': 1,
       'hosts': [for (final host in _hosts.values) host.toJson()],
     };
     await file.parent.create(recursive: true);
-    await file.writeAsString(jsonEncode(payload), flush: true);
+    await atomicWrite(
+      file,
+      (temp) => temp.writeAsString(jsonEncode(payload), flush: true),
+    );
   }
 
   /// A fresh id for a new saved host: timestamp plus a random suffix, unique

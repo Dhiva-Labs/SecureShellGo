@@ -434,6 +434,20 @@ Future<void> removeRemoteDirectoryTree(
   RemoteFileSystem fs,
   String directory,
 ) async {
+  // [RemoteFileSystem.isDirectory] follows symlinks, and so would the walk
+  // below: handed a link to a folder — a "replace" whose target name is
+  // `www -> /var/www` — it listed the folder the link points at and deleted
+  // everything in it. A link is removed as the link, never walked.
+  if (await _isSymlink(fs, directory)) {
+    try {
+      await fs.remove(directory);
+    } catch (_) {
+      // Forbidden. The link and its target both stay, which is the safe way
+      // for this to fail.
+    }
+    return;
+  }
+
   if (!await fs.isDirectory(directory)) {
     // Not there at all, or is a file — either way, remove it and be done.
     try {
@@ -483,5 +497,29 @@ Future<void> removeRemoteDirectoryTree(
     await fs.removeDirectory(directory);
   } catch (_) {
     // Best-effort — a symlink that will not rmdir might still be there.
+  }
+}
+
+/// Whether [path] is itself a symlink, without following it.
+///
+/// Asked of the parent's listing, which reports a link as a link
+/// (`readdir` attributes are `lstat`'s). If the parent cannot be listed the
+/// answer is not known, and a link must still not be walked, so SFTP's
+/// `remove` settles it: it unlinks a file or a link as itself and refuses a
+/// real directory. Succeeding there means there is nothing left to walk.
+Future<bool> _isSymlink(RemoteFileSystem fs, String path) async {
+  final name = RemotePath.basename(path);
+  try {
+    final siblings = await fs.list(RemotePath.parent(path));
+    return siblings.any(
+      (e) => e.name == name && e.kind == RemoteEntryKind.symlink,
+    );
+  } catch (_) {
+    try {
+      await fs.remove(path);
+      return true;
+    } catch (_) {
+      return false;
+    }
   }
 }

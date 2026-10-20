@@ -175,6 +175,54 @@ void main() {
     });
   });
 
+  group('one RSA key, three signature algorithms', () {
+    setUp(() async {
+      await evaluate(
+        verify: answering(true),
+        keyType: 'rsa-sha2-512',
+        fingerprint: 'SHA256:RSAKEY',
+      );
+      prompts.clear();
+    });
+
+    test('the same key under another algorithm connects silently', () async {
+      for (final algorithm in ['rsa-sha2-256', 'ssh-rsa', 'rsa-sha2-512']) {
+        expect(
+          await evaluate(
+            verify: neverPrompts,
+            keyType: algorithm,
+            fingerprint: 'SHA256:RSAKEY',
+          ),
+          isTrue,
+          reason: algorithm,
+        );
+      }
+    });
+
+    test('a different key under another algorithm is a changed key, not a '
+        'first use', () async {
+      // The attack: a machine-in-the-middle with its own RSA key offers only
+      // `ssh-rsa`. Keyed on the algorithm, that used to read as an RSA key
+      // never seen before and get the mild trust-on-first-use prompt.
+      expect(
+        await evaluate(
+          verify: answering(false),
+          keyType: 'ssh-rsa',
+          fingerprint: 'SHA256:EVIL',
+        ),
+        isFalse,
+      );
+
+      expect(prompts.single.kind, HostKeyPromptKind.changed);
+      expect(prompts.single.previous?.fingerprint, 'SHA256:RSAKEY');
+    });
+
+    test('is stored once, under the key type', () async {
+      final all = await knownHosts.all();
+      expect(all.single.keyType, 'ssh-rsa');
+    });
+  });
+
   test('fingerprints decode to the OpenSSH form', () {
     const bytes = [
       83, 72, 65, 50, 53, 54, 58, 97, 98, 99, // "SHA256:abc"

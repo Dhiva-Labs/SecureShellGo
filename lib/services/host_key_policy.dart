@@ -31,7 +31,8 @@ class HostKeyPrompt {
   final String hostname;
   final int port;
 
-  /// Host key algorithm the server negotiated, e.g. `ssh-ed25519`.
+  /// Type of the presented host key, e.g. `ssh-ed25519` or `ssh-rsa` — the
+  /// key's type, whichever RSA signature algorithm was negotiated.
   final String keyType;
 
   /// OpenSSH-style `SHA256:...` fingerprint of the presented key.
@@ -77,6 +78,10 @@ class HostKeyPolicy {
     required String fingerprint,
     required HostKeyVerifier verify,
   }) async {
+    // The key's type, not the negotiated signature algorithm: an RSA key is
+    // one key whichever of its three algorithms was picked. See
+    // [KnownHostKey.canonicalKeyType].
+    keyType = KnownHostKey.canonicalKeyType(keyType);
     final known = await knownHosts.lookup(hostname, port, keyType);
 
     if (known != null && known.fingerprint == fingerprint) {

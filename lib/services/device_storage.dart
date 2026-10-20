@@ -6,6 +6,7 @@ import 'package:flutter/services.dart';
 import 'package:path_provider/path_provider.dart';
 
 import 'remote_path.dart';
+import 'windows_shell_open.dart';
 
 /// A file the user picked through the system document UI, staged into
 /// app-private cache so it can be read with plain file I/O.
@@ -699,19 +700,15 @@ class DesktopDeviceStorage implements DeviceStorage {
   Future<bool> openDownload(String uri, {String? mimeType}) async {
     final path = filePathFromUri(uri);
     if (path == null) return false;
+    // Never through `cmd`: the file name is the server's. See
+    // [windowsShellOpen].
+    if (Platform.isWindows) return windowsShellOpen(path);
     try {
       final ProcessResult result;
       if (Platform.isLinux) {
         result = await Process.run('xdg-open', <String>[path]);
       } else if (Platform.isMacOS) {
         result = await Process.run('open', <String>[path]);
-      } else if (Platform.isWindows) {
-        // Empty title argument: `start`'s first quoted argument is a window
-        // title, not the target, when more than one argument follows it.
-        result = await Process.run(
-          'cmd',
-          <String>['/c', 'start', '', path],
-        );
       } else {
         return false;
       }

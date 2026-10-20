@@ -123,6 +123,18 @@ class BackupCrypto {
   /// header cannot talk this app into a cheap derivation.
   static const int pbkdf2MinIterations = 600000;
 
+  /// Ceilings on what a backup's header may ask the importing device to
+  /// spend. The header is read before anything is authenticated, so these
+  /// numbers are whatever the file says: without a ceiling a crafted file
+  /// claiming 4 TiB of Argon2 memory or 2³² passes crashes or hangs the app
+  /// the moment the user tries a passphrase. Generous against what this
+  /// build writes (64 MiB, 3 passes, 600k PBKDF2 iterations), so a future
+  /// version's stronger defaults still import.
+  static const int argon2MaxMemoryKiB = 1024 * 1024; // 1 GiB
+  static const int argon2MaxIterations = 64;
+  static const int argon2MaxLanes = 16;
+  static const int pbkdf2MaxIterations = 20000000;
+
   static final Random _random = Random.secure();
 
   /// Encrypts [plaintext] under [passphrase] and returns the whole file.
@@ -268,6 +280,11 @@ class BackupKdfParams {
   /// Argon2's `p`. Zero for PBKDF2.
   final int lanes;
 
+  static const _tooCostly = BackupFormatException(
+    'This backup asks for more work to open than SecureShell Go will spend '
+    'on this device, so it will not be opened.',
+  );
+
   /// A one-line description for the import preview, so the user can see what
   /// a file was actually written with rather than assuming today's defaults.
   String get label => switch (kdfId) {
@@ -283,6 +300,9 @@ class BackupKdfParams {
   /// the shape a downgrade attack would take: hand the user a file whose
   /// header says "one Argon2 pass over 8 KiB" and the passphrase stops
   /// mattering. Nothing here can be weaker than what this build would write.
+  ///
+  /// Also rejects costs too *high* to spend — see
+  /// [BackupCrypto.argon2MaxMemoryKiB].
   void validate() {
     switch (kdfId) {
       case BackupCrypto.kdfArgon2id:
@@ -295,6 +315,10 @@ class BackupKdfParams {
             'accepts, so it will not be opened.',
           );
         }
+        final tooCostly = memoryKiB > BackupCrypto.argon2MaxMemoryKiB ||
+            iterations > BackupCrypto.argon2MaxIterations ||
+            lanes > BackupCrypto.argon2MaxLanes;
+        if (tooCostly) throw _tooCostly;
       case BackupCrypto.kdfPbkdf2Sha256:
         if (iterations < BackupCrypto.pbkdf2MinIterations) {
           throw const BackupFormatException(
@@ -302,6 +326,7 @@ class BackupKdfParams {
             'accepts, so it will not be opened.',
           );
         }
+        if (iterations > BackupCrypto.pbkdf2MaxIterations) throw _tooCostly;
       default:
         throw const BackupFormatException(
           'This backup uses a key derivation this version does not know.',

@@ -2,11 +2,14 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:typed_data';
 
+import 'package:crypto/crypto.dart';
 import 'package:dartssh2/dartssh2.dart';
 
 import '../models/host.dart';
+import '../models/known_host.dart';
 import '../models/remote_entry.dart';
 import 'remote_copy.dart';
+import 'remote_exec.dart';
 import 'remote_path.dart';
 import 'session_controller.dart';
 import 'sftp_service.dart';
@@ -61,6 +64,13 @@ enum DirectCopyUnavailableReason {
   /// fallback trigger.
   hostKeyMismatch,
 
+  /// The source could not show us the destination's host key — no
+  /// `ssh-keyscan` there, the destination unreachable from it, or no key of
+  /// the type this device verified — or this device has no verified key for
+  /// the destination to compare against. Without one the source's `sftp`
+  /// cannot be told which key to accept, so the transfer goes by relay.
+  hostKeyUnverifiable,
+
   /// The exec ran, produced no exit code (dropped channel), or reported
   /// something we cannot classify. Kept separate so the panel can surface
   /// the stderr text instead of a canned message.
@@ -90,16 +100,6 @@ class SSHDirectCopyUnavailable implements Exception {
   String toString() => message ?? 'Direct transfer is not available.';
 }
 
-/// A non-fatal caveat on a completed direct copy, worth surfacing in the UI.
-///
-/// Used today for the fallback host-key mode: when we cannot verify the
-/// destination's host key from the source (ssh-keyscan is missing on A, or
-/// we have no stored fingerprint on this device yet), we still allow the
-/// transfer under `StrictHostKeyChecking=accept-new` — but the panel says
-/// so, because a "check happened" that in fact did not is worse than a
-/// warning the user can act on.
-enum DirectCopyWarning { hostKeyCheckRelaxed }
-
 /// Streams one file from [source]'s server to [destHost] with **no** bytes
 /// passing through this device.
 ///
@@ -126,13 +126,22 @@ enum DirectCopyWarning { hostKeyCheckRelaxed }
 /// forwarding, a wrong key, or any password prompt fails the exec instead
 /// of hanging on a TTY that this process cannot see.
 ///
-/// **Host key trust.** We defer to the source's OpenSSH client for the
-/// verification of B's key. `StrictHostKeyChecking=accept-new` accepts a
-/// first-seen key and stores it in a per-transfer temporary
-/// `UserKnownHostsFile` on A (`/tmp/ssg-<uuid>`), which is then removed.
-/// A stronger check — pinning B's fingerprint from our own
-/// `KnownHostsService` and running under `StrictHostKeyChecking=yes` — is a
-/// known gap; see the report.
+/// **Host key trust.** A's `sftp` may accept exactly one key for B: the one
+/// [destinationHostKey] names, which this device verified on its own live
+/// connection to B. `ssh-keyscan` on A fetches B's public keys (fingerprints
+/// alone cannot go into a `known_hosts` file); only a line whose SHA256
+/// fingerprint matches is written to a `mktemp` file on A, and `sftp` runs
+/// under `StrictHostKeyChecking=yes` with that as its only known-hosts
+/// source. What keyscan returned is never trusted on its own say-so — a
+/// machine in the middle of A→B can answer keyscan too, and gets
+/// [DirectCopyUnavailableReason.hostKeyMismatch] for it — and if anything
+/// changes between the scan and the transfer, `sftp`'s own strict check
+/// refuses. This used to run under `accept-new` with nothing pinned, which
+/// trusted whatever answered on A's network.
+///
+/// **What it costs.** While the exec runs, A holds a forwarded agent that
+/// will sign with the destination's key. Anyone with root on A can use it
+/// for that window, which is why the route is opt-in in the UI.
 ///
 /// **Verify, then move.** After exec exits 0 we `stat` the destination
 /// through our own SFTP session to B (which is separately authenticated on
@@ -146,11 +155,11 @@ Future<RemoteCopyOutcome> copyRemoteFileDirect({
   required RemoteFileSystem destinationFs,
   required String sourcePath,
   required String destinationPath,
+  required VerifiedHostKey? destinationHostKey,
   bool overwrite = false,
   bool deleteSourceAfterVerify = false,
   TransferProgress? onProgress,
   CancelCheck? isCancelled,
-  Set<DirectCopyWarning>? warnings,
 }) async {
   if (destHost.authMethod == SshAuthMethod.password) {
     throw const SSHDirectCopyUnavailable(
@@ -198,38 +207,9 @@ Future<RemoteCopyOutcome> copyRemoteFileDirect({
       overwrite: overwrite,
     );
 
-    final targetUser = destHost.username;
-    final targetHost = destHost.hostname;
-    final port = destHost.port;
-
-    // The source-side sftp command line. `-b -` reads the batch from
-    // stdin; `-q` silences the banner; the -o flags refuse to fall through
-    // to a password prompt if the forwarded key does not authenticate.
-    // `StrictHostKeyChecking=accept-new` with a per-transfer known_hosts
-    // file at least stops the standard sshd from refusing on a first-seen
-    // host key and stops residue accumulating on the source machine.
-    final knownHostsPath = _tempKnownHostsPath();
-    final command = [
-      'sh',
-      '-c',
-      _shellQuote(
-        'touch ${_shellQuote(knownHostsPath)} && '
-        'chmod 600 ${_shellQuote(knownHostsPath)} && '
-        'sftp '
-        '-b - '
-        '-P $port '
-        '-o BatchMode=yes '
-        '-o PasswordAuthentication=no '
-        '-o KbdInteractiveAuthentication=no '
-        '-o ForwardAgent=yes '
-        '-o StrictHostKeyChecking=accept-new '
-        '-o UserKnownHostsFile=${_shellQuote(knownHostsPath)} '
-        '${_shellQuote('$targetUser@$targetHost')}; '
-        'rc=\$?; rm -f ${_shellQuote(knownHostsPath)}; exit \$rc',
-      ),
-    ].join(' ');
-
-    warnings?.add(DirectCopyWarning.hostKeyCheckRelaxed);
+    final pinned = await _pinDestinationKey(source, destHost, destinationHostKey);
+    if (isCancelled?.call() ?? false) throw const TransferCancelled();
+    final command = _sourceSftpCommand(destHost, pinned);
 
     exec = await _openForwardedExec(source, agent, command);
     final session = exec.session;
@@ -553,9 +533,133 @@ Future<void> _cleanupTemporary(RemoteFileSystem fs, String path) async {
 
 /// A stable temporary path on the source. Only the source sees it; the
 /// destination temp is named by `_defaultTemporaryName` below.
-String _tempKnownHostsPath() {
-  final stamp = DateTime.now().microsecondsSinceEpoch;
-  return '/tmp/ssg-kh-$stamp';
+/// The `known_hosts` lines in [keyscanOutput] whose key is exactly [trusted].
+///
+/// [keyscanOutput] is `ssh-keyscan`'s stdout, run on the source: one
+/// `<host> <key-type> <base64-blob>` line per key, plus `#` comments. Each
+/// blob is fingerprinted here the way OpenSSH and dartssh2 do it — SHA256,
+/// unpadded base64 — and compared with what this device verified.
+///
+/// [sameTypeMismatch] is set when the scan offered a key of [trusted]'s type
+/// that is *not* it: the destination as seen from the source is presenting a
+/// different key from the one it presents to us. Lines for other key types
+/// are ignored either way; a server holding several host keys is ordinary.
+({List<String> lines, bool sameTypeMismatch}) pinKnownHostsLines(
+  String keyscanOutput,
+  VerifiedHostKey trusted,
+) {
+  final lines = <String>[];
+  var mismatch = false;
+  for (final raw in const LineSplitter().convert(keyscanOutput)) {
+    final line = raw.trim();
+    if (line.isEmpty || line.startsWith('#')) continue;
+    final fields = line.split(RegExp(r'\s+'));
+    if (fields.length < 3) continue;
+    if (KnownHostKey.canonicalKeyType(fields[1]) != trusted.keyType) continue;
+    final Uint8List blob;
+    try {
+      blob = base64.decode(base64.normalize(fields[2]));
+    } on FormatException {
+      continue;
+    }
+    final digest = base64.encode(sha256.convert(blob).bytes).replaceAll('=', '');
+    if ('SHA256:$digest' == trusted.fingerprint) {
+      // Host, type and blob only: a trailing comment has no business in a
+      // file `sftp` reads as trust.
+      lines.add('${fields[0]} ${fields[1]} ${fields[2]}');
+    } else {
+      mismatch = true;
+    }
+  }
+  return (lines: lines, sameTypeMismatch: mismatch);
+}
+
+/// Fetches the destination's key as the source sees it and keeps only the
+/// line that matches [verified]. See "Host key trust" on
+/// [copyRemoteFileDirect].
+///
+/// Runs on the source's ordinary session connection, not the transfer's
+/// agent-forwarded one: OpenSSH grants agent forwarding once per connection,
+/// and the `sftp` exec needs that grant.
+Future<List<String>> _pinDestinationKey(
+  SessionController source,
+  Host destHost,
+  VerifiedHostKey? verified,
+) async {
+  if (verified == null) {
+    throw const SSHDirectCopyUnavailable(
+      reason: DirectCopyUnavailableReason.hostKeyUnverifiable,
+      message: 'This device has no verified host key for the destination '
+          'to pin the transfer to.',
+    );
+  }
+
+  final ExecResult scan;
+  try {
+    scan = await RemoteExec.run(
+      source.connection,
+      'ssh-keyscan -T 10 -p ${destHost.port} '
+      '${_shellQuote(destHost.hostname)} 2>/dev/null',
+      timeout: const Duration(seconds: 20),
+    );
+  } catch (e) {
+    throw SSHDirectCopyUnavailable(
+      reason: DirectCopyUnavailableReason.hostKeyUnverifiable,
+      message: 'Could not check the destination\'s host key from the '
+          'source server.',
+      details: e.toString(),
+    );
+  }
+
+  final pin = pinKnownHostsLines(scan.stdout, verified);
+  if (pin.lines.isNotEmpty) return pin.lines;
+  if (pin.sameTypeMismatch) {
+    throw SSHDirectCopyUnavailable(
+      reason: DirectCopyUnavailableReason.hostKeyMismatch,
+      message: 'The source server sees a different host key for '
+          '"${destHost.displayName}" than this device trusts '
+          '(${verified.fingerprint}). Something between the two servers may '
+          'be intercepting the connection, so nothing was transferred.',
+    );
+  }
+  throw const SSHDirectCopyUnavailable(
+    reason: DirectCopyUnavailableReason.hostKeyUnverifiable,
+    message: 'The source server could not show the destination\'s host key '
+        '(no ssh-keyscan there, or the destination is unreachable from it).',
+  );
+}
+
+/// The command run on the source for one direct transfer.
+///
+/// `-b -` reads the batch from stdin. The `-o` flags refuse to fall through
+/// to a password prompt if the forwarded key does not authenticate, and
+/// confine host-key trust to [pinnedKnownHosts], written to a `mktemp` file
+/// (mode 0600, unpredictable name) that the trap removes however `sftp`
+/// exits. `GlobalKnownHostsFile=/dev/null` keeps the source's system-wide
+/// list from vouching for a key this device never verified. No
+/// `ForwardAgent`: `sftp` would ignore it, and the destination has no use
+/// for the agent anyway.
+String _sourceSftpCommand(Host destHost, List<String> pinnedKnownHosts) {
+  final lines = pinnedKnownHosts.map(_shellQuote).join(' ');
+  return [
+    'sh',
+    '-c',
+    _shellQuote(
+      'kh=\$(mktemp) || exit 70; '
+      'trap \'rm -f "\$kh"\' EXIT; '
+      'printf \'%s\\n\' $lines > "\$kh" || exit 70; '
+      'sftp '
+      '-b - '
+      '-P ${destHost.port} '
+      '-o BatchMode=yes '
+      '-o PasswordAuthentication=no '
+      '-o KbdInteractiveAuthentication=no '
+      '-o StrictHostKeyChecking=yes '
+      '-o UserKnownHostsFile="\$kh" '
+      '-o GlobalKnownHostsFile=/dev/null '
+      '${_shellQuote('${destHost.username}@${destHost.hostname}')}',
+    ),
+  ].join(' ');
 }
 
 /// `notes.md` → `.notes.md.ssg-part-1738000000000`, matching relay.
@@ -613,11 +717,11 @@ Future<RemoteCopyOutcome> copyRemoteDirectoryDirect({
   required RemoteFileSystem destinationFs,
   required String sourceDirectory,
   required String destinationDirectory,
+  required VerifiedHostKey? destinationHostKey,
   bool overwrite = false,
   bool deleteSourceAfterVerify = false,
   TransferProgress? onProgress,
   CancelCheck? isCancelled,
-  Set<DirectCopyWarning>? warnings,
 }) async {
   if (destHost.authMethod == SshAuthMethod.password) {
     throw const SSHDirectCopyUnavailable(
@@ -647,6 +751,11 @@ Future<RemoteCopyOutcome> copyRemoteDirectoryDirect({
     );
   }
 
+  if (isCancelled?.call() ?? false) throw const TransferCancelled();
+
+  // Before anything below touches the destination: an overwrite clears the
+  // target tree, and a host-key refusal must not arrive after that.
+  final pinned = await _pinDestinationKey(source, destHost, destinationHostKey);
   if (isCancelled?.call() ?? false) throw const TransferCancelled();
 
   // Prepare the destination shape via our own trusted SFTP to B:
@@ -681,32 +790,7 @@ Future<RemoteCopyOutcome> copyRemoteDirectoryDirect({
       remoteDestination: destinationDirectory,
     );
 
-    final targetUser = destHost.username;
-    final targetHost = destHost.hostname;
-    final port = destHost.port;
-
-    final knownHostsPath = _tempKnownHostsPath();
-    final command = [
-      'sh',
-      '-c',
-      _shellQuote(
-        'touch ${_shellQuote(knownHostsPath)} && '
-        'chmod 600 ${_shellQuote(knownHostsPath)} && '
-        'sftp '
-        '-b - '
-        '-P $port '
-        '-o BatchMode=yes '
-        '-o PasswordAuthentication=no '
-        '-o KbdInteractiveAuthentication=no '
-        '-o ForwardAgent=yes '
-        '-o StrictHostKeyChecking=accept-new '
-        '-o UserKnownHostsFile=${_shellQuote(knownHostsPath)} '
-        '${_shellQuote('$targetUser@$targetHost')}; '
-        'rc=\$?; rm -f ${_shellQuote(knownHostsPath)}; exit \$rc',
-      ),
-    ].join(' ');
-
-    warnings?.add(DirectCopyWarning.hostKeyCheckRelaxed);
+    final command = _sourceSftpCommand(destHost, pinned);
 
     exec = await _openForwardedExec(source, agent, command);
     final session = exec.session;

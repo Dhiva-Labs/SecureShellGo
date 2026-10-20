@@ -25,7 +25,6 @@ import 'transfer_queue.dart';
 export 'direct_remote_copy.dart'
     show
         DirectCopyUnavailableReason,
-        DirectCopyWarning,
         SSHDirectCopyUnavailable;
 export 'session_reconnect.dart'
     show ReconnectSupport, ReconnectConnector, ReconnectDelayScheduler;
@@ -1176,6 +1175,12 @@ class SessionController {
         if (destCreds == null) {
           fallbackReason = 'no saved credentials for the destination host';
         } else {
+          // The key this device verified on its own live connection to the
+          // destination; the source's sftp is pinned to it.
+          final destinationKey = switch (target.connection) {
+            SshConnection(:final hostKey) => hostKey,
+            _ => null,
+          };
           try {
             handle.setRouteUsed(TransferRoute.direct);
             outcome = task.isDirectoryTransfer
@@ -1186,6 +1191,7 @@ class SessionController {
                     destinationFs: destination,
                     sourceDirectory: task.remotePath,
                     destinationDirectory: destinationPath,
+                    destinationHostKey: destinationKey,
                     overwrite: task.overwrite,
                     deleteSourceAfterVerify: task.moveSource,
                     onProgress: handle.report,
@@ -1198,6 +1204,7 @@ class SessionController {
                     destinationFs: destination,
                     sourcePath: task.remotePath,
                     destinationPath: destinationPath,
+                    destinationHostKey: destinationKey,
                     overwrite: task.overwrite,
                     deleteSourceAfterVerify: task.moveSource,
                     onProgress: handle.report,

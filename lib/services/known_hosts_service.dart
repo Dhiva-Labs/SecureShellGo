@@ -4,6 +4,7 @@ import 'dart:io';
 
 import '../models/known_host.dart';
 import 'app_data_paths.dart';
+import 'atomic_file.dart';
 import 'known_hosts_integrity.dart';
 
 /// Persistent store of host keys the user has trusted.
@@ -35,6 +36,9 @@ class KnownHostsService {
   File? _file;
   final KnownHostsIntegrityKey? _integrityKey;
   final Map<String, KnownHostKey> _entries = {};
+
+  /// Saves land one at a time, in order — see [SerialFileWriter].
+  final SerialFileWriter _writer = SerialFileWriter();
   Future<void>? _loading;
   bool _loaded = false;
 
@@ -43,6 +47,15 @@ class KnownHostsService {
   /// exactly the event a user deserves to hear about.
   bool _integrityFailed = false;
   bool get integrityFailed => _integrityFailed;
+
+  /// Set when the integrity key could not be *read* — a locked keyring, not
+  /// a missing key. The sealed file on disk may be perfectly good; it just
+  /// cannot be checked this session. Trust decisions from here on are kept
+  /// in memory and nothing is written, because writing means sealing with a
+  /// key, and the only key on offer would be a new one minted over the real
+  /// one. Cleared by the next launch that can read the keyring.
+  bool _keyUnavailable = false;
+  bool get keyUnavailable => _keyUnavailable;
 
   /// Loads the store from disk once; concurrent callers share one future.
   Future<void> ensureLoaded() {
@@ -61,9 +74,11 @@ class KnownHostsService {
 
   Future<void> _load() async {
     var migrateLegacy = false;
+    var fileExisted = false;
     try {
       final file = await _resolveFile();
       if (await file.exists()) {
+        fileExisted = true;
         final raw = await file.readAsString();
         if (raw.trim().isNotEmpty) {
           // Ask whether a key already exists *before* obtaining one:
@@ -95,17 +110,35 @@ class KnownHostsService {
               final value = entry.value;
               if (value is Map<String, dynamic>) {
                 final known = KnownHostKey.fromJson(value);
-                _entries[known.id] = known;
+                // Stores written before RSA key types were canonical can hold
+                // `rsa-sha2-512` and `ssh-rsa` entries for one host, which now
+                // fold onto one id. Keep the first one trusted: if they differ,
+                // the later one may have been accepted through the mild prompt
+                // that bug produced, and the worst a legitimate rotation costs
+                // is one changed-key warning the user can override.
+                final clash = _entries[known.id];
+                if (clash == null || known.addedAt.isBefore(clash.addedAt)) {
+                  _entries[known.id] = known;
+                }
               }
             }
           }
         }
       }
+    } on KnownHostsKeyUnavailable {
+      // The keyring is locked or unreachable, so the file cannot be checked.
+      // Fail closed for this session, say so, and write nothing: see
+      // [keyUnavailable].
+      _entries.clear();
+      _keyUnavailable = true;
+      _integrityFailed = fileExisted;
     } catch (_) {
       // A corrupt or unreadable store must not brick the app. Starting empty
       // means every host is treated as unknown, so the user is prompted again
-      // rather than silently trusting anything.
+      // rather than silently trusting anything — and is told why, since an
+      // emptied trust store is exactly the event worth hearing about.
       _entries.clear();
+      _integrityFailed = fileExisted;
     } finally {
       _loaded = true;
     }
@@ -122,7 +155,9 @@ class KnownHostsService {
     }
   }
 
-  Future<void> _persist() async {
+  Future<void> _persist() => _writer.run(_writeNow);
+
+  Future<void> _writeNow() async {
     final file = await _resolveFile();
     final payload = <String, dynamic>{
       'version': 1,
@@ -134,7 +169,10 @@ class KnownHostsService {
     final document =
         key == null ? jsonEncode(payload) : KnownHostsEnvelope.seal(key, payload);
     await file.parent.create(recursive: true);
-    await file.writeAsString(document, flush: true);
+    await atomicWrite(
+      file,
+      (temp) => temp.writeAsString(document, flush: true),
+    );
   }
 
   /// The trusted key for this host *and key type*, or null if never trusted.
@@ -150,11 +188,22 @@ class KnownHostsService {
     return _entries.keys.any((key) => key.startsWith(prefix));
   }
 
+  /// Writes the store unless the integrity key is unreadable this session,
+  /// in which case the change stays in memory. See [keyUnavailable].
+  Future<void> _persistUnlessKeyUnavailable() async {
+    if (_keyUnavailable) return;
+    try {
+      await _persist();
+    } on KnownHostsKeyUnavailable {
+      _keyUnavailable = true;
+    }
+  }
+
   /// Records (or replaces) trust for one host key.
   Future<void> trust(KnownHostKey key) async {
     await ensureLoaded();
     _entries[key.id] = key;
-    await _persist();
+    await _persistUnlessKeyUnavailable();
   }
 
   /// Drops every trusted key for a host. Used by "forget host" in later phases.
@@ -162,7 +211,7 @@ class KnownHostsService {
     await ensureLoaded();
     final prefix = '${KnownHostKey.hostId(hostname, port)}|';
     _entries.removeWhere((key, _) => key.startsWith(prefix));
-    await _persist();
+    await _persistUnlessKeyUnavailable();
   }
 
   /// All trusted keys, newest first. For a "known hosts" screen later.

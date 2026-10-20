@@ -39,6 +39,13 @@
       session alive — still runs.
     -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
+    <!--
+      The app lock's framework BiometricPrompt (API 28+, AppLockBridge.kt)
+      refuses to authenticate without this. It is a normal, install-time
+      permission with no runtime prompt. Without it every unlock threw a
+      SecurityException before any sheet appeared.
+    -->
+    <uses-permission android:name="android.permission.USE_BIOMETRIC"/>
 
     <!--
       Backup is off, on purpose, and the reasoning is worth writing down

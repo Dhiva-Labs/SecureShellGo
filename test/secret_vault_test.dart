@@ -2,6 +2,7 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:secure_shell_go/services/atomic_file.dart';
 import 'package:secure_shell_go/services/backup_crypto.dart';
 import 'package:secure_shell_go/services/secret_vault.dart';
 
@@ -340,7 +341,10 @@ void main() {
     // The temp file the atomic write needs is already a directory, so
     // writing it fails before the rename can happen. Any I/O failure at that
     // point has the same shape: the rename never runs, and the vault on disk
-    // is still the previous one.
+    // is still the previous one. (Temp names are unique per write, so the
+    // test pins this one's to know where to put the blocker.)
+    debugAtomicTempPath = (target) => '${target.path}.tmp';
+    addTearDown(() => debugAtomicTempPath = null);
     final blocker = Directory('${file.path}.tmp');
     await blocker.create();
 

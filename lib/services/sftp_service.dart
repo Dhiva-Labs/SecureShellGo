@@ -321,10 +321,19 @@ class SftpService implements RemoteFileSystem, RemoteFileMetadata {
     CancelCheck? isCancelled,
   }) async {
     final source = File(localPath);
+    // Written beside the target and renamed over it only once complete. The
+    // target used to be opened with truncate, which destroyed a file being
+    // replaced before a byte had arrived: a dropped connection left half a
+    // file in its place, and a cancel — which removed the partial upload —
+    // left nothing at all.
+    final temporaryPath = RemotePath.join(
+      RemotePath.parent(remotePath),
+      _uploadTemporaryName(RemotePath.basename(remotePath)),
+    );
     final SftpFile file;
     try {
       file = await _client.open(
-        remotePath,
+        temporaryPath,
         mode: SftpFileOpenMode.create |
             SftpFileOpenMode.write |
             SftpFileOpenMode.truncate,
@@ -346,30 +355,112 @@ class SftpService implements RemoteFileSystem, RemoteFileMetadata {
         moved += bytes.length;
         onProgress?.call(moved);
       }
-      return moved;
     } on FileSystemException catch (e) {
+      await _closeAndDiscard(file, temporaryPath);
       throw SftpFailure(
         'Could not read the file you picked.',
         details: e.toString(),
       );
     } catch (e) {
+      await _closeAndDiscard(file, temporaryPath);
       throw _describe(e, remotePath);
-    } finally {
-      try {
-        await file.close();
-      } catch (_) {
-        // Channel already gone.
-      }
-      if (cancelled) {
-        // A half-written upload on the server is worse than no upload: it
-        // looks like a complete file to everything else on that machine.
-        try {
-          await _client.remove(remotePath);
-        } catch (_) {
-          // Best effort.
-        }
-      }
     }
+
+    try {
+      await file.close();
+    } catch (_) {
+      // Channel already gone; the size check below decides.
+    }
+    if (cancelled) {
+      await _removeQuietly(temporaryPath);
+      return moved;
+    }
+
+    int? landed;
+    try {
+      landed = (await _client.stat(temporaryPath)).size;
+    } catch (_) {
+      landed = null;
+    }
+    if (landed != moved) {
+      await _removeQuietly(temporaryPath);
+      throw SftpFailure(
+        'The upload did not reach the server completely, so nothing there '
+        'was changed.',
+        details: 'sent $moved bytes, the server reports ${landed ?? 'none'}',
+      );
+    }
+
+    await _publishUpload(temporaryPath, remotePath);
+    return moved;
+  }
+
+  /// Puts a finished upload under its final name, keeping the permissions
+  /// of a file it replaces — an uploaded fix to an executable script must
+  /// still be executable.
+  ///
+  /// dartssh2's rename uses OpenSSH's `posix-rename`, which replaces the
+  /// target atomically. A server without it refuses to rename onto an
+  /// existing name, and only then is the old file removed first: after the
+  /// new one is complete and size-checked, so the gap is one round trip.
+  Future<void> _publishUpload(String temporaryPath, String remotePath) async {
+    final name = RemotePath.basename(remotePath);
+    final previous = await statFile(remotePath);
+    final permissions = previous?.permissions;
+    if (permissions != null) await setPermissions(temporaryPath, permissions);
+
+    try {
+      await _client.rename(temporaryPath, remotePath);
+      return;
+    } catch (_) {
+      // Fall through: this server will not rename onto a name that exists.
+    }
+    try {
+      await _client.remove(remotePath);
+    } catch (e) {
+      await _removeQuietly(temporaryPath);
+      throw SftpFailure(
+        'The server would not let "$name" be replaced, so it was left '
+        'exactly as it was.',
+        details: e.toString(),
+      );
+    }
+    try {
+      await _client.rename(temporaryPath, remotePath);
+    } catch (e) {
+      throw SftpFailure(
+        'The server removed the old "$name" but would not put the upload in '
+        'its place. The uploaded file is in "$temporaryPath".',
+        details: e.toString(),
+      );
+    }
+  }
+
+  Future<void> _closeAndDiscard(SftpFile file, String path) async {
+    try {
+      await file.close();
+    } catch (_) {
+      // Channel already gone.
+    }
+    await _removeQuietly(path);
+  }
+
+  Future<void> _removeQuietly(String path) async {
+    try {
+      await _client.remove(path);
+    } catch (_) {
+      // Best effort: a leftover is named for what it is.
+    }
+  }
+
+  /// `notes.md` → `.notes.md.ssg-part-1738000000000`, the convention
+  /// `remote_copy.dart` and the editor already use, so a leftover from a
+  /// process that died mid-upload is recognisable.
+  static String _uploadTemporaryName(String finalName) {
+    final stamp = DateTime.now().millisecondsSinceEpoch;
+    final head =
+        finalName.length > 200 ? finalName.substring(0, 200) : finalName;
+    return '.$head.ssg-part-$stamp';
   }
 
   /// Whether [path] already exists on the remote side.

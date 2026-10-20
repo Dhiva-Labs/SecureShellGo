@@ -1,5 +1,7 @@
+import 'dart:convert';
 import 'dart:io';
 
+import 'package:crypto/crypto.dart';
 import 'package:dartssh2/dartssh2.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:secure_shell_go/models/host.dart';
@@ -108,6 +110,12 @@ void main() {
     late Host destHost;
     late SshCredentials destCredentials;
 
+    // B's host key as this device verified it, and the line `ssh-keyscan`
+    // on A prints for the same key. The session transport answers every
+    // exec with [keyscan]; the only exec it is asked for is the scan.
+    final destKey = _verifiedKey('ssh-ed25519', 'b host key');
+    final keyscan = 'b.example ssh-ed25519 ${_blob('b host key')}\n';
+
     setUp(() {
       final generated = SshKeygen.generateEd25519(comment: 'test@example');
       destCredentials = SshCredentials(privateKeyPem: generated.privateKeyPem);
@@ -123,7 +131,7 @@ void main() {
 
     test('the exec runs on the dialled transport, never on the session', ()
         async {
-      final session = FakeExecTransport();
+      final session = FakeExecTransport(stdout: keyscan);
       final dialled = FakeExecTransport(
         agentForwarding: true,
         // The direct copy path waits on `done`, not `waitForExit`.
@@ -145,19 +153,21 @@ void main() {
         destinationFs: _StubFs({'/dst/file.bin': 12}),
         sourcePath: '/src/file.bin',
         destinationPath: '/dst/file.bin',
+        destinationHostKey: destKey,
       );
 
       expect(outcome.bytesCopied, 12);
-      // The whole point: the session's own connection was never asked to run
-      // anything, so nothing it does later is spent on a one-shot channel.
-      expect(session.commands, isEmpty);
+      // The whole point: the session's own connection ran only the host-key
+      // scan, which needs no agent, so nothing it does later is spent on a
+      // one-shot channel. The forwarded exec ran on the dialled connection.
+      expect(session.commands.single, startsWith('ssh-keyscan'));
       expect(dialled.commands, hasLength(1));
       expect(dialled.commands.single, contains('sftp'));
     });
 
     test('the key is installed only for that exec, and hung up after', ()
         async {
-      final session = FakeExecTransport();
+      final session = FakeExecTransport(stdout: keyscan);
       final dialled = FakeExecTransport(
         agentForwarding: true,
         // The direct copy path waits on `done`, not `waitForExit`.
@@ -179,6 +189,7 @@ void main() {
         destinationFs: _StubFs({'/dst/file.bin': 12}),
         sourcePath: '/src/file.bin',
         destinationPath: '/dst/file.bin',
+        destinationHostKey: destKey,
       );
 
       expect(dialled.agentInstalledAtExec, [true],
@@ -195,7 +206,7 @@ void main() {
         () async {
       // Under the old shape this was impossible even in principle: the
       // session's single client had already spent its one agent grant.
-      final session = FakeExecTransport();
+      final session = FakeExecTransport(stdout: keyscan);
       final dialled = <FakeExecTransport>[];
       final controller = SessionController(
         connection: session,
@@ -221,6 +232,7 @@ void main() {
           destinationFs: _StubFs({'/dst/file.bin': 12}),
           sourcePath: '/src/file.bin',
           destinationPath: '/dst/file.bin',
+          destinationHostKey: destKey,
         );
       }
 
@@ -231,7 +243,7 @@ void main() {
 
     test('no connector means a relay fallback, not a failed transfer',
         () async {
-      final session = FakeExecTransport();
+      final session = FakeExecTransport(stdout: keyscan);
       final controller = SessionController(
         connection: session,
         storage: _NoStorage(),
@@ -248,6 +260,7 @@ void main() {
           destinationFs: _StubFs({'/dst/file.bin': 12}),
           sourcePath: '/src/file.bin',
           destinationPath: '/dst/file.bin',
+          destinationHostKey: destKey,
         ),
         throwsA(
           isA<SSHDirectCopyUnavailable>().having(
@@ -259,7 +272,119 @@ void main() {
           ),
         ),
       );
-      expect(session.commands, isEmpty);
+      expect(session.commands.single, startsWith('ssh-keyscan'));
+    });
+
+    group('the destination host key', () {
+      late FakeExecTransport dialled;
+      late SessionController controller;
+
+      SessionController controllerAnsweringScan(String scanOutput) {
+        dialled = FakeExecTransport(
+          agentForwarding: true,
+          respond: (_) => FakeExecSession(exits: true),
+        );
+        controller = SessionController(
+          connection: FakeExecTransport(stdout: scanOutput),
+          storage: _NoStorage(),
+          openFileSystem: () async => _StubFs({'/src/file.bin': 12}),
+          resolveDestinationCredentials: (_) async => destCredentials,
+          connectWithAgentForwarding: (_, _) async => dialled,
+        );
+        addTearDown(controller.dispose);
+        return controller;
+      }
+
+      Future<void> copy({VerifiedHostKey? key}) => copyRemoteFileDirect(
+            source: controller,
+            destHost: destHost,
+            destCredentials: destCredentials,
+            destinationFs: _StubFs({'/dst/file.bin': 12}),
+            sourcePath: '/src/file.bin',
+            destinationPath: '/dst/file.bin',
+            destinationHostKey: key,
+          );
+
+      Matcher unavailable(DirectCopyUnavailableReason reason) => throwsA(
+            isA<SSHDirectCopyUnavailable>()
+                .having((e) => e.reason, 'reason', reason),
+          );
+
+      test('pins the source\'s sftp to the verified key and nothing else',
+          () async {
+        // A second, unrelated key type in the scan must not be pinned.
+        controllerAnsweringScan(
+          '# b.example:22 SSH-2.0-OpenSSH_9.6\n'
+          '$keyscan'
+          'b.example ssh-rsa ${_blob('some other key')}\n',
+        );
+        await copy(key: destKey);
+
+        final command = dialled.commands.single;
+        expect(command, contains('StrictHostKeyChecking=yes'));
+        expect(command, contains('GlobalKnownHostsFile=/dev/null'));
+        expect(command, contains('mktemp'));
+        expect(command, contains(keyscan.trim()));
+        expect(command, isNot(contains(_blob('some other key'))));
+        expect(command, isNot(contains('accept-new')));
+        expect(command, isNot(contains('ForwardAgent')));
+      });
+
+      test('a different key seen from the source is refused, not relayed',
+          () async {
+        controllerAnsweringScan(
+          'b.example ssh-ed25519 ${_blob('an interceptor')}\n',
+        );
+        await expectLater(
+          copy(key: destKey),
+          unavailable(DirectCopyUnavailableReason.hostKeyMismatch),
+        );
+        expect(dialled.commands, isEmpty,
+            reason: 'nothing may be sent towards the impostor');
+      });
+
+      test('no verified key on this device falls back to relay', () async {
+        controllerAnsweringScan(keyscan);
+        await expectLater(
+          copy(key: null),
+          unavailable(DirectCopyUnavailableReason.hostKeyUnverifiable),
+        );
+        expect(dialled.commands, isEmpty);
+      });
+
+      test('a scan that shows no key of that type falls back to relay',
+          () async {
+        controllerAnsweringScan('');
+        await expectLater(
+          copy(key: destKey),
+          unavailable(DirectCopyUnavailableReason.hostKeyUnverifiable),
+        );
+        expect(dialled.commands, isEmpty);
+      });
+
+      test('a refused folder copy leaves the destination untouched',
+          () async {
+        controllerAnsweringScan(
+          'b.example ssh-ed25519 ${_blob('an interceptor')}\n',
+        );
+        final destination = _RecordingFs();
+        await expectLater(
+          copyRemoteDirectoryDirect(
+            source: controller,
+            destHost: destHost,
+            destCredentials: destCredentials,
+            destinationFs: destination,
+            sourceDirectory: '/src/folder',
+            destinationDirectory: '/dst/folder',
+            destinationHostKey: destKey,
+            // Overwrite clears the destination tree first; the refusal has
+            // to land before that.
+            overwrite: true,
+          ),
+          unavailable(DirectCopyUnavailableReason.hostKeyMismatch),
+        );
+        expect(destination.calls, isEmpty);
+      });
     });
   });
 
@@ -396,6 +521,29 @@ class _StubFs implements RemoteFileSystem {
   @override
   dynamic noSuchMethod(Invocation invocation) =>
       super.noSuchMethod(invocation);
+}
+
+/// A destination filesystem that must not be touched: records every call.
+class _RecordingFs implements RemoteFileSystem {
+  final List<Symbol> calls = [];
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) {
+    calls.add(invocation.memberName);
+    return super.noSuchMethod(invocation);
+  }
+}
+
+/// A stand-in host key blob, base64 as `ssh-keyscan` prints it.
+String _blob(String seed) => base64.encode(utf8.encode(seed));
+
+/// What this device would have recorded after verifying [_blob] of [seed].
+VerifiedHostKey _verifiedKey(String type, String seed) {
+  final digest = sha256.convert(utf8.encode(seed)).bytes;
+  return VerifiedHostKey(
+    keyType: type,
+    fingerprint: 'SHA256:${base64.encode(digest).replaceAll('=', '')}',
+  );
 }
 
 /// `SessionController` reaches for platform storage in its constructor; none

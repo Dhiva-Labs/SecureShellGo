@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
@@ -96,6 +97,41 @@ void main() {
     await service.forgetHost('example.com', 22);
     expect(await service.isHostKnown('example.com', 22), isFalse);
     expect(await service.all(), isEmpty);
+  });
+
+  test('RSA entries written per algorithm fold onto one, keeping the first',
+      () async {
+    // A store from before key types were canonical: one RSA host trusted
+    // twice, under two algorithm names, with two different keys.
+    Map<String, Object> entry(String type, String fp, String added) => {
+          'hostname': 'example.com',
+          'port': 22,
+          'keyType': type,
+          'fingerprint': fp,
+          'addedAt': added,
+        };
+    await storeFile.writeAsString(jsonEncode({
+      'version': 1,
+      'hosts': {
+        'example.com:22|ssh-rsa':
+            entry('ssh-rsa', 'SHA256:LATER', '2026-06-01T00:00:00.000'),
+        'example.com:22|rsa-sha2-512':
+            entry('rsa-sha2-512', 'SHA256:FIRST', '2025-01-01T00:00:00.000'),
+      },
+    }));
+
+    final service = KnownHostsService(file: storeFile);
+    final all = await service.all();
+    expect(all, hasLength(1));
+    expect(all.single.keyType, 'ssh-rsa');
+    expect(all.single.fingerprint, 'SHA256:FIRST');
+    for (final algorithm in ['ssh-rsa', 'rsa-sha2-256', 'rsa-sha2-512']) {
+      expect(
+        (await service.lookup('example.com', 22, algorithm))?.fingerprint,
+        'SHA256:FIRST',
+        reason: algorithm,
+      );
+    }
   });
 
   test('a corrupt store fails closed: everything reads as unknown', () async {
