@@ -171,6 +171,24 @@ class RemotePath {
     return joined;
   }
 
+  /// Why [name] cannot be given to a file or folder on the server, or null
+  /// when it can.
+  ///
+  /// For what the user types into Rename and New folder, which is joined
+  /// onto the directory on screen — so a `/` would quietly put the result
+  /// somewhere else, and `..` would rename the *parent*. NUL is in the list
+  /// because SFTP paths are C strings: the server would cut the name short
+  /// there rather than refuse it.
+  static String? nameProblem(String name) {
+    if (name.trim().isEmpty) return 'Enter a name.';
+    if (name == '.' || name == '..') {
+      return '"$name" is reserved — it means a folder, not a name.';
+    }
+    if (name.contains(separator)) return 'A name cannot contain "/".';
+    if (name.contains('\u0000')) return 'A name cannot contain a NUL character.';
+    return null;
+  }
+
   /// `report.pdf` → `report (1).pdf` → `report (2).pdf`, skipping anything
   /// [taken] already reports.
   ///

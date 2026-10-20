@@ -10,6 +10,7 @@ import '../services/bookmark_store.dart';
 import '../services/device_storage.dart';
 import '../services/download_plan.dart';
 import '../services/editor_document.dart';
+import '../services/remote_entry_actions.dart';
 import '../services/remote_path.dart';
 import '../services/remote_transfer_plan.dart';
 import '../services/session_controller.dart';
@@ -142,6 +143,12 @@ class _FileBrowserPaneState extends State<FileBrowserPane>
 
   /// Transfers already counted, so each finishing is noticed exactly once.
   final Set<String> _refreshedFor = {};
+
+  /// Deletes, renames, new folders and permission changes still waiting on
+  /// the server, for the progress line under the toolbar. A count, not a
+  /// flag, because a rename can start while a big folder is still being
+  /// deleted, and the line must stay up until both are done.
+  int _operationsInFlight = 0;
 
   /// Set when a transfer changed the directory on screen, cleared by the
   /// refresh it triggers once the queue is quiet.
@@ -1100,6 +1107,329 @@ class _FileBrowserPaneState extends State<FileBrowserPane>
     if (mounted) _snack('Copied ${entry.path}');
   }
 
+  // -------------------------------------------------------- file operations
+
+  /// Runs [operation] with the progress line showing.
+  ///
+  /// A recursive delete is one round trip per file, which over a phone's
+  /// connection can take long enough that a listing that has not changed yet
+  /// looks like a delete that did nothing.
+  Future<T> _whileWorking<T>(Future<T> Function() operation) async {
+    setState(() => _operationsInFlight++);
+    try {
+      return await operation();
+    } finally {
+      _operationsInFlight--;
+      if (mounted) setState(() {});
+    }
+  }
+
+  /// A note for a name the listing is about to hide, so a new `.env` does
+  /// not look like a create that failed.
+  String _hiddenNote(String name) => name.startsWith('.') && !_showHidden
+      ? ' — it is hidden, so turn on Hidden files to see it'
+      : '';
+
+  /// Asks, then deletes [entries] from the server and redraws the listing.
+  ///
+  /// One at a time and to the end: a refusal on one entry is no reason to
+  /// keep the rest, which the user has already confirmed. What could not be
+  /// deleted is said afterwards, in the server's words.
+  Future<void> _delete(List<RemoteEntry> entries) async {
+    if (entries.isEmpty) return;
+    final confirmed = await _confirmDelete(entries);
+    if (!mounted || confirmed != true) return;
+
+    final RemoteFileSystem sftp;
+    try {
+      sftp = await _client();
+    } on SftpFailure catch (e) {
+      if (mounted) _snack(e.message, isError: true);
+      return;
+    }
+    if (!mounted) return;
+
+    final failures = <SftpFailure>[];
+    await _whileWorking(() async {
+      for (final entry in entries) {
+        final failure = await deleteRemoteEntry(sftp, entry);
+        if (failure != null) failures.add(failure);
+      }
+    });
+    if (!mounted) return;
+    // Cleared here as well as by the refresh, which keeps the selection if
+    // the listing fails — and a selection of paths that are gone would offer
+    // to download them.
+    _clearSelection();
+    await _refresh();
+    if (!mounted) return;
+
+    if (failures.isEmpty) {
+      _snack(
+        entries.length == 1
+            ? 'Deleted ${entries.single.name}'
+            : 'Deleted ${entries.length} items',
+      );
+    } else if (entries.length == 1) {
+      _snack(failures.single.message, isError: true);
+    } else {
+      _snack(
+        '${failures.length} of ${entries.length} items could not be '
+        'deleted. ${failures.first.message}',
+        isError: true,
+      );
+    }
+  }
+
+  Future<void> _deleteSelected() => _delete(
+        _visible
+            .where((e) => _selected.contains(e.path))
+            .toList(growable: false),
+      );
+
+  /// Names what is about to go, and says plainly when that is more than the
+  /// row that was tapped — a folder takes everything under it with it — or
+  /// less: a link goes on its own, and what it points to stays.
+  Future<bool?> _confirmDelete(List<RemoteEntry> entries) {
+    final single = entries.length == 1 ? entries.single : null;
+    final String title;
+    final String body;
+    if (single == null) {
+      title = 'Delete ${entries.length} items?';
+      body = entries.any((e) => e.kind == RemoteEntryKind.directory)
+          ? 'Folders go with everything inside them. This cannot be undone.'
+          : 'This cannot be undone.';
+    } else if (single.kind == RemoteEntryKind.directory) {
+      title = 'Delete folder "${single.name}"?';
+      body = 'Everything inside it is deleted too — every file and folder, '
+          'all the way down. This cannot be undone.';
+    } else if (single.kind == RemoteEntryKind.symlink) {
+      title = 'Delete link "${single.name}"?';
+      body = single.isNavigable
+          ? 'Only the link is removed. The folder it points to, and '
+              'everything in it, stays where it is.'
+          : 'Only the link is removed. The file it points to stays where it '
+              'is.';
+    } else {
+      title = 'Delete "${single.name}"?';
+      body = 'It is removed from the server. This cannot be undone.';
+    }
+
+    // Enough names to recognise the batch by, without a dialog that grows
+    // off the screen when the selection is a whole folder's worth.
+    const listed = 5;
+    final names = single == null
+        ? [for (final entry in entries.take(listed)) entry.name]
+        : const <String>[];
+    final unlisted = entries.length - names.length;
+
+    return showDialog<bool>(
+      context: context,
+      builder: (context) {
+        final theme = Theme.of(context);
+        return AlertDialog(
+          title: Text(title),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              for (final name in names)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 4),
+                  child: Text(
+                    name,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      fontFamily: AppTheme.monoFontFamily,
+                      fontFamilyFallback: AppTheme.monoFontFamilyFallback,
+                      fontSize: 13,
+                    ),
+                  ),
+                ),
+              if (single == null && unlisted > 0)
+                Text(
+                  'and $unlisted more',
+                  style: TextStyle(
+                    fontSize: 13,
+                    color: theme.colorScheme.onSurfaceVariant,
+                  ),
+                ),
+              if (names.isNotEmpty) const SizedBox(height: 8),
+              Text(body, style: const TextStyle(height: 1.35)),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(false),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              style: FilledButton.styleFrom(
+                backgroundColor: theme.colorScheme.error,
+              ),
+              onPressed: () => Navigator.of(context).pop(true),
+              child: const Text('Delete'),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  /// Renames [entry] where it stands. The dialog refuses a name that is
+  /// taken before the server is asked — see [remoteNameTaken] for why the
+  /// server cannot be left to refuse it.
+  Future<void> _rename(RemoteEntry entry) async {
+    final RemoteFileSystem sftp;
+    try {
+      sftp = await _client();
+    } on SftpFailure catch (e) {
+      if (mounted) _snack(e.message, isError: true);
+      return;
+    }
+    if (!mounted) return;
+
+    final directory = RemotePath.parent(entry.path);
+    final name = await showDialog<String>(
+      context: context,
+      builder: (context) => _NameDialog(
+        title: 'Rename',
+        confirmLabel: 'Rename',
+        initial: entry.name,
+        // A file keeps its extension unless the user means to change it,
+        // the way every desktop file manager starts a rename.
+        selectStem: !entry.isNavigable,
+        check: (name) async {
+          if (name == entry.name) return null;
+          final taken = await remoteNameTaken(
+            sftp,
+            directory,
+            name,
+            renaming: entry.name,
+          );
+          return taken
+              ? '"$name" already exists here. Renaming onto it would replace '
+                  'it, so choose another name.'
+              : null;
+        },
+      ),
+    );
+    if (!mounted || name == null || name == entry.name) return;
+
+    try {
+      await _whileWorking(
+        () => sftp.rename(entry.path, RemotePath.join(directory, name)),
+      );
+    } on SftpFailure catch (e) {
+      if (mounted) _snack(e.message, isError: true);
+      return;
+    }
+    if (!mounted) return;
+    await _refresh();
+    if (mounted) _snack('Renamed to $name${_hiddenNote(name)}');
+  }
+
+  /// F2 with exactly one row selected.
+  void _renameSelected() {
+    final chosen = _visible.where((e) => _selected.contains(e.path));
+    if (chosen.length == 1) unawaited(_rename(chosen.single));
+  }
+
+  /// Makes a folder in the directory on screen.
+  Future<void> _createFolder() async {
+    // Captured now, like an upload's destination: the folder goes where the
+    // user was looking when they asked for it.
+    final directory = _path;
+    final RemoteFileSystem sftp;
+    try {
+      sftp = await _client();
+    } on SftpFailure catch (e) {
+      if (mounted) _snack(e.message, isError: true);
+      return;
+    }
+    if (!mounted) return;
+
+    final name = await showDialog<String>(
+      context: context,
+      builder: (context) => _NameDialog(
+        title: 'New folder',
+        confirmLabel: 'Create',
+        hint: 'Folder name',
+        check: (name) async => await remoteNameTaken(sftp, directory, name)
+            ? '"$name" already exists here.'
+            : null,
+      ),
+    );
+    if (!mounted || name == null) return;
+
+    try {
+      await _whileWorking(() => sftp.mkdir(RemotePath.join(directory, name)));
+    } on SftpFailure catch (e) {
+      if (mounted) _snack(e.message, isError: true);
+      return;
+    }
+    if (!mounted) return;
+    await _refresh();
+    if (mounted) _snack('Created folder $name${_hiddenNote(name)}');
+  }
+
+  /// Whether the Permissions row belongs on [entry]'s sheet: the server
+  /// reported a mode in the listing, and the filesystem can change one.
+  ///
+  /// Files and folders only. A server's chmod follows a symlink, so offering
+  /// it on a link would show and change the permissions of whatever the link
+  /// points to, under the link's name.
+  bool _canChangePermissions(RemoteEntry entry) =>
+      _sftp is RemoteFileMetadata &&
+      entry.permissions != null &&
+      (entry.kind == RemoteEntryKind.file ||
+          entry.kind == RemoteEntryKind.directory);
+
+  /// Shows [entry]'s mode, fresh from the server, and applies a new one.
+  Future<void> _editPermissions(RemoteEntry entry) async {
+    final RemoteFileSystem sftp;
+    try {
+      sftp = await _client();
+    } on SftpFailure catch (e) {
+      if (mounted) _snack(e.message, isError: true);
+      return;
+    }
+    if (sftp is! RemoteFileMetadata) return;
+    final metadata = sftp as RemoteFileMetadata;
+
+    // Asked again rather than read off the row: the listing can be minutes
+    // old, and the dialog is about to offer to write this value back.
+    final current = (await metadata.statFile(entry.path))?.permissions;
+    if (!mounted) return;
+    if (current == null) {
+      _snack(
+        'The server did not say what the permissions of ${entry.name} are.',
+        isError: true,
+      );
+      return;
+    }
+
+    final chosen = await showDialog<int>(
+      context: context,
+      builder: (context) => _PermissionsDialog(name: entry.name, mode: current),
+    );
+    if (!mounted || chosen == null || chosen == current) return;
+
+    final applied =
+        await _whileWorking(() => metadata.setPermissions(entry.path, chosen));
+    if (!mounted) return;
+    if (!applied) {
+      _snack(
+        'The server would not change the permissions of ${entry.name}.',
+        isError: true,
+      );
+      return;
+    }
+    await _refresh();
+    if (mounted) _snack('${entry.name} is now ${_octalMode(chosen)}');
+  }
+
   void _snack(String message, {bool isError = false}) {
     final theme = Theme.of(context);
     ScaffoldMessenger.of(context).showSnackBar(
@@ -1126,14 +1456,31 @@ class _FileBrowserPaneState extends State<FileBrowserPane>
             entry.kind == RemoteEntryKind.directory) &&
         _destinations.isNotEmpty;
     final isFolder = entry.kind == RemoteEntryKind.directory;
+    final canChmod = _canChangePermissions(entry);
+    final desktop = _isDesktop(context);
     final theme = Theme.of(context);
+
+    // The keys behind the rows that have one, on desktop where there is a
+    // keyboard to press them on.
+    Widget? shortcut(String keys) => desktop
+        ? Text(
+            keys,
+            style: theme.textTheme.bodySmall?.copyWith(
+              color: theme.colorScheme.onSurfaceVariant,
+            ),
+          )
+        : null;
 
     await showModalBottomSheet<void>(
       context: context,
       backgroundColor: theme.colorScheme.surfaceContainerHigh,
+      // Scrolls, like the destination picker: a file next to another open
+      // server has ten rows here, more than the default 9/16-height sheet
+      // holds on a phone, and a Column would overflow and hide Delete.
+      isScrollControlled: true,
       builder: (context) => SafeArea(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
+        child: ListView(
+          shrinkWrap: true,
           children: [
             ListTile(
               title: Text(entry.name, maxLines: 2, overflow: TextOverflow.ellipsis),
@@ -1223,6 +1570,25 @@ class _FileBrowserPaneState extends State<FileBrowserPane>
                 },
               ),
             ],
+            ListTile(
+              leading: const Icon(Icons.drive_file_rename_outline),
+              title: const Text('Rename…'),
+              trailing: shortcut('F2'),
+              onTap: () {
+                Navigator.of(context).pop();
+                unawaited(_rename(entry));
+              },
+            ),
+            if (canChmod)
+              ListTile(
+                leading: const Icon(Icons.lock_outline),
+                title: const Text('Permissions…'),
+                subtitle: Text('Now ${_octalMode(entry.permissions!)}'),
+                onTap: () {
+                  Navigator.of(context).pop();
+                  unawaited(_editPermissions(entry));
+                },
+              ),
             if (entry.isDownloadable)
               ListTile(
                 leading: const Icon(Icons.checklist),
@@ -1239,6 +1605,26 @@ class _FileBrowserPaneState extends State<FileBrowserPane>
               onTap: () {
                 Navigator.of(context).pop();
                 unawaited(_copyPath(entry));
+              },
+            ),
+            // Last, and in the error colour, as on the host list: the one row
+            // here that cannot be taken back.
+            ListTile(
+              leading:
+                  Icon(Icons.delete_outline, color: theme.colorScheme.error),
+              title: Text(
+                isFolder ? 'Delete folder' : 'Delete',
+                style: TextStyle(color: theme.colorScheme.error),
+              ),
+              subtitle: isFolder
+                  ? const Text('With everything inside it')
+                  : entry.kind == RemoteEntryKind.symlink
+                      ? const Text('Removes the link, not what it points to')
+                      : null,
+              trailing: shortcut('Del'),
+              onTap: () {
+                Navigator.of(context).pop();
+                unawaited(_delete([entry]));
               },
             ),
           ],
@@ -1299,6 +1685,7 @@ class _FileBrowserPaneState extends State<FileBrowserPane>
               onSelectAll: _selectAll,
               onClear: _clearSelection,
               onDownload: () => unawaited(_downloadSelected()),
+              onDelete: () => unawaited(_deleteSelected()),
               onSendToServer: _destinations.isEmpty
                   ? null
                   : (move) => unawaited(_sendSelected(move: move)),
@@ -1308,12 +1695,16 @@ class _FileBrowserPaneState extends State<FileBrowserPane>
               showHidden: _showHidden,
               onToggleHidden: () => setState(() => _showHidden = !_showHidden),
               onRefresh: () => unawaited(_refresh()),
+              onNewFolder: () => unawaited(_createFolder()),
               onUpload: () => unawaited(_pickAndUpload()),
               onUploadFolder: _folderPickerAvailable
                   ? () => unawaited(_pickAndUploadFolder())
                   : null,
             ),
-          const Divider(height: 1),
+          if (_operationsInFlight > 0)
+            const LinearProgressIndicator(minHeight: 2)
+          else
+            const Divider(height: 1),
           Expanded(child: _buildBody()),
         ],
       ),
@@ -1349,6 +1740,12 @@ class _FileBrowserPaneState extends State<FileBrowserPane>
     // Escape is only bound while the bar is open. `CallbackShortcuts` reports
     // a key as handled whenever it has a binding for it, and swallowing every
     // Escape in the pane to run a no-op would be a bug waiting to be filed.
+    //
+    // F2 and Delete act on the selection from here; with nothing selected,
+    // each row binds them for itself (see [_buildEntryTile]). Never while the
+    // path field is open: it is inside this pane, and Delete is a key it
+    // needs for its own text.
+    final selectionKeys = _selecting && !_jumping;
     return CallbackShortcuts(
       bindings: <ShortcutActivator, VoidCallback>{
         const SingleActivator(LogicalKeyboardKey.keyL, control: true):
@@ -1356,6 +1753,11 @@ class _FileBrowserPaneState extends State<FileBrowserPane>
         const SingleActivator(LogicalKeyboardKey.keyL, meta: true): _openJump,
         if (_jumping)
           const SingleActivator(LogicalKeyboardKey.escape): _closeJump,
+        if (selectionKeys)
+          const SingleActivator(LogicalKeyboardKey.delete): () =>
+              unawaited(_deleteSelected()),
+        if (selectionKeys && _selected.length == 1)
+          const SingleActivator(LogicalKeyboardKey.f2): _renameSelected,
       },
       child: Focus(
         focusNode: _paneFocus,
@@ -1399,7 +1801,29 @@ class _FileBrowserPaneState extends State<FileBrowserPane>
     return [entry];
   }
 
+  /// One row, answering F2 and Delete for itself while it has the keyboard.
+  ///
+  /// Bound per row because the browser has no "current row" apart from
+  /// keyboard focus — a tap opens, it does not select — so the row the user
+  /// tabbed to is the only unambiguous target. While selecting, the bindings
+  /// go quiet and the keys reach the pane's, which act on the selection. The
+  /// wrapper stays in the tree either way, so entering selection mode does
+  /// not rebuild the row and take its focus away.
   Widget _buildEntryTile(RemoteEntry entry) {
+    return CallbackShortcuts(
+      bindings: <ShortcutActivator, VoidCallback>{
+        if (!_selecting) ...{
+          const SingleActivator(LogicalKeyboardKey.f2): () =>
+              unawaited(_rename(entry)),
+          const SingleActivator(LogicalKeyboardKey.delete): () =>
+              unawaited(_delete([entry])),
+        },
+      },
+      child: _buildEntryRow(entry),
+    );
+  }
+
+  Widget _buildEntryRow(RemoteEntry entry) {
     final tile = _EntryTile(
       entry: entry,
       selected: _selected.contains(entry.path),
@@ -1961,6 +2385,305 @@ class _ScanningDialogState extends State<_ScanningDialog> {
   }
 }
 
+/// Asks for a file or folder name, for Rename and New folder.
+///
+/// Checked twice, and both answers land under the field so a bad name is
+/// fixed in place rather than by starting over: [RemotePath.nameProblem] for
+/// what no server should be handed, then [check] for what this one already
+/// has — the second is a round trip, so it runs once, on submit.
+class _NameDialog extends StatefulWidget {
+  const _NameDialog({
+    required this.title,
+    required this.confirmLabel,
+    required this.check,
+    this.initial = '',
+    this.selectStem = false,
+    this.hint,
+  });
+
+  final String title;
+  final String confirmLabel;
+
+  /// Null when the name is free to use, or why it is not.
+  final Future<String?> Function(String name) check;
+
+  final String initial;
+
+  /// Select [initial] without its extension, so typing replaces the name
+  /// and keeps the `.conf`.
+  final bool selectStem;
+
+  final String? hint;
+
+  @override
+  State<_NameDialog> createState() => _NameDialogState();
+}
+
+class _NameDialogState extends State<_NameDialog> {
+  late final TextEditingController _controller;
+  String? _error;
+  bool _checking = false;
+
+  @override
+  void initState() {
+    super.initState();
+    final initial = widget.initial;
+    _controller = TextEditingController.fromValue(
+      TextEditingValue(
+        text: initial,
+        selection: TextSelection(
+          baseOffset: 0,
+          extentOffset: widget.selectStem
+              ? RemotePath.stem(initial).length
+              : initial.length,
+        ),
+      ),
+    );
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  Future<void> _submit() async {
+    if (_checking) return;
+    final name = _controller.text;
+    final problem = RemotePath.nameProblem(name);
+    if (problem != null) {
+      setState(() => _error = problem);
+      return;
+    }
+
+    setState(() {
+      _checking = true;
+      _error = null;
+    });
+    String? refusal;
+    try {
+      refusal = await widget.check(name);
+    } on SftpFailure catch (e) {
+      refusal = e.message;
+    }
+    if (!mounted) return;
+    if (refusal != null) {
+      setState(() {
+        _checking = false;
+        _error = refusal;
+      });
+      return;
+    }
+    Navigator.of(context).pop(name);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: Text(widget.title),
+      content: TextField(
+        controller: _controller,
+        autofocus: true,
+        // A file name is not prose, the same as the path field: no
+        // capitalising it and no correcting it into a word.
+        autocorrect: false,
+        enableSuggestions: false,
+        textCapitalization: TextCapitalization.none,
+        decoration: InputDecoration(
+          hintText: widget.hint,
+          errorText: _error,
+          errorMaxLines: 4,
+        ),
+        onChanged: (_) {
+          if (_error != null) setState(() => _error = null);
+        },
+        onSubmitted: (_) => unawaited(_submit()),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('Cancel'),
+        ),
+        FilledButton(
+          onPressed: _checking ? null : () => unawaited(_submit()),
+          child: Text(widget.confirmLabel),
+        ),
+      ],
+    );
+  }
+}
+
+/// A mode as read/write/execute checkboxes and as octal, kept in step.
+///
+/// Both, because each is somebody's natural way in: the grid for "let the
+/// group write to this", the digits for whoever already knows they want 755.
+/// The digits are the whole twelve bits — setuid, setgid and sticky show as
+/// a fourth digit when set — and the grid only ever touches the low nine, so
+/// ticking a box never quietly clears a setuid bit the user cannot see.
+class _PermissionsDialog extends StatefulWidget {
+  const _PermissionsDialog({required this.name, required this.mode});
+
+  final String name;
+
+  /// Permission bits as [RemoteFileStat.permissions] reports them.
+  final int mode;
+
+  @override
+  State<_PermissionsDialog> createState() => _PermissionsDialogState();
+}
+
+class _PermissionsDialogState extends State<_PermissionsDialog> {
+  static const _classes = [('Owner', 6), ('Group', 3), ('Others', 0)];
+  static const _bits = [('Read', 4), ('Write', 2), ('Execute', 1)];
+
+  late int _mode = widget.mode & 0xFFF;
+  late final TextEditingController _octal =
+      TextEditingController(text: _octalMode(_mode));
+
+  /// False while the digits do not parse. The grid keeps the last mode that
+  /// did, and Apply waits.
+  bool _octalValid = true;
+
+  @override
+  void dispose() {
+    _octal.dispose();
+    super.dispose();
+  }
+
+  void _toggle(int bit, bool on) {
+    final mode = on ? _mode | bit : _mode & ~bit;
+    setState(() {
+      _mode = mode;
+      _octalValid = true;
+    });
+    _octal.text = _octalMode(mode);
+  }
+
+  void _typed(String text) {
+    final mode = _parseOctalMode(text);
+    setState(() {
+      _octalValid = mode != null;
+      if (mode != null) _mode = mode;
+    });
+  }
+
+  void _apply() {
+    if (_octalValid) Navigator.of(context).pop(_mode);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    const mono = TextStyle(
+      fontFamily: AppTheme.monoFontFamily,
+      fontFamilyFallback: AppTheme.monoFontFamilyFallback,
+      fontSize: 13,
+    );
+
+    return AlertDialog(
+      title: const Text('Permissions'),
+      // Scrolls for a phone on its side, where the grid and the field
+      // together are taller than the space a dialog gets.
+      content: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              widget.name,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: mono,
+            ),
+            const SizedBox(height: 8),
+            Table(
+              // Wide enough for a checkbox's full 48 dp target, narrow
+              // enough that the grid fits a 360 dp phone's dialog.
+              defaultColumnWidth: const FixedColumnWidth(52),
+              columnWidths: const {0: IntrinsicColumnWidth()},
+              defaultVerticalAlignment: TableCellVerticalAlignment.middle,
+              children: [
+                TableRow(
+                  children: [
+                    const SizedBox.shrink(),
+                    for (final (label, _) in _bits)
+                      Center(
+                        child: Text(
+                          label,
+                          style: theme.textTheme.bodySmall?.copyWith(
+                            color: theme.colorScheme.onSurfaceVariant,
+                          ),
+                        ),
+                      ),
+                  ],
+                ),
+                for (final (who, shift) in _classes)
+                  TableRow(
+                    children: [
+                      Padding(
+                        padding: const EdgeInsets.only(right: 8),
+                        child: Text(who),
+                      ),
+                      for (final (what, bit) in _bits)
+                        Center(
+                          child: Checkbox(
+                            value: _mode & (bit << shift) != 0,
+                            semanticLabel: '$who: ${what.toLowerCase()}',
+                            onChanged: (on) =>
+                                _toggle(bit << shift, on ?? false),
+                          ),
+                        ),
+                    ],
+                  ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: _octal,
+              keyboardType: TextInputType.number,
+              inputFormatters: [
+                FilteringTextInputFormatter.allow(RegExp('[0-7]')),
+                LengthLimitingTextInputFormatter(4),
+              ],
+              style: mono,
+              decoration: InputDecoration(
+                labelText: 'Octal',
+                errorText:
+                    _octalValid ? null : 'Three or four digits, each 0 to 7',
+              ),
+              onChanged: _typed,
+              onSubmitted: (_) => _apply(),
+            ),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('Cancel'),
+        ),
+        FilledButton(
+          onPressed: _octalValid ? _apply : null,
+          child: const Text('Apply'),
+        ),
+      ],
+    );
+  }
+}
+
+/// `0644` as `644`, `04755` as `4755`: a fourth digit only when setuid,
+/// setgid or sticky is set, the way `stat -c %a` prints a mode. Takes a
+/// listing's full mode word too — the file-type bits above are dropped.
+String _octalMode(int mode) =>
+    (mode & 0xFFF).toRadixString(8).padLeft(3, '0');
+
+/// The other direction, or null for anything but three or four octal
+/// digits. Fewer is refused rather than padded: `75` is far more likely
+/// half of `755` than a deliberate `075`.
+int? _parseOctalMode(String text) => RegExp(r'^[0-7]{3,4}$').hasMatch(text)
+    ? int.parse(text, radix: 8)
+    : null;
+
 /// The bar that appears when files arrive from another app's Share menu.
 class _SharedFilesBanner extends StatelessWidget {
   const _SharedFilesBanner({
@@ -2271,6 +2994,7 @@ class _BrowserActions extends StatelessWidget {
     required this.showHidden,
     required this.onToggleHidden,
     required this.onRefresh,
+    required this.onNewFolder,
     required this.onUpload,
     this.onUploadFolder,
   });
@@ -2278,6 +3002,7 @@ class _BrowserActions extends StatelessWidget {
   final bool showHidden;
   final VoidCallback onToggleHidden;
   final VoidCallback onRefresh;
+  final VoidCallback onNewFolder;
   final VoidCallback onUpload;
 
   /// The folder picker's entry, or null on a platform where no picker is
@@ -2306,6 +3031,11 @@ class _BrowserActions extends StatelessWidget {
             ),
           ),
           const Spacer(),
+          IconButton(
+            tooltip: 'New folder',
+            icon: const Icon(Icons.create_new_folder_outlined, size: 20),
+            onPressed: onNewFolder,
+          ),
           if (onUploadFolder != null)
             IconButton(
               tooltip: 'Upload a folder here',
@@ -2334,6 +3064,7 @@ class _SelectionBar extends StatelessWidget {
     required this.onSelectAll,
     required this.onClear,
     required this.onDownload,
+    required this.onDelete,
     this.onSendToServer,
   });
 
@@ -2341,6 +3072,7 @@ class _SelectionBar extends StatelessWidget {
   final VoidCallback onSelectAll;
   final VoidCallback onClear;
   final VoidCallback onDownload;
+  final VoidCallback onDelete;
 
   /// Sends the selection to another open session — `true` for a move. Null
   /// when nothing else is connected, which is the only reason the button is
@@ -2358,43 +3090,71 @@ class _SelectionBar extends StatelessWidget {
       color: theme.colorScheme.primary.withValues(alpha: 0.12),
       child: SizedBox(
         height: 48,
-        child: Row(
-          children: [
-            IconButton(
-              tooltip: 'Clear selection',
-              icon: const Icon(Icons.close, size: 20),
-              onPressed: onClear,
-            ),
-            Text('$count selected', style: const TextStyle(fontSize: 13)),
-            const Spacer(),
-            TextButton(onPressed: onSelectAll, child: const Text('All')),
-            if (sendTo != null)
-              PopupMenuButton<bool>(
-                tooltip: 'Send to another server',
-                icon: const Icon(Icons.drive_file_move_outlined, size: 20),
-                onSelected: sendTo,
-                itemBuilder: (context) => const [
-                  PopupMenuItem<bool>(
-                    value: false,
-                    child: Text('Copy to another server…'),
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            // Below this width — a phone held upright — the labelled
+            // Download button no longer fits beside Delete and the send
+            // menu, so it keeps only its icon and tooltip. The count gives
+            // way too, last of all: the row must never overflow, because an
+            // overflow here takes the listing under it down with it.
+            final compact = constraints.maxWidth < 440;
+            return Row(
+              children: [
+                IconButton(
+                  tooltip: 'Clear selection',
+                  icon: const Icon(Icons.close, size: 20),
+                  onPressed: onClear,
+                ),
+                Expanded(
+                  child: Text(
+                    '$count selected',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(fontSize: 13),
                   ),
-                  PopupMenuItem<bool>(
-                    value: true,
-                    child: Text('Move to another server…'),
+                ),
+                TextButton(onPressed: onSelectAll, child: const Text('All')),
+                if (sendTo != null)
+                  PopupMenuButton<bool>(
+                    tooltip: 'Send to another server',
+                    icon: const Icon(Icons.drive_file_move_outlined, size: 20),
+                    onSelected: sendTo,
+                    itemBuilder: (context) => const [
+                      PopupMenuItem<bool>(
+                        value: false,
+                        child: Text('Copy to another server…'),
+                      ),
+                      PopupMenuItem<bool>(
+                        value: true,
+                        child: Text('Move to another server…'),
+                      ),
+                    ],
                   ),
-                ],
-              ),
-            FilledButton.icon(
-              onPressed: onDownload,
-              icon: const Icon(Icons.download, size: 18),
-              label: const Text('Download'),
-              style: FilledButton.styleFrom(
-                minimumSize: const Size(0, 40),
-                padding: const EdgeInsets.symmetric(horizontal: 14),
-              ),
-            ),
-            const SizedBox(width: 8),
-          ],
+                IconButton(
+                  tooltip: 'Delete selected (Del)',
+                  icon: const Icon(Icons.delete_outline, size: 20),
+                  onPressed: onDelete,
+                ),
+                if (compact)
+                  IconButton.filled(
+                    tooltip: 'Download',
+                    icon: const Icon(Icons.download, size: 20),
+                    onPressed: onDownload,
+                  )
+                else
+                  FilledButton.icon(
+                    onPressed: onDownload,
+                    icon: const Icon(Icons.download, size: 18),
+                    label: const Text('Download'),
+                    style: FilledButton.styleFrom(
+                      minimumSize: const Size(0, 40),
+                      padding: const EdgeInsets.symmetric(horizontal: 14),
+                    ),
+                  ),
+                const SizedBox(width: 8),
+              ],
+            );
+          },
         ),
       ),
     );

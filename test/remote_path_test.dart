@@ -131,6 +131,34 @@ void main() {
     });
   });
 
+  group('nameProblem', () {
+    test('an ordinary name is fine, spaces and dots included', () {
+      expect(RemotePath.nameProblem('notes.md'), isNull);
+      expect(RemotePath.nameProblem('.env'), isNull);
+      expect(RemotePath.nameProblem('my report (final).pdf'), isNull);
+      expect(RemotePath.nameProblem('...'), isNull);
+    });
+
+    test('nothing, or only spaces, is not a name', () {
+      expect(RemotePath.nameProblem(''), isNotNull);
+      expect(RemotePath.nameProblem('   '), isNotNull);
+    });
+
+    test('a name cannot reach outside the folder it is given in', () {
+      // Joined onto the directory on screen, each of these would rename or
+      // create something somewhere else.
+      expect(RemotePath.nameProblem('.'), isNotNull);
+      expect(RemotePath.nameProblem('..'), isNotNull);
+      expect(RemotePath.nameProblem('a/b'), isNotNull);
+      expect(RemotePath.nameProblem('/etc'), isNotNull);
+      expect(RemotePath.nameProblem('../x'), isNotNull);
+    });
+
+    test('a NUL is refused rather than left to cut the name short', () {
+      expect(RemotePath.nameProblem('a\u0000b'), isNotNull);
+    });
+  });
+
   group('deduplicate', () {
     test('leaves a free name alone', () {
       expect(RemotePath.deduplicate('report.pdf', (_) => false), 'report.pdf');
