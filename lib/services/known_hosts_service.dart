@@ -95,7 +95,16 @@ class KnownHostsService {
               final value = entry.value;
               if (value is Map<String, dynamic>) {
                 final known = KnownHostKey.fromJson(value);
-                _entries[known.id] = known;
+                // Stores written before RSA key types were canonical can hold
+                // `rsa-sha2-512` and `ssh-rsa` entries for one host, which now
+                // fold onto one id. Keep the first one trusted: if they differ,
+                // the later one may have been accepted through the mild prompt
+                // that bug produced, and the worst a legitimate rotation costs
+                // is one changed-key warning the user can override.
+                final clash = _entries[known.id];
+                if (clash == null || known.addedAt.isBefore(clash.addedAt)) {
+                  _entries[known.id] = known;
+                }
               }
             }
           }
