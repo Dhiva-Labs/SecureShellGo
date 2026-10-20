@@ -2126,10 +2126,12 @@ Future<TransferRoute?> _pickRoute(
   required _DirectRouteOffer offer,
   required bool move,
 }) async {
-  // Off until asked for: for the length of the transfer the source server
-  // can sign with the destination's key (see `direct_remote_copy.dart`), the
-  // same trade OpenSSH makes users opt into with ForwardAgent.
-  var useDirect = false;
+  // On whenever it can run. It is the only route that keeps going once the
+  // app is closed, and the forwarded key is now held only while the source's
+  // sftp signs in, not for the length of the transfer (see
+  // `server_side_job.dart`). The caption still says what it exposes, and an
+  // ineligible destination leaves it off and greyed out with the reason.
+  var useDirect = offer.eligible;
   final go = await showDialog<bool>(
     context: context,
     builder: (context) => StatefulBuilder(
