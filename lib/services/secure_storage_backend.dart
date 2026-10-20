@@ -179,6 +179,25 @@ class FlutterSecureStorageBackend implements SecureStorageBackend {
     }
   }
 
+  /// [read], except that a keyring that cannot be reached throws
+  /// [SecureStorageUnavailableException] rather than reading as "nothing
+  /// saved".
+  ///
+  /// For the one caller that must not confuse the two: the known-hosts
+  /// integrity key, where "nothing saved" means "mint a new key", and minting
+  /// over a key that was only unreadable for the moment orphans every host
+  /// the user has trusted. See `KnownHostsIntegrityKey`.
+  Future<String?> readOrThrow(String key) async {
+    try {
+      return await _storage.read(key: key);
+    } on PlatformException catch (e) {
+      throw SecureStorageUnavailableException(
+        'The system keyring could not be read.',
+        code: e.code,
+      );
+    }
+  }
+
   @override
   Future<void> delete(String key) async {
     try {

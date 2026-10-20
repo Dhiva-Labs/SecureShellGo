@@ -40,34 +40,64 @@ class IntegrityCheck {
 /// rewrite the file inside the app sandbox can otherwise silence the MITM
 /// warning; without the key they cannot produce an envelope this app accepts.
 class KnownHostsIntegrityKey {
-  KnownHostsIntegrityKey(this._backend, {Random? random})
-      : _random = random ?? Random.secure();
+  /// [readOrThrow], when given, is a read that throws on an unreachable
+  /// store instead of answering null (see
+  /// [FlutterSecureStorageBackend.readOrThrow]). Without it every failed read
+  /// looks like "no key yet", which is what tests over an in-memory store
+  /// want and what production must not have.
+  KnownHostsIntegrityKey(
+    this._backend, {
+    Random? random,
+    Future<String?> Function(String key)? readOrThrow,
+  })  : _random = random ?? Random.secure(),
+        // ignore: prefer_initializing_formals
+        _readOrThrow = readOrThrow;
 
   static const String storageKey = 'known_hosts:hmac_key_v1';
   static const int keyLengthBytes = 32;
 
   final SecureStorageBackend _backend;
   final Random _random;
+  final Future<String?> Function(String key)? _readOrThrow;
 
   Uint8List? _cached;
+
+  /// Reads the stored key, telling "none saved" (null) apart from "cannot
+  /// tell right now" ([KnownHostsKeyUnavailable]).
+  Future<String?> _read() async {
+    final strict = _readOrThrow;
+    if (strict == null) return _backend.read(storageKey);
+    try {
+      return await strict(storageKey);
+    } catch (e) {
+      throw KnownHostsKeyUnavailable(e);
+    }
+  }
 
   /// Whether a key has ever been established on this device.
   ///
   /// A version-1 (unauthenticated) file is only trusted when this is false.
   /// Once a key exists, an unauthenticated file can only mean the envelope was
   /// stripped, which is a downgrade attack and must fail closed.
+  ///
+  /// Throws [KnownHostsKeyUnavailable] when the store cannot be read.
   Future<bool> exists() async {
     if (_cached != null) return true;
-    final raw = await _backend.read(storageKey);
+    final raw = await _read();
     return raw != null && raw.isNotEmpty;
   }
 
   /// The device key, creating and persisting one on first use.
+  ///
+  /// Throws [KnownHostsKeyUnavailable], and mints nothing, when the store
+  /// cannot be read: a key that is merely unreadable for now (a locked
+  /// keyring) would otherwise be overwritten by a fresh one, and every file
+  /// it sealed would stop verifying for good.
   Future<Uint8List> obtain() async {
     final cached = _cached;
     if (cached != null) return cached;
 
-    final raw = await _backend.read(storageKey);
+    final raw = await _read();
     if (raw != null && raw.isNotEmpty) {
       try {
         final decoded = base64Decode(raw);
@@ -94,6 +124,18 @@ class KnownHostsIntegrityKey {
     _cached = null;
     await _backend.delete(storageKey);
   }
+}
+
+/// The integrity key's store could not be read, so whether a key exists is
+/// unknown. Not the same as having no key — see
+/// [KnownHostsIntegrityKey.obtain].
+class KnownHostsKeyUnavailable implements Exception {
+  const KnownHostsKeyUnavailable(this.cause);
+
+  final Object cause;
+
+  @override
+  String toString() => 'Known-hosts integrity key unavailable: $cause';
 }
 
 /// Wraps/unwraps the authenticated envelope written to known_hosts.json.

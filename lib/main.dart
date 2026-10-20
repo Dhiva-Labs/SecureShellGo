@@ -99,8 +99,14 @@ class _SecureShellGoAppState extends State<SecureShellGoApp> {
   // it through the vault would put a passphrase prompt in front of a cold
   // start. A machine with no keyring is exactly as protected here as it was
   // before the vault existed — no better, and no worse.
+  //
+  // `readOrThrow` so a locked keyring reads as "cannot tell", not as "no key
+  // yet" — the second would mint a new key over the real one.
   late final KnownHostsService _knownHosts = KnownHostsService(
-    integrityKey: KnownHostsIntegrityKey(_keyring),
+    integrityKey: KnownHostsIntegrityKey(
+      _keyring,
+      readOrThrow: _keyring.readOrThrow,
+    ),
   );
   // The jump-host resolver turns a saved host's `jumpHostId` into the hop's
   // own record and its own credentials, so every bastion in a chain is

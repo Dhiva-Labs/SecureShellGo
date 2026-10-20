@@ -78,6 +78,22 @@ void main() {
       final key = await KnownHostsIntegrityKey(backend).obtain();
       expect(key.length, KnownHostsIntegrityKey.keyLengthBytes);
     });
+
+    test('a store that cannot be read throws and mints nothing', () async {
+      final locked = KnownHostsIntegrityKey(
+        backend,
+        readOrThrow: (_) async => throw StateError('keyring locked'),
+      );
+      await expectLater(
+        locked.obtain(),
+        throwsA(isA<KnownHostsKeyUnavailable>()),
+      );
+      await expectLater(
+        locked.exists(),
+        throwsA(isA<KnownHostsKeyUnavailable>()),
+      );
+      expect(backend.data, isEmpty, reason: 'no key may be minted over it');
+    });
   });
 
   group('KnownHostsEnvelope', () {
@@ -227,6 +243,46 @@ void main() {
       );
       expect(await reloaded.all(), isEmpty);
       expect(reloaded.integrityFailed, isTrue);
+    });
+
+    test('a locked keyring leaves the real key and the sealed store intact',
+        () async {
+      await KnownHostsService(file: storeFile, integrityKey: newKey())
+          .trust(hostKey());
+      final sealedBefore = await storeFile.readAsString();
+      final keyBefore = backend.data[KnownHostsIntegrityKey.storageKey];
+
+      // This launch cannot read the keyring at all.
+      final locked = KnownHostsService(
+        file: storeFile,
+        integrityKey: KnownHostsIntegrityKey(
+          backend,
+          readOrThrow: (_) async => throw StateError('keyring locked'),
+        ),
+      );
+      expect(await locked.all(), isEmpty, reason: 'fails closed');
+      expect(locked.keyUnavailable, isTrue);
+      expect(locked.integrityFailed, isTrue, reason: 'and says so');
+
+      // Accepting a host this session works, in memory...
+      await locked.trust(hostKey(hostname: 'new.example'));
+      expect(await locked.isHostKnown('new.example', 22), isTrue);
+      await locked.forgetHost('new.example', 22);
+
+      // ...but neither the key nor the file was touched.
+      expect(backend.data[KnownHostsIntegrityKey.storageKey], keyBefore);
+      expect(await storeFile.readAsString(), sealedBefore);
+
+      // So the next launch that can read the keyring has everything back.
+      final unlocked = KnownHostsService(
+        file: storeFile,
+        integrityKey: KnownHostsIntegrityKey(backend),
+      );
+      expect(
+        (await unlocked.lookup('example.com', 22, 'ssh-ed25519'))?.fingerprint,
+        'SHA256:AAAA',
+      );
+      expect(unlocked.integrityFailed, isFalse);
     });
 
     test('a pre-Phase-3 file is adopted once and re-sealed', () async {
