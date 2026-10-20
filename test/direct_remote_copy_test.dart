@@ -88,6 +88,7 @@ void main() {
       destinationFs: destFs,
       sourcePath: sourcePath,
       destinationPath: '${demo.serverBFilesDir}/direct_test.bin',
+      destinationHostKey: _verifiedKeyOf(destinationController),
     );
 
     expect(outcome.bytesCopied, random.length);
@@ -139,6 +140,7 @@ void main() {
       destinationFs: destFs,
       sourcePath: sourcePath,
       destinationPath: '${demo.serverBFilesDir}/bypass_probe.bin',
+      destinationHostKey: _verifiedKeyOf(destinationController),
     );
     final afterIo = _readProcIo();
 
@@ -329,6 +331,7 @@ void main() {
       destinationFs: destFs,
       sourceDirectory: sourceRoot,
       destinationDirectory: '${demo.serverBFilesDir}/direct-folder',
+      destinationHostKey: _verifiedKeyOf(destinationController),
     );
 
     expect(outcome.bytesCopied, aBytes.length + bBytes.length + cBytes.length);
@@ -399,15 +402,19 @@ void main() {
         destinationFs: destFs,
         sourcePath: '${demo.serverAFilesDir}/report.bin',
         destinationPath: '${demo.serverBFilesDir}/no_land.bin',
+        destinationHostKey: _verifiedKeyOf(destinationController),
       );
       fail('expected the direct call to throw');
     } on SSHDirectCopyUnavailable catch (e) {
       thrown = e;
     }
 
+    // The host-key scan on A is the first thing to try reaching the
+    // destination now, so an unreachable one is caught there — still a relay
+    // fallback, and still before sftp could write anything.
     expect(
       (thrown as SSHDirectCopyUnavailable).reason,
-      DirectCopyUnavailableReason.noReachability,
+      DirectCopyUnavailableReason.hostKeyUnverifiable,
     );
 
     final afterList = Directory(demo.serverBFilesDir)
@@ -422,6 +429,11 @@ void main() {
           : null,
       timeout: const Timeout(Duration(seconds: 60)));
 }
+
+/// The key this device verified on its own connection to the destination,
+/// which is what the direct path pins the source's sftp to.
+VerifiedHostKey? _verifiedKeyOf(SessionController destination) =>
+    (destination.connection as SshConnection).hostKey;
 
 void _resetServerBFiles(String dir) {
   // Wipe anything the previous run may have dropped. Not `rm -rf` — leave

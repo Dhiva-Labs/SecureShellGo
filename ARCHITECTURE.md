@@ -651,7 +651,14 @@ below that plan:
 - **Direct** (`copyRemoteDirectoryDirect` in `direct_remote_copy.dart`): the
   source-side `sftp` batch runs `put -r SRC DST` in one exec channel. From A's
   perspective SRC is on its own filesystem, so `put` reads it locally; DST is
-  B, over an SSH connection A opened using the forwarded agent. Overwrite
+  B, over an SSH connection A opened using the forwarded agent. A's `sftp`
+  trusts exactly one host key for B: the one this device verified on its own
+  live connection to B (`SshConnection.hostKey`). `ssh-keyscan` on A supplies
+  the public key, only a line whose SHA256 fingerprint matches is written to
+  a `mktemp` known-hosts file, and `sftp` runs under
+  `StrictHostKeyChecking=yes` with no global list. A scan showing a different
+  key of that type is `hostKeyMismatch` and refuses outright; no key to pin
+  falls back to relay. The pin runs before anything below touches B. Overwrite
   clears the destination via `removeRemoteDirectoryTree` on B (through our
   trusted SFTP channel to B, not A's sftp) before `put -r` fills a fresh tree.
   Verification is whole-batch: file count and total bytes on B must match A
