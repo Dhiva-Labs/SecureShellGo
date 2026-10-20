@@ -24,6 +24,7 @@ import '../services/tunnel_runtime.dart';
 import '../theme.dart';
 import '../widgets/command_palette.dart';
 import '../widgets/host_key_dialog.dart';
+import '../widgets/login_prompt_dialog.dart';
 import '../widgets/host_list_presentation.dart';
 import '../widgets/quick_connect_bar.dart';
 import '../widgets/snippet_picker.dart' show runSnippetOnSession;
@@ -358,6 +359,7 @@ class _HostListScreenState extends State<HostListScreen> {
       return;
     }
 
+    final login = LoginDialogs(this);
     try {
       final connection = await widget.sshService.connect(
         host: host,
@@ -366,8 +368,15 @@ class _HostListScreenState extends State<HostListScreen> {
           if (!mounted) return false;
           return showHostKeyDialog(context, prompt);
         },
+        answerPrompts: login.answer,
+        onBanner: login.addBanner,
       );
 
+      if (!mounted) {
+        connection.close();
+        return;
+      }
+      await login.showUnseenBanners();
       if (!mounted) {
         connection.close();
         return;

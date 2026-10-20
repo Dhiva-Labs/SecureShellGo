@@ -73,6 +73,8 @@ class _CountingSshService extends SshService {
     required Host host,
     required SshCredentials credentials,
     required HostKeyVerifier verifyHostKey,
+    LoginPromptHandler? answerPrompts,
+    ServerBannerHandler? onBanner,
     Duration timeout = SshService.defaultTimeout,
     bool agentForwarding = false,
   }) async {

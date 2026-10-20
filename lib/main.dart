@@ -177,6 +177,9 @@ class _SecureShellGoAppState extends State<SecureShellGoApp> {
         host: host,
         credentials: credentials,
         verifyHostKey: verifyHostKey,
+        // No `answerPrompts`, on purpose: nobody is watching a reconnect, so
+        // a login prompt the saved password cannot answer has to fail the
+        // attempt rather than wait. See `ReconnectConnector`.
       ),
     ),
   );

@@ -12,6 +12,7 @@ import '../services/settings_store.dart';
 import '../services/ssh_service.dart';
 import '../theme.dart';
 import '../widgets/host_key_dialog.dart';
+import '../widgets/login_prompt_dialog.dart';
 import 'host_edit_screen.dart';
 
 /// Where a file shared from another app is going.
@@ -99,6 +100,7 @@ class _ShareTargetScreenState extends State<ShareTargetScreen> {
       return;
     }
 
+    final login = LoginDialogs(this);
     try {
       final connection = await widget.sshService.connect(
         host: host,
@@ -107,7 +109,14 @@ class _ShareTargetScreenState extends State<ShareTargetScreen> {
           if (!mounted) return false;
           return showHostKeyDialog(context, prompt);
         },
+        answerPrompts: login.answer,
+        onBanner: login.addBanner,
       );
+      if (!mounted) {
+        connection.close();
+        return;
+      }
+      await login.showUnseenBanners();
       if (!mounted) {
         connection.close();
         return;

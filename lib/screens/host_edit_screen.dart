@@ -17,6 +17,7 @@ import '../theme.dart';
 import '../widgets/error_banner.dart';
 import '../widgets/host_color_dot.dart';
 import '../widgets/host_key_dialog.dart';
+import '../widgets/login_prompt_dialog.dart';
 import '../widgets/import_key_file_button.dart';
 import '../widgets/inline_hint.dart';
 import '../widgets/public_key_dialog.dart';
@@ -383,6 +384,7 @@ class _HostEditScreenState extends State<HostEditScreen> {
   }
 
   Future<void> _openSession(Host host, SshCredentials credentials) async {
+    final login = LoginDialogs(this);
     try {
       final connection = await widget.sshService.connect(
         host: host,
@@ -391,8 +393,15 @@ class _HostEditScreenState extends State<HostEditScreen> {
           if (!mounted) return false;
           return showHostKeyDialog(context, prompt);
         },
+        answerPrompts: login.answer,
+        onBanner: login.addBanner,
       );
 
+      if (!mounted) {
+        connection.close();
+        return;
+      }
+      await login.showUnseenBanners();
       if (!mounted) {
         connection.close();
         return;
@@ -499,6 +508,7 @@ class _HostEditScreenState extends State<HostEditScreen> {
             if (!mounted) return false;
             return showHostKeyDialog(context, prompt);
           },
+          answerPrompts: LoginDialogs(this).answer,
         );
       }
       if (!mounted) return;
