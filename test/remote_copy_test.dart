@@ -57,12 +57,38 @@ class MemoryFs implements RemoteFileSystem {
   @override
   Future<String> resolve(String path) async => path;
 
+  /// Symlinks here, link path → target. As over SFTP: listing a link lists
+  /// its target and [isDirectory] follows it (`opendir`, `stat`), while the
+  /// link's parent lists it as a symlink (`readdir` attributes are lstat's).
+  final Map<String, String> symlinks = {};
+
   @override
   Future<List<RemoteEntry>> list(String path) async {
     if (throwOnList) {
       throw SftpFailure('Permission denied.', isPermissionDenied: true);
     }
+    final linkTarget = symlinks[path];
+    if (linkTarget != null) {
+      return [
+        for (final e in await list(linkTarget))
+          RemoteEntry(
+            name: e.name,
+            path: '$path/${e.name}',
+            kind: e.kind,
+            size: e.size,
+          ),
+      ];
+    }
     final entries = <RemoteEntry>[];
+    for (final link in symlinks.keys) {
+      if (_parentOf(link) == path) {
+        entries.add(RemoteEntry(
+          name: _basename(link),
+          path: link,
+          kind: RemoteEntryKind.symlink,
+        ));
+      }
+    }
     for (final dir in directories) {
       if (_parentOf(dir) == path) {
         entries.add(RemoteEntry(
@@ -144,6 +170,7 @@ class MemoryFs implements RemoteFileSystem {
   Future<void> remove(String path) async {
     removed.add(path);
     files.remove(path);
+    symlinks.remove(path);
   }
 
   @override
@@ -177,7 +204,8 @@ class MemoryFs implements RemoteFileSystem {
   }
 
   @override
-  Future<bool> isDirectory(String path) async => directories.contains(path);
+  Future<bool> isDirectory(String path) async =>
+      directories.contains(symlinks[path] ?? path);
 
   @override
   Future<void> close() async {}
@@ -730,6 +758,39 @@ void main() {
 
       expect(outcome.bytesCopied, 0);
       expect(destination.directories, contains('/srv/b/empty-folder'));
+    });
+  });
+  group('removeRemoteDirectoryTree', () {
+    test('a symlink to a folder is removed as the link, never walked', () {
+      // A "replace" whose target name is `www -> /var/www`. Following the
+      // link, the walk listed /var/www and deleted everything in it.
+      final fs = MemoryFs();
+      fs.directories.addAll({'/home/dev', '/var/www', '/var/www/assets'});
+      fs.files['/var/www/index.html'] = 10;
+      fs.files['/var/www/assets/app.js'] = 20;
+      fs.symlinks['/home/dev/www'] = '/var/www';
+
+      return removeRemoteDirectoryTree(fs, '/home/dev/www').then((_) {
+        expect(fs.removed, ['/home/dev/www']);
+        expect(fs.symlinks, isEmpty);
+        expect(fs.files.keys,
+            containsAll(['/var/www/index.html', '/var/www/assets/app.js']));
+        expect(fs.directories, containsAll(['/var/www', '/var/www/assets']));
+      });
+    });
+
+    test('a real folder is still cleared, links inside it unlinked', () async {
+      final fs = MemoryFs();
+      fs.directories.addAll({'/srv', '/srv/site', '/srv/shared'});
+      fs.files['/srv/site/a.txt'] = 1;
+      fs.files['/srv/shared/keep.txt'] = 1;
+      fs.symlinks['/srv/site/shared'] = '/srv/shared';
+
+      await removeRemoteDirectoryTree(fs, '/srv/site');
+
+      expect(fs.directories, isNot(contains('/srv/site')));
+      expect(fs.files.keys, ['/srv/shared/keep.txt']);
+      expect(fs.symlinks, isEmpty);
     });
   });
 }
