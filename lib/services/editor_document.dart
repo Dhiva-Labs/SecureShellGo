@@ -70,6 +70,7 @@ class DecodedText {
     required this.text,
     required this.lineEndings,
     required this.hadInvalidUtf8,
+    this.hasBom = false,
   });
 
   /// The document, always with `\n` endings whatever the file used. The
@@ -87,7 +88,23 @@ class DecodedText {
   /// allowed *silently*, because the replacement is not reversible: the
   /// original bytes are gone from the moment they were decoded.
   final bool hadInvalidUtf8;
+
+  /// Whether the file began with a UTF-8 byte-order mark.
+  ///
+  /// Dart's decoder drops it without a word, so it is noted here and put back
+  /// by [encodeEditorText]: three bytes nobody can see, which some Windows
+  /// tools and every byte-for-byte checksum care about.
+  final bool hasBom;
 }
+
+/// The UTF-8 byte-order mark.
+const List<int> utf8Bom = <int>[0xEF, 0xBB, 0xBF];
+
+bool _startsWithBom(Uint8List bytes) =>
+    bytes.length >= 3 &&
+    bytes[0] == utf8Bom[0] &&
+    bytes[1] == utf8Bom[1] &&
+    bytes[2] == utf8Bom[2];
 
 /// True when [bytes] look like something other than text.
 ///
@@ -151,33 +168,95 @@ DecodedText decodeEditorText(Uint8List bytes, {required String name}) {
   // strict decode is the only way to find out whether it did anything. The
   // alternative — scanning the result for U+FFFD — accuses a file that
   // legitimately contains a replacement character of being broken.
+  final hasBom = _startsWithBom(bytes);
+  final body = hasBom ? Uint8List.sublistView(bytes, 3) : bytes;
+
   var invalid = false;
   try {
-    utf8.decode(bytes);
+    utf8.decode(body);
   } on FormatException {
     invalid = true;
   }
 
-  final raw = utf8.decode(bytes, allowMalformed: true);
+  final raw = utf8.decode(body, allowMalformed: true);
   final endings = detectLineEndings(raw);
   return DecodedText(
     text: endings == LineEndingStyle.lf ? raw : raw.replaceAll('\r\n', '\n'),
     lineEndings: endings,
     hadInvalidUtf8: invalid,
+    hasBom: hasBom,
   );
 }
 
-/// Puts [style]'s terminators back on and encodes for the wire.
+/// Puts [style]'s terminators and [bom] back on and encodes for the wire.
 ///
-/// [LineEndingStyle.mixed] resolves to LF: a file that was already
-/// inconsistent has no style to preserve, and picking the one the rest of
-/// the world defaults to beats preserving the inconsistency.
-Uint8List encodeEditorText(String text, LineEndingStyle style) {
-  final normalised = text.replaceAll('\r\n', '\n');
-  final out = style == LineEndingStyle.crlf
-      ? normalised.replaceAll('\n', '\r\n')
-      : normalised;
-  return Uint8List.fromList(utf8.encode(out));
+/// The exact inverse of [decodeEditorText]: every `\n` becomes the file's
+/// terminator and nothing else in [text] is touched. It used to normalise
+/// `\r\n` in the buffer first, as a guard against pasted Windows text — and
+/// that turned a file's own `\r\r\n` into `\r\n` on every save. The guard now
+/// lives where the text comes in (`normaliseInsertedLineBreaks`), so it only
+/// ever touches what the user inserted.
+///
+/// [LineEndingStyle.mixed] resolves to LF; the editor asks which style to
+/// use before it gets this far.
+Uint8List encodeEditorText(
+  String text,
+  LineEndingStyle style, {
+  bool bom = false,
+}) {
+  final out = style == LineEndingStyle.crlf ? text.replaceAll('\n', '\r\n') : text;
+  final encoded = utf8.encode(out);
+  if (!bom) return Uint8List.fromList(encoded);
+  return Uint8List.fromList([...utf8Bom, ...encoded]);
+}
+
+/// Rewrites `\r\n` (and a lone `\r`) in the part of [newText] the user just
+/// inserted to `\n`, leaving the rest of the document alone. Returns null
+/// when nothing needed rewriting.
+///
+/// The editor's buffer is LF-only by convention; a paste from a Windows
+/// clipboard would otherwise put `\r\n` into it and come back out as
+/// `\r\r\n` in a CRLF file. Only the inserted span is rewritten, because the
+/// rest may hold a `\r` that genuinely is in the file. [base] and [extent] are
+/// the new selection, moved to match.
+({String text, int base, int extent})? normaliseInsertedLineBreaks({
+  required String oldText,
+  required String newText,
+  required int base,
+  required int extent,
+}) {
+  if (!newText.contains('\r')) return null;
+  final maxPrefix =
+      oldText.length < newText.length ? oldText.length : newText.length;
+  var prefix = 0;
+  while (prefix < maxPrefix &&
+      oldText.codeUnitAt(prefix) == newText.codeUnitAt(prefix)) {
+    prefix++;
+  }
+  var suffix = 0;
+  while (suffix < oldText.length - prefix &&
+      suffix < newText.length - prefix &&
+      oldText.codeUnitAt(oldText.length - 1 - suffix) ==
+          newText.codeUnitAt(newText.length - 1 - suffix)) {
+    suffix++;
+  }
+  final insertedEnd = newText.length - suffix;
+  final inserted = newText.substring(prefix, insertedEnd);
+  if (!inserted.contains('\r')) return null;
+  final cleaned =
+      inserted.replaceAll('\r\n', '\n').replaceAll('\r', '\n');
+  final shift = inserted.length - cleaned.length;
+  int move(int offset) {
+    if (offset <= prefix) return offset;
+    if (offset >= insertedEnd) return offset - shift;
+    return (offset - shift).clamp(prefix, prefix + cleaned.length);
+  }
+
+  return (
+    text: newText.substring(0, prefix) + cleaned + newText.substring(insertedEnd),
+    base: move(base),
+    extent: move(extent),
+  );
 }
 
 /// Extensions and bare names that a plain tap should open for editing rather

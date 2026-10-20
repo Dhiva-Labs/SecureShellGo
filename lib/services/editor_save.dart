@@ -109,11 +109,16 @@ class EditorOpenResult {
     required this.hadInvalidUtf8,
     required this.fingerprint,
     this.permissions,
+    this.hasBom = false,
   });
 
   final String text;
   final LineEndingStyle lineEndings;
   final bool hadInvalidUtf8;
+
+  /// Whether the file began with a UTF-8 byte-order mark, to be put back on
+  /// save. See [DecodedText.hasBom].
+  final bool hasBom;
 
   /// Taken *before* the read, so a file that changes between the stat and the
   /// last byte read is caught by the first save rather than silently baked in
@@ -195,6 +200,7 @@ Future<EditorOpenResult> openRemoteText({
     text: decoded.text,
     lineEndings: decoded.lineEndings,
     hadInvalidUtf8: decoded.hadInvalidUtf8,
+    hasBom: decoded.hasBom,
     fingerprint: RemoteFingerprint(
       size: stat?.size ?? bytes.length,
       modified: stat?.modified,
@@ -240,6 +246,7 @@ Future<SaveOutcome> saveRemoteText({
   required LineEndingStyle lineEndings,
   required RemoteFingerprint expected,
   int? permissions,
+  bool hasBom = false,
   bool force = false,
   TemporaryNamer? temporaryNamer,
 }) async {
@@ -264,7 +271,7 @@ Future<SaveOutcome> saveRemoteText({
     }
   }
 
-  final bytes = encodeEditorText(text, lineEndings);
+  final bytes = encodeEditorText(text, lineEndings, bom: hasBom);
   final temporaryPath = RemotePath.join(
     directory,
     (temporaryNamer ?? _editTemporaryName)(name),

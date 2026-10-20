@@ -227,9 +227,9 @@ void main() {
 
     expect(find.text('nginx.conf'), findsOneWidget);
     expect(find.text('demo:/etc/nginx.conf'), findsOneWidget);
-    // Four lines, so a gutter numbered 1..4.
-    expect(find.text('1'), findsOneWidget);
-    expect(find.text('4'), findsOneWidget);
+    // Four lines, so a gutter numbered 1..4 (painted, and labelled for
+    // screen readers).
+    expect(find.bySemanticsLabel('Lines 1–4'), findsOneWidget);
     // The mode was picked from the file name.
     expect(find.textContaining('nginx / Apache conf'), findsOneWidget);
     expect(find.textContaining('LF'), findsOneWidget);

@@ -6,6 +6,7 @@ import 'package:xterm/xterm.dart';
 
 import '../models/app_settings.dart';
 import '../models/remote_entry.dart';
+import '../services/editor_indent.dart';
 import '../services/editor_document.dart';
 import '../services/editor_save.dart';
 import '../services/editor_search.dart';
@@ -59,6 +60,14 @@ class _EditorTab {
   /// Set once the user has been told the file was not valid UTF-8, so the
   /// warning interrupts the first save and not every one after it.
   bool lossyAcknowledged = false;
+
+  /// Put back on save; see `DecodedText.hasBom`.
+  bool hasBom = false;
+
+  /// How this file indents and the language rules for Enter, Tab and
+  /// comments — detected when the file is opened.
+  EditorLanguage language = EditorLanguage.plain;
+  IndentStyle indentStyle = const IndentStyle.spaces(4);
 
   String get name => RemotePath.basename(path);
 
@@ -198,6 +207,13 @@ class _RemoteEditorScreenState extends State<RemoteEditorScreen> {
         permissions: opened.permissions,
         mode: mode,
       );
+      tab
+        ..hasBom = opened.hasBom
+        ..language = EditorLanguage.forFile(path, mode.id)
+        ..indentStyle = detectIndentStyle(
+          opened.text,
+          EditorLanguage.forFile(path, mode.id),
+        );
       // Rebuilds the title's dirty dot and the find bar's counts as the user
       // types; the field repaints itself from the same controller.
       tab.controller.addListener(_onActiveTextChanged);
@@ -322,6 +338,8 @@ class _RemoteEditorScreenState extends State<RemoteEditorScreen> {
   Future<void> _save({bool force = false, _EditorTab? target}) async {
     final tab = target ?? _tab;
     if (tab == null) return;
+    // Ctrl+S on a file nobody edited must not rewrite it.
+    if (!force && !tab.isDirty) return;
 
     if (tab.hadInvalidUtf8 && !tab.lossyAcknowledged) {
       final go = await _warnAboutLossyEncoding(tab);
@@ -339,6 +357,7 @@ class _RemoteEditorScreenState extends State<RemoteEditorScreen> {
         lineEndings: tab.lineEndings,
         expected: tab.fingerprint,
         permissions: tab.permissions,
+        hasBom: tab.hasBom,
         force: force,
       );
       if (!mounted) return;
@@ -473,6 +492,8 @@ class _RemoteEditorScreenState extends State<RemoteEditorScreen> {
         tab.savedText = opened.text;
         tab.lineEndings = opened.lineEndings;
         tab.hadInvalidUtf8 = opened.hadInvalidUtf8;
+        tab.hasBom = opened.hasBom;
+        tab.indentStyle = detectIndentStyle(opened.text, tab.language);
         tab.lossyAcknowledged = false;
         tab.fingerprint = opened.fingerprint;
         tab.permissions = opened.permissions;
@@ -509,6 +530,7 @@ class _RemoteEditorScreenState extends State<RemoteEditorScreen> {
         // it is skipped rather than fabricated.
         expected: const RemoteFingerprint.unknown(),
         permissions: tab.permissions,
+        hasBom: tab.hasBom,
         force: true,
       );
       if (!mounted) return;
@@ -1135,6 +1157,7 @@ class _RemoteEditorScreenState extends State<RemoteEditorScreen> {
               setState(() {
                 tab.mode = syntaxModeById(value);
                 tab.controller.mode = tab.mode;
+                tab.language = EditorLanguage.forFile(tab.path, tab.mode.id);
               });
           }
         },
@@ -1309,6 +1332,8 @@ class _RemoteEditorScreenState extends State<RemoteEditorScreen> {
             theme: theme,
             fontSize: _settings.terminalFontSize,
             softWrap: _softWrap,
+            indentStyle: tab.indentStyle,
+            language: tab.language,
           ),
         ),
         _statusBar(tab, theme),
