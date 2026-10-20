@@ -142,7 +142,7 @@ abstract class RemoteFileSystem {
   ///
   /// Fails if [path] already exists or its parent does not — the recursive
   /// folder-transfer code holds those invariants itself (breadth-first over
-  /// the parents first, and a preflight rm on an overwrite target) rather
+  /// the parents first, and a fresh staging folder for a replace) rather
   /// than dressing this up as `mkdir -p`.
   Future<void> mkdir(String path);
 
