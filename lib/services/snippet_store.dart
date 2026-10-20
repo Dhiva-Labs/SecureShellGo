@@ -5,6 +5,7 @@ import 'dart:math';
 
 import '../models/snippet.dart';
 import 'app_data_paths.dart';
+import 'atomic_file.dart';
 
 /// Persistent store of saved command snippets.
 ///
@@ -21,6 +22,9 @@ class SnippetStore {
   static const String fileName = 'snippets.json';
 
   File? _file;
+
+  /// Saves land one at a time, in order — see [SerialFileWriter].
+  final SerialFileWriter _writer = SerialFileWriter();
 
   /// Insertion order doubles as display order, same reasoning as
   /// [HostStore]'s own map.
@@ -73,19 +77,25 @@ class SnippetStore {
       // A corrupt or unreadable store must not brick the app — see
       // HostStore for the same reasoning.
       _snippets.clear();
+      await setAsideUnreadable(_file);
     } finally {
       _loaded = true;
     }
   }
 
-  Future<void> _persist() async {
+  Future<void> _persist() => _writer.run(_writeNow);
+
+  Future<void> _writeNow() async {
     final file = await _resolveFile();
     final payload = <String, dynamic>{
       'version': 1,
       'snippets': [for (final snippet in _snippets.values) snippet.toJson()],
     };
     await file.parent.create(recursive: true);
-    await file.writeAsString(jsonEncode(payload), flush: true);
+    await atomicWrite(
+      file,
+      (temp) => temp.writeAsString(jsonEncode(payload), flush: true),
+    );
   }
 
   /// A fresh id for a new snippet: timestamp plus a random suffix, same

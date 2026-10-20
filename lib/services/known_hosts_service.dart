@@ -4,6 +4,7 @@ import 'dart:io';
 
 import '../models/known_host.dart';
 import 'app_data_paths.dart';
+import 'atomic_file.dart';
 import 'known_hosts_integrity.dart';
 
 /// Persistent store of host keys the user has trusted.
@@ -35,6 +36,9 @@ class KnownHostsService {
   File? _file;
   final KnownHostsIntegrityKey? _integrityKey;
   final Map<String, KnownHostKey> _entries = {};
+
+  /// Saves land one at a time, in order — see [SerialFileWriter].
+  final SerialFileWriter _writer = SerialFileWriter();
   Future<void>? _loading;
   bool _loaded = false;
 
@@ -151,7 +155,9 @@ class KnownHostsService {
     }
   }
 
-  Future<void> _persist() async {
+  Future<void> _persist() => _writer.run(_writeNow);
+
+  Future<void> _writeNow() async {
     final file = await _resolveFile();
     final payload = <String, dynamic>{
       'version': 1,
@@ -163,7 +169,10 @@ class KnownHostsService {
     final document =
         key == null ? jsonEncode(payload) : KnownHostsEnvelope.seal(key, payload);
     await file.parent.create(recursive: true);
-    await file.writeAsString(document, flush: true);
+    await atomicWrite(
+      file,
+      (temp) => temp.writeAsString(document, flush: true),
+    );
   }
 
   /// The trusted key for this host *and key type*, or null if never trusted.

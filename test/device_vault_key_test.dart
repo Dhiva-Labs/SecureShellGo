@@ -35,7 +35,10 @@ void main() {
     await key.create();
     expect(file.statSync().mode & 0x1ff, DeviceVaultKey.ownerOnlyMode);
     // And nothing was left behind at the umask's default mode on the way.
-    expect(await File('${file.path}.tmp').exists(), isFalse);
+    expect(
+      file.parent.listSync().where((e) => e.path.endsWith('.tmp')),
+      isEmpty,
+    );
   }, skip: Platform.isWindows ? 'POSIX modes only' : null);
 
   test('a missing or wrong-sized key reads as null, never as a guess',

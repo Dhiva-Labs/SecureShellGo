@@ -5,6 +5,7 @@ import 'dart:math';
 
 import '../models/path_bookmark.dart';
 import 'app_data_paths.dart';
+import 'atomic_file.dart';
 
 /// Persistent store of per-host path bookmarks.
 ///
@@ -30,6 +31,9 @@ class BookmarkStore {
   static final BookmarkStore instance = BookmarkStore();
 
   File? _file;
+
+  /// Saves land one at a time, in order — see [SerialFileWriter].
+  final SerialFileWriter _writer = SerialFileWriter();
 
   final Map<String, PathBookmark> _bookmarks = {};
 
@@ -82,19 +86,25 @@ class BookmarkStore {
       // HostStore for the same reasoning. Starting empty just means the
       // bookmarks sheet looks empty; nothing else depends on this file.
       _bookmarks.clear();
+      await setAsideUnreadable(_file);
     } finally {
       _loaded = true;
     }
   }
 
-  Future<void> _persist() async {
+  Future<void> _persist() => _writer.run(_writeNow);
+
+  Future<void> _writeNow() async {
     final file = await _resolveFile();
     final payload = <String, dynamic>{
       'version': 1,
       'bookmarks': [for (final bookmark in _bookmarks.values) bookmark.toJson()],
     };
     await file.parent.create(recursive: true);
-    await file.writeAsString(jsonEncode(payload), flush: true);
+    await atomicWrite(
+      file,
+      (temp) => temp.writeAsString(jsonEncode(payload), flush: true),
+    );
   }
 
   String _newId() {
