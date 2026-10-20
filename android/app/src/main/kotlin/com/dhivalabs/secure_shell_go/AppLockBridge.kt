@@ -144,13 +144,20 @@ class AppLockBridge(private val activity: Activity) :
         sawRejection = false
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-            showBiometricPrompt()
+            showBiometricPrompt(keyguard)
         } else {
             showConfirmCredential(keyguard)
         }
     }
 
-    private fun showBiometricPrompt() {
+    /**
+     * Once [support] has said a credential exists, nothing here may answer
+     * `unavailable`: the Dart side opens the gate on that answer, so any
+     * failure to raise this sheet would become a way past the lock. Every
+     * such failure drops to [showConfirmCredential] instead, which checks the
+     * same PIN, pattern or password on every API level.
+     */
+    private fun showBiometricPrompt(keyguard: KeyguardManager) {
         val signal = CancellationSignal()
         cancellationSignal = signal
 
@@ -189,7 +196,17 @@ class AppLockBridge(private val activity: Activity) :
                 errorCode: Int,
                 errString: CharSequence?,
             ) {
-                finish(mapError(errorCode))
+                when (errorCode) {
+                    // With DEVICE_CREDENTIAL allowed these should not arrive
+                    // at all; if they do, this sheet cannot authenticate
+                    // anyone, but the credential screen still can.
+                    ERROR_HW_NOT_PRESENT, ERROR_HW_UNAVAILABLE,
+                    ERROR_NO_BIOMETRICS -> {
+                        cancellationSignal = null
+                        showConfirmCredential(keyguard)
+                    }
+                    else -> finish(mapError(errorCode))
+                }
             }
         }
 
@@ -200,10 +217,11 @@ class AppLockBridge(private val activity: Activity) :
                 callback,
             )
         }.onFailure {
-            // The sheet could not be raised at all. Answering `unavailable`
-            // makes the Dart side fail open rather than leaving the gate up
-            // with nothing behind the Unlock button.
-            finish(RESULT_UNAVAILABLE)
+            // The sheet could not be raised at all (a missing USE_BIOMETRIC
+            // used to land here on every unlock). Not `unavailable`: see the
+            // doc comment above.
+            cancellationSignal = null
+            showConfirmCredential(keyguard)
         }
     }
 
@@ -214,12 +232,6 @@ class AppLockBridge(private val activity: Activity) :
             // Dismissing after getting it wrong is a failed attempt the user
             // gave up on, not a clean cancel. See [sawRejection].
             if (sawRejection) RESULT_FAILED else RESULT_CANCELLED
-
-        ERROR_HW_NOT_PRESENT, ERROR_HW_UNAVAILABLE, ERROR_NO_BIOMETRICS ->
-            // With DEVICE_CREDENTIAL allowed these should not arrive at all;
-            // if they do, the sheet cannot authenticate anyone and the Dart
-            // side should fail open rather than hold the gate shut.
-            RESULT_UNAVAILABLE
 
         else -> RESULT_FAILED
     }
@@ -284,7 +296,9 @@ class AppLockBridge(private val activity: Activity) :
         cancellationSignal = null
         // A pending call whose activity is going away would otherwise leave
         // the Dart future hanging forever, and with it the lock screen.
-        finish(RESULT_UNAVAILABLE)
+        // `cancelled`, not `unavailable`: the gate stays up with its Unlock
+        // button live, rather than opening because the activity went away.
+        finish(RESULT_CANCELLED)
     }
 
     private fun keyguardManager(): KeyguardManager? =
