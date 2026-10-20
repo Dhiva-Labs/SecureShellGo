@@ -56,6 +56,10 @@ dependencies:
   # (GTK, IFileDialog, NSOpenPanel) would cost far more native code than this
   # one Flutter-team-maintained dependency.
   file_selector: ^1.1.0
+  # UTF-16 strings for the one Win32 call the app makes itself, ShellExecuteW
+  # (windows_shell_open.dart). Already in the tree through path_provider and
+  # file_selector; declared because the app now uses it directly.
+  ffi: ^2.1.0
 
 dev_dependencies:
   flutter_test:
