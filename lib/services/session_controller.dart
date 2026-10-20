@@ -1063,6 +1063,12 @@ class SessionController {
   /// Empty subdirectories on the source are mkdir'd on the destination so
   /// the shape of the tree is preserved — a `logs/` folder with nothing in
   /// it still lands.
+  ///
+  /// A top-level `Replace` at the collision prompt uploads into a hidden
+  /// sibling of the folder it replaces and swaps it in once every file has
+  /// landed and been counted (see [StagedDirectoryReplace]). The folder
+  /// being replaced is not touched before then, so a cancel, a failed file
+  /// or a dropped connection costs only the staging folder.
   Future<void> _runUploadDirectory(
     RemoteFileSystem sftp,
     TransferTask task,
@@ -1074,46 +1080,69 @@ class SessionController {
     handle.setTotal(tree.totalBytes);
     handle.throwIfCancelled();
 
-    if (task.overwrite) {
-      // A top-level `Replace` at the collision prompt licenses the wipe. The
-      // destination directory is torn down and rebuilt fresh, so nothing
-      // inside can collide with anything already there.
-      await removeRemoteDirectoryTree(sftp, remoteRoot);
-      handle.throwIfCancelled();
-    }
-    try {
-      await sftp.mkdir(remoteRoot);
-    } on SftpFailure {
-      // Already exists (nothing to overwrite) — proceed and let the writes
-      // fail loudly if it turns out we cannot use it.
-    }
+    final replace =
+        task.overwrite ? StagedDirectoryReplace(sftp, remoteRoot) : null;
+    // Where the tree is written: beside the folder a replace is for, or
+    // straight into a free name.
+    final root = replace?.staging ?? remoteRoot;
 
-    // Every subdirectory first, breadth-first order preserved by the walk,
-    // so empty folders survive and a per-file mkdir never races with an
-    // uncreated parent.
-    for (final relative in tree.directories) {
-      handle.throwIfCancelled();
-      final path = RemotePath.join(remoteRoot, relative);
+    if (replace != null) {
+      // A fresh name, so a refusal is a real one, and arrives before the
+      // folder being replaced has been touched.
+      await sftp.mkdir(root);
+    } else {
       try {
-        await sftp.mkdir(path);
+        await sftp.mkdir(root);
       } on SftpFailure {
-        // Already there is fine; a real failure surfaces on the file write.
+        // Already exists (nothing to overwrite) — proceed and let the writes
+        // fail loudly if it turns out we cannot use it.
       }
     }
 
-    var bytesMoved = 0;
-    for (final file in tree.files) {
-      handle.throwIfCancelled();
-      final remotePath = RemotePath.join(remoteRoot, file.relativePath);
-      final moved = await sftp.upload(
-        file.absolutePath,
-        remotePath,
-        onProgress: (bytes) => handle.report(bytesMoved + bytes),
-        isCancelled: () => handle.isCancelled,
-      );
-      bytesMoved += moved;
-      handle.report(bytesMoved);
-      handle.throwIfCancelled();
+    // Up to the swap, every exit — cancel, failure, a dropped connection —
+    // takes the staging folder with it. The swap cleans up after itself.
+    var discardStaging = replace != null;
+    try {
+      // Every subdirectory first, breadth-first order preserved by the walk,
+      // so empty folders survive and a per-file mkdir never races with an
+      // uncreated parent.
+      for (final relative in tree.directories) {
+        handle.throwIfCancelled();
+        final path = RemotePath.join(root, relative);
+        try {
+          await sftp.mkdir(path);
+        } on SftpFailure {
+          // Already there is fine; a real failure surfaces on the file write.
+        }
+      }
+
+      var bytesMoved = 0;
+      for (final file in tree.files) {
+        handle.throwIfCancelled();
+        final remotePath = RemotePath.join(root, file.relativePath);
+        final moved = await sftp.upload(
+          file.absolutePath,
+          remotePath,
+          onProgress: (bytes) => handle.report(bytesMoved + bytes),
+          isCancelled: () => handle.isCancelled,
+        );
+        bytesMoved += moved;
+        handle.report(bytesMoved);
+        handle.throwIfCancelled();
+      }
+
+      if (replace != null) {
+        await replace.verifyStaged(
+          files: tree.files.length,
+          bytes: bytesMoved,
+        );
+        // The last point a cancel can stop the replace.
+        handle.throwIfCancelled();
+        discardStaging = false;
+        await replace.swapIn();
+      }
+    } finally {
+      if (discardStaging) await replace!.discard();
     }
     handle.setDestination(remoteRoot);
   }

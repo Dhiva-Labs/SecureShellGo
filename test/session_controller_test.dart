@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:dartssh2/dartssh2.dart';
@@ -11,6 +12,8 @@ import 'package:secure_shell_go/services/session_controller.dart';
 import 'package:secure_shell_go/services/sftp_service.dart';
 import 'package:secure_shell_go/services/ssh_service.dart';
 import 'package:secure_shell_go/services/transfer_queue.dart';
+
+import 'memory_fs.dart';
 
 /// Stands in for a live [SshConnection]. dartssh2's `SSHClient` cannot be
 /// faked usefully, which is exactly why [SessionTransport] exists.
@@ -906,6 +909,124 @@ void main() {
 
       final picked = await session.pickLocalFiles();
       expect(picked.map((f) => f.name), ['a.txt', 'b.txt']);
+    });
+  });
+
+  group('folder uploads', () {
+    late Directory local;
+    late MemoryFs remote;
+
+    /// The folder on the server that a `Replace` is aimed at.
+    const oldTree = {
+      'file:index.html=4242',
+      'dir:old',
+      'file:old/stale.txt=7',
+    };
+
+    /// The picked folder, and what the server should hold once it replaces
+    /// the old one — the empty `logs/` included.
+    const newTree = {
+      'file:index.html=100',
+      'dir:css',
+      'file:css/app.css=300',
+      'dir:logs',
+    };
+
+    setUp(() {
+      local = Directory.systemTemp.createTempSync('folder-upload');
+      addTearDown(() => local.deleteSync(recursive: true));
+      Directory('${local.path}/site/css').createSync(recursive: true);
+      Directory('${local.path}/site/logs').createSync();
+      File('${local.path}/site/index.html').writeAsBytesSync(List.filled(100, 1));
+      File('${local.path}/site/css/app.css').writeAsBytesSync(List.filled(300, 2));
+
+      remote = MemoryFs()
+        ..directories.addAll(['/srv', '/srv/site', '/srv/site/old'])
+        ..files['/srv/site/index.html'] = 4242
+        ..files['/srv/site/old/stale.txt'] = 7;
+    });
+
+    SessionController buildOverRemote() => SessionController(
+          connection: transport,
+          storage: FakeStorage(),
+          openFileSystem: () async => remote,
+          keepaliveScheduler: (_, tick) {
+            final timer = HandCrankedTimer(tick);
+            keepaliveTimers.add(timer);
+            return timer;
+          },
+        );
+
+    TransferTask replaceSite(SessionController session) =>
+        session.queueUploadDirectory(
+          pickedPath: '${local.path}/site',
+          pickedName: 'site',
+          remoteDirectory: '/srv',
+          overwrite: true,
+        );
+
+    test('a replace yields exactly the new folder', () async {
+      final session = buildOverRemote();
+      addTearDown(session.dispose);
+
+      final task = replaceSite(session);
+      await settle(session);
+
+      expect(task.status, TransferStatus.completed);
+      expect(task.destination, '/srv/site');
+      expect(remote.treeUnder('/srv/site'), newTree);
+      expect(remote.leftovers, isEmpty);
+    });
+
+    test('a failure mid-upload leaves the folder being replaced, and no '
+        'staging folder', () async {
+      final session = buildOverRemote();
+      addTearDown(session.dispose);
+      // index.html (100 bytes) goes up; app.css drops part way through.
+      remote.failWriteAfter = 200;
+
+      final task = replaceSite(session);
+      await settle(session);
+
+      expect(task.status, TransferStatus.failed);
+      expect(remote.treeUnder('/srv/site'), oldTree);
+      expect(remote.leftovers, isEmpty);
+    });
+
+    test('a cancel mid-upload leaves the folder being replaced, and no '
+        'staging folder', () async {
+      final session = buildOverRemote();
+      addTearDown(session.dispose);
+      final marker = File('${local.path}/marker.txt')..writeAsBytesSync([1]);
+
+      late TransferTask task;
+      TransferTask? after;
+      var cancelled = false;
+      remote.onChunkRead = (moved) {
+        if (moved < 128 || cancelled) return;
+        cancelled = true;
+        // A cancel marks the row at once, while the upload is still
+        // unwinding. The queue runs one transfer at a time, so a transfer
+        // queued behind it finishing means the upload's cleanup has
+        // finished too.
+        after = session.transfers.enqueueUpload(
+          localPath: marker.path,
+          remotePath: '/srv/marker.txt',
+          name: 'marker.txt',
+        );
+        session.transfers.cancel(task.id);
+      };
+
+      task = replaceSite(session);
+      await session.transfers.changes
+          .firstWhere((_) => after?.status.isFinished ?? false);
+
+      expect(cancelled, isTrue);
+      expect(task.status, TransferStatus.cancelled);
+      expect(after!.status, TransferStatus.completed);
+      expect(remote.files['/srv/marker.txt'], 1);
+      expect(remote.treeUnder('/srv/site'), oldTree);
+      expect(remote.leftovers, isEmpty);
     });
   });
 

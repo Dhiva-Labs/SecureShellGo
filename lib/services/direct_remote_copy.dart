@@ -7,7 +7,6 @@ import 'package:dartssh2/dartssh2.dart';
 
 import '../models/host.dart';
 import '../models/known_host.dart';
-import '../models/remote_entry.dart';
 import 'remote_copy.dart';
 import 'remote_exec.dart';
 import 'remote_path.dart';
@@ -690,26 +689,31 @@ String _sftpQuote(String s) => '"${s.replaceAll('"', r'\"')}"';
 /// is B, over an SSH connection A opened using the forwarded agent.
 ///
 /// **Destination naming.** `sftp put -r local remote` in OpenSSH creates the
-/// remote directory at that exact path (it does not append `basename(local)`).
-/// So the caller passes the final desired path — including any
-/// [RemotePath.deduplicate] renaming for keep-both — and we ensure the parent
-/// exists via our trusted SFTP to B (so a nested destination like
-/// `/srv/team/uploads/Documents` does not fail on a missing `/srv/team`),
-/// clear an overwrite target via [removeRemoteDirectoryTree], then let the
-/// source-side `sftp` create it fresh.
+/// remote directory at that exact path (it does not append `basename(local)`)
+/// as long as nothing is there yet. So the caller passes the final desired
+/// path — including any [RemotePath.deduplicate] renaming for keep-both — and
+/// we ensure the parent exists via our trusted SFTP to B (so a nested
+/// destination like `/srv/team/uploads/Documents` does not fail on a missing
+/// `/srv/team`), then let the source-side `sftp` create it fresh.
+///
+/// **Replace.** An overwrite does not clear the target first. `put -r` writes
+/// into a hidden sibling that does not exist yet (see
+/// [StagedDirectoryReplace]), the verification below runs against that, and
+/// only then is it swapped in for the folder it replaces. A cancel, a failed
+/// exec or a mismatched count removes the staging folder and leaves the
+/// original exactly as it was.
 ///
 /// **Verification.** After the exec exits cleanly we walk the destination
-/// tree over our own SFTP session to B (through [_directoryFileCount] and
-/// [_directoryTotalSize]) and confirm both the file count and the summed
-/// bytes match what the source reports for its side. That is the safety chain
-/// [copyRemoteDirectory] runs per-file, applied to the whole batch here —
-/// the direct path has no per-file receipts to check.
+/// tree over our own SFTP session to B (through [measureRemoteTree]) and
+/// confirm both the file count and the summed bytes match what the source
+/// reports for its side. That is the safety chain [copyRemoteDirectory] runs
+/// per-file, applied to the whole batch here — the direct path has no
+/// per-file receipts to check.
 ///
 /// **Move semantics.** [deleteSourceAfterVerify] deletes the source tree only
-/// after both counts on B match A. Any failure leaves the source untouched
-/// and, when possible, the destination alone — a botched replace does not
-/// take the pre-existing tree with it, since the tree was already gone before
-/// `put -r` began.
+/// after both counts on B match A, and for a replace only after the swap. Any
+/// failure before then leaves the source untouched, and the destination as
+/// it was.
 Future<RemoteCopyOutcome> copyRemoteDirectoryDirect({
   required SessionController source,
   required Host destHost,
@@ -753,18 +757,21 @@ Future<RemoteCopyOutcome> copyRemoteDirectoryDirect({
 
   if (isCancelled?.call() ?? false) throw const TransferCancelled();
 
-  // Before anything below touches the destination: an overwrite clears the
-  // target tree, and a host-key refusal must not arrive after that.
+  // Before anything below touches the destination: a host-key refusal must
+  // arrive before any write to B, the parent mkdir included.
   final pinned = await _pinDestinationKey(source, destHost, destinationHostKey);
   if (isCancelled?.call() ?? false) throw const TransferCancelled();
 
-  // Prepare the destination shape via our own trusted SFTP to B:
-  // - clear an overwrite target so `put -r` gets a fresh mkdir
-  // - ensure the destination's parent exists so put -r does not fail
-  //   on a missing intermediate directory
-  if (overwrite) {
-    await removeRemoteDirectoryTree(destinationFs, destinationDirectory);
-  }
+  final replace = overwrite
+      ? StagedDirectoryReplace(destinationFs, destinationDirectory)
+      : null;
+  // Where `put -r` writes: beside the folder a replace is for, or straight
+  // into a free name. Either way nothing is there yet, which is what makes
+  // `put -r` create it rather than nest the source inside it.
+  final root = replace?.staging ?? destinationDirectory;
+
+  // Ensure the destination's parent exists via our own trusted SFTP to B,
+  // so put -r does not fail on a missing intermediate directory.
   final destParent = RemotePath.parent(destinationDirectory);
   try {
     await destinationFs.mkdir(destParent);
@@ -777,7 +784,9 @@ Future<RemoteCopyOutcome> copyRemoteDirectoryDirect({
   final sourceName = RemotePath.basename(sourceDirectory);
 
   _ForwardedExec? exec;
-  var published = false;
+  // Until the tree is verified — and, for a replace, until the swap takes
+  // charge of it — every exit takes what `put -r` wrote with it.
+  var discardRoot = true;
 
   try {
     // The sftp batch: cd to the source parent so `put -r <name> <dest>`
@@ -787,7 +796,7 @@ Future<RemoteCopyOutcome> copyRemoteDirectoryDirect({
     final batch = _sftpDirectoryBatch(
       localSourceParent: sourceParent,
       localSourceName: sourceName,
-      remoteDestination: destinationDirectory,
+      remoteDestination: root,
     );
 
     final command = _sourceSftpCommand(destHost, pinned);
@@ -810,70 +819,67 @@ Future<RemoteCopyOutcome> copyRemoteDirectoryDirect({
     // verifies the tree runs over our own trusted SFTP sessions.
     exec.close();
 
-    if (isCancelled?.call() ?? false) {
-      // A cancel mid-put leaves whatever partial tree A had time to write.
-      // Blow it away so a subsequent retry lands in a fresh directory.
-      await removeRemoteDirectoryTree(destinationFs, destinationDirectory);
-      throw const TransferCancelled();
-    }
-
-    if (exit != 0) {
-      await removeRemoteDirectoryTree(destinationFs, destinationDirectory);
-      throw _classifyFailure(exit ?? -1, stderrText);
-    }
+    // A cancel or a failure mid-put leaves whatever partial tree A had time
+    // to write; the `finally` below removes it, so a retry lands fresh.
+    if (isCancelled?.call() ?? false) throw const TransferCancelled();
+    if (exit != 0) throw _classifyFailure(exit ?? -1, stderrText);
 
     // Whole-batch verification: file counts and byte totals on both sides
     // must line up. There is no per-file receipt on the direct path; this
     // is the safety chain of copyRemoteFile, applied at the batch level.
     final sourceSftp = await source.sftp();
-    final destCount = await _directoryFileCount(destinationFs, destinationDirectory);
-    final sourceCount = await _directoryFileCount(sourceSftp, sourceDirectory);
-    if (destCount != sourceCount) {
+    final landed = await measureRemoteTree(destinationFs, root);
+    final original = await measureRemoteTree(sourceSftp, sourceDirectory);
+    if (landed.files != original.files) {
       throw RemoteCopyFailure(
         'The copy on the destination server has a different number of files '
         'than the source. The original was not changed.',
-        details: 'source has $sourceCount files, destination has $destCount',
+        details: 'source has ${original.files} files, destination has '
+            '${landed.files}',
       );
     }
-    final destBytes =
-        await _directoryTotalSize(destinationFs, destinationDirectory);
-    final sourceBytes = await _directoryTotalSize(sourceSftp, sourceDirectory);
-    if (destBytes != sourceBytes) {
+    if (landed.bytes != original.bytes) {
       throw RemoteCopyFailure(
         'The copy on the destination server is a different size than the '
         'source. The original was not changed.',
-        details:
-            'source is $sourceBytes bytes, destination is $destBytes bytes',
+        details: 'source is ${original.bytes} bytes, destination is '
+            '${landed.bytes} bytes',
       );
     }
 
-    published = true;
-    onProgress?.call(destBytes);
+    if (replace != null) {
+      // The last point a cancel can stop the replace.
+      if (isCancelled?.call() ?? false) throw const TransferCancelled();
+    }
+    // Verified. From here the tree is the user's — or, for a replace, the
+    // swap's to deal with, failure included.
+    discardRoot = false;
+    await replace?.swapIn();
+    onProgress?.call(landed.bytes);
 
     if (deleteSourceAfterVerify) {
       // Both counts already checked; nothing left to compare. Blow the
       // source tree away via our own trusted SFTP to A.
       await removeRemoteDirectoryTree(sourceSftp, sourceDirectory);
       return RemoteCopyOutcome(
-        bytesCopied: destBytes,
+        bytesCopied: landed.bytes,
         destinationPath: destinationDirectory,
         sourceDeleted: true,
       );
     }
 
     return RemoteCopyOutcome(
-      bytesCopied: destBytes,
+      bytesCopied: landed.bytes,
       destinationPath: destinationDirectory,
       sourceDeleted: false,
     );
   } finally {
     // Idempotent: the happy path already hung up as soon as the exec ended.
     exec?.close();
-    if (!published) {
-      // The verify block already cleaned up on the failure paths it can
-      // classify; this catches surprise throws between exec and verify.
-      unawaited(removeRemoteDirectoryTree(destinationFs, destinationDirectory));
-    }
+    // Awaited, so a transfer reported as failed or cancelled has already
+    // taken its partial tree with it. For a replace that tree is the
+    // staging folder; the folder it was to replace was never touched.
+    if (discardRoot) await removeRemoteDirectoryTree(destinationFs, root);
   }
 }
 
@@ -892,54 +898,4 @@ String _sftpDirectoryBatch({
         '${_sftpQuote(remoteDestination)}')
     ..writeln('bye');
   return buf.toString();
-}
-
-/// Walks [root] on [fs] and returns the number of plain files under it.
-///
-/// Symlinks and anything non-file are not counted, matching what
-/// [copyRemoteDirectory] moves — so a verify against a source tree containing
-/// symlinks does not flag them as missing on B.
-Future<int> _directoryFileCount(RemoteFileSystem fs, String root) async {
-  var count = 0;
-  final pending = <String>[root];
-  for (var index = 0; index < pending.length; index++) {
-    final List<RemoteEntry> entries;
-    try {
-      entries = await fs.list(pending[index]);
-    } catch (_) {
-      continue;
-    }
-    for (final entry in entries) {
-      if (entry.kind == RemoteEntryKind.file) {
-        count++;
-      } else if (entry.kind == RemoteEntryKind.directory) {
-        pending.add(RemotePath.join(pending[index], entry.name));
-      }
-    }
-  }
-  return count;
-}
-
-/// Walks [root] on [fs] and returns the sum of file sizes under it. Files
-/// whose size the server does not report contribute zero, so this is a
-/// comparison against the source computed the same way.
-Future<int> _directoryTotalSize(RemoteFileSystem fs, String root) async {
-  var total = 0;
-  final pending = <String>[root];
-  for (var index = 0; index < pending.length; index++) {
-    final List<RemoteEntry> entries;
-    try {
-      entries = await fs.list(pending[index]);
-    } catch (_) {
-      continue;
-    }
-    for (final entry in entries) {
-      if (entry.kind == RemoteEntryKind.file) {
-        total += entry.size ?? 0;
-      } else if (entry.kind == RemoteEntryKind.directory) {
-        pending.add(RemotePath.join(pending[index], entry.name));
-      }
-    }
-  }
-  return total;
 }
