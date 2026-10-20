@@ -26,6 +26,15 @@ typedef ReconnectDelayScheduler = Timer Function(
 /// the service itself so that everything below `services/` stays testable
 /// without a socket, and so the reconnect path cannot quietly acquire the
 /// ability to do anything to a connection *except* open one.
+///
+/// There is deliberately no login-prompt handler in it, for the same reason
+/// the host-key verifier always says no: nobody is watching a reconnect. The
+/// lambda leaves `SshService.connect`'s `answerPrompts` unset, so a saved
+/// password still answers a plain keyboard-interactive password question,
+/// and anything else — a one-time code, a Duo menu — fails the attempt at
+/// once with an [SshAuthenticationException], which stops the schedule. A
+/// prompt nobody can see would otherwise hold the attempt open until the
+/// server's own login timeout, and then be retried, forever.
 typedef ReconnectConnector = Future<SessionTransport> Function({
   required Host host,
   required SshCredentials credentials,
@@ -76,6 +85,10 @@ class ReconnectSupport {
 /// answered "no". The attempt then fails as a host-key failure, which the
 /// policy never retries, and the banner says so. A changed key is never
 /// accepted by this path, automatically or otherwise.
+///
+/// **Login prompts.** Likewise never put in front of anyone — see
+/// [ReconnectConnector]. A host that wants a second factor stops the
+/// schedule on its first attempt, with a message naming what it asked for.
 class SessionReconnector {
   SessionReconnector({
     required this.host,

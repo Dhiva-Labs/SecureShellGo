@@ -141,12 +141,16 @@ class PublicKeyPushService {
   /// configured for, since the whole point is to get a key-based login
   /// working. The connection is always closed afterwards; nothing from it
   /// outlives this call.
+  ///
+  /// [password] also answers a keyboard-interactive password question;
+  /// [answerPrompts] gets anything beyond that, such as a one-time code.
   Future<void> installWithPassword({
     required SshService sshService,
     required Host host,
     required String password,
     required String publicKeyLine,
     required HostKeyVerifier verifyHostKey,
+    LoginPromptHandler? answerPrompts,
     Duration timeout = SshService.defaultTimeout,
   }) async {
     final passwordHost = host.authMethod == SshAuthMethod.password
@@ -159,6 +163,7 @@ class PublicKeyPushService {
         host: passwordHost,
         credentials: SshCredentials(password: password),
         verifyHostKey: verifyHostKey,
+        answerPrompts: answerPrompts,
         timeout: timeout,
       );
     } on SshConnectionException catch (e) {

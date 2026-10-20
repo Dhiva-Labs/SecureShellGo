@@ -10,6 +10,7 @@ import '../services/ssh_service.dart';
 import '../theme.dart';
 import '../widgets/error_banner.dart';
 import '../widgets/host_key_dialog.dart';
+import '../widgets/login_prompt_dialog.dart';
 import '../widgets/import_key_file_button.dart';
 import '../widgets/inline_hint.dart';
 
@@ -118,6 +119,7 @@ class _QuickConnectScreenState extends State<QuickConnectScreen> {
     final host = _buildHost();
     final credentials = _buildCredentials();
 
+    final login = LoginDialogs(this);
     try {
       final connection = await widget.sshService.connect(
         host: host,
@@ -126,8 +128,15 @@ class _QuickConnectScreenState extends State<QuickConnectScreen> {
           if (!mounted) return false;
           return showHostKeyDialog(context, prompt);
         },
+        answerPrompts: login.answer,
+        onBanner: login.addBanner,
       );
 
+      if (!mounted) {
+        connection.close();
+        return;
+      }
+      await login.showUnseenBanners();
       if (!mounted) {
         connection.close();
         return;

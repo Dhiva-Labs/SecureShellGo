@@ -9,6 +9,7 @@ import 'host_field_input.dart';
 import 'host_key_policy.dart';
 import 'jump_host_chain.dart';
 import 'known_hosts_service.dart';
+import 'login_prompt.dart';
 import 'ssh_agent_backend.dart';
 import 'ssh_agent_client.dart';
 
@@ -16,6 +17,14 @@ export 'host_key_policy.dart'
     show HostKeyPolicy, HostKeyPrompt, HostKeyPromptKind, HostKeyVerifier;
 export 'jump_host_chain.dart'
     show JumpHostChain, JumpHostChainError, JumpHostChainException;
+export 'login_prompt.dart'
+    show
+        LoginChallenge,
+        LoginPrompt,
+        LoginPromptField,
+        LoginPromptHandler,
+        ServerBanner,
+        ServerBannerHandler;
 export 'ssh_agent_backend.dart'
     show
         CredentialSSHAgent,
@@ -382,6 +391,17 @@ class SshService {
   /// here.
   static const Duration hostKeyDecisionBudget = Duration(minutes: 5);
 
+  /// How long the server gets to come back after a person answers a login
+  /// prompt.
+  ///
+  /// Far longer than [defaultTimeout], because an answer is often the start
+  /// of a wait rather than the end of one: choosing "Duo Push" sends the
+  /// server off to wait for a phone, and it replies only once the person
+  /// has approved the login there. The time a prompt spends on screen is not
+  /// counted at all — see [_LoginDeadline] — so this is only the server's
+  /// share.
+  static const Duration loginReplyBudget = Duration(minutes: 2);
+
   /// Connects, verifies the host key, and authenticates.
   ///
   /// When [host] names a jump host, every hop in the chain is dialled and
@@ -402,10 +422,27 @@ class SshService {
   /// carries a handler can only ever run *one* exec, so this is never right
   /// for a session the user is going to keep working in; see
   /// [SessionTransport.execute].
+  ///
+  /// [answerPrompts] is how a keyboard-interactive question — a one-time
+  /// code, a Duo menu, a password the server will only take this way —
+  /// reaches a person, for the target and for every hop alike; each
+  /// [LoginPrompt] names the host asking. A password host's saved password
+  /// answers the first plain password question by itself, so a server that
+  /// only offers keyboard-interactive needs nobody (see
+  /// [KeyboardInteractiveResponder]). Leave it null when no one is there to
+  /// ask — a reconnect, a background transfer: a question the saved
+  /// credentials cannot answer then fails the connect at once with an
+  /// [SshAuthenticationException] that says what was asked, instead of
+  /// waiting on an answer that will never come.
+  ///
+  /// [onBanner] receives the text a server shows before login, already
+  /// stripped down to plain text, from the target and from every hop.
   Future<SshConnection> connect({
     required Host host,
     required SshCredentials credentials,
     required HostKeyVerifier verifyHostKey,
+    LoginPromptHandler? answerPrompts,
+    ServerBannerHandler? onBanner,
     Duration timeout = defaultTimeout,
     bool agentForwarding = false,
   }) async {
@@ -425,14 +462,25 @@ class SshService {
         hops: hops,
         links: links,
         verifyHostKey: verifyHostKey,
+        answerPrompts: answerPrompts,
+        onBanner: onBanner,
         timeout: timeout,
       );
-      return await _authenticate(
+      return await _login(
         host: host,
         credentials: credentials,
         identities: identities,
         socket: socket,
+        redial: () => hops.isEmpty
+            ? _openDirectSocket(host, timeout)
+            : _openForwardedSocket(
+                through: links.last,
+                to: host,
+                timeout: timeout,
+              ),
         verifyHostKey: verifyHostKey,
+        answerPrompts: answerPrompts,
+        onBanner: onBanner,
         timeout: timeout,
         jumpLinks: List.unmodifiable(links),
         agentForwarding: agentForwarding,
@@ -481,6 +529,8 @@ class SshService {
     required List<Host> hops,
     required List<SshJumpLink> links,
     required HostKeyVerifier verifyHostKey,
+    required LoginPromptHandler? answerPrompts,
+    required ServerBannerHandler? onBanner,
     required Duration timeout,
   }) async {
     if (hops.isEmpty) return _openDirectSocket(target, timeout);
@@ -489,18 +539,19 @@ class SshService {
       final hop = hops[i];
       // The first hop is the only one this device dials itself; every
       // later one is reached through the tunnel built so far.
-      final hopSocket = i == 0
-          ? await _openDirectSocket(hop, timeout, asJumpHost: true)
-          : await _openForwardedSocket(
-              through: links.last,
-              to: hop,
-              timeout: timeout,
-            );
+      final through = i == 0 ? null : links.last;
+      Future<SSHSocket> dial() => through == null
+          ? _openDirectSocket(hop, timeout, asJumpHost: true)
+          : _openForwardedSocket(through: through, to: hop, timeout: timeout);
       links.add(
         await _authenticateHop(
           hop: hop,
-          socket: hopSocket,
+          target: target,
+          socket: await dial(),
+          redial: dial,
           verifyHostKey: verifyHostKey,
+          answerPrompts: answerPrompts,
+          onBanner: onBanner,
           timeout: timeout,
         ),
       );
@@ -590,11 +641,16 @@ class SshService {
   }
 
   /// Authenticates one jump hop, using that hop's own saved credentials and
-  /// its own host key check.
+  /// its own host key check. Its login prompts name it, and [target] as the
+  /// host it is the way to.
   Future<SshJumpLink> _authenticateHop({
     required Host hop,
+    required Host target,
     required SSHSocket socket,
+    required Future<SSHSocket> Function() redial,
     required HostKeyVerifier verifyHostKey,
+    required LoginPromptHandler? answerPrompts,
+    required ServerBannerHandler? onBanner,
     required Duration timeout,
   }) async {
     final resolver = jumpHosts!;
@@ -609,15 +665,19 @@ class SshService {
     }
 
     try {
-      final connection = await _authenticate(
+      final connection = await _login(
         host: hop,
+        jumpHostFor: target,
         credentials: credentials,
         // The hop's socket is already open by now — unavoidable, since the
         // channel it rides on is what proves the previous hop can reach it —
         // so anything unusable here has to take the socket down with it.
         identities: await _prepareIdentitiesOrClose(hop, credentials, socket),
         socket: socket,
+        redial: redial,
         verifyHostKey: verifyHostKey,
+        answerPrompts: answerPrompts,
+        onBanner: onBanner,
         timeout: timeout,
         jumpLinks: const [],
       );
@@ -626,6 +686,10 @@ class SshService {
         client: connection.client,
         socket: connection.socket,
       );
+    } on JumpHostException {
+      // Only a redial (see [_login]) can raise one in here, and it already
+      // names the hop that could not be reached.
+      rethrow;
     } on HostKeyRejectedException catch (e) {
       throw JumpHostException(
         'The host key for the jump host "${hop.displayName}" was not '
@@ -651,6 +715,67 @@ class SshService {
     }
   }
 
+  /// [_authenticate], with one more go when the server turned down the saved
+  /// password and a person is there to type the right one.
+  ///
+  /// The second go needs a fresh socket from [redial]: OpenSSH ends a
+  /// keyboard-interactive exchange with a failure as soon as PAM says no,
+  /// and dartssh2 tries each method once per connection, so there is no
+  /// asking again on the same one. The host key was trusted moments ago, so
+  /// the second handshake matches it silently.
+  Future<SshConnection> _login({
+    required Host host,
+    required SshCredentials credentials,
+    required List<SSHKeyPair>? identities,
+    required SSHSocket socket,
+    required Future<SSHSocket> Function() redial,
+    required HostKeyVerifier verifyHostKey,
+    required LoginPromptHandler? answerPrompts,
+    required ServerBannerHandler? onBanner,
+    required Duration timeout,
+    required List<SshJumpLink> jumpLinks,
+    Host? jumpHostFor,
+    bool agentForwarding = false,
+  }) async {
+    // A server sends its banner on every connection, and the user should
+    // see it once per connect, not once per socket.
+    final bannersShown = <String>{};
+    void showBanner(String text) {
+      if (!bannersShown.add(text)) return;
+      onBanner?.call(
+        ServerBanner(host: host, jumpHostFor: jumpHostFor, text: text),
+      );
+    }
+
+    Future<SshConnection> attempt(
+      SSHSocket socket, {
+      required bool savedPasswordRejected,
+    }) {
+      return _authenticate(
+        host: host,
+        credentials: credentials,
+        identities: identities,
+        socket: socket,
+        verifyHostKey: verifyHostKey,
+        answerPrompts: answerPrompts,
+        showBanner: showBanner,
+        timeout: timeout,
+        jumpLinks: jumpLinks,
+        jumpHostFor: jumpHostFor,
+        savedPasswordRejected: savedPasswordRejected,
+        agentForwarding: agentForwarding,
+      );
+    }
+
+    try {
+      return await attempt(socket, savedPasswordRejected: false);
+    } on _SavedPasswordRejected {
+      // Cannot recur: with savedPasswordRejected set, the saved password is
+      // never sent, so it cannot be what the server refuses.
+      return attempt(await redial(), savedPasswordRejected: true);
+    }
+  }
+
   /// Runs the SSH handshake and authentication for [host] over an already
   /// open [socket], whichever kind it is.
   Future<SshConnection> _authenticate({
@@ -659,8 +784,12 @@ class SshService {
     required List<SSHKeyPair>? identities,
     required SSHSocket socket,
     required HostKeyVerifier verifyHostKey,
+    required LoginPromptHandler? answerPrompts,
+    required void Function(String text) showBanner,
     required Duration timeout,
     required List<SshJumpLink> jumpLinks,
+    required Host? jumpHostFor,
+    required bool savedPasswordRejected,
     bool agentForwarding = false,
   }) async {
     // Set by the verify handler so we can distinguish "user said no" from a
@@ -683,14 +812,67 @@ class SshService {
     // out.
     final agentSlot = agentForwarding ? MutableSSHAgentHandler() : null;
 
-    final client = SSHClient(
+    // Completes when the login is over either way, so a prompt still on
+    // screen when the server hangs up can close itself.
+    final loginOver = Completer<void>();
+
+    late final SSHClient client;
+    final deadline = _LoginDeadline(() => client.close());
+
+    final usesPassword = host.authMethod == SshAuthMethod.password;
+    final responder = KeyboardInteractiveResponder(
+      host: host,
+      jumpHostFor: jumpHostFor,
+      savedPassword: usesPassword ? credentials.password : null,
+      savedPasswordRejected: savedPasswordRejected,
+      withdrawn: loginOver.future,
+      ask: answerPrompts == null
+          ? null
+          : (prompt) async {
+              // The clock stops while a person reads and types, and restarts
+              // with room for whatever their answer sets off on the server.
+              deadline.hold();
+              try {
+                return await answerPrompts(prompt);
+              } finally {
+                deadline.arm(loginReplyBudget);
+              }
+            },
+    );
+
+    // Everything the server said before login, for the error message if the
+    // login then fails.
+    final banners = <String>[];
+
+    client = SSHClient(
       socket,
       username: host.username,
       identities: identities,
       agentHandler: agentSlot,
-      onPasswordRequest: host.authMethod == SshAuthMethod.password
+      // Not offered again once the server has refused it — see [_login].
+      onPasswordRequest: usesPassword && !savedPasswordRejected
           ? () => credentials.password
           : null,
+      // Set for every host, key hosts included: `AuthenticationMethods
+      // publickey,keyboard-interactive` accepts the key only as the first
+      // of two factors, and dartssh2 cannot tell that from a refusal, so the
+      // only way to reach the second is to always be ready for it.
+      onUserInfoRequest: (request) => responder.respond(
+        LoginChallenge.fromServer(
+          name: request.name,
+          instruction: request.instruction,
+          prompts: [
+            for (final prompt in request.prompts)
+              (text: prompt.promptText, echo: prompt.echo),
+          ],
+        ),
+      ),
+      onUserauthBanner: (raw) {
+        final text = cleanServerText(raw);
+        if (text.isEmpty) return;
+        banners.add(text);
+        showBanner(text);
+      },
       onVerifyHostKey: (type, fingerprintBytes) async {
         final fingerprint = HostKeyPolicy.decodeFingerprint(fingerprintBytes);
         final accepted = await policy.evaluate(
@@ -705,14 +887,19 @@ class SshService {
             keyType: KnownHostKey.canonicalKeyType(type),
             fingerprint: fingerprint,
           );
+          // dartssh2 calls the transport ready the moment this returns true
+          // and starts authenticating there, so the login clock starts here.
+          deadline.arm(timeout);
         } else {
           userRejectedKey = true;
         }
         return accepted;
       },
       handshakeTimeout: timeout + hostKeyDecisionBudget,
-      // No human is in the loop during auth, so keep this tight.
-      authTimeout: timeout,
+      // Kept by [deadline] instead: dartssh2's timer runs on while a prompt
+      // is on screen, and would cut off someone reading a code off their
+      // phone.
+      authTimeout: null,
       // dartssh2's own 10 s keep-alive timer is switched off; the session
       // owns the schedule instead, at SessionKeepalive.interval. One owner
       // rather than two, a gentler interval on a phone radio, and — the part
@@ -732,13 +919,21 @@ class SshService {
           'Connection cancelled: the server\'s host key was not trusted.',
         );
       }
-      final message = _describeSshError(e, host);
-      // Same message either way — the type is for the reconnect schedule,
-      // which must never retry this. See [SshAuthenticationException].
-      if (e is SSHAuthFailError) {
-        throw SshAuthenticationException(message, details: e.toString());
+      if (e is SSHAuthFailError &&
+          answerPrompts != null &&
+          responder.lastAnswerWasSavedPassword) {
+        throw const _SavedPasswordRejected();
       }
-      throw SshConnectionException(message, details: e.toString());
+      throw _loginFailure(
+        e,
+        host: host,
+        responder: responder,
+        timedOut: deadline.expired,
+        serverText: [...banners, ...responder.notices],
+      );
+    } finally {
+      deadline.finish();
+      if (!loginOver.isCompleted) loginOver.complete();
     }
 
     return SshConnection(
@@ -750,6 +945,72 @@ class SshService {
       hostKey: verifiedKey,
     );
   }
+
+  /// The exception a failed login surfaces as.
+  ///
+  /// Everything that comes down to the credentials — refused, cancelled, or
+  /// needing a person who is not there — is an [SshAuthenticationException],
+  /// which the reconnect schedule never retries. Anything the server said
+  /// along the way rides in `details`: a denial from a second factor ("Login
+  /// request denied") arrives as exactly that kind of text, and is usually
+  /// the only useful thing about the failure.
+  SshConnectionException _loginFailure(
+    Object error, {
+    required Host host,
+    required KeyboardInteractiveResponder responder,
+    required bool timedOut,
+    required List<String> serverText,
+  }) {
+    final details = serverText.isEmpty
+        ? error.toString()
+        : 'The server said:\n${serverText.join('\n\n')}\n\n$error';
+
+    if (timedOut) {
+      return SshConnectionException(
+        'The server stopped responding during login.',
+        details: details,
+      );
+    }
+    if (error is! SSHAuthFailError) {
+      return SshConnectionException(
+        _describeSshError(error, host),
+        details: details,
+      );
+    }
+    if (responder.cancelled) {
+      return SshAuthenticationException(
+        'Connection cancelled: the login prompt from "${host.displayName}" '
+        'was not answered.',
+        details: details,
+      );
+    }
+    final unanswered = responder.unansweredPrompt;
+    if (unanswered != null) {
+      final asked = unanswered.label.isEmpty
+          ? 'a question'
+          : '"${_shorten(unanswered.label, 60)}"';
+      return SshAuthenticationException(
+        '"${host.displayName}" asks $asked at login, which needs you to '
+        'answer it, and nobody was asked here. Connect to it from the host '
+        'list to log in.',
+        details: details,
+      );
+    }
+    if (responder.personAnswered) {
+      return SshAuthenticationException(
+        'Authentication failed for "${host.username}". The server did not '
+        'accept the answers to its login prompts.',
+        details: details,
+      );
+    }
+    return SshAuthenticationException(
+      _describeSshError(error, host),
+      details: details,
+    );
+  }
+
+  static String _shorten(String text, int max) =>
+      text.length <= max ? text : '${text.substring(0, max - 1)}…';
 
   /// Fails an agent-auth host with the most specific reason available.
   ///
@@ -916,6 +1177,49 @@ class SshService {
       return describeSocketError(error, host);
     }
     return 'Could not establish an SSH session with ${host.hostname}.';
+  }
+}
+
+/// Thrown by [SshService._authenticate] when the server refused the saved
+/// password inside keyboard-interactive and a person is on hand to type the
+/// right one. Never escapes [SshService._login], which redials and asks.
+class _SavedPasswordRejected implements Exception {
+  const _SavedPasswordRejected();
+}
+
+/// The authentication timeout, kept by [SshService] rather than handed to
+/// dartssh2, because it has to stop while a person is answering a login
+/// prompt and dartssh2's runs on regardless.
+class _LoginDeadline {
+  _LoginDeadline(this._onExpired);
+
+  final void Function() _onExpired;
+  Timer? _timer;
+  var _finished = false;
+
+  /// Whether the clock ran out, as opposed to the login ending some other
+  /// way.
+  bool get expired => _expired;
+  var _expired = false;
+
+  /// Starts the clock afresh with [budget] to go.
+  void arm(Duration budget) {
+    if (_finished) return;
+    _timer?.cancel();
+    _timer = Timer(budget, () {
+      _finished = true;
+      _expired = true;
+      _onExpired();
+    });
+  }
+
+  /// Stops the clock until the next [arm]: a person is answering.
+  void hold() => _timer?.cancel();
+
+  /// The login is over, and nothing restarts the clock.
+  void finish() {
+    _finished = true;
+    _timer?.cancel();
   }
 }
 

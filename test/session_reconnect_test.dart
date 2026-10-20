@@ -413,6 +413,27 @@ void main() {
 
       expect(harness.reconnector.message, 'Authentication failed for "dev".');
     });
+
+    test('a login prompt nobody can answer stops it the same way', () async {
+      // What `SshService.connect` throws when a server asks for a one-time
+      // code and no `answerPrompts` was given — which, on this path, is
+      // every time. See `ReconnectConnector`.
+      const asked = SshAuthenticationException(
+        '"Test box" asks "Verification code" at login, which needs you to '
+        'answer it, and nobody was asked here. Connect to it from the host '
+        'list to log in.',
+      );
+      final harness = buildReconnector([asked]);
+      addTearDown(harness.reconnector.dispose);
+
+      harness.reconnector.begin();
+      await harness.scheduler.fire();
+
+      expect(harness.connector.calls, 1);
+      expect(harness.scheduler.pendingCount, 0);
+      expect(harness.reconnector.hasGivenUp, isTrue);
+      expect(harness.reconnector.message, asked.message);
+    });
   });
 
   group('host keys', () {
