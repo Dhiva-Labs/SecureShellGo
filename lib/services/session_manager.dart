@@ -3,6 +3,7 @@ import 'dart:async';
 import '../models/host.dart';
 import 'device_storage.dart';
 import 'session_controller.dart';
+import 'server_side_job.dart';
 import 'session_foreground.dart';
 import 'sftp_service.dart';
 import 'ssh_service.dart';
@@ -90,6 +91,7 @@ class SessionManager {
     DestinationCredentialResolver? resolveDestinationCredentials,
     AgentForwardingConnector? connectWithAgentForwarding,
     ReconnectSupport? reconnect,
+    ServerJobStore? serverJobs,
   })  : _foreground = foreground ?? SessionForegroundController.instance,
         // ignore: prefer_initializing_formals
         _createController = createController,
@@ -98,7 +100,18 @@ class SessionManager {
         // ignore: prefer_initializing_formals
         _connectWithAgentForwarding = connectWithAgentForwarding,
         // ignore: prefer_initializing_formals
-        _reconnect = reconnect;
+        _reconnect = reconnect,
+        // ignore: prefer_initializing_formals
+        _serverJobs = serverJobs;
+
+  /// Direct copies running as jobs on a source server, remembered across
+  /// app restarts. See [_resumeServerJobs].
+  final ServerJobStore? _serverJobs;
+
+  /// Jobs this manager is already following: job id to the source session
+  /// and task doing it, so a second session opening does not start a
+  /// second follower for the same job.
+  final Map<String, ({String sessionId, String taskId})> _following = {};
 
   /// Builds the controller for a new session, honouring the injected factory
   /// when there is one.
@@ -128,6 +141,7 @@ class SessionManager {
       resolveDestinationCredentials: resolveDestinationCredentials,
       connectWithAgentForwarding: _connectWithAgentForwarding,
       reconnect: _reconnect,
+      serverJobs: _serverJobs,
     );
   }
 
@@ -243,7 +257,49 @@ class SessionManager {
     }
 
     _notify();
+    unawaited(_resumeServerJobs());
     return entry;
+  }
+
+  /// Picks up server-side copies started by an earlier run of the app — or
+  /// by a session that has since closed — once both ends are open again.
+  ///
+  /// The bytes never needed the app; what does is the finish. The app checks
+  /// the copy over its own trusted connection to the destination, swaps a
+  /// replaced folder in, and deletes a move's source only after that check.
+  /// So a job waits, original untouched, until its source and destination
+  /// are both open, and is then followed through the source's ordinary
+  /// transfer queue like any other copy.
+  Future<void> _resumeServerJobs() async {
+    final store = _serverJobs;
+    if (store == null) return;
+    final List<ServerJobRecord> records;
+    try {
+      records = await store.all();
+    } catch (_) {
+      return;
+    }
+    for (final record in records) {
+      final following = _following[record.jobId];
+      if (following != null && _isStillFollowing(following)) continue;
+      final source = liveForHost(record.sourceHostId).firstOrNull;
+      final destination = liveForHost(record.destinationHostId)
+          .where((s) => s.id != source?.id)
+          .firstOrNull;
+      if (source == null || destination == null) continue;
+      final task = source.controller.resumeServerJob(
+        record,
+        destinationSessionId: destination.id,
+      );
+      _following[record.jobId] = (sessionId: source.id, taskId: task.id);
+    }
+  }
+
+  bool _isStillFollowing(({String sessionId, String taskId}) following) {
+    final session = byId(following.sessionId);
+    if (session == null || session.isClosed) return false;
+    return session.controller.transfers.tasks
+        .any((t) => t.id == following.taskId && t.status.isActive);
   }
 
   /// Resolves another session's remote filesystem for a transfer running on

@@ -666,6 +666,20 @@ below that plan:
   tree. A verified mismatch or a cancel wipes the partial tree on B via
   `removeRemoteDirectoryTree` so nothing left behind looks complete.
 
+**Direct copies are server-side jobs.** Where the app has a
+`ServerJobStore` (always, outside unit tests), the direct path does not run
+`sftp` inside an exec channel it holds: `server_side_job.dart` launches it
+detached on the source (`setsid`, else `nohup`) in
+`~/.cache/secureshellgo/jobs/<id>/`, the app hangs up the agent-forwarded
+connection as soon as `sftp` has signed in, and follows the job's `exit`
+file over the source's ordinary session. Closing the app, a dropped network
+or a closed tab (`TransferHandle.isAbandoned`) leaves the job running; only
+the user's Cancel stops it. The record survives restarts, and
+`SessionManager` picks the job up again once its source and destination are
+both open, so the steps that need the app — verifying on the destination,
+a replace's swap, a move's delete — still happen, and never before the copy
+is verified.
+
 The download side keeps its own `download_plan.dart` — its `relativeDirectory`
 is sanitised for MediaStore, which replaces `:*?"<>|`, strips leading dots and
 caps segments at 80 characters. That is all correct for Android and all wrong

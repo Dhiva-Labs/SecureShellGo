@@ -16,6 +16,7 @@ import 'services/host_store.dart';
 import 'services/known_hosts_integrity.dart';
 import 'services/known_hosts_service.dart';
 import 'services/secret_vault.dart';
+import 'services/server_side_job.dart';
 import 'services/session_manager.dart';
 import 'services/settings_store.dart';
 import 'services/snippet_store.dart';
@@ -153,6 +154,10 @@ class _SecureShellGoAppState extends State<SecureShellGoApp> {
   // runs, and the connect goes through the same `SshService` — and therefore
   // the same known-hosts check — that a hand-made connection does.
   late final SessionManager _sessions = SessionManager(
+    // Direct server-to-server copies run as jobs on the source server and
+    // are remembered here, so closing the app does not stop them — see
+    // `server_side_job.dart`.
+    serverJobs: ServerJobStore(),
     resolveDestinationCredentials: _credentialStore.load,
     connectWithAgentForwarding: (host, credentials) => _sshService.connect(
       host: host,

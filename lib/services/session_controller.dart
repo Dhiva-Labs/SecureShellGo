@@ -18,6 +18,7 @@ import 'remote_copy.dart';
 import 'remote_path.dart';
 import 'session_keepalive.dart';
 import 'session_reconnect.dart';
+import 'server_side_job.dart';
 import 'sftp_service.dart';
 import 'ssh_service.dart';
 import 'transfer_queue.dart';
@@ -117,6 +118,7 @@ class SessionController {
     RemoteTargetResolver? resolveRemoteTarget,
     DestinationCredentialResolver? resolveDestinationCredentials,
     AgentForwardingConnector? connectWithAgentForwarding,
+    ServerJobStore? serverJobs,
     PeriodicScheduler keepaliveScheduler = Timer.periodic,
     ReconnectSupport? reconnect,
     ReconnectDelayScheduler reconnectScheduler = Timer.new,
@@ -130,6 +132,8 @@ class SessionController {
         _resolveDestinationCredentials = resolveDestinationCredentials,
         // ignore: prefer_initializing_formals
         _connectWithAgentForwarding = connectWithAgentForwarding,
+        // ignore: prefer_initializing_formals
+        _serverJobs = serverJobs,
         // ignore: prefer_initializing_formals
         _keepaliveScheduler = keepaliveScheduler {
     transfers = TransferQueue(executor: _runTransfer);
@@ -180,6 +184,12 @@ class SessionController {
   /// [_resolveDestinationCredentials], and with the same consequence — the
   /// transfer falls back to the relay path rather than failing.
   final AgentForwardingConnector? _connectWithAgentForwarding;
+
+  /// Where direct copies running as jobs on the source server are
+  /// remembered, so they can be followed — and finished — after the app has
+  /// been closed. Null (the unit tests) runs direct copies attached to an
+  /// exec channel instead, as before. See `server_side_job.dart`.
+  final ServerJobStore? _serverJobs;
 
   /// Whether this session can copy files straight to another server.
   bool get canTransferToOtherSessions => _resolveRemoteTarget != null;
@@ -940,6 +950,72 @@ class SessionController {
     );
   }
 
+  /// Picks up a server-side copy an earlier run of the app started and
+  /// follows it to the end — verification, a replace's swap, a move's
+  /// delete — with [destinationSessionId] as the destination. See
+  /// [ServerJobRecord].
+  TransferTask resumeServerJob(
+    ServerJobRecord record, {
+    required String destinationSessionId,
+  }) {
+    return transfers.enqueueRemoteCopy(
+      remotePath: record.sourcePath,
+      name: record.name,
+      destinationSessionId: destinationSessionId,
+      destinationLabel: record.destinationLabel,
+      destinationPath: record.destinationPath,
+      overwrite: record.overwrite,
+      moveSource: record.moveSource,
+      totalBytes: record.totalBytes,
+      route: TransferRoute.direct,
+      isDirectoryTransfer: record.isDirectory,
+      serverJobId: record.jobId,
+      serverJobStamp: record.stamp,
+      resumingServerJob: true,
+    );
+  }
+
+  /// How a direct copy runs: as a job on the source server when there is a
+  /// store to remember it in, attached to an exec channel when not.
+  DetachedRun? _serverJobFor(
+    TransferTask task,
+    SessionController target,
+    TransferHandle handle,
+  ) {
+    final jobs = _serverJobs;
+    if (jobs == null) return null;
+    final jobId = task.serverJobId ?? ServerSideJob.newId();
+    final stamp = task.serverJobStamp ?? DateTime.now().millisecondsSinceEpoch;
+    final record = ServerJobRecord(
+      jobId: jobId,
+      stamp: stamp,
+      sourceHostId: host.id,
+      sourceLabel: host.displayName,
+      destinationHostId: target.host.id,
+      destinationLabel: task.destinationLabel ?? target.host.displayName,
+      sourcePath: task.remotePath,
+      destinationPath: task.destinationPath!,
+      name: task.name,
+      isDirectory: task.isDirectoryTransfer,
+      moveSource: task.moveSource,
+      overwrite: task.overwrite,
+      startedAt: DateTime.now(),
+      totalBytes: task.totalBytes,
+    );
+    return DetachedRun(
+      jobId: jobId,
+      stamp: stamp,
+      resuming: task.resumingServerJob,
+      onLaunched: () => jobs.save(record),
+      isAbandoned: () => handle.isAbandoned,
+    );
+  }
+
+  void _forgetServerJob(DetachedRun? run) {
+    if (run == null) return;
+    unawaited(_serverJobs?.remove(run.jobId));
+  }
+
   /// The finished downloads that have not been announced to the user yet,
   /// given the queue's latest [tasks]. Empty when there is nothing new to
   /// say, or when the queue is still busy and the batch is not complete.
@@ -1199,7 +1275,10 @@ class SessionController {
         fallbackReason =
             'no destination-credential resolver on this session';
       } else {
-        final destCreds = await resolveCreds(target.host.id);
+        // A job picked up from an earlier run is past sign-in already and
+        // needs no key; no saved credential must not send it down the relay.
+        final destCreds = await resolveCreds(target.host.id) ??
+            (task.resumingServerJob ? const SshCredentials() : null);
         handle.throwIfCancelled();
         if (destCreds == null) {
           fallbackReason = 'no saved credentials for the destination host';
@@ -1210,6 +1289,7 @@ class SessionController {
             SshConnection(:final hostKey) => hostKey,
             _ => null,
           };
+          final detached = _serverJobFor(task, target, handle);
           try {
             handle.setRouteUsed(TransferRoute.direct);
             outcome = task.isDirectoryTransfer
@@ -1225,6 +1305,7 @@ class SessionController {
                     deleteSourceAfterVerify: task.moveSource,
                     onProgress: handle.report,
                     isCancelled: () => handle.isCancelled,
+                    detached: detached,
                   )
                 : await copyRemoteFileDirect(
                     source: this,
@@ -1238,8 +1319,17 @@ class SessionController {
                     deleteSourceAfterVerify: task.moveSource,
                     onProgress: handle.report,
                     isCancelled: () => handle.isCancelled,
+                    detached: detached,
                   );
+            _forgetServerJob(detached);
+          } on ServerJobLeftRunning {
+            // The session is going away and the job is not: it stays
+            // remembered, and the next time both servers are open it is
+            // picked up and finished. To the queue this is an ordinary
+            // cancel, which it already is.
+            throw const TransferCancelled();
           } on SSHDirectCopyUnavailable catch (e) {
+            _forgetServerJob(detached);
             if (e.reason == DirectCopyUnavailableReason.hostKeyMismatch) {
               // Refuse: a relay from this device cannot honestly answer a
               // MITM-shaped signal seen on A→B, so surface it instead of
@@ -1247,6 +1337,10 @@ class SessionController {
               rethrow;
             }
             fallbackReason = e.message ?? e.reason.name;
+          } catch (_) {
+            // Failed or cancelled by the user: either way the job is over.
+            _forgetServerJob(detached);
+            rethrow;
           }
         }
       }

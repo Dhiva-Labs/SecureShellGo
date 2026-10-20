@@ -247,10 +247,16 @@ String _stampedName(String finalName, String marker, int stamp) {
 /// it in one request, and because a rename never follows a symlink: a target
 /// named `www -> /var/www` is moved aside, and removed, as the link.
 class StagedDirectoryReplace {
-  factory StagedDirectoryReplace(RemoteFileSystem fs, String target) {
+  /// [stamp] names the staging and retired folders; pass the one a
+  /// server-side job was started with to find what it wrote. Defaults to now.
+  factory StagedDirectoryReplace(
+    RemoteFileSystem fs,
+    String target, {
+    int? stamp,
+  }) {
     final directory = RemotePath.parent(target);
     final name = RemotePath.basename(target);
-    final stamp = DateTime.now().millisecondsSinceEpoch;
+    stamp ??= DateTime.now().millisecondsSinceEpoch;
     return StagedDirectoryReplace._(
       fs,
       target,

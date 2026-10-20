@@ -69,6 +69,9 @@ class TransferTask {
     this.moveSource = false,
     this.route = TransferRoute.relay,
     this.isDirectoryTransfer = false,
+    this.serverJobId,
+    this.serverJobStamp,
+    this.resumingServerJob = false,
   });
 
   final String id;
@@ -151,6 +154,15 @@ class TransferTask {
   /// moved `Documents/` should not become 300 rows on the transfer panel.
   final bool isDirectoryTransfer;
 
+  /// For a server-to-server copy run as a job on the source server (see
+  /// `server_side_job.dart`): the job's id and naming stamp, set up front
+  /// only when picking up a job an earlier run of the app started — in which
+  /// case [resumingServerJob] is true and the executor follows the job
+  /// rather than starting one.
+  final String? serverJobId;
+  final int? serverJobStamp;
+  final bool resumingServerJob;
+
   /// Bytes, when known up front. Downloads learn it from `stat`, uploads from
   /// the picked file.
   int? totalBytes;
@@ -208,12 +220,22 @@ class TransferHandle {
   final void Function() _onChanged;
 
   var _cancelled = false;
+  var _abandoned = false;
 
   /// True once the user asked for this transfer to stop. Executors must check
   /// it between chunks and return (or throw [TransferCancelled]) promptly.
   bool get isCancelled => _cancelled;
 
-  void _cancel() => _cancelled = true;
+  /// True when the cancel came from the session ending — its tab closed, its
+  /// connection dropped — rather than from the user. Most executors treat
+  /// the two alike; a copy running as a job on the source server does not,
+  /// and leaves the job to finish.
+  bool get isAbandoned => _abandoned;
+
+  void _cancel({bool abandoned = false}) {
+    _cancelled = true;
+    _abandoned = abandoned;
+  }
 
   /// Declares the total size once it is known (e.g. after a remote `stat`).
   void setTotal(int? total) {
@@ -406,6 +428,9 @@ class TransferQueue {
     int? totalBytes,
     TransferRoute route = TransferRoute.relay,
     bool isDirectoryTransfer = false,
+    String? serverJobId,
+    int? serverJobStamp,
+    bool resumingServerJob = false,
   }) {
     return _enqueue(
       TransferTask(
@@ -421,6 +446,9 @@ class TransferQueue {
         moveSource: moveSource,
         route: route,
         isDirectoryTransfer: isDirectoryTransfer,
+        serverJobId: serverJobId,
+        serverJobStamp: serverJobStamp,
+        resumingServerJob: resumingServerJob,
       ),
     );
   }
@@ -434,7 +462,9 @@ class TransferQueue {
   }
 
   /// Cancels a queued or running transfer. A finished one is left alone.
-  void cancel(String id) {
+  void cancel(String id) => _cancelTask(id, abandoned: false);
+
+  void _cancelTask(String id, {required bool abandoned}) {
     final task = _find(id);
     if (task == null || task.status.isFinished) return;
 
@@ -448,16 +478,17 @@ class TransferQueue {
     // Running: flag the handle and let the executor unwind. Marking the task
     // cancelled here as well means the UI reacts immediately even if the
     // executor is blocked on a slow chunk.
-    _handles[id]?._cancel();
+    _handles[id]?._cancel(abandoned: abandoned);
     task.status = TransferStatus.cancelled;
     task.finishedAt = DateTime.now();
     _publish();
   }
 
-  /// Cancels everything still queued or running.
+  /// Cancels everything still queued or running, because the session is
+  /// ending — see [TransferHandle.isAbandoned].
   void cancelAll() {
     for (final task in _tasks.where((t) => t.status.isActive).toList()) {
-      cancel(task.id);
+      _cancelTask(task.id, abandoned: true);
     }
   }
 

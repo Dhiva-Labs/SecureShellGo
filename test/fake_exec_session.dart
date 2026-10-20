@@ -175,8 +175,23 @@ class FakeExecTransport implements SessionTransport {
     this.delay,
     bool agentForwarding = false,
     FakeExecSession Function(String command)? respond,
+    Host? host,
   })  : agentSlot = agentForwarding ? MutableSSHAgentHandler() : null,
-        _respond = respond; // ignore: prefer_initializing_formals
+        _respond = respond, // ignore: prefer_initializing_formals
+        _host = host; // ignore: prefer_initializing_formals
+
+  /// Which server this stands in for; [_defaultHost] unless a test needs two
+  /// distinct ones.
+  final Host? _host;
+
+  static const Host _defaultHost = Host(
+    id: 'h1',
+    label: 'test',
+    hostname: 'example.test',
+    port: 22,
+    username: 'root',
+    authMethod: SshAuthMethod.password,
+  );
 
   String stdout;
   String stderrText;
@@ -237,14 +252,7 @@ class FakeExecTransport implements SessionTransport {
   }
 
   @override
-  Host get host => const Host(
-        id: 'h1',
-        label: 'test',
-        hostname: 'example.test',
-        port: 22,
-        username: 'root',
-        authMethod: SshAuthMethod.password,
-      );
+  Host get host => _host ?? _defaultHost;
 
   @override
   Future<void> get done => Completer<void>().future;

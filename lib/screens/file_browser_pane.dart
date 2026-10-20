@@ -2157,13 +2157,15 @@ Future<TransferRoute?> _pickRoute(
               ),
               subtitle: Text(
                 offer.eligible
-                    ? 'Bytes go from source server to destination server '
-                        'on the network between them, bypassing this '
-                        'device. While it runs, the source server can use '
-                        'your key for ${target.host.displayName} — only '
-                        'choose this if you trust the source server. Falls '
-                        'back to the relay path if the servers cannot '
-                        'reach each other.'
+                    ? 'Runs on the source server, straight to the '
+                        'destination: it keeps going if you close the app '
+                        'or lose signal, and is checked and finished when '
+                        'both servers are open again. While it signs in, the '
+                        'source server can use your key for '
+                        '${target.host.displayName} — only choose this if '
+                        'you trust the source server. Falls back to copying '
+                        'through this device if the servers cannot reach '
+                        'each other.'
                     : offer.reason ??
                         'Direct transfer is not available for this '
                             'destination.',
