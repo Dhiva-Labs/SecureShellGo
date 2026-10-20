@@ -68,6 +68,9 @@ class HostListPresentation {
     /// default, which renders identically to before this parameter existed.
     bool selectionMode = false,
     Set<String> selectedHostIds = const <String>{},
+    /// The text scale in force, so a grid cell grows with the text in it
+    /// instead of clipping it. 1.0 is the system default.
+    double textScale = 1.0,
   }) {
     final windowClass = WindowSizeClass.forWidth(width);
 
@@ -87,30 +90,22 @@ class HostListPresentation {
       ];
     }
 
-    final expandedLayout = windowClass == WindowSizeClass.expanded;
     return switch (style) {
+      // From medium width up, not only expanded: a tablet held upright is
+      // 600-840dp, and a one-column list there is a strip of rows each
+      // wider than a phone with nothing beside them.
       UiStyle.aurora => [
           for (final section in sections)
-            expandedLayout
-                ? _gridSection(
-                    section: section,
-                    collapsed: isCollapsed(section),
-                    searching: searching,
-                    connectingHostId: connectingHostId,
-                    actions: actions,
-                    selectionMode: selectionMode,
-                    selectedHostIds: selectedHostIds,
-                  )
-                : _listSection(
-                    section: section,
-                    collapsed: isCollapsed(section),
-                    dense: false,
-                    searching: searching,
-                    connectingHostId: connectingHostId,
-                    actions: actions,
-                    selectionMode: selectionMode,
-                    selectedHostIds: selectedHostIds,
-                  ),
+            _gridSection(
+              section: section,
+              collapsed: isCollapsed(section),
+              searching: searching,
+              connectingHostId: connectingHostId,
+              actions: actions,
+              selectionMode: selectionMode,
+              selectedHostIds: selectedHostIds,
+              textScale: textScale,
+            ),
         ],
       UiStyle.aws => [
           for (final section in sections)
@@ -183,16 +178,16 @@ Widget _sectionSliver({
 enum _HeaderVariant { aurora, aws, gcp, azure }
 
 // ---------------------------------------------------------------------------
-// Aurora + mobile: today's grouped header, either a one-column list or (
-// aurora, expanded width only) a 2-column card grid. Ported from
+// Aurora + mobile: today's grouped header, either a one-column list (any
+// style on a phone) or, for aurora from medium width up, a card grid. Ported from
 // `host_list_screen.dart`'s pre-wave-2 `_buildSection`/`_GroupHeader`/
 // `_buildListSliver`/`_buildGridSliver`/`_HostCard` byte-for-byte in
 // substance — only split into reusable pieces and renamed to avoid clashing
 // with the screen's own remaining private types.
 // ---------------------------------------------------------------------------
 
-/// The plain one-column list: aurora's own look at compact/medium width, and
-/// — regardless of [UiStyle] — the only thing a phone or a narrow split-
+/// The plain one-column list: azure's desktop idiom, and — regardless of
+/// [UiStyle] — the only thing a phone or a narrow split-
 /// screen window ever renders. A phone has no room for a table's columns or
 /// a card grid, and the point of wave 2's variants is structural, not
 /// colour, which mobile already gets from [AppTheme.themeFor] without any of
@@ -249,7 +244,13 @@ Widget _listSection({
   );
 }
 
-/// Aurora's expanded-width grid: unchanged from before wave 2.
+/// Aurora's grid, from medium width up.
+///
+/// Cards are capped at [_auroraCardMaxWidth] wide, so the column count
+/// follows the window — two on a tablet, three at 1366, four or five at
+/// 1920 — rather than two very wide cards at any size. Each cell is as tall
+/// as [_AuroraHostCard]'s content at the current text scale: a fixed 104
+/// left half of every card empty at normal text and would clip it at large.
 Widget _gridSection({
   required HostSection section,
   required bool collapsed,
@@ -258,6 +259,7 @@ Widget _gridSection({
   required HostListActions actions,
   bool selectionMode = false,
   Set<String> selectedHostIds = const <String>{},
+  double textScale = 1.0,
 }) {
   return _sectionSliver(
     header: _StyledGroupHeader(
@@ -279,11 +281,11 @@ Widget _gridSection({
     body: () => SliverPadding(
       padding: const EdgeInsets.all(12),
       sliver: SliverGrid(
-        gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-          crossAxisCount: 2,
+        gridDelegate: SliverGridDelegateWithMaxCrossAxisExtent(
+          maxCrossAxisExtent: _auroraCardMaxWidth,
           mainAxisSpacing: 12,
           crossAxisSpacing: 12,
-          mainAxisExtent: 104,
+          mainAxisExtent: _auroraCardHeight(textScale),
         ),
         delegate: SliverChildBuilderDelegate(
           (context, index) {
@@ -306,6 +308,23 @@ Widget _gridSection({
     ),
   );
 }
+
+const double _auroraCardMaxWidth = 440;
+
+/// [target] with break opportunities after `@`, `.` and `:`.
+///
+/// `user@host.example.com` is one word to the line breaker, so a narrow row
+/// broke it wherever it ran out of room — `admin@nas.loca` then a lone `l`.
+/// Zero-width spaces after the separators let it wrap as `admin@` and
+/// `nas.local` instead. Display only: nothing copies or parses this string.
+String _breakableTarget(String target) =>
+    target.replaceAllMapped(RegExp(r'[@.:]'), (m) => '${m[0]}\u200B');
+
+/// [_AuroraHostCard]'s height: 12 + 12 of padding and a little slack, plus
+/// its three lines of text (name, target, last connected, with their gaps),
+/// which scale with the text and the padding does not.
+double _auroraCardHeight(double textScale) =>
+    28 + 58 * textScale.clamp(1.0, 3.0);
 
 // ---------------------------------------------------------------------------
 // AWS-inspired: a dense, single-line-per-host table with aligned columns —
@@ -895,7 +914,11 @@ class _ListHostRow extends StatelessWidget {
           mainAxisSize: MainAxisSize.min,
           children: [
             const SizedBox(height: 2),
-            Text(host.target),
+            Text(
+              _breakableTarget(host.target),
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+            ),
             if (host.lastConnectedAt != null)
               Text(
                 'Last connected '

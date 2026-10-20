@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -139,6 +140,19 @@ class _HostListScreenState extends State<HostListScreen> {
   /// was dropped. Re-prompting for every host with no explanation would look
   /// like a bug; this says what actually happened.
   bool _trustStoreReset = false;
+
+  /// Keeps the quick-connect bar's state (a half-typed target) when a
+  /// rotation moves the header between pinned and scrolling — see [build].
+  final GlobalKey _headerKey = GlobalKey();
+
+  /// Below this window height the quick-connect and search bars scroll away
+  /// with the list instead of staying pinned. A phone on its side is ~390dp
+  /// tall, and pinned they took half of it, leaving room for one row.
+  static const double _pinnedHeaderMinHeight = 560;
+
+  /// Space left under the last host so the add-host button never sits on
+  /// top of it: the FAB's 56 plus its 16 margin, and a little more.
+  static const double _fabClearance = 88;
 
   /// Whether the list is showing checkboxes instead of connect-on-tap, for a
   /// fleet-wide "Push file…". Entered from the toolbar toggle or a host's own
@@ -1086,6 +1100,21 @@ class _HostListScreenState extends State<HostListScreen> {
   @override
   Widget build(BuildContext context) {
     final desktop = _isDesktop(context);
+    final pinHeader =
+        MediaQuery.sizeOf(context).height >= _pinnedHeaderMinHeight;
+    final header = KeyedSubtree(
+      key: _headerKey,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (!_selectionMode)
+            QuickConnectBar(
+              onTarget: (target) => unawaited(_quickConnect(target)),
+            ),
+          _buildSearchField(),
+        ],
+      ),
+    );
 
     // Ctrl+K / Cmd+K (FEATURE 4), wired locally rather than in `main.dart` —
     // `Focus(autofocus: true)` gives the shortcut something focused to
@@ -1123,7 +1152,13 @@ class _HostListScreenState extends State<HostListScreen> {
             appBar: _selectionMode
                 ? _buildSelectionAppBar()
                 : AppBar(
-                    title: const Text('SecureShell Go'),
+                    // Shrinks rather than truncating to "SecureShell …" on a
+                    // narrow phone with large text.
+                    title: const FittedBox(
+                      fit: BoxFit.scaleDown,
+                      alignment: AlignmentDirectional.centerStart,
+                      child: Text('SecureShell Go'),
+                    ),
                     actions: [
                       IconButton(
                         tooltip: 'Select hosts',
@@ -1177,12 +1212,12 @@ class _HostListScreenState extends State<HostListScreen> {
                       live: widget.sessions.liveCount,
                       onResume: () => unawaited(_showSessions()),
                     ),
-                  if (!_selectionMode)
-                    QuickConnectBar(
-                      onTarget: (target) => unawaited(_quickConnect(target)),
+                  if (pinHeader) header,
+                  Expanded(
+                    child: _buildHostList(
+                      scrollingHeader: pinHeader ? null : header,
                     ),
-                  _buildSearchField(),
-                  Expanded(child: _buildHostList()),
+                  ),
                 ],
               ),
             ),
@@ -1246,14 +1281,23 @@ class _HostListScreenState extends State<HostListScreen> {
     );
   }
 
-  Widget _buildHostList() {
+  /// [scrollingHeader], when given, goes at the top of the scroll view — the
+  /// short-window case in [build] — rather than pinned above it.
+  Widget _buildHostList({Widget? scrollingHeader}) {
     final width = MediaQuery.sizeOf(context).width;
+    // As a factor, for the grid's cell height; TextScaler can be nonlinear,
+    // so measure it at body size.
+    final textScale = MediaQuery.textScalerOf(context).scale(14) / 14;
 
     return FutureBuilder<List<Host>>(
       future: _future,
       builder: (context, snapshot) {
         if (!snapshot.hasData) {
-          return const Center(child: CircularProgressIndicator());
+          const spinner = Center(child: CircularProgressIndicator());
+          if (scrollingHeader == null) return spinner;
+          return Column(
+            children: [scrollingHeader, const Expanded(child: spinner)],
+          );
         }
         final hosts = snapshot.data!;
         final sections = HostGrouping.buildSections(hosts, query: _query);
@@ -1272,6 +1316,8 @@ class _HostListScreenState extends State<HostListScreen> {
           child: CustomScrollView(
             physics: const AlwaysScrollableScrollPhysics(),
             slivers: [
+              if (scrollingHeader != null)
+                SliverToBoxAdapter(child: scrollingHeader),
               if (hosts.isEmpty)
                 SliverFillRemaining(
                   hasScrollBody: false,
@@ -1309,6 +1355,11 @@ class _HostListScreenState extends State<HostListScreen> {
                     onToggleSelect: _toggleHostSelected,
                     onSelectAllInGroup: _toggleSelectAllInGroup,
                   ),
+                  textScale: textScale,
+                ),
+              if (sections.isNotEmpty && !_selectionMode)
+                const SliverToBoxAdapter(
+                  child: SizedBox(height: _fabClearance),
                 ),
             ],
           ),
@@ -1489,9 +1540,18 @@ class _EmptyHostList extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    // The theme makes filled buttons full-width, which on a desktop window
+    // was a 1000px bar; side padding keeps the whole block at most 420 wide.
+    // Padding rather than a ConstrainedBox, because this sits in a
+    // SliverFillRemaining that sizes it by intrinsic height, and a
+    // ConstrainedBox measures its text at the unconstrained width — one line
+    // where the real layout wraps to two, and a 20px overflow in landscape.
+    final side = math.max(32.0, (MediaQuery.sizeOf(context).width - 420) / 2);
     return Center(
       child: Padding(
-        padding: const EdgeInsets.all(32),
+        // The extra bottom room keeps the button clear of the add-host FAB
+        // when large text pushes everything down on a small phone.
+        padding: EdgeInsets.fromLTRB(side, 32, side, 96),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [

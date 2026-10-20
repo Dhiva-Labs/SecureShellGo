@@ -98,6 +98,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
   /// Which of a [UiStyle]'s two variants the style previews below — and the
   /// running app, once [ThemeBrightness.system] is chosen — should render
   /// right now.
+  /// Whether the UI-style list has width for its previews beside the names:
+  /// always, except on a phone narrower than 360dp with text scaled past
+  /// 120%.
+  bool _roomForStylePreviews(BuildContext context) =>
+      MediaQuery.sizeOf(context).width >= 360 ||
+      MediaQuery.textScalerOf(context).scale(14) / 14 <= 1.2;
+
   Brightness _effectiveBrightness(BuildContext context) {
     return switch (_settings.themeBrightness) {
       ThemeBrightness.light => Brightness.light,
@@ -295,10 +302,15 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       RadioListTile<UiStyle>(
                         value: style,
                         title: Text(style.label),
-                        secondary: _UiStylePreview(
-                          style: style,
-                          brightness: _effectiveBrightness(context),
-                        ),
+                        // On a narrow phone with large text the preview
+                        // squeezed each name into three lines; the name is
+                        // the part that has to stay readable.
+                        secondary: _roomForStylePreviews(context)
+                            ? _UiStylePreview(
+                                style: style,
+                                brightness: _effectiveBrightness(context),
+                              )
+                            : null,
                         dense: true,
                       ),
                   ],

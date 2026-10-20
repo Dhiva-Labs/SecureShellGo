@@ -34,6 +34,7 @@ class _Harness extends StatefulWidget {
     this.selectionMode = false,
     this.initialSelected = const <String>{},
     this.onSelectionChanged,
+    this.textScale = 1.0,
   });
 
   final List<Host> hosts;
@@ -57,6 +58,8 @@ class _Harness extends StatefulWidget {
   /// Reports the selected-id set after every toggle, so a test can assert on
   /// it without reaching into the harness's own State.
   final ValueChanged<Set<String>>? onSelectionChanged;
+
+  final double textScale;
 
   @override
   State<_Harness> createState() => _HarnessState();
@@ -92,6 +95,7 @@ class _HarnessState extends State<_Harness> {
             connectingHostId: widget.connectingHostId,
             selectionMode: widget.selectionMode,
             selectedHostIds: _selected,
+            textScale: widget.textScale,
             actions: HostListActions(
               onToggleSection: (s) => setState(() {
                 if (!_collapsed.remove(s.settingsKey)) {
@@ -178,7 +182,7 @@ void main() {
   });
 
   group('desktop structural idiom by style', () {
-    testWidgets('aurora: a 2-column fixed grid at expanded width', (
+    testWidgets('aurora: a card grid sized by width at expanded width', (
       tester,
     ) async {
       await tester.pumpWidget(
@@ -188,22 +192,52 @@ void main() {
 
       expect(find.byType(SliverGrid), findsOneWidget);
       expect(find.byType(Card), findsWidgets);
+      // Capped card width rather than a fixed two columns, so a wide window
+      // gets more columns instead of two very wide cards.
       final grid = tester.widget<SliverGrid>(find.byType(SliverGrid));
       expect(
         grid.gridDelegate,
-        isA<SliverGridDelegateWithFixedCrossAxisCount>(),
+        isA<SliverGridDelegateWithMaxCrossAxisExtent>(),
       );
     });
 
-    testWidgets('aurora: the plain list at medium width — "responsive" means '
-        'this, not just the grid', (tester) async {
+    testWidgets('aurora: the grid from medium width, the list on a phone', (
+      tester,
+    ) async {
       await tester.pumpWidget(
         _Harness(hosts: twoHosts, style: UiStyle.aurora, width: mediumWidth),
       );
       await tester.pumpAndSettle();
+      expect(find.byType(SliverGrid), findsOneWidget);
 
+      await tester.pumpWidget(
+        _Harness(hosts: twoHosts, style: UiStyle.aurora, width: mobileWidth),
+      );
+      await tester.pumpAndSettle();
       expect(find.byType(SliverGrid), findsNothing);
       expect(find.byType(ListTile), findsWidgets);
+    });
+
+    testWidgets('aurora: grid cells grow with the text scale', (tester) async {
+      double cellHeight(WidgetTester tester) {
+        final grid = tester.widget<SliverGrid>(find.byType(SliverGrid));
+        return (grid.gridDelegate as SliverGridDelegateWithMaxCrossAxisExtent)
+            .mainAxisExtent!;
+      }
+
+      await tester.pumpWidget(
+        _Harness(hosts: twoHosts, style: UiStyle.aurora, width: desktopWidth),
+      );
+      final normal = cellHeight(tester);
+      await tester.pumpWidget(
+        _Harness(
+          hosts: twoHosts,
+          style: UiStyle.aurora,
+          width: desktopWidth,
+          textScale: 2.0,
+        ),
+      );
+      expect(cellHeight(tester), greaterThan(normal * 1.5));
     });
 
     testWidgets('aws: a dense table with hairline separators, no grid, no '
@@ -479,7 +513,7 @@ void main() {
           _Harness(
             hosts: twoHosts,
             style: UiStyle.aurora,
-            width: mediumWidth, // the plain list, not aurora's grid
+            width: mobileWidth, // the plain list, not aurora's grid
             selectionMode: true,
             onConnect: (h) => connected = h,
             onSelectionChanged: (s) => selection = s,
@@ -562,7 +596,7 @@ void main() {
             key: key,
             hosts: [host('solo', label: 'Solo box', group: 'Work')],
             style: UiStyle.aurora,
-            width: mediumWidth,
+            width: mobileWidth,
             selectionMode: true,
             initialSelected: const {'solo'},
             onConnect: (h) => connected = h,
@@ -578,7 +612,7 @@ void main() {
           _Harness(
             hosts: [host('solo', label: 'Solo box', group: 'Work')],
             style: UiStyle.aurora,
-            width: mediumWidth,
+            width: mobileWidth,
             onConnect: (h) => connected = h,
           ),
         );
