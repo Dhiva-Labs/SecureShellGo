@@ -248,6 +248,13 @@ class _RemoteEditorScreenState extends State<RemoteEditorScreen> {
       // Rebuilds the title's dirty dot and the find bar's counts as the user
       // types; the field repaints itself from the same controller.
       tab.controller.addListener(_onActiveTextChanged);
+      // Where the field will take the keyboard as it appears, start the caret
+      // at the top, as every desktop editor does. Left unset, a field gaining
+      // focus puts it at the end of the file — and on Android (a keyboard
+      // cover, a DeX desk) shows a touch handle there too.
+      if (_hasKeyboard) {
+        tab.controller.selection = const TextSelection.collapsed(offset: 0);
+      }
       setState(() {
         _tabs.add(tab);
         if (activate) _active = _tabs.length - 1;

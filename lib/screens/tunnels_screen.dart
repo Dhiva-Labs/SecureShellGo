@@ -280,11 +280,17 @@ class _GroupHeader extends StatelessWidget {
           color: color,
         ),
         const SizedBox(width: 8),
-        Text(
-          group.hostLabel.toUpperCase(),
-          style: theme.textTheme.labelSmall?.copyWith(
-            letterSpacing: 1.1,
-            color: color,
+        // A host label is the user's to make as long as they like; on a
+        // narrow phone with large text it ran off the edge.
+        Flexible(
+          child: Text(
+            group.hostLabel.toUpperCase(),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: theme.textTheme.labelSmall?.copyWith(
+              letterSpacing: 1.1,
+              color: color,
+            ),
           ),
         ),
       ],
