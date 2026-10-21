@@ -1,0 +1,12 @@
+### Added
+- Mosh: a host whose terminal connection is set to Mosh (Advanced in the host editor) now gets its terminal over Mosh. The app starts `mosh-server` over the SSH connection it already has, then talks to it over UDP — no `mosh` program needed on the device. Sign-in, files, tunnels and server commands stay on SSH.
+- A Mosh terminal carries on through what drops SSH: switching between Wi-Fi and mobile data, a new address, a phone or laptop asleep for hours. It picks up where the server is when the network comes back, with nothing to reconnect.
+- When the server has been out of touch for a few seconds, a bar across the top of a Mosh terminal says how long ("mosh: Last contact 12 seconds ago."), and goes once it catches up.
+- On a slow connection, what you type appears straight away, underlined until the server confirms it (Mosh's local echo). It only switches on when the link is slow, and never shows at a password prompt.
+- If SSH drops while a Mosh terminal is open, the terminal keeps working; files and tunnels reconnect in the background, and the strip above the terminal says so.
+- Where Mosh cannot be used — `mosh-server` not installed, no UTF-8 locale on the host, or UDP blocked by a firewall — the terminal opens over SSH instead, with one line saying why. A `mosh-server` started for a connection that never got through is stopped again.
+- `mosh-server` is found in Homebrew and other common install locations as well as on the PATH.
+- Hosts set to keep their shell in tmux or screen run it under Mosh too, so a Mosh terminal can also be re-attached after the app closes.
+- A Mosh terminal keeps a scrollback of what scrolled past while you watched. Mosh sends screens rather than every line of output, so a burst that flashed by between two screens is not in it.
+- Closing a Mosh tab ends the session on the server, as Mosh's own Ctrl-^ . does.
+- Agent and X11 forwarding reach SSH terminals only; Mosh cannot carry them, so a Mosh terminal has neither.
