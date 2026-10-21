@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
+import '../l10n/l10n.dart';
 import '../models/snippet.dart';
 import '../services/session_controller.dart';
 import '../services/snippet_placeholders.dart';
@@ -110,6 +111,7 @@ class _SnippetPickerSheetState extends State<_SnippetPickerSheet> {
     // Two-thirds of the screen height: enough to browse a long list without
     // covering the terminal it is about to send into entirely.
     final height = MediaQuery.sizeOf(context).height * 0.66;
+    final l10n = context.l10n;
 
     return SafeArea(
       child: SizedBox(
@@ -121,9 +123,9 @@ class _SnippetPickerSheetState extends State<_SnippetPickerSheet> {
               child: TextField(
                 controller: _searchController,
                 autofocus: true,
-                decoration: const InputDecoration(
-                  hintText: 'Search snippets',
-                  prefixIcon: Icon(Icons.search),
+                decoration: InputDecoration(
+                  hintText: l10n.snippetsSearch,
+                  prefixIcon: const Icon(Icons.search),
                 ),
               ),
             ),
@@ -139,8 +141,9 @@ class _SnippetPickerSheetState extends State<_SnippetPickerSheet> {
                     return Center(
                       child: Text(
                         snapshot.data!.isEmpty
-                            ? 'No snippets saved yet'
-                            : 'No snippets match "$_query"',
+                            ? l10n.snippetsNoneSaved
+                            : l10n.snippetsNoMatch(_query),
+                        textAlign: TextAlign.center,
                         style: Theme.of(context).textTheme.bodyMedium,
                       ),
                     );

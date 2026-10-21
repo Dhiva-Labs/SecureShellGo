@@ -13,6 +13,16 @@
 // Opt-in — skipped in a plain `flutter test`, since 45 renders cost about
 // half a minute. It reports rather than fails, unless LAYOUT_STRICT=1, so it
 // can be run to look at the app before every problem it finds is fixed.
+//
+// English by default. LAYOUT_LOCALE=<language> renders every case in one of
+// the app's translations instead — German and Russian run longest, so they
+// are the ones to sweep before a release:
+//
+//   LAYOUT_LOCALE=de LAYOUT_SWEEP=1 LAYOUT_STRICT=1 flutter test test/layout_sweep_test.dart
+//
+// Results and screenshots then carry the language: `settings @ phone [de]`,
+// `settings__phone__de.png`. Only Roboto is loaded, so a zh, ja or ko sweep
+// measures its text in a fallback font: worth a look, not a verdict.
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
@@ -25,11 +35,13 @@ import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:secure_shell_go/l10n/l10n.dart';
 import 'package:secure_shell_go/models/app_settings.dart';
 import 'package:secure_shell_go/models/host.dart';
 import 'package:secure_shell_go/models/known_host.dart';
 import 'package:secure_shell_go/models/remote_entry.dart';
 import 'package:secure_shell_go/models/tunnel_profile.dart';
+import 'package:secure_shell_go/screens/backup_screen.dart';
 import 'package:secure_shell_go/screens/file_browser_pane.dart';
 import 'package:secure_shell_go/screens/fleet_run_screen.dart';
 import 'package:secure_shell_go/screens/host_edit_screen.dart';
@@ -40,8 +52,15 @@ import 'package:secure_shell_go/screens/remote_search_screen.dart';
 import 'package:secure_shell_go/screens/server_stats_screen.dart';
 import 'package:secure_shell_go/screens/session_screen.dart';
 import 'package:secure_shell_go/screens/settings_screen.dart';
+import 'package:secure_shell_go/screens/snippet_edit_screen.dart';
+import 'package:secure_shell_go/screens/snippets_screen.dart';
 import 'package:secure_shell_go/screens/terminal_pane.dart';
+import 'package:secure_shell_go/screens/tunnel_edit_screen.dart';
 import 'package:secure_shell_go/screens/tunnels_screen.dart';
+import 'package:secure_shell_go/services/app_lock.dart';
+import 'package:secure_shell_go/services/app_lock_controller.dart';
+import 'package:secure_shell_go/services/backup_payload.dart';
+import 'package:secure_shell_go/services/backup_service.dart';
 import 'package:secure_shell_go/services/bookmark_store.dart';
 import 'package:secure_shell_go/services/credential_store.dart';
 import 'package:secure_shell_go/services/device_storage.dart';
@@ -57,12 +76,14 @@ import 'package:secure_shell_go/services/session_foreground.dart';
 import 'package:secure_shell_go/services/session_manager.dart';
 import 'package:secure_shell_go/services/session_recorder.dart';
 import 'package:secure_shell_go/services/settings_store.dart';
+import 'package:secure_shell_go/services/snippet_store.dart';
 import 'package:secure_shell_go/services/sftp_service.dart';
 import 'package:secure_shell_go/services/ssh_service.dart';
 import 'package:secure_shell_go/services/terminal_workspace.dart';
 import 'package:secure_shell_go/services/tunnel_runtime.dart';
 import 'package:secure_shell_go/services/tunnel_store.dart';
 import 'package:secure_shell_go/theme.dart';
+import 'package:secure_shell_go/widgets/app_lock_gate.dart';
 import 'package:secure_shell_go/widgets/terminal_find_bar.dart';
 import 'package:secure_shell_go/widgets/terminal_fonts.dart';
 
@@ -213,6 +234,18 @@ class _DemoFs implements RemoteFileSystem {
   @override
   dynamic noSuchMethod(Invocation invocation) =>
       throw UnimplementedError('${invocation.memberName} is not faked');
+}
+
+/// A device that can lock the app, and a finger that keeps missing — so the
+/// lock screen shows how many tries are left.
+class _MissingFinger implements AppLockAuthenticator {
+  @override
+  Future<AppLockSupport> support() async => AppLockSupport.available;
+  @override
+  Future<AppLockOutcome> authenticate({required String reason}) async =>
+      AppLockOutcome.failed;
+  @override
+  Future<void> setSecureDisplay(bool enabled) async {}
 }
 
 class _NoStorage implements DeviceStorage {
@@ -413,6 +446,18 @@ const List<_Device> _devices = [
 ];
 
 final String? _shotDir = Platform.environment['SCREENSHOT_DIR'];
+
+/// LAYOUT_LOCALE, if set: the translation every case renders in.
+final Locale? _locale = () {
+  final tag = Platform.environment['LAYOUT_LOCALE'];
+  if (tag == null || tag.isEmpty) return null;
+  final locale = Locale(tag);
+  if (!AppLocalizations.supportedLocales.contains(locale)) {
+    throw ArgumentError('LAYOUT_LOCALE=$tag: the app has no such translation '
+        '(${AppLocalizations.supportedLocales.join(', ')})');
+  }
+  return locale;
+}();
 final bool _strict = Platform.environment['LAYOUT_STRICT'] == '1';
 // Opt-in: set LAYOUT_SWEEP=1, SCREENSHOT_DIR or LAYOUT_STRICT=1 to run.
 final bool _skip = !(_shotDir != null ||
@@ -558,7 +603,9 @@ void main() {
     List<ui.DisplayFeature> features = const [],
     Future<void> Function(WidgetTester tester)? after,
   }) async {
-    final key = '$screen @ ${device.name}';
+    final language = _locale?.languageCode;
+    final key = '$screen @ ${device.name}'
+        '${language == null ? '' : ' [$language]'}';
     final errors = _results.putIfAbsent(key, () => []);
     final previous = FlutterError.onError;
     FlutterError.onError = (details) {
@@ -578,6 +625,12 @@ void main() {
         child: MaterialApp(
           navigatorKey: navigator,
           debugShowCheckedModeBanner: false,
+          locale: _locale,
+          localizationsDelegates:
+              _locale == null ? null : AppLocalizations.localizationsDelegates,
+          supportedLocales: _locale == null
+              ? const [Locale('en', 'US')]
+              : AppLocalizations.supportedLocales,
           themeMode: ThemeMode.dark,
           theme: AppTheme.themeFor(UiStyle.aurora, Brightness.light),
           darkTheme: AppTheme.themeFor(UiStyle.aurora, Brightness.dark),
@@ -608,7 +661,8 @@ void main() {
         await tester.runAsync(() async {
           final ui.Image image = await ro.toImage(pixelRatio: device.dpr);
           final bytes = await image.toByteData(format: ui.ImageByteFormat.png);
-          await File('$out/${screen}__${device.name}.png')
+          await File('$out/${screen}__${device.name}'
+                  '${language == null ? '' : '__$language'}.png')
               .writeAsBytes(bytes!.buffer.asUint8List());
         });
       }
@@ -702,6 +756,17 @@ void main() {
     });
     return runtime;
   }
+
+  /// Everything a backup could hold, on the sweep's own stores.
+  BackupService backupService() => BackupService(
+        hostStore: hosts,
+        snippetStore: SnippetStore(file: File('${dir.path}/snippets.json')),
+        tunnelStore: tunnelStore,
+        bookmarkStore: BookmarkStore(file: File('${dir.path}/bm.json')),
+        settingsStore: settings,
+        credentialStore: credentials,
+        knownHosts: knownHosts,
+      );
 
   for (final device in _devices) {
     group(device.name, () {
@@ -939,6 +1004,203 @@ void main() {
           device,
           push: true,
           () => TunnelsScreen(tunnels: runtime, hostStore: hosts),
+        );
+      });
+
+      // Tall, like the host form: every section built, with every optional
+      // row there is — app lock and its timeouts, tunnels, backup and the
+      // diagnostics log's buttons.
+      testWidgets('settings, whole length', skip: _skip, (tester) async {
+        final runtime = await seedTunnels(tester);
+        final lock = AppLockController(authenticator: _MissingFinger());
+        addTearDown(lock.dispose);
+        await tester.runAsync(() => settings.update((s) => s.copyWith(
+              appLockEnabled: true,
+              diagnosticsLog: true,
+            )));
+        await render(
+          tester,
+          'settings_whole',
+          (
+            name: device.name,
+            size: Size(device.size.width, 6000),
+            dpr: device.dpr,
+            text: device.text,
+          ),
+          push: true,
+          () => SettingsScreen(
+            settingsStore: settings,
+            knownHosts: knownHosts,
+            hostStore: hosts,
+            tunnels: runtime,
+            appLock: lock,
+            backupService: backupService(),
+          ),
+        );
+      });
+
+      testWidgets('backup', skip: _skip, (tester) async {
+        await render(
+          tester,
+          'backup',
+          device,
+          push: true,
+          () => BackupScreen(
+            service: backupService(),
+            deviceStorage: _NoStorage(),
+          ),
+        );
+      });
+
+      // The export dialog at its fullest: a passphrase too short, so the
+      // hint and the strength show, and passwords included, so the warning
+      // does too.
+      testWidgets('backup export dialog', skip: _skip, (tester) async {
+        await render(
+          tester,
+          'backup_export',
+          device,
+          push: true,
+          () => BackupScreen(
+            service: backupService(),
+            deviceStorage: _NoStorage(),
+          ),
+          after: (tester) async {
+            await tester.tap(find.byIcon(Icons.upload_file_outlined));
+            await tester.pumpAndSettle();
+            await tester.enterText(find.byType(TextField).first, 'abc');
+            final include = find.byType(Checkbox).first;
+            await tester.ensureVisible(include);
+            await tester.pumpAndSettle();
+            await tester.tap(include);
+            await tester.pumpAndSettle();
+          },
+        );
+      });
+
+      testWidgets('backup import preview', skip: _skip, (tester) async {
+        await render(
+          tester,
+          'backup_import',
+          device,
+          push: true,
+          () => const Scaffold(),
+          after: (tester) async {
+            unawaited(showDialog<void>(
+              context: tester.element(find.byType(Scaffold).last),
+              builder: (_) => ImportPreviewDialog(
+                contents: const BackupContents(
+                  hosts: 6,
+                  groups: 3,
+                  snippets: 4,
+                  tunnels: 3,
+                  bookmarks: 5,
+                  credentials: 0,
+                  includesCredentials: false,
+                  hostsNeedingCredentials: 6,
+                  knownHosts: 3,
+                  includesKnownHosts: true,
+                ),
+                hostKeys: KnownHostsImport(
+                  toAdd: [
+                    KnownHostKey(
+                      hostname: 'db-primary.internal.example.com',
+                      port: 2222,
+                      keyType: 'ssh-ed25519',
+                      fingerprint:
+                          'SHA256:47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU',
+                      addedAt: DateTime(2026, 9, 1),
+                    ),
+                  ],
+                  serversKept: 1,
+                ),
+              ),
+            ));
+            await tester.pumpAndSettle();
+          },
+        );
+      });
+
+      testWidgets('snippets, empty', skip: _skip, (tester) async {
+        await render(
+          tester,
+          'snippets_empty',
+          device,
+          push: true,
+          () => SnippetsScreen(
+            snippetStore: SnippetStore(file: File('${dir.path}/sn.json')),
+          ),
+        );
+      });
+
+      testWidgets('snippet form', skip: _skip, (tester) async {
+        await render(
+          tester,
+          'snippet_edit',
+          device,
+          push: true,
+          () => SnippetEditScreen(
+            snippetStore: SnippetStore(file: File('${dir.path}/sn.json')),
+          ),
+        );
+      });
+
+      // Each type changes the form's shape. The remote one listens on a
+      // privileged port and the SOCKS one on every interface, so both
+      // warnings show.
+      for (final (name, profile) in [
+        ('tunnel_edit', null),
+        (
+          'tunnel_edit_remote',
+          const TunnelProfile(
+            id: 'r',
+            name: 'Webhook back to my laptop',
+            hostId: 'web',
+            type: TunnelType.remote,
+            localPort: 8080,
+            remotePort: 80,
+          ),
+        ),
+        (
+          'tunnel_edit_socks',
+          const TunnelProfile(
+            id: 's',
+            name: '',
+            hostId: 'db',
+            type: TunnelType.dynamic,
+            localHost: TunnelProfile.anyInterface,
+            localPort: 1080,
+          ),
+        ),
+      ]) {
+        testWidgets(name.replaceAll('_', ' '), skip: _skip, (tester) async {
+          await render(
+            tester,
+            name,
+            device,
+            push: true,
+            () => TunnelEditScreen(
+              tunnelStore: tunnelStore,
+              hosts: [_web, _db],
+              profile: profile,
+            ),
+          );
+        });
+      }
+
+      // A wrong finger once, so the tries left show under the button.
+      testWidgets('app lock', skip: _skip, (tester) async {
+        final lock = AppLockController(authenticator: _MissingFinger());
+        addTearDown(lock.dispose);
+        await tester.runAsync(() => lock.start(const AppSettings(
+              appLockEnabled: true,
+              appLockTimeout: AppLockTimeout.immediately,
+            )));
+        await render(
+          tester,
+          'app_lock',
+          device,
+          () => AppLockGate(controller: lock, child: const Scaffold()),
         );
       });
 

@@ -113,47 +113,58 @@ abstract class AppLockAuthenticator {
 class AppLockPlatform {
   const AppLockPlatform._();
 
-  /// The sentence Settings shows under a disabled toggle. Phrased as a fact
-  /// about the platform, not an apology, and never implies the user has done
-  /// something wrong.
-  static String reasonFor({
+  /// Why Settings shows the toggle disabled. Settings words it, in the app's
+  /// language (`screens/settings/setting_labels.dart`).
+  static AppLockUnavailable reasonFor({
     required bool isLinux,
     required bool isWindows,
     required bool isMacOS,
   }) {
-    if (isLinux) {
-      return 'Linux has no per-app unlock that SecureShell Go can use '
-          'without administrator rights, which would lock out anyone who '
-          'does not have them.';
-    }
-    if (isWindows) {
-      return 'Windows Hello is turned off or not supported on this PC.';
-    }
-    if (isMacOS) {
-      return 'Touch ID and password unlock are not available in this build '
-          'yet.';
-    }
-    return 'App lock is not available on this platform.';
+    if (isLinux) return AppLockUnavailable.linux;
+    if (isWindows) return AppLockUnavailable.windowsHelloOff;
+    if (isMacOS) return AppLockUnavailable.macOS;
+    return AppLockUnavailable.otherPlatform;
   }
 
   /// [reasonFor] for the platform this build is running on.
-  static String get currentReason => reasonFor(
+  static AppLockUnavailable get currentReason => reasonFor(
         isLinux: Platform.isLinux,
         isWindows: Platform.isWindows,
         isMacOS: Platform.isMacOS,
       );
 
-  /// What Settings says when the platform can lock the app but the user has
-  /// nothing set up to unlock it with ([AppLockSupport.noDeviceCredential]).
-  static String setupHintFor({required bool isWindows}) => isWindows
-      ? 'Set up Windows Hello (a PIN, fingerprint or face) in Windows '
-          'Settings first, then this can be turned on.'
-      : 'Set a screen lock (PIN, pattern, password or biometric) on this '
-          'device first, then this can be turned on.';
+  /// What Settings asks the user to set up when the platform can lock the
+  /// app but there is nothing to unlock it with
+  /// ([AppLockSupport.noDeviceCredential]).
+  static AppLockSetup setupHintFor({required bool isWindows}) =>
+      isWindows ? AppLockSetup.windowsHello : AppLockSetup.screenLock;
 
   /// [setupHintFor] for the platform this build is running on.
-  static String get currentSetupHint =>
+  static AppLockSetup get currentSetupHint =>
       setupHintFor(isWindows: Platform.isWindows);
+}
+
+/// Why this platform cannot lock the app — see [AppLockPlatform].
+enum AppLockUnavailable {
+  /// No per-app unlock without administrator rights.
+  linux,
+
+  /// Windows Hello is off, or the PC has none.
+  windowsHelloOff,
+
+  /// `LAContext` is not wired up in this build.
+  macOS,
+
+  otherPlatform,
+}
+
+/// What the user has to set up before the app lock can be turned on.
+enum AppLockSetup {
+  /// A Windows Hello PIN, fingerprint or face.
+  windowsHello,
+
+  /// An Android screen lock: PIN, pattern, password or biometric.
+  screenLock,
 }
 
 /// Talks to `AppLockBridge.kt`.

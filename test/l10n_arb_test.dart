@@ -21,9 +21,40 @@ void main() {
         m[1]!,
   ]..sort();
 
-  Set<String> placeholders(String text) => {
-        for (final m in RegExp(r'\{(\w+)').allMatches(text)) m[1]!,
-      };
+  /// The argument names in an ICU message: each `{name}`, and the selector
+  /// of each `{count, plural, …}` with those inside its branches — but not
+  /// the branches' own words, which every language is free to choose.
+  Set<String> placeholders(String text) {
+    final names = <String>{};
+    var i = 0;
+    late final void Function() argument;
+    void message() {
+      while (i < text.length && text[i] != '}') {
+        if (text[i++] == '{') argument();
+      }
+    }
+
+    argument = () {
+      final start = i;
+      while (i < text.length && !',}'.contains(text[i])) {
+        i++;
+      }
+      names.add(text.substring(start, i).trim());
+      if (i < text.length && text[i] == ',') {
+        // The type (plural, select), then `key{message}` branches.
+        while (i < text.length && text[i] != '}') {
+          if (text[i++] == '{') {
+            message();
+            i++;
+          }
+        }
+      }
+      i++;
+    };
+
+    message();
+    return names;
+  }
 
   test('there are eight translations', () {
     expect(others, ['de', 'es', 'fr', 'ja', 'ko', 'pt', 'ru', 'zh']);

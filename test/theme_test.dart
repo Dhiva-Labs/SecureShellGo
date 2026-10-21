@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:secure_shell_go/l10n/l10n.dart';
 import 'package:secure_shell_go/models/app_settings.dart';
+import 'package:secure_shell_go/screens/settings/setting_labels.dart';
 import 'package:secure_shell_go/theme.dart';
 
 void main() {
@@ -71,10 +73,14 @@ void main() {
       }
     });
 
-    test('every style has a non-empty, distinct label', () {
-      final labels = UiStyle.values.map((s) => s.label).toSet();
-      expect(labels, hasLength(UiStyle.values.length));
-      expect(labels.every((label) => label.trim().isNotEmpty), isTrue);
+    test('every style has a non-empty, distinct label in every language',
+        () {
+      for (final locale in AppLocalizations.supportedLocales) {
+        final l10n = lookupAppLocalizations(locale);
+        final labels = UiStyle.values.map((s) => s.labelIn(l10n)).toSet();
+        expect(labels, hasLength(UiStyle.values.length), reason: '$locale');
+        expect(labels.every((label) => label.trim().isNotEmpty), isTrue);
+      }
     });
 
     test('aurora is the default', () {
@@ -149,10 +155,19 @@ void main() {
       }
     });
 
-    test('every scheme has a non-empty, distinct label', () {
-      final labels = TerminalColorScheme.values.map((s) => s.label).toSet();
-      expect(labels, hasLength(TerminalColorScheme.values.length));
-      expect(labels.every((label) => label.trim().isNotEmpty), isTrue);
+    test('every scheme has a non-empty, distinct label in every language',
+        () {
+      for (final locale in AppLocalizations.supportedLocales) {
+        final l10n = lookupAppLocalizations(locale);
+        final labels =
+            TerminalColorScheme.values.map((s) => s.labelIn(l10n)).toSet();
+        expect(
+          labels,
+          hasLength(TerminalColorScheme.values.length),
+          reason: '$locale',
+        );
+        expect(labels.every((label) => label.trim().isNotEmpty), isTrue);
+      }
     });
   });
 }

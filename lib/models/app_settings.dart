@@ -15,19 +15,6 @@ enum TerminalColorScheme {
   blackOnWhite,
   retroGreen;
 
-  String get label => switch (this) {
-        TerminalColorScheme.classic => 'SecureShell Go (default)',
-        TerminalColorScheme.dracula => 'Dracula',
-        TerminalColorScheme.solarizedDark => 'Solarized Dark',
-        TerminalColorScheme.solarizedLight => 'Solarized Light',
-        TerminalColorScheme.nord => 'Nord',
-        TerminalColorScheme.gruvboxDark => 'Gruvbox Dark',
-        TerminalColorScheme.monokai => 'Monokai',
-        TerminalColorScheme.oneDark => 'One Dark',
-        TerminalColorScheme.blackOnWhite => 'Black on white',
-        TerminalColorScheme.retroGreen => 'Retro green',
-      };
-
   static TerminalColorScheme fromName(String? name) =>
       TerminalColorScheme.values.firstWhere(
         (scheme) => scheme.name == name,
@@ -49,13 +36,6 @@ enum UiStyle {
   gcp,
   azure;
 
-  String get label => switch (this) {
-        UiStyle.aurora => 'Aurora (default)',
-        UiStyle.aws => 'AWS-inspired',
-        UiStyle.gcp => 'Google Cloud-inspired',
-        UiStyle.azure => 'Azure-inspired',
-      };
-
   /// Unrecognised or absent reads as [aurora] — today's only look, and the
   /// safe fallback for a settings file written before this field existed.
   static UiStyle fromName(String? name) => UiStyle.values.firstWhere(
@@ -70,12 +50,6 @@ enum ThemeBrightness {
   system,
   light,
   dark;
-
-  String get label => switch (this) {
-        ThemeBrightness.system => 'Match system',
-        ThemeBrightness.light => 'Light',
-        ThemeBrightness.dark => 'Dark',
-      };
 
   /// Unrecognised or absent reads as [dark] — the app has only ever rendered
   /// dark, so a settings file written before this field existed must not
@@ -107,13 +81,6 @@ enum AppLockTimeout {
         AppLockTimeout.fifteenMinutes => const Duration(minutes: 15),
       };
 
-  String get label => switch (this) {
-        AppLockTimeout.immediately => 'Immediately',
-        AppLockTimeout.oneMinute => 'After 1 minute',
-        AppLockTimeout.fiveMinutes => 'After 5 minutes',
-        AppLockTimeout.fifteenMinutes => 'After 15 minutes',
-      };
-
   /// Unrecognised or absent reads as [oneMinute] — the default — rather than
   /// as the most permissive option, same fail-safe direction as
   /// [SshAuthMethod.fromName] in `models/host.dart`.
@@ -129,12 +96,6 @@ enum TerminalCursorStyle {
   block,
   underline,
   bar;
-
-  String get label => switch (this) {
-        TerminalCursorStyle.block => 'Block',
-        TerminalCursorStyle.underline => 'Underline',
-        TerminalCursorStyle.bar => 'Bar',
-      };
 
   /// Unrecognised or absent reads as [block], the only shape there was.
   static TerminalCursorStyle fromName(String? name) =>
@@ -155,12 +116,6 @@ enum TerminalBell {
 
   off;
 
-  String get label => switch (this) {
-        TerminalBell.vibrate => 'Vibrate',
-        TerminalBell.visual => 'Flash the screen',
-        TerminalBell.off => 'Off',
-      };
-
   /// Unrecognised or absent reads as [vibrate], the behaviour before this
   /// was a choice.
   static TerminalBell fromName(String? name) => TerminalBell.values.firstWhere(
@@ -179,11 +134,6 @@ enum TerminalFont {
   /// some phones' monospace fonts lack.
   jetBrainsMono;
 
-  String get label => switch (this) {
-        TerminalFont.system => 'System font',
-        TerminalFont.jetBrainsMono => 'JetBrains Mono',
-      };
-
   /// Unrecognised or absent reads as [system], the font used before.
   static TerminalFont fromName(String? name) => TerminalFont.values.firstWhere(
         (f) => f.name == name,
@@ -197,12 +147,6 @@ enum KeyBarMode {
   auto,
   always,
   never;
-
-  String get label => switch (this) {
-        KeyBarMode.auto => 'Automatic',
-        KeyBarMode.always => 'Always',
-        KeyBarMode.never => 'Never',
-      };
 
   /// Unrecognised or absent reads as [auto].
   static KeyBarMode fromName(String? name) => KeyBarMode.values.firstWhere(
