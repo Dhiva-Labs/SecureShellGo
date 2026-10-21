@@ -27,6 +27,42 @@ class UnusedStorage implements DeviceStorage {
       throw UnimplementedError('storage is not exercised in these tests');
 }
 
+/// A session whose terminal is on Mosh while its SSH connection is gone and
+/// no longer being reconnected — the state a real one reaches in
+/// session_mosh_test, here without the UDP underneath.
+class SshLostUnderMoshController extends SessionController {
+  SshLostUnderMoshController(SessionTransport connection, {this.gaveUp = false})
+      : super(
+          connection: connection,
+          storage: UnusedStorage(),
+          keepaliveScheduler: (_, tick) => CrankTimer(tick),
+        );
+
+  final bool gaveUp;
+  var reconnects = 0;
+
+  @override
+  bool get isSshLostUnderMosh => true;
+
+  @override
+  bool get isReconnecting => false;
+
+  @override
+  bool get canReconnect => true;
+
+  @override
+  bool get reconnectGaveUp => gaveUp;
+
+  @override
+  String? get reconnectMessage => gaveUp
+      ? 'Could not reconnect after 7 attempts. The terminal carries on over '
+          'Mosh.'
+      : null;
+
+  @override
+  void reconnectNow() => reconnects++;
+}
+
 void main() {
   late Dialer dialer;
   late ManualScheduler reconnects;
@@ -186,5 +222,48 @@ void main() {
 
     expect(tester.takeException(), isNull);
     expect(find.text('Reconnect'), findsOneWidget);
+  });
+
+  group('SSH lost under a Mosh terminal', () {
+    ({ManagedSession entry, SshLostUnderMoshController controller}) openLost({
+      bool gaveUp = false,
+    }) {
+      late SshLostUnderMoshController controller;
+      final manager = SessionManager(
+        foreground: SessionForegroundController(channel: SilentForeground()),
+        createController: (connection, resolve, resolveCreds) =>
+            controller = SshLostUnderMoshController(connection, gaveUp: gaveUp),
+      );
+      addTearDown(manager.dispose);
+      final entry = manager.open(LinkTransport());
+      return (entry: entry, controller: controller);
+    }
+
+    testWidgets('says the terminal carries on, and offers Reconnect',
+        (tester) async {
+      final session = openLost();
+      await show(tester, session.entry);
+      await settle(tester);
+
+      expect(find.textContaining('carries on over Mosh'), findsOneWidget);
+      expect(find.text('Close'), findsNothing,
+          reason: 'the terminal is fine; nothing here is a dead end');
+      await tester.tap(find.text('Reconnect'));
+      expect(session.controller.reconnects, 1);
+    });
+
+    testWidgets('says why reconnecting gave up', (tester) async {
+      tester.view.physicalSize = const Size(320, 640);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      final session = openLost(gaveUp: true);
+      await show(tester, session.entry);
+      await settle(tester);
+
+      expect(find.textContaining('Could not reconnect after 7 attempts'),
+          findsOneWidget);
+      expect(find.text('Reconnect'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    });
   });
 }

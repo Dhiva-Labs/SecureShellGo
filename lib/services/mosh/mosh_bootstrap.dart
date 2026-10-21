@@ -202,13 +202,28 @@ Future<MoshServerInfo> startMoshServer(
   throw last!;
 }
 
-/// Stops a `mosh-server` nobody connected to. Best effort.
+/// Stops a `mosh-server` by its pid: one nobody connected to, or one whose
+/// client's goodbye went unanswered. Best effort.
 Future<void> stopMoshServer(SessionTransport ssh, int pid) async {
   try {
-    await RemoteExec.run(ssh, 'kill $pid', timeout: const Duration(seconds: 5));
+    await RemoteExec.run(
+      ssh,
+      stopMoshServerCommand(pid),
+      timeout: const Duration(seconds: 5),
+    );
   } catch (_) {
-    // It times out on its own after a minute without a client anyway.
+    // One nobody connected to times out on its own after a minute.
   }
+}
+
+/// The command [stopMoshServer] runs: `kill`, unless `ps` says [pid] now
+/// belongs to something other than `mosh-server` — the server having
+/// exited after all, and its pid gone to another of the user's processes.
+/// A host whose `ps` cannot say gets the plain `kill`.
+String stopMoshServerCommand(int pid) {
+  final script = 'c=\$(ps -o comm= -p $pid 2>/dev/null) || c=mosh-server; '
+      'case "\$c" in *mosh-server*) kill $pid;; esac';
+  return 'sh -c ${posixSingleQuote(script)}';
 }
 
 /// Where to send datagrams: the address the SSH connection went to, as far

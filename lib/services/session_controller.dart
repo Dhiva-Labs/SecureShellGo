@@ -297,6 +297,14 @@ class SessionController {
   /// Mosh terminal; see [_markClosed].
   int? _sshLostUnderMosh;
 
+  /// Counts [_resetShell]s, so a shell that finishes opening after the one
+  /// it was opened for has been reset can tell, and stand down.
+  var _shellEpoch = 0;
+
+  /// Whether the SSH connection is up — what stopping a `mosh-server` by
+  /// its pid, or starting another, needs.
+  bool get _sshUp => !_closed && _sshLostUnderMosh != _transportGeneration;
+
   Future<RemoteFileSystem>? _sftpOpening;
   RemoteFileSystem? _sftp;
 
@@ -471,6 +479,13 @@ class SessionController {
   /// True once the shell channel has been opened.
   bool get hasShell => _shell != null || _mosh != null;
 
+  /// True while the terminal carries on over Mosh but the SSH connection
+  /// under files, tunnels and commands is gone: being reconnected, or given
+  /// up on until the user or the network says to try again. The session is
+  /// not [isClosed] meanwhile — its terminal is fine.
+  bool get isSshLostUnderMosh =>
+      !_closed && _sshLostUnderMosh == _transportGeneration;
+
   /// Whether keep-alives are still being sent. Diagnostics and tests.
   bool get isKeepaliveRunning => _keepalive?.isRunning ?? false;
 
@@ -515,7 +530,9 @@ class SessionController {
   /// disconnected — a schedule that gave up, a Stop, an orderly close, an
   /// `exit` — because a person asked for it.
   void reconnectNow() {
-    if (!_closed) return;
+    // SSH lost under a Mosh terminal is a dead transport too, with a
+    // terminal still on top of it.
+    if (!_closed && !isSshLostUnderMosh) return;
     _reconnector?.retryNow();
     _notify();
   }
@@ -533,7 +550,9 @@ class SessionController {
     if (_disposed) return;
     _mosh?.networkChanged();
     final reconnector = _reconnector;
-    if (_closed) {
+    // With SSH lost under Mosh there is no link to check — its keep-alive
+    // stopped with it — only a reconnect to resume, as for a closed session.
+    if (_closed || isSshLostUnderMosh) {
       if (reconnector != null &&
           (reconnector.isWaiting || reconnector.mayRetryOnNetwork)) {
         reconnector.retryNow();
@@ -727,6 +746,11 @@ class SessionController {
     // exactly like a network fault.
     if (retryable && !_disposed && !_shellExitedCleanly) {
       _reconnector?.begin();
+    } else if (_shellExitedCleanly && isReconnecting) {
+      // Begun when SSH dropped under a Mosh terminal the user has since
+      // left with `exit`. Left running, it would reconnect, find no
+      // terminal, and start a new mosh-server and shell for nobody.
+      _reconnector?.cancel();
     }
     _notify();
   }
@@ -779,9 +803,10 @@ class SessionController {
     }
     _shell = null;
     _shellOpening = null;
+    _shellEpoch++;
     final mosh = _mosh;
     _mosh = null;
-    if (mosh != null) unawaited(mosh.close());
+    if (mosh != null) unawaited(mosh.close(ssh: _sshUp ? connection : null));
     _shellReady = null;
     _shellStarted = false;
     _shellError = null;
@@ -841,7 +866,11 @@ class SessionController {
     );
 
     try {
-      if (host.transport == HostTransport.mosh && await _openMoshShell()) {
+      final epoch = _shellEpoch;
+      if (host.transport == HostTransport.mosh &&
+          await _openMoshShell(epoch)) {
+        // Reset while it started: whatever opened since is in charge.
+        if (epoch != _shellEpoch) return;
         _shellStarted = true;
         _notify();
         return;
@@ -969,12 +998,14 @@ class SessionController {
   /// shell refusing `exec`, no `sh` on its path. (tmux or screen failing is
   /// caught on the server already, by [persistentShellCommand].) The login
   /// shell takes its place, with a line saying so, here and from now on.
-  void _fallBackFromPersistentShell(int code) {
+  ///
+  /// [code] is null under Mosh, which does not pass the exit status on.
+  void _fallBackFromPersistentShell(int? code) {
     _persistentShellFailed = true;
+    final status = code == null ? '' : ' (exit status $code)';
     _writeToTerminal(
-      '\r\n\x1b[2m${host.persistentSession.label} could not be started '
-      '(exit status $code), so this shell will not survive a '
-      'disconnect.\x1b[0m\r\n',
+      '\r\n\x1b[2m${host.persistentSession.label} could not be started'
+      '$status, so this shell will not survive a disconnect.\x1b[0m\r\n',
     );
     _resetShell();
     _notify();
@@ -987,7 +1018,10 @@ class SessionController {
   ///
   /// A persistent session's tmux or screen runs under `mosh-server` just as
   /// it would under SSH, so a Mosh terminal can be re-attached too.
-  Future<bool> _openMoshShell() async {
+  ///
+  /// [epoch] is the [_shellEpoch] this shell is for. Also true, having
+  /// opened nothing, when that shell was reset while this one started.
+  Future<bool> _openMoshShell(int epoch) async {
     // The first Mosh frame clears the screen; a fallback overwrites the line.
     _writeToTerminal('\x1b[2mStarting Mosh…\x1b[0m');
     final kind = host.persistentSession;
@@ -1009,28 +1043,58 @@ class SessionController {
         command: command,
       );
     } catch (error) {
+      if (epoch != _shellEpoch) return true;
       if (_closed) rethrow;
       _writeToTerminal(
         '\r\x1b[K\x1b[2m${moshFallbackNotice(error)}\x1b[0m\r\n',
       );
       return false;
     }
-    if (_disposed) {
-      unawaited(mosh.close());
+    // Starting takes a UDP round trip or several, and SSH can drop
+    // meanwhile; a reconnect that lands first resets the shell and starts
+    // its own Mosh. This one, server and shell, must then go rather than
+    // run on beside it.
+    if (_disposed || epoch != _shellEpoch) {
+      unawaited(mosh.close(ssh: _sshUp ? connection : null));
       return true;
     }
+    if (epoch > 0) {
+      // Not this session's first shell: the screen holds what the last one
+      // left, and the line saying why it ended. The first Mosh frame clears
+      // the screen, so all of that goes up into the scrollback first —
+      // less the "Starting Mosh…" line, which has said its piece.
+      _writeToTerminal('\r\x1b[K${'\r\n' * terminal.viewHeight}');
+    }
+    final openedAt = _clock();
     _mosh = mosh;
     _shellOutput.add(mosh.output.listen(_writeToTerminal));
     unawaited(mosh.done.then((exit) {
       if (!identical(_mosh, mosh)) return;
       _mosh = null;
-      if (exit.clean) _shellExitedCleanly = true;
       // Ended while the SSH connection was also down: the session is now
-      // what it would have been without Mosh — closed, and reconnecting.
+      // what it would have been without Mosh — closed, and reconnecting
+      // unless the user ended it.
       if (_sshLostUnderMosh == _transportGeneration) {
-        _markClosed('Connection lost.', _transportGeneration, retryable: true);
+        if (exit.clean) _shellExitedCleanly = true;
+        _markClosed(
+          exit.clean ? 'Mosh session ended.' : 'Connection lost.',
+          _transportGeneration,
+          retryable: true,
+        );
         return;
       }
+      // The persistent shell ended the moment it started, which under
+      // Mosh — no exit status comes back — is all there is to go on; see
+      // [_fallBackFromPersistentShell].
+      if (command != null &&
+          exit.clean &&
+          _sshUp &&
+          !_disposed &&
+          _clock().difference(openedAt) < persistentStartGrace) {
+        _fallBackFromPersistentShell(null);
+        return;
+      }
+      if (exit.clean) _shellExitedCleanly = true;
       reportShellEnded(exit.clean
           ? 'Mosh session ended.'
           : 'Mosh session ended: ${exit.reason}');
@@ -1145,10 +1209,13 @@ class SessionController {
   Future<RemoteFileSystem> sftp() {
     // The terminal is carrying on over Mosh, but the SSH connection under
     // the files is gone until the reconnect brings it back.
-    if (_sshLostUnderMosh == _transportGeneration) {
+    if (isSshLostUnderMosh) {
       return Future<RemoteFileSystem>.error(
-        const SftpFailure('The SSH connection dropped and is reconnecting; '
-            'files will be back with it.'),
+        SftpFailure(isReconnecting
+            ? 'The SSH connection dropped and is reconnecting; files will be '
+                'back with it.'
+            : 'The SSH connection dropped. Reconnect to browse files; the '
+                'terminal carries on over Mosh.'),
       );
     }
     final existing = _sftp;
@@ -1943,12 +2010,19 @@ class SessionController {
     }
     _shell = null;
     _shellOpening = null;
-    // Says goodbye to mosh-server in its own time; the tab is gone either way.
+    // Says goodbye to mosh-server in its own time; the tab is gone either
+    // way. While SSH is up it stays open until then, so that a goodbye
+    // nobody answers — UDP that no longer gets through — can still stop
+    // mosh-server, which would otherwise keep it and its shell for ever.
     final mosh = _mosh;
     _mosh = null;
-    if (mosh != null) unawaited(mosh.close());
-
-    connection.close();
+    final ssh = connection;
+    if (mosh != null && _sshUp) {
+      unawaited(mosh.close(ssh: ssh).whenComplete(ssh.close));
+    } else {
+      if (mosh != null) unawaited(mosh.close());
+      ssh.close();
+    }
     _closed = true;
     await _arrivals.close();
     await _changes.close();

@@ -68,7 +68,16 @@ void main() {
       command: r"PS1='mosh$ ' exec sh -i",
       bind: bind,
     );
-    addTearDown(mosh.client.abandon);
+    // Ends mosh-server as closing a tab does, rather than leaving one
+    // running per test; registered after `ssh.close`, so it runs first.
+    addTearDown(
+      () => mosh
+          .close(ssh: ssh)
+          .timeout(
+            const Duration(seconds: 20),
+            onTimeout: () => const MoshExit(clean: false),
+          ),
+    );
     mosh.output.listen(screen.terminal.write);
     return (ssh, mosh, screen);
   }
@@ -279,6 +288,7 @@ void main() {
   group('through a session', () {
     Future<SessionController> session({
       PersistentSession persistent = PersistentSession.off,
+      MoshStarter startMosh = MoshShell.start,
     }) async {
       final host = lab.host(
         transport: HostTransport.mosh,
@@ -292,6 +302,7 @@ void main() {
               ({required host, required credentials, required verifyHostKey}) =>
                   lab.connect(host: host),
         ),
+        startMosh: startMosh,
       );
       addTearDown(controller.dispose);
       controller.terminal.resize(100, 30);
@@ -360,6 +371,92 @@ void main() {
           (Process.runSync('sh', ['-c', 'command -v screen']).exitCode != 0
               ? 'needs GNU screen'
               : null),
+      timeout: timeout,
+    );
+
+    /// Whether process [pid] is still running on the lab host.
+    Future<bool> running(int pid) async {
+      final ssh = await lab.connect();
+      try {
+        final result = await RemoteExec.run(ssh, 'kill -0 $pid && echo up');
+        return result.stdout.contains('up');
+      } finally {
+        ssh.close();
+      }
+    }
+
+    /// Opens a session's Mosh terminal, and returns the pids of its
+    /// mosh-server and of the shell under it.
+    Future<({int server, int shell})> openTerminal(
+      SessionController controller,
+      MoshShell? Function() started,
+    ) async {
+      await controller.ensureShell();
+      controller.terminal.textInput(r'echo "shell-pid:$$:"' '\r');
+      final printed = RegExp(r'shell-pid:(\d+):');
+      String text() => controller.terminal.buffer.getText();
+      await _until(
+        () => printed.hasMatch(text()),
+        timeout: const Duration(seconds: 15),
+      );
+      final shell = printed.firstMatch(text())!.group(1)!;
+      return (server: started()!.server.pid!, shell: int.parse(shell));
+    }
+
+    test(
+      'closing the tab ends mosh-server, and the shell under it',
+      () async {
+        MoshShell? started;
+        final controller = await session(
+          startMosh: (ssh, {required columns, required rows, command}) async =>
+              started = await MoshShell.start(
+                ssh,
+                columns: columns,
+                rows: rows,
+                command: command,
+              ),
+        );
+        final pids = await openTerminal(controller, () => started);
+
+        await controller.dispose();
+        await _until(
+          () async => !await running(pids.server) && !await running(pids.shell),
+          timeout: const Duration(seconds: 20),
+        );
+      },
+      skip: skip,
+      timeout: timeout,
+    );
+
+    test(
+      'a goodbye that never gets through still ends mosh-server, over SSH',
+      () async {
+        var cut = false;
+        MoshShell? started;
+        final controller = await session(
+          startMosh: (ssh, {required columns, required rows, command}) async =>
+              started = await MoshShell.start(
+                ssh,
+                columns: columns,
+                rows: rows,
+                command: command,
+                bind: (family, onDatagram) async => _Cuttable(
+                  await bindRawMoshSocket(family, onDatagram),
+                  () => cut,
+                ),
+              ),
+        );
+        final pids = await openTerminal(controller, () => started);
+
+        // UDP stops getting out, so the goodbye never arrives.
+        cut = true;
+        await controller.dispose();
+        await _until(
+          () async => !await running(pids.server) && !await running(pids.shell),
+          timeout: const Duration(seconds: 50),
+        );
+      },
+      skip: skip,
       timeout: timeout,
     );
 
@@ -437,6 +534,20 @@ class _Screen {
       await Future<void>.delayed(const Duration(milliseconds: 50));
     }
   }
+}
+
+/// A socket whose datagrams stop leaving once [_cut] says so.
+class _Cuttable implements MoshUdpSocket {
+  _Cuttable(this._inner, this._cut);
+  final MoshUdpSocket _inner;
+  final bool Function() _cut;
+  @override
+  int get port => _inner.port;
+  @override
+  int send(Uint8List data, InternetAddress address, int port) =>
+      _cut() ? data.length : _inner.send(data, address, port);
+  @override
+  void close() => _inner.close();
 }
 
 /// A socket whose datagrams never leave.
