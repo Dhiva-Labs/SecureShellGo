@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../l10n/l10n.dart';
 import '../services/login_prompt.dart';
 import '../theme.dart';
 
@@ -105,7 +106,9 @@ Future<void> showServerBannerSheet(
                 alignment: Alignment.centerRight,
                 child: FilledButton(
                   onPressed: () => Navigator.of(context).pop(),
-                  child: const Text('Continue'),
+                  child: Text(
+                    MaterialLocalizations.of(context).continueButtonLabel,
+                  ),
                 ),
               ),
             ],
@@ -180,10 +183,11 @@ class _LoginPromptDialogState extends State<_LoginPromptDialog> {
     final challenge = prompt.challenge;
     final theme = Theme.of(context);
     final jumpTarget = prompt.jumpHostFor;
+    final l10n = context.l10n;
 
     return AlertDialog(
       icon: Icon(Icons.password, color: theme.colorScheme.primary, size: 32),
-      title: Text('Sign in to ${prompt.host.displayName}'),
+      title: Text(l10n.signInTitle(prompt.host.displayName)),
       content: SingleChildScrollView(
         child: Column(
           mainAxisSize: MainAxisSize.min,
@@ -192,13 +196,13 @@ class _LoginPromptDialogState extends State<_LoginPromptDialog> {
             Text(
               jumpTarget == null
                   ? prompt.host.target
-                  : 'Jump host on the way to ${jumpTarget.displayName}',
+                  : l10n.signInJumpHostFor(jumpTarget.displayName),
               style: theme.textTheme.bodySmall,
             ),
             const SizedBox(height: 12),
             if (prompt.savedPasswordRejected) ...[
               _Note(
-                text: 'The server did not accept the saved password.',
+                text: l10n.signInSavedPasswordRejected,
                 color: theme.colorScheme.error,
               ),
               const SizedBox(height: 12),
@@ -230,12 +234,12 @@ class _LoginPromptDialogState extends State<_LoginPromptDialog> {
       actions: [
         TextButton(
           onPressed: () => Navigator.of(context).pop(),
-          child: const Text('Cancel'),
+          child: Text(MaterialLocalizations.of(context).cancelButtonLabel),
         ),
         FilledButton(
           style: FilledButton.styleFrom(minimumSize: const Size(0, 48)),
           onPressed: _submit,
-          child: const Text('Continue'),
+          child: Text(MaterialLocalizations.of(context).continueButtonLabel),
         ),
       ],
     );
@@ -267,11 +271,11 @@ class _LoginPromptDialogState extends State<_LoginPromptDialog> {
         onSubmitted: (_) =>
             isLast ? _submit() : _focus[i + 1].requestFocus(),
         decoration: InputDecoration(
-          labelText: field.label.isEmpty ? 'Answer' : field.label,
+          labelText: field.label.isEmpty ? context.l10n.signInAnswer : field.label,
           suffixIcon: field.echo
               ? null
               : IconButton(
-                  tooltip: hidden ? 'Show' : 'Hide',
+                  tooltip: hidden ? context.l10n.signInShow : context.l10n.signInHide,
                   icon: Icon(
                     hidden
                         ? Icons.visibility_outlined
@@ -303,9 +307,11 @@ class _BannerText extends StatelessWidget {
       children: [
         Text(
           jumpTarget == null
-              ? 'Message from ${banner.host.displayName}'
-              : 'Message from ${banner.host.displayName} '
-                  '(jump host for ${jumpTarget.displayName})',
+              ? context.l10n.signInBannerFrom(banner.host.displayName)
+              : context.l10n.signInBannerFromJumpHost(
+                  banner.host.displayName,
+                  jumpTarget.displayName,
+                ),
           style: theme.textTheme.bodySmall,
         ),
         const SizedBox(height: 4),

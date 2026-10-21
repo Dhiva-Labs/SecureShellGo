@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../l10n/l10n.dart';
 import '../theme.dart';
 
 /// Shows a freshly generated public key line with a one-tap copy.
@@ -18,50 +19,53 @@ Future<void> showGeneratedPublicKeyDialog(
     context: context,
     builder: (context) => AlertDialog(
       icon: const Icon(Icons.vpn_key_outlined),
-      title: const Text('New key generated'),
-      content: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Text(
-            'The private key now fills the field below and will be saved '
-            'with this host. Add the public line to a server yourself, or '
-            'use "Install public key on server…" once you have saved.',
-            style: TextStyle(height: 1.35),
-          ),
-          const SizedBox(height: 12),
-          Container(
-            width: double.infinity,
-            padding: const EdgeInsets.all(10),
-            decoration: BoxDecoration(
-              color: Theme.of(context).colorScheme.surfaceContainerHighest,
-              borderRadius: BorderRadius.circular(6),
+      title: Text(context.l10n.publicKeyGeneratedTitle),
+      // Scrolls rather than overflowing on a short screen with large text.
+      content: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              context.l10n.publicKeyGeneratedBody(
+                context.l10n.hostEditInstallKey,
+              ),
+              style: const TextStyle(height: 1.35),
             ),
-            child: SelectableText(
-              publicKeyLine,
-              style: const TextStyle(
-                fontFamily: AppTheme.monoFontFamily,
-                fontFamilyFallback: AppTheme.monoFontFamilyFallback,
-                fontSize: 12,
-                height: 1.35,
+            const SizedBox(height: 12),
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(10),
+              decoration: BoxDecoration(
+                color: Theme.of(context).colorScheme.surfaceContainerHighest,
+                borderRadius: BorderRadius.circular(6),
+              ),
+              child: SelectableText(
+                publicKeyLine,
+                style: const TextStyle(
+                  fontFamily: AppTheme.monoFontFamily,
+                  fontFamilyFallback: AppTheme.monoFontFamilyFallback,
+                  fontSize: 12,
+                  height: 1.35,
+                ),
               ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
       actions: [
         TextButton(
           onPressed: () {
             Clipboard.setData(ClipboardData(text: publicKeyLine));
             ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(content: Text('Public key copied')),
+              SnackBar(content: Text(context.l10n.publicKeyCopied)),
             );
           },
-          child: const Text('Copy'),
+          child: Text(MaterialLocalizations.of(context).copyButtonLabel),
         ),
         FilledButton(
           onPressed: () => Navigator.of(context).pop(),
-          child: const Text('Done'),
+          child: Text(context.l10n.publicKeyDone),
         ),
       ],
     ),
@@ -77,32 +81,36 @@ Future<String?> promptForPushPassword(BuildContext context, String target) {
   return showDialog<String>(
     context: context,
     builder: (context) => AlertDialog(
-      title: const Text('Install public key on server'),
-      content: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text('Enter the password for $target to install the key.'),
-          const SizedBox(height: 12),
-          TextField(
-            controller: controller,
-            obscureText: true,
-            autofocus: true,
-            autocorrect: false,
-            enableSuggestions: false,
-            decoration: const InputDecoration(labelText: 'Password'),
-            onSubmitted: (value) => Navigator.of(context).pop(value),
-          ),
-        ],
+      title: Text(context.l10n.publicKeyInstallTitle),
+      content: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(context.l10n.publicKeyInstallPrompt(target)),
+            const SizedBox(height: 12),
+            TextField(
+              controller: controller,
+              obscureText: true,
+              autofocus: true,
+              autocorrect: false,
+              enableSuggestions: false,
+              decoration: InputDecoration(
+                labelText: context.l10n.hostPasswordLabel,
+              ),
+              onSubmitted: (value) => Navigator.of(context).pop(value),
+            ),
+          ],
+        ),
       ),
       actions: [
         TextButton(
           onPressed: () => Navigator.of(context).pop(),
-          child: const Text('Cancel'),
+          child: Text(MaterialLocalizations.of(context).cancelButtonLabel),
         ),
         FilledButton(
           onPressed: () => Navigator.of(context).pop(controller.text),
-          child: const Text('Install'),
+          child: Text(context.l10n.publicKeyInstall),
         ),
       ],
     ),
