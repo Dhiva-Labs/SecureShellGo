@@ -9,6 +9,7 @@ import '../services/backup_passphrase.dart';
 import '../services/backup_payload.dart';
 import '../services/backup_service.dart';
 import '../services/device_storage.dart';
+import '../theme.dart';
 
 /// Export the app's configuration to an encrypted file, and import one back.
 ///
@@ -173,18 +174,32 @@ class _BackupScreenState extends State<BackupScreen> {
       });
       return;
     }
+    KnownHostsImport hostKeys;
+    try {
+      hostKeys = await widget.service.knownHostsToImport(payload);
+    } catch (_) {
+      // Unreadable known-hosts store: offer nothing to trust.
+      hostKeys = const KnownHostsImport(toAdd: [], serversKept: 0);
+    }
     if (!mounted) return;
     setState(() => _busy = false);
 
-    final mode = await showDialog<ImportMode>(
+    final choice = await showDialog<ImportChoice>(
       context: context,
-      builder: (_) => _ImportPreviewDialog(contents: payload.contents),
+      builder: (_) => ImportPreviewDialog(
+        contents: payload.contents,
+        hostKeys: hostKeys,
+      ),
     );
-    if (mode == null || !mounted) return;
+    if (choice == null || !mounted) return;
 
     setState(() => _busy = true);
     try {
-      final result = await widget.service.apply(payload: payload, mode: mode);
+      final result = await widget.service.apply(
+        payload: payload,
+        mode: choice.mode,
+        trustKnownHosts: choice.trustKnownHosts,
+      );
       if (!mounted) return;
       setState(() => _status = _describe(result));
     } catch (e) {
@@ -220,9 +235,17 @@ class _BackupScreenState extends State<BackupScreen> {
     }
     if (result.knownHostsKept > 0) {
       buffer.write(
-        ' Kept this device\'s key for ${result.knownHostsKept} '
-        'server${result.knownHostsKept == 1 ? '' : 's'} whose key in the '
-        'backup is different.',
+        ' Kept this device\'s own keys for ${result.knownHostsKept} '
+        'server${result.knownHostsKept == 1 ? '' : 's'} it already knew; '
+        'the backup\'s keys for '
+        '${result.knownHostsKept == 1 ? 'it' : 'them'} were not used.',
+      );
+    }
+    if (result.knownHostsNotTrusted > 0) {
+      buffer.write(
+        ' Did not trust the ${result.knownHostsNotTrusted} host '
+        'key${result.knownHostsNotTrusted == 1 ? '' : 's'} in the backup; '
+        'those servers will be checked on first connect.',
       );
     }
     if (result.knownHostsNotSaved) {
@@ -501,8 +524,9 @@ class _ExportDialogState extends State<_ExportDialog> {
                 title: const Text('Include trusted host keys'),
                 subtitle: const Text(
                   'Off by default. Lets a restored device recognise your '
-                  'servers without asking again. Keys a device already '
-                  'trusts are never replaced by the ones in a backup.',
+                  'servers without asking again, if you choose to trust '
+                  'them when importing. A device that already knows a '
+                  'server keeps its own keys for it.',
                   style: TextStyle(height: 1.3),
                 ),
               ),
@@ -583,16 +607,56 @@ class _ImportPassphraseDialogState extends State<_ImportPassphraseDialog> {
   }
 }
 
-/// What is inside the file, and the merge/replace choice. Shown *after* a
-/// successful decrypt and *before* anything is written.
-class _ImportPreviewDialog extends StatelessWidget {
-  const _ImportPreviewDialog({required this.contents});
+/// What the import preview collected.
+class ImportChoice {
+  const ImportChoice({required this.mode, required this.trustKnownHosts});
+
+  final ImportMode mode;
+
+  /// "Trust these keys" was ticked.
+  final bool trustKnownHosts;
+}
+
+/// What is inside the file, the host keys it would have this device trust,
+/// and the merge/replace choice. Shown *after* a successful decrypt and
+/// *before* anything is written.
+///
+/// The host keys are listed one by one — server and fingerprint — behind a
+/// "Trust these keys" box that starts off: a trusted key is accepted
+/// without a question the next time, so a backup from anyone but yourself
+/// must not get that by default. Public for its test.
+class ImportPreviewDialog extends StatefulWidget {
+  const ImportPreviewDialog({
+    super.key,
+    required this.contents,
+    this.hostKeys = const KnownHostsImport(toAdd: [], serversKept: 0),
+  });
 
   final BackupContents contents;
+  final KnownHostsImport hostKeys;
+
+  @override
+  State<ImportPreviewDialog> createState() => _ImportPreviewDialogState();
+}
+
+class _ImportPreviewDialogState extends State<ImportPreviewDialog> {
+  bool _trust = false;
+
+  void _choose(ImportMode mode) => Navigator.of(context).pop(
+        ImportChoice(mode: mode, trustKnownHosts: _trust),
+      );
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final contents = widget.contents;
+    final hostKeys = widget.hostKeys;
+    final small = theme.textTheme.bodySmall?.copyWith(height: 1.3);
+    final mono = small?.copyWith(
+      fontFamily: AppTheme.monoFontFamily,
+      fontFamilyFallback: AppTheme.monoFontFamilyFallback,
+    );
+    final kept = hostKeys.serversKept;
     return AlertDialog(
       title: const Text('This backup contains'),
       content: SingleChildScrollView(
@@ -617,18 +681,60 @@ class _ImportPreviewDialog extends StatelessWidget {
                       '${contents.hostsNeedingCredentials} host'
                       '${contents.hostsNeedingCredentials == 1 ? '' : 's'} '
                       'will ask on first connect.',
-              style: theme.textTheme.bodySmall?.copyWith(height: 1.3),
+              style: small,
             ),
             const SizedBox(height: 10),
             Text(
               'Settings in the file will replace your current settings in '
-              'both modes. '
-              '${contents.includesKnownHosts ? 'Trusted host keys are added '
-                  'to this device\'s in both modes; a key this device '
-                  'already trusts for a server is kept.' : 'Trusted host '
-                  'keys on this device are not touched.'}',
-              style: theme.textTheme.bodySmall?.copyWith(height: 1.3),
+              'both modes.',
+              style: small,
             ),
+            if (contents.includesKnownHosts) ...[
+              const SizedBox(height: 10),
+              if (hostKeys.toAdd.isEmpty)
+                Text(
+                  'No new servers to trust: this device already knows every '
+                  'server in the backup and keeps its own keys for them.',
+                  style: small,
+                )
+              else ...[
+                Text(
+                  'Host keys for servers this device has never connected '
+                  'to:',
+                  style: small,
+                ),
+                const SizedBox(height: 4),
+                for (final key in hostKeys.toAdd)
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 4),
+                    child: Text(
+                      '${key.port == 22 ? key.hostname : '${key.hostname}:${key.port}'}'
+                      '  ${key.keyType}\n${key.fingerprint}',
+                      style: mono,
+                    ),
+                  ),
+                CheckboxListTile(
+                  value: _trust,
+                  onChanged: (v) => setState(() => _trust = v ?? false),
+                  contentPadding: EdgeInsets.zero,
+                  controlAffinity: ListTileControlAffinity.leading,
+                  title: const Text('Trust these keys'),
+                  subtitle: const Text(
+                    'Only if you made this backup yourself. A trusted key is '
+                    'accepted without asking the next time you connect; '
+                    'left off, each server is checked on first connect.',
+                    style: TextStyle(height: 1.3),
+                  ),
+                ),
+              ],
+              if (kept > 0)
+                Text(
+                  'The backup has other keys for $kept '
+                  'server${kept == 1 ? '' : 's'} this device already knows. '
+                  'They are not used: this device keeps its own.',
+                  style: small,
+                ),
+            ],
             if (contents.isEmpty) ...[
               const SizedBox(height: 10),
               Text(
@@ -649,11 +755,11 @@ class _ImportPreviewDialog extends StatelessWidget {
           child: const Text('Cancel'),
         ),
         TextButton(
-          onPressed: () => Navigator.of(context).pop(ImportMode.replace),
+          onPressed: () => _choose(ImportMode.replace),
           child: const Text('Replace'),
         ),
         FilledButton(
-          onPressed: () => Navigator.of(context).pop(ImportMode.merge),
+          onPressed: () => _choose(ImportMode.merge),
           child: const Text('Merge'),
         ),
       ],
