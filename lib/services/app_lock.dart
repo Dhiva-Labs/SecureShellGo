@@ -65,7 +65,7 @@ abstract class AppLockAuthenticator {
 
 /// What each platform actually got, and why.
 ///
-/// The short version: **Android is implemented; Linux, Windows and macOS
+/// The short version: **Android and Windows are implemented; Linux and macOS
 /// report the setting as unavailable.** The long version is worth writing
 /// down, because "we ran out of time" and "this cannot be done safely with
 /// what we have" are very different answers and only one of them is true
@@ -98,20 +98,18 @@ abstract class AppLockAuthenticator {
 ///    native code on the authentication path is not something to write
 ///    unverified.
 ///
-///  * **Windows** — not implemented. Windows Hello lives behind
-///    `UserConsentVerifier`, a WinRT API reachable only from C++/WinRT in
-///    `windows/runner`. That is new native code on a security path that
-///    cannot be compiled or run in this environment, and an untested
-///    authenticator is worse than an honest "unavailable".
+///  * **Windows** — implemented, through Windows Hello:
+///    `UserConsentVerifier::RequestVerificationForWindowAsync` in C++/WinRT
+///    (`windows/runner/windows_hello.cpp`), on the same channel and with the
+///    same answers as the Android bridge. Hello is the PIN, fingerprint or
+///    face the user signs in to Windows with. See [WindowsHelloAppLock] for
+///    how it fails closed, and for why there is no screenshot flag.
 ///
-///  * **macOS** — not implemented, for the same reason: `LAContext`
-///    (`LocalAuthentication`) needs Swift in `macos/Runner`, which likewise
-///    cannot be built or exercised here.
-///
-/// macOS and Windows are the tractable follow-ups — roughly forty lines of
-/// native each, in runners that already exist — and should be picked up by
-/// someone who can build and test on those platforms. Linux needs a real
-/// decision about PAM first.
+///  * **macOS** — not implemented: `LAContext` (`LocalAuthentication`) needs
+///    Swift in `macos/Runner`, which cannot be built or exercised here. The
+///    tractable follow-up — roughly forty lines of native in a runner that
+///    already exists — for someone who can build and test on a Mac. Linux
+///    needs a real decision about PAM first.
 class AppLockPlatform {
   const AppLockPlatform._();
 
@@ -129,7 +127,7 @@ class AppLockPlatform {
           'does not have them.';
     }
     if (isWindows) {
-      return 'Windows Hello is not available in this build yet.';
+      return 'Windows Hello is turned off or not supported on this PC.';
     }
     if (isMacOS) {
       return 'Touch ID and password unlock are not available in this build '
@@ -144,6 +142,18 @@ class AppLockPlatform {
         isWindows: Platform.isWindows,
         isMacOS: Platform.isMacOS,
       );
+
+  /// What Settings says when the platform can lock the app but the user has
+  /// nothing set up to unlock it with ([AppLockSupport.noDeviceCredential]).
+  static String setupHintFor({required bool isWindows}) => isWindows
+      ? 'Set up Windows Hello (a PIN, fingerprint or face) in Windows '
+          'Settings first, then this can be turned on.'
+      : 'Set a screen lock (PIN, pattern, password or biometric) on this '
+          'device first, then this can be turned on.';
+
+  /// [setupHintFor] for the platform this build is running on.
+  static String get currentSetupHint =>
+      setupHintFor(isWindows: Platform.isWindows);
 }
 
 /// Talks to `AppLockBridge.kt`.
@@ -219,6 +229,82 @@ class MethodChannelAppLock implements AppLockAuthenticator {
   }
 }
 
+/// Windows Hello, through `windows/runner/windows_hello.cpp`.
+///
+/// The same channel, methods and answers as [MethodChannelAppLock] — the
+/// runner registers its own handler on that channel name — but the failures
+/// fold the other way where it matters:
+///
+///  * [support] that cannot reach the runner reports
+///    [AppLockSupport.unsupportedPlatform], so a build without the native
+///    half simply never offers the lock.
+///  * [authenticate] that throws, or answers something unknown, reports
+///    [AppLockOutcome.cancelled]: the gate stays up with Unlock live. Once
+///    Hello has said it is set up, nothing here may answer
+///    [AppLockOutcome.unavailable], which opens the gate — the same rule
+///    `AppLockBridge.kt` follows, and the reason the controller's fail-open
+///    path is for *no credential*, not for *the prompt broke*. Only the
+///    runner answers `unavailable`, and only when Hello itself reports it is
+///    not set up or is switched off by policy. A gate stuck shut by a
+///    persistently broken prompt clears at the next launch, where [support]
+///    is asked again.
+class WindowsHelloAppLock implements AppLockAuthenticator {
+  const WindowsHelloAppLock({
+    MethodChannel channel = MethodChannelAppLock.channel,
+  })  :
+        // ignore: prefer_initializing_formals
+        _channel = channel;
+
+  final MethodChannel _channel;
+
+  @override
+  Future<AppLockSupport> support() async {
+    try {
+      final reply = await _channel.invokeMethod<String>('support');
+      return switch (reply) {
+        'available' => AppLockSupport.available,
+        'noDeviceCredential' => AppLockSupport.noDeviceCredential,
+        _ => AppLockSupport.unsupportedPlatform,
+      };
+    } on MissingPluginException {
+      return AppLockSupport.unsupportedPlatform;
+    } on PlatformException {
+      return AppLockSupport.unsupportedPlatform;
+    }
+  }
+
+  @override
+  Future<AppLockOutcome> authenticate({required String reason}) async {
+    try {
+      final reply = await _channel.invokeMethod<String>(
+        'authenticate',
+        <String, dynamic>{'reason': reason},
+      );
+      return switch (reply) {
+        'success' => AppLockOutcome.success,
+        'failed' => AppLockOutcome.failed,
+        'lockedOut' => AppLockOutcome.lockedOut,
+        'unavailable' => AppLockOutcome.unavailable,
+        _ => AppLockOutcome.cancelled,
+      };
+    } on MissingPluginException {
+      return AppLockOutcome.cancelled;
+    } on PlatformException {
+      return AppLockOutcome.cancelled;
+    }
+  }
+
+  /// Nothing to do on Windows, on purpose. Android needs the flag because
+  /// its recent-apps thumbnail is a snapshot taken as the app leaves, before
+  /// the lock screen exists. Taskbar and Alt+Tab previews are live, so they
+  /// show the lock screen as soon as it is up. Blocking capture instead
+  /// (`WDA_EXCLUDEFROMCAPTURE`) would black the window out of every screen
+  /// share for anyone with the lock on — a high price for no gain.
+  @override
+  Future<void> setSecureDisplay(bool enabled) async {}
+}
+
 /// The authenticator for the platform this build is running on.
-AppLockAuthenticator createDefaultAppLockAuthenticator() =>
-    const MethodChannelAppLock();
+AppLockAuthenticator createDefaultAppLockAuthenticator() => Platform.isWindows
+    ? const WindowsHelloAppLock()
+    : const MethodChannelAppLock();
