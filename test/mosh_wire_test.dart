@@ -487,6 +487,65 @@ void main() {
       expect(network.sockets.last.closed, isFalse);
     });
   });
+
+  group('hostile input', () {
+    test('a length-delimited field with a huge length is refused, not '
+        'overflowed', () {
+      // Field 6 (bytes), then a length of 2^63-1: `_at + length` wraps.
+      final message = bytes([
+        0x32,
+        0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x7f,
+        1, 2, 3,
+      ]);
+      expect(
+        () => TransportInstruction.decode(message),
+        throwsA(isA<ProtobufFormatException>()),
+      );
+    });
+
+    MoshFragment piece(Uint8List contents, {int number = 0, int id = 7}) =>
+        MoshFragment(id: id, number: number, isFinal: true, contents: contents);
+
+    test('an instruction that would inflate past 4 MiB is refused', () {
+      // 64 MiB of zeros deflates to about 64 KiB.
+      final bomb = Uint8List.fromList(
+        ZLibCodec(level: 9).encode(Uint8List(64 << 20)),
+      );
+      final assembly = MoshFragmentAssembly();
+      expect(
+        () => assembly.add(piece(bomb)),
+        throwsA(isA<FormatException>()),
+      );
+    });
+
+    test('fragment numbers and buffered bytes are capped', () {
+      final assembly = MoshFragmentAssembly();
+      expect(
+        () => assembly.add(
+          MoshFragment(
+            id: 1,
+            number: 0x7ffe,
+            isFinal: false,
+            contents: bytes([1]),
+          ),
+        ),
+        throwsA(isA<FormatException>()),
+      );
+      // Unfinished fragments adding up past what any instruction needs.
+      final big = Uint8List(64 * 1024);
+      Object? error;
+      for (var n = 0; n < 100 && error == null; n++) {
+        try {
+          assembly.add(
+            MoshFragment(id: 2, number: n, isFinal: false, contents: big),
+          );
+        } catch (e) {
+          error = e;
+        }
+      }
+      expect(error, isA<FormatException>());
+    });
+  });
 }
 
 final _empty = Uint8List(0);

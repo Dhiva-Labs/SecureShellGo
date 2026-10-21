@@ -1486,6 +1486,10 @@ class MoshEmulator {
   }
 }
 
+/// The largest width or height, in cells, a Mosh terminal is given: what
+/// the client sends at most, and what it accepts from the server.
+const moshMaxTerminalSize = 1000;
+
 /// The client's copy of one of the server's states: Mosh's
 /// `Terminal::Complete`, minus the parts only a server needs.
 class MoshTerminalState {
@@ -1510,6 +1514,13 @@ class MoshTerminalState {
       if (hostBytes != null) {
         MoshEmulator(fb).writeBytes(hostBytes);
       } else if (resize != null) {
+        // A size this client never asked for (it sends at most
+        // [moshMaxTerminalSize]) is a broken or hostile server, and a
+        // framebuffer that size would exhaust memory.
+        if (resize.width > moshMaxTerminalSize ||
+            resize.height > moshMaxTerminalSize) {
+          throw const ProtobufFormatException('Mosh resize out of range');
+        }
         if (resize.width > 0 && resize.height > 0) {
           fb.resize(resize.width, resize.height);
         }
