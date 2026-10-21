@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../l10n/l10n.dart';
 import '../services/input_profile.dart';
 import '../services/session_manager.dart';
 import '../services/terminal_workspace.dart';
@@ -271,6 +272,7 @@ class _PaneHeader extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final l10n = context.l10n;
     final session = entry;
     final canSplit = workspace.canSplit;
     // A split, once made, stays whatever was touched since, so a finger can
@@ -295,9 +297,13 @@ class _PaneHeader extends StatelessWidget {
           children: [
             const SizedBox(width: 8),
             if (receiving) ...[
-              const Tooltip(
-                message: 'Receiving broadcast input',
-                child: Icon(Icons.podcasts, size: 12, color: AppTheme.danger),
+              Tooltip(
+                message: l10n.workspaceReceivingBroadcast,
+                child: const Icon(
+                  Icons.podcasts,
+                  size: 12,
+                  color: AppTheme.danger,
+                ),
               ),
               const SizedBox(width: 7),
             ],
@@ -313,7 +319,7 @@ class _PaneHeader extends StatelessWidget {
             ],
             Flexible(
               child: PopupMenuButton<String>(
-                tooltip: 'Session in this pane',
+                tooltip: l10n.workspacePaneSession,
                 position: PopupMenuPosition.under,
                 onSelected: _choose,
                 itemBuilder: (context) => [
@@ -328,9 +334,9 @@ class _PaneHeader extends StatelessWidget {
                     ),
                   if (session != null) ...[
                     const PopupMenuDivider(),
-                    const PopupMenuItem<String>(
+                    PopupMenuItem<String>(
                       value: _clearPane,
-                      child: Text('Leave this pane empty'),
+                      child: Text(l10n.workspaceLeaveEmpty),
                     ),
                   ],
                 ],
@@ -341,7 +347,7 @@ class _PaneHeader extends StatelessWidget {
                     children: [
                       Flexible(
                         child: Text(
-                          session?.host.displayName ?? 'No session',
+                          session?.host.displayName ?? l10n.workspaceNoSession,
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                           style: TextStyle(
@@ -362,7 +368,7 @@ class _PaneHeader extends StatelessWidget {
             ),
             const Spacer(),
             PopupMenuButton<_PaneAction>(
-              tooltip: 'Pane',
+              tooltip: l10n.workspacePaneMenu,
               position: PopupMenuPosition.under,
               icon: const Icon(Icons.more_vert, size: 16),
               splashRadius: 16,
@@ -373,25 +379,25 @@ class _PaneHeader extends StatelessWidget {
                 PopupMenuItem<_PaneAction>(
                   value: _PaneAction.splitRight,
                   enabled: canSplit,
-                  child: const _PaneMenuRow(
+                  child: _PaneMenuRow(
                     icon: Icons.splitscreen,
-                    label: 'Split right',
+                    label: l10n.workspaceSplitRight,
                   ),
                 ),
                 PopupMenuItem<_PaneAction>(
                   value: _PaneAction.splitDown,
                   enabled: canSplit,
-                  child: const _PaneMenuRow(
+                  child: _PaneMenuRow(
                     icon: Icons.horizontal_split,
-                    label: 'Split down',
+                    label: l10n.workspaceSplitDown,
                   ),
                 ),
                 const PopupMenuDivider(),
-                const PopupMenuItem<_PaneAction>(
+                PopupMenuItem<_PaneAction>(
                   value: _PaneAction.close,
                   child: _PaneMenuRow(
                     icon: Icons.close_fullscreen,
-                    label: 'Close pane',
+                    label: l10n.workspaceClosePane,
                   ),
                 ),
               ],
@@ -462,7 +468,7 @@ class _EmptyPane extends StatelessWidget {
               ),
               const SizedBox(height: 10),
               Text(
-                'No session in this pane',
+                context.l10n.workspaceEmptyPane,
                 style: TextStyle(
                   fontSize: 13,
                   color: theme.colorScheme.onSurfaceVariant,
@@ -497,7 +503,7 @@ class _EmptyPane extends StatelessWidget {
                   FilledButton.tonalIcon(
                     onPressed: onAddSession,
                     icon: const Icon(Icons.add, size: 16),
-                    label: const Text('New session'),
+                    label: Text(context.l10n.sessionNew),
                     style: FilledButton.styleFrom(
                       minimumSize: const Size(0, 32),
                       padding: const EdgeInsets.symmetric(horizontal: 12),

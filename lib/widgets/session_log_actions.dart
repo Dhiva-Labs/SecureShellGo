@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:file_selector/file_selector.dart' as file_selector;
 import 'package:flutter/material.dart';
 
+import '../l10n/l10n.dart';
 import '../services/device_storage.dart';
 import '../services/session_controller.dart';
 import '../services/session_recorder.dart';
@@ -16,10 +17,10 @@ import '../services/session_recorder.dart';
 /// finished file, so the log is kept in memory and the system picker comes up
 /// when recording stops.
 abstract class SessionLogDestination {
-  /// The right one for this platform.
-  factory SessionLogDestination.forPlatform() {
+  /// The right one for this platform; [l10n] words the save dialog.
+  factory SessionLogDestination.forPlatform(AppLocalizations l10n) {
     if (Platform.isLinux || Platform.isWindows || Platform.isMacOS) {
-      return FileLogDestination();
+      return FileLogDestination(l10n: l10n);
     }
     final storage = createDefaultDeviceStorage();
     return DocumentLogDestination(
@@ -46,22 +47,33 @@ abstract class SessionLogDestination {
 /// The desktop's: a file chosen in the native save dialog, written as the
 /// session runs.
 class FileLogDestination implements SessionLogDestination {
-  FileLogDestination({Future<String?> Function(String suggestedName)? choose})
-      : _choose = choose ?? _nativeSaveDialog;
+  FileLogDestination({
+    Future<String?> Function(String suggestedName)? choose,
+    AppLocalizations? l10n,
+  }) : _choose = choose ??
+            _nativeSaveDialog(
+              l10n ?? lookupAppLocalizations(const Locale('en')),
+            );
 
   final Future<String?> Function(String suggestedName) _choose;
 
-  static Future<String?> _nativeSaveDialog(String suggestedName) async {
-    final location = await file_selector.getSaveLocation(
-      suggestedName: suggestedName,
-      confirmButtonText: 'Record',
-      canCreateDirectories: true,
-      acceptedTypeGroups: const [
-        file_selector.XTypeGroup(label: 'Logs', extensions: ['log', 'txt']),
-      ],
-    );
-    return location?.path;
-  }
+  static Future<String?> Function(String suggestedName) _nativeSaveDialog(
+    AppLocalizations l10n,
+  ) =>
+      (suggestedName) async {
+        final location = await file_selector.getSaveLocation(
+          suggestedName: suggestedName,
+          confirmButtonText: l10n.sessionLogSaveDialogConfirm,
+          canCreateDirectories: true,
+          acceptedTypeGroups: [
+            file_selector.XTypeGroup(
+              label: l10n.sessionLogFileType,
+              extensions: const ['log', 'txt'],
+            ),
+          ],
+        );
+        return location?.path;
+      };
 
   @override
   bool get choosesFileFirst => true;
@@ -177,8 +189,9 @@ class SessionLogActions {
   ) async {
     final terminal = session.terminal;
     if (terminal.isRecording) return;
+    final l10n = context.l10n;
     final destination =
-        debugDestination ?? SessionLogDestination.forPlatform();
+        debugDestination ?? SessionLogDestination.forPlatform(l10n);
     final plainText = await _askHow(context, destination);
     if (plainText == null || !context.mounted) return;
 
@@ -190,7 +203,7 @@ class SessionLogActions {
       sink = await destination.open(fileName);
     } on Exception catch (e) {
       _tell(messenger, 
-        SnackBar(content: Text('Could not start the session log: $e')),
+        SnackBar(content: Text(l10n.sessionLogStartFailed('$e'))),
       );
       return;
     }
@@ -209,8 +222,12 @@ class SessionLogActions {
       SnackBar(
         content: Text(
           destination.choosesFileFirst
-              ? 'Recording this session to ${sink is FileLogSink ? sink.file.path.split(Platform.pathSeparator).last : fileName}'
-              : 'Recording this session. Stop to choose where to save it.',
+              ? l10n.sessionLogRecordingTo(
+                  sink is FileLogSink
+                      ? sink.file.path.split(Platform.pathSeparator).last
+                      : fileName,
+                )
+              : l10n.sessionLogRecordingInMemory,
         ),
       ),
     );
@@ -244,39 +261,36 @@ class SessionLogActions {
     bool justNow = false,
   }) async {
     final messenger = ScaffoldMessenger.maybeOf(context);
+    final l10n = context.l10n;
     await ending.settled;
     if (!context.mounted || !terminal.announce(ending)) return;
     final recorder = ending.recorder;
     if (recorder.stoppedBy == RecordingStop.failed) {
       _tell(messenger,
         SnackBar(
-          content: Text(
-            'The session log stopped: it could not be written '
-            '(${recorder.failure}).',
-          ),
+          content: Text(l10n.sessionLogWriteFailed('${recorder.failure}')),
         ),
       );
       return;
     }
-    const reason = 'The session log is full, so recording stopped.';
     final saved = ending.savedAs;
     final error = ending.error;
     final log = recorder.saver;
     if (error != null) {
       _tell(messenger,
-        SnackBar(content: Text('$reason Could not save it: $error')),
+        SnackBar(content: Text(l10n.sessionLogFullSaveFailed('$error'))),
       );
     } else if (ending.needsSaving && log is _RunningLog) {
       if (justNow) {
-        await _save(messenger, log, reason: reason);
+        await _save(messenger, l10n, log, full: true);
       } else {
         _tell(messenger,
           SnackBar(
-            content: const Text(reason),
+            content: Text(l10n.sessionLogFull),
             duration: const Duration(seconds: 30),
             action: SnackBarAction(
-              label: 'Save…',
-              onPressed: () => unawaited(_save(messenger, log)),
+              label: l10n.sessionLogSaveAction,
+              onPressed: () => unawaited(_save(messenger, l10n, log)),
             ),
           ),
         );
@@ -285,7 +299,7 @@ class SessionLogActions {
       _tell(messenger,
         SnackBar(
           content: Text(
-            saved == null ? reason : '$reason Session log saved: $saved',
+            saved == null ? l10n.sessionLogFull : l10n.sessionLogFullSaved(saved),
           ),
         ),
       );
@@ -297,51 +311,60 @@ class SessionLogActions {
     SessionRecorder recorder,
   ) async {
     final messenger = ScaffoldMessenger.maybeOf(context);
+    final l10n = context.l10n;
     try {
       await recorder.finish(footer: sessionLogFooter(DateTime.now()));
     } catch (e) {
       _tell(messenger,
-        SnackBar(content: Text('Could not finish the session log: $e')),
+        SnackBar(content: Text(l10n.sessionLogFinishFailed('$e'))),
       );
       return true;
     }
     final log = recorder.saver;
     if (log is! _RunningLog) return true;
-    return _save(messenger, log);
+    return _save(messenger, l10n, log);
   }
 
+  /// [full]: the log stopped because it reached its limit, which the
+  /// message says first.
   static Future<bool> _save(
     ScaffoldMessengerState? messenger,
+    AppLocalizations l10n,
     _RunningLog log, {
-    String? reason,
+    bool full = false,
   }) async {
     String? saved;
     try {
       saved = await log.destination.save(log.sink, log.fileName);
     } on Exception catch (e) {
       _tell(messenger, 
-        SnackBar(content: Text('Could not save the session log: $e')),
+        SnackBar(content: Text(l10n.sessionLogSaveFailed('$e'))),
       );
       return true;
     }
-    final prefix = reason == null ? '' : '$reason ';
     if (saved == null) {
       // Backed out of the picker. The log is still in memory for as long as
       // this message is up, so it can be saved after all.
       _tell(messenger, 
         SnackBar(
-          content: Text('${prefix}The session log was not saved.'),
+          content: Text(
+            full ? l10n.sessionLogFullNotSaved : l10n.sessionLogNotSaved,
+          ),
           duration: const Duration(seconds: 8),
           action: SnackBarAction(
-            label: 'Save…',
-            onPressed: () => unawaited(_save(messenger, log)),
+            label: l10n.sessionLogSaveAction,
+            onPressed: () => unawaited(_save(messenger, l10n, log)),
           ),
         ),
       );
       return false;
     }
     _tell(messenger, 
-      SnackBar(content: Text('${prefix}Session log saved: $saved')),
+      SnackBar(
+        content: Text(
+          full ? l10n.sessionLogFullSaved(saved) : l10n.sessionLogSaved(saved),
+        ),
+      ),
     );
     return true;
   }
@@ -370,11 +393,12 @@ class SessionLogActions {
     SessionLogDestination destination,
   ) {
     var plainText = true;
+    final l10n = context.l10n;
     return showDialog<bool>(
       context: context,
       builder: (context) => StatefulBuilder(
         builder: (context, setState) => AlertDialog(
-          title: const Text('Record session log'),
+          title: Text(l10n.sessionLogDialogTitle),
           // Scrolls on a small phone with large text rather than overflowing.
           content: SingleChildScrollView(
             child: Column(
@@ -382,20 +406,17 @@ class SessionLogActions {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  'Everything this session prints from now on is written to '
-                  'a log file. '
-                  '${destination.choosesFileFirst ? 'Choose where it goes next.' : 'When you stop, you choose where to save it.'}',
+                  destination.choosesFileFirst
+                      ? l10n.sessionLogDialogBodyFileFirst
+                      : l10n.sessionLogDialogBodyFileLater,
                 ),
                 const SizedBox(height: 8),
                 SwitchListTile(
                   contentPadding: EdgeInsets.zero,
                   value: plainText,
                   onChanged: (value) => setState(() => plainText = value),
-                  title: const Text('Plain text'),
-                  subtitle: const Text(
-                    'Leave out colours and terminal control codes. Off keeps '
-                    'the output exactly as received, for replaying with cat.',
-                  ),
+                  title: Text(l10n.sessionLogPlainText),
+                  subtitle: Text(l10n.sessionLogPlainTextHelp),
                 ),
               ],
             ),
@@ -403,12 +424,14 @@ class SessionLogActions {
           actions: [
             TextButton(
               onPressed: () => Navigator.of(context).pop(),
-              child: const Text('Cancel'),
+              child: Text(MaterialLocalizations.of(context).cancelButtonLabel),
             ),
             FilledButton(
               onPressed: () => Navigator.of(context).pop(plainText),
               child: Text(
-                destination.choosesFileFirst ? 'Choose file…' : 'Start',
+                destination.choosesFileFirst
+                    ? l10n.sessionLogChooseFile
+                    : l10n.sessionLogStart,
               ),
             ),
           ],

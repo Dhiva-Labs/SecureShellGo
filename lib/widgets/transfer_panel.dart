@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
+import '../l10n/l10n.dart';
 import '../services/remote_path.dart';
 import '../services/transfer_queue.dart';
 
@@ -21,12 +22,53 @@ IconData iconForDirection(TransferDirection direction) => switch (direction) {
 /// What an interrupted row says: how far it had got, and that it carries on
 /// by itself — shared by the session sheet and the all-sessions panel, for
 /// the same reason [iconForDirection] is.
-String interruptedSubtitle(TransferTask task) {
+String interruptedSubtitle(TransferTask task, AppLocalizations l10n) {
   final percent = task.percent;
   final where = percent == null || task.transferredBytes == 0
-      ? 'Interrupted'
-      : 'Interrupted at $percent%';
-  return '$where · ${task.error ?? 'continues when the connection is back'}';
+      ? l10n.transferPanelInterrupted
+      : l10n.transferPanelInterruptedAt(percent);
+  return '$where · ${task.error ?? l10n.transferPanelResumesLater}';
+}
+
+/// A transfer row's second line — the same in the session sheet and the
+/// all-sessions panel. [withRate] adds the speed of a running transfer.
+String transferSubtitle(
+  TransferTask task,
+  AppLocalizations l10n, {
+  bool withRate = false,
+}) {
+  switch (task.status) {
+    case TransferStatus.queued:
+      // A server-to-server transfer's row would otherwise be the one place
+      // in the app where "where is this going?" has no answer at all.
+      return task.direction == TransferDirection.serverToServer
+          ? l10n.transferPanelWaitingFor(
+              task.destinationLabel ?? l10n.transferPanelAnotherServer,
+            )
+          : l10n.transferPanelWaiting;
+    case TransferStatus.completed:
+      final size = RemotePath.formatBytes(task.transferredBytes);
+      final landed = task.destination ?? l10n.transferPanelSaved;
+      return task.direction == TransferDirection.serverToServer &&
+              task.moveSource
+          ? '$size · ${l10n.transferPanelMovedTo(landed)}'
+          : '$size · $landed';
+    case TransferStatus.cancelled:
+      return l10n.transferPanelCancelled;
+    case TransferStatus.interrupted:
+      return interruptedSubtitle(task, l10n);
+    case TransferStatus.failed:
+      return task.error ?? l10n.transferPanelFailed;
+    case TransferStatus.running:
+      final moved = RemotePath.formatBytes(task.transferredBytes);
+      final total = task.totalBytes;
+      final speed = withRate ? task.bytesPerSecond : null;
+      final rate =
+          speed == null ? '' : ' · ${RemotePath.formatBytes(speed.round())}/s';
+      if (total == null) return '$moved$rate';
+      return '${l10n.transferPanelProgress(moved, RemotePath.formatBytes(total))}'
+          ' · ${task.percent}%$rate';
+  }
 }
 
 /// Rebuilds [builder] whenever anything in [queue] changes.
@@ -69,6 +111,7 @@ class TransferSummaryBar extends StatelessWidget {
       builder: (context, tasks) {
         if (tasks.isEmpty) return const SizedBox.shrink();
         final theme = Theme.of(context);
+        final l10n = context.l10n;
 
         final active = tasks.where((t) => t.status.isActive).toList();
         final failed = tasks.where((t) => t.status == TransferStatus.failed);
@@ -84,13 +127,13 @@ class TransferSummaryBar extends StatelessWidget {
           );
           final queued = active.length - 1;
           label = queued > 0
-              ? '${running.name}  ·  $queued more queued'
+              ? '${running.name}  ·  ${l10n.transferPanelMoreQueued(queued)}'
               : running.name;
           icon = iconForDirection(running.direction);
         } else if (failed.isNotEmpty) {
           label = failed.length == 1
-              ? '${failed.first.name} failed'
-              : '${failed.length} transfers failed';
+              ? l10n.transferPanelOneFailed(failed.first.name)
+              : l10n.transferPanelManyFailed(failed.length);
           icon = Icons.error_outline;
           color = theme.colorScheme.error;
         } else {
@@ -108,24 +151,27 @@ class TransferSummaryBar extends StatelessWidget {
             final only = done.first;
             final where = only.destination ?? only.name;
             label = switch (only.direction) {
-              TransferDirection.upload => 'Uploaded $where',
-              TransferDirection.download => 'Saved $where',
-              TransferDirection.serverToServer =>
-                only.moveSource ? 'Moved to $where' : 'Copied to $where',
+              TransferDirection.upload => l10n.transferPanelUploaded(where),
+              TransferDirection.download => l10n.transferPanelSavedFile(where),
+              TransferDirection.serverToServer => only.moveSource
+                  ? l10n.transferPanelMovedToDestination(where)
+                  : l10n.transferPanelCopiedTo(where),
             };
           } else if (uploads.isEmpty && sent.isEmpty) {
-            label = '${done.length} files saved to Downloads';
+            label = l10n.transferPanelSavedToDownloads(done.length);
           } else if (downloads.isEmpty && sent.isEmpty) {
-            label = '${done.length} files uploaded';
+            label = l10n.transferPanelFilesUploaded(done.length);
           } else if (downloads.isEmpty && uploads.isEmpty) {
-            label = '${done.length} files sent to another server';
+            label = l10n.transferPanelFilesSent(done.length);
           } else {
             // Mixed. Naming each part beats a single verb that is wrong for
             // two thirds of what just happened.
             label = [
-              if (downloads.isNotEmpty) '${downloads.length} downloaded',
-              if (uploads.isNotEmpty) '${uploads.length} uploaded',
-              if (sent.isNotEmpty) '${sent.length} sent across',
+              if (downloads.isNotEmpty)
+                l10n.transferPanelDownloadedCount(downloads.length),
+              if (uploads.isNotEmpty)
+                l10n.transferPanelUploadedCount(uploads.length),
+              if (sent.isNotEmpty) l10n.transferPanelSentCount(sent.length),
             ].join(' · ');
           }
           icon = Icons.check_circle_outline;
@@ -213,27 +259,27 @@ Future<void> showTransfersSheet(
                   child: Row(
                     children: [
                       Text(
-                        'Transfers',
+                        context.l10n.transferPanelTitle,
                         style: Theme.of(context).textTheme.titleMedium,
                       ),
                       const Spacer(),
                       if (queue.hasActive)
                         TextButton(
                           onPressed: queue.cancelAll,
-                          child: const Text('Cancel all'),
+                          child: Text(context.l10n.transferPanelCancelAll),
                         ),
                       if (anyFinished)
                         TextButton(
                           onPressed: queue.clearFinished,
-                          child: const Text('Clear'),
+                          child: Text(context.l10n.transferPanelClear),
                         ),
                     ],
                   ),
                 ),
                 if (tasks.isEmpty)
-                  const Padding(
-                    padding: EdgeInsets.symmetric(vertical: 32),
-                    child: Text('Nothing transferred yet.'),
+                  Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 32),
+                    child: Text(context.l10n.transferPanelEmpty),
                   )
                 else
                   Flexible(
@@ -280,20 +326,17 @@ class _TransferTile extends StatelessWidget {
 
   Future<void> _open(BuildContext context) async {
     final messenger = ScaffoldMessenger.of(context);
+    final noApp = context.l10n.transferPanelNoAppForFile;
     final opened = await onOpen!(task);
     if (!opened) {
-      messenger.showSnackBar(
-        const SnackBar(
-          content: Text('No app on this device can open that file.'),
-        ),
-      );
+      messenger.showSnackBar(SnackBar(content: Text(noApp)));
     }
   }
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final subtitle = _subtitle();
+    final subtitle = transferSubtitle(task, context.l10n, withRate: true);
 
     return ListTile(
       dense: true,
@@ -335,7 +378,7 @@ class _TransferTile extends StatelessWidget {
   Widget? _buildAction(BuildContext context) {
     if (task.status.isActive) {
       return IconButton(
-        tooltip: 'Cancel',
+        tooltip: MaterialLocalizations.of(context).cancelButtonLabel,
         icon: const Icon(Icons.close, size: 20),
         onPressed: () => onCancel(task.id),
       );
@@ -346,48 +389,15 @@ class _TransferTile extends StatelessWidget {
     if (task.status == TransferStatus.failed) {
       return TextButton(
         onPressed: () => onRetry(task.id),
-        child: const Text('Retry'),
+        child: Text(context.l10n.transferPanelRetry),
       );
     }
     if (_canOpen) {
       return TextButton(
         onPressed: () => unawaited(_open(context)),
-        child: const Text('Open'),
+        child: Text(context.l10n.transferPanelOpen),
       );
     }
     return null;
-  }
-
-  String _subtitle() {
-    switch (task.status) {
-      case TransferStatus.queued:
-        // A server-to-server transfer's row would otherwise be the one place
-        // in the app where "where is this going?" has no answer at all.
-        return task.direction == TransferDirection.serverToServer
-            ? 'Waiting… → ${task.destinationLabel ?? 'another server'}'
-            : 'Waiting…';
-      case TransferStatus.completed:
-        final landed = task.destination ?? 'saved';
-        return task.direction == TransferDirection.serverToServer &&
-                task.moveSource
-            ? '${RemotePath.formatBytes(task.transferredBytes)} · moved to '
-                '$landed'
-            : '${RemotePath.formatBytes(task.transferredBytes)} · $landed';
-      case TransferStatus.cancelled:
-        return 'Cancelled';
-      case TransferStatus.interrupted:
-        return interruptedSubtitle(task);
-      case TransferStatus.failed:
-        return task.error ?? 'Failed';
-      case TransferStatus.running:
-        final moved = RemotePath.formatBytes(task.transferredBytes);
-        final total = task.totalBytes;
-        final speed = task.bytesPerSecond;
-        final rate =
-            speed == null ? '' : ' · ${RemotePath.formatBytes(speed.round())}/s';
-        if (total == null) return '$moved$rate';
-        return '$moved of ${RemotePath.formatBytes(total)}'
-            ' · ${task.percent}%$rate';
-    }
   }
 }

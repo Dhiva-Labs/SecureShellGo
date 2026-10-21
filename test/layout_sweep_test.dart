@@ -86,6 +86,7 @@ import 'package:secure_shell_go/theme.dart';
 import 'package:secure_shell_go/widgets/app_lock_gate.dart';
 import 'package:secure_shell_go/widgets/terminal_find_bar.dart';
 import 'package:secure_shell_go/widgets/terminal_fonts.dart';
+import 'package:xterm/xterm.dart';
 
 import 'fake_exec_session.dart';
 import 'support/fake_transport.dart';
@@ -969,6 +970,31 @@ void main() {
               ),
               'deploy',
             );
+            await tester.pump();
+          },
+        );
+      });
+
+      // The bar that slides in over the key bar while text is selected: three
+      // buttons and a caption, which a small phone with large text — or a
+      // language with longer words — has no room to label in full.
+      testWidgets('terminal selection', skip: _skip, (tester) async {
+        await renderSessions(
+          tester,
+          'terminal_selection',
+          device,
+          hands: _Hands.touch,
+          after: (tester) async {
+            final pane =
+                tester.widget<TerminalPane>(find.byType(TerminalPane).first);
+            final buffer = pane.session.terminal.buffer;
+            tester
+                .widget<TerminalView>(find.byType(TerminalView).first)
+                .controller!
+                .setSelection(
+                  buffer.createAnchor(0, buffer.height - 1),
+                  buffer.createAnchor(4, buffer.height - 1),
+                );
             await tester.pump();
           },
         );

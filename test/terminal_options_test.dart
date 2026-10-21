@@ -8,6 +8,7 @@ import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:secure_shell_go/l10n/l10n.dart';
 import 'package:secure_shell_go/models/app_settings.dart';
 import 'package:secure_shell_go/screens/session_screen.dart';
 import 'package:secure_shell_go/screens/settings/terminal_section.dart';
@@ -920,8 +921,12 @@ void main() {
               buildSession(connection),
         );
 
-    Widget screenFor(SessionManager manager) => MaterialApp(
+    Widget screenFor(SessionManager manager, {Locale? locale}) => MaterialApp(
           theme: AppTheme.dark,
+          locale: locale,
+          localizationsDelegates:
+              locale == null ? null : AppLocalizations.localizationsDelegates,
+          supportedLocales: AppLocalizations.supportedLocales,
           builder: (context, child) => InputProfileScope(
             profile: profileOf(PointerDeviceKind.touch),
             child: child!,
@@ -933,8 +938,8 @@ void main() {
           ),
         );
 
-    Future<(SessionManager, ShellTransport)> pumpScreen(
-        WidgetTester tester) async {
+    Future<(SessionManager, ShellTransport)> pumpScreen(WidgetTester tester,
+        {Locale? locale}) async {
       final transport = ShellTransport();
       final manager = newManager();
       addTearDown(manager.dispose);
@@ -943,19 +948,47 @@ void main() {
       tester.view.physicalSize = const Size(412, 900);
       tester.view.devicePixelRatio = 1;
       addTearDown(tester.view.reset);
-      await tester.pumpWidget(screenFor(manager));
+      await tester.pumpWidget(screenFor(manager, locale: locale));
       for (var i = 0; i < 5; i++) {
         await tester.pump();
       }
       return (manager, transport);
     }
 
-    Future<void> menu(WidgetTester tester, String item) async {
-      await tester.tap(find.byTooltip('More'));
+    Future<void> menu(WidgetTester tester, String item,
+        {String more = 'More'}) async {
+      await tester.tap(find.byTooltip(more));
       await tester.pumpAndSettle();
       await tester.tap(find.text(item));
       await tester.pumpAndSettle();
     }
+
+    testWidgets('in German, the screen and its log flow speak German, the '
+        'log itself stays English', (tester) async {
+      final (_, transport) = await pumpScreen(tester, locale: const Locale('de'));
+      expect(find.byTooltip('Hostliste – diese Sitzung bleibt verbunden'),
+          findsOneWidget);
+
+      await tester.tap(find.byTooltip('Mehr'));
+      await tester.pumpAndSettle();
+      expect(find.text('Im Terminal suchen'), findsOneWidget);
+      expect(find.text('Find in terminal'), findsNothing);
+      await tester.tap(find.text('Sitzungsprotokoll aufzeichnen…'));
+      await tester.pumpAndSettle();
+      expect(find.text('Sitzungsprotokoll aufzeichnen'), findsOneWidget);
+      expect(find.text('Nur Text'), findsOneWidget);
+      await tester.tap(find.text('Starten'));
+      await tester.pumpAndSettle();
+
+      await print(tester, transport, 'hallo\r\n');
+      await menu(tester, 'Aufzeichnung beenden und speichern',
+          more: 'Mehr');
+      expect(find.textContaining('Sitzungsprotokoll gespeichert: '),
+          findsOneWidget);
+      // What is written to the file is a record, not UI: never translated.
+      expect(utf8.decode(saver.saved.single.bytes),
+          startsWith('Session log for dev@example.com, started '));
+    });
 
     testWidgets('find from the session menu', (tester) async {
       await pumpScreen(tester);

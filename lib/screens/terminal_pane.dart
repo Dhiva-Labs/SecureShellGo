@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/gestures.dart';
@@ -7,6 +8,7 @@ import 'package:flutter/services.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:xterm/xterm.dart';
 
+import '../l10n/l10n.dart';
 import '../models/app_settings.dart';
 import '../services/clipboard_paste.dart';
 import '../services/input_profile.dart';
@@ -342,7 +344,10 @@ class _TerminalPaneState extends State<TerminalPane>
     _terminalController.clearSelection();
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Copied'), duration: Duration(seconds: 1)),
+      SnackBar(
+        content: Text(context.l10n.terminalCopied),
+        duration: const Duration(seconds: 1),
+      ),
     );
   }
 
@@ -365,7 +370,7 @@ class _TerminalPaneState extends State<TerminalPane>
     final data = await Clipboard.getData(Clipboard.kTextPlain);
     final text = data?.text;
     if (text == null || text.isEmpty) {
-      if (mounted) _snack('Clipboard is empty');
+      if (mounted) _snack(context.l10n.terminalClipboardEmpty);
       return;
     }
 
@@ -400,14 +405,13 @@ class _TerminalPaneState extends State<TerminalPane>
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(
-                'Paste $lines lines?',
+                context.l10n.terminalPasteLinesTitle(lines),
                 style: Theme.of(context).textTheme.titleMedium,
               ),
               const SizedBox(height: 8),
-              const Text(
-                'Each line is sent to the shell as if typed and Enter '
-                'pressed, so this can run more than one command.',
-                style: TextStyle(height: 1.35),
+              Text(
+                context.l10n.terminalPasteLinesBody,
+                style: const TextStyle(height: 1.35),
               ),
               const SizedBox(height: 20),
               Row(
@@ -415,14 +419,16 @@ class _TerminalPaneState extends State<TerminalPane>
                   Expanded(
                     child: OutlinedButton(
                       onPressed: () => Navigator.of(context).pop(false),
-                      child: const Text('Cancel'),
+                      child: Text(
+                        MaterialLocalizations.of(context).cancelButtonLabel,
+                      ),
                     ),
                   ),
                   const SizedBox(width: 12),
                   Expanded(
                     child: FilledButton(
                       onPressed: () => Navigator.of(context).pop(true),
-                      child: const Text('Paste'),
+                      child: Text(context.l10n.terminalPaste),
                     ),
                   ),
                 ],
@@ -519,6 +525,7 @@ class _TerminalPaneState extends State<TerminalPane>
     final at = overlay.globalToLocal(details.globalPosition);
     final keyboard = InputProfile.of(context).keyboard;
     final theme = Theme.of(context);
+    final l10n = context.l10n;
     final link = _linkAtGlobal(details.globalPosition);
 
     PopupMenuItem<_TerminalMenu> item(
@@ -558,18 +565,19 @@ class _TerminalPaneState extends State<TerminalPane>
       ),
       items: [
         if (link != null) ...[
-          item(_TerminalMenu.openLink, 'Open link', Icons.open_in_new,
+          item(_TerminalMenu.openLink, l10n.terminalOpenLink, Icons.open_in_new,
               keys: _linkClickKeys),
-          item(_TerminalMenu.copyLink, 'Copy link', Icons.link),
+          item(_TerminalMenu.copyLink, l10n.terminalCopyLink, Icons.link),
           const PopupMenuDivider(),
         ],
-        item(_TerminalMenu.copy, 'Copy', Icons.copy,
+        item(_TerminalMenu.copy, l10n.terminalCopy, Icons.copy,
             keys: 'Ctrl+Shift+C', enabled: _hasSelection),
-        item(_TerminalMenu.paste, 'Paste', Icons.content_paste,
+        item(_TerminalMenu.paste, l10n.terminalPaste, Icons.content_paste,
             keys: 'Ctrl+Shift+V'),
-        item(_TerminalMenu.selectAll, 'Select all', Icons.select_all),
+        item(_TerminalMenu.selectAll, l10n.terminalSelectAll, Icons.select_all),
         const PopupMenuDivider(),
-        item(_TerminalMenu.find, 'Find…', Icons.search, keys: 'Ctrl+Shift+F'),
+        item(_TerminalMenu.find, l10n.terminalFindMenu, Icons.search,
+            keys: 'Ctrl+Shift+F'),
       ],
     );
     switch (choice) {
@@ -761,23 +769,23 @@ class _TerminalPaneState extends State<TerminalPane>
             ),
           ),
         ),
-        const PopupMenuItem<_TerminalMenu>(
+        PopupMenuItem<_TerminalMenu>(
           value: _TerminalMenu.openLink,
           child: Row(
             children: [
-              Icon(Icons.open_in_new, size: 18),
-              SizedBox(width: 12),
-              Text('Open link'),
+              const Icon(Icons.open_in_new, size: 18),
+              const SizedBox(width: 12),
+              Text(context.l10n.terminalOpenLink),
             ],
           ),
         ),
-        const PopupMenuItem<_TerminalMenu>(
+        PopupMenuItem<_TerminalMenu>(
           value: _TerminalMenu.copyLink,
           child: Row(
             children: [
-              Icon(Icons.link, size: 18),
-              SizedBox(width: 12),
-              Text('Copy link'),
+              const Icon(Icons.link, size: 18),
+              const SizedBox(width: 12),
+              Text(context.l10n.terminalCopyLink),
             ],
           ),
         ),
@@ -800,7 +808,7 @@ class _TerminalPaneState extends State<TerminalPane>
     if (uri == null) return;
     final open = widget.openLink ?? _launchInBrowser;
     final opened = await open(uri);
-    if (!opened && mounted) _snack('No app on this device can open that link.');
+    if (!opened && mounted) _snack(context.l10n.terminalNoAppForLink);
   }
 
   static Future<bool> _launchInBrowser(Uri uri) async {
@@ -815,9 +823,9 @@ class _TerminalPaneState extends State<TerminalPane>
     await Clipboard.setData(ClipboardData(text: link.text));
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('Link copied'),
-        duration: Duration(seconds: 1),
+      SnackBar(
+        content: Text(context.l10n.terminalLinkCopied),
+        duration: const Duration(seconds: 1),
       ),
     );
   }
@@ -1152,13 +1160,13 @@ class _TerminalPaneState extends State<TerminalPane>
                     // becomes ready and the cover is removed.
                     child: ColoredBox(
                       color: terminalTheme.background,
-                      child: const Center(
+                      child: Center(
                         child: Column(
                           mainAxisSize: MainAxisSize.min,
                           children: [
-                            CircularProgressIndicator(),
-                            SizedBox(height: 16),
-                            Text('Opening shell…'),
+                            const CircularProgressIndicator(),
+                            const SizedBox(height: 16),
+                            Text(context.l10n.terminalOpeningShell),
                           ],
                         ),
                       ),
@@ -1252,14 +1260,15 @@ class _RecordingBadge extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final l10n = context.l10n;
     return PopupMenuButton<bool>(
-      tooltip: 'Recording a session log',
+      tooltip: l10n.sessionLogRecordingTooltip,
       position: PopupMenuPosition.under,
       onSelected: (_) => onStop(),
-      itemBuilder: (context) => const [
+      itemBuilder: (context) => [
         PopupMenuItem<bool>(
           value: true,
-          child: Text('Stop recording and save'),
+          child: Text(l10n.sessionLogStopAndSave),
         ),
       ],
       child: DecoratedBox(
@@ -1279,7 +1288,7 @@ class _RecordingBadge extends StatelessWidget {
               ),
               const SizedBox(width: 4),
               Text(
-                'REC',
+                l10n.sessionLogRecBadge,
                 style: theme.textTheme.labelSmall?.copyWith(
                   color: theme.colorScheme.onErrorContainer,
                   fontWeight: FontWeight.w700,
@@ -1311,53 +1320,128 @@ class _SelectionToolbar extends StatelessWidget {
   final VoidCallback onSelectAll;
   final VoidCallback onPaste;
 
+  static const _captionStyle = TextStyle(fontSize: 12.5);
+
+  /// The width the bar needs with every button labelled: the four words,
+  /// as this language and text size draw them, plus the icons, gaps and
+  /// padding around them.
+  static double _labelledWidth(
+    BuildContext context,
+    TextStyle? buttonStyle,
+    List<String> buttons,
+    String caption,
+  ) {
+    final scaler = MediaQuery.textScalerOf(context);
+    final direction = Directionality.of(context);
+    double width(String text, TextStyle? style) {
+      final painter = TextPainter(
+        text: TextSpan(text: text, style: style),
+        textDirection: direction,
+        textScaler: scaler,
+        maxLines: 1,
+      )..layout();
+      final w = painter.width;
+      painter.dispose();
+      return w;
+    }
+
+    // 12 + 16 + 8 before the caption; 8 after Copy; each button's icon and
+    // gap (24) and padding (16, 16, 24); a little slack for rounding.
+    return 36 + 8 + 3 * 24 + 16 + 16 + 24 + 12 +
+        width(caption, _captionStyle) +
+        buttons.fold<double>(0, (sum, label) => sum + width(label, buttonStyle));
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final l10n = context.l10n;
     return Material(
       color: theme.colorScheme.primary.withValues(alpha: 0.12),
       child: SizedBox(
         height: touch ? 48 : 44,
-        child: Row(
-          children: [
-            const SizedBox(width: 12),
-            Icon(
-              Icons.highlight_alt,
-              size: 16,
-              color: theme.colorScheme.primary,
-            ),
-            const SizedBox(width: 8),
-            const Text('Selected', style: TextStyle(fontSize: 12.5)),
-            const Spacer(),
-            TextButton.icon(
-              onPressed: onSelectAll,
-              icon: const Icon(Icons.select_all, size: 16),
-              label: const Text('Select all'),
-              style: TextButton.styleFrom(
-                minimumSize: Size.zero,
-                padding: const EdgeInsets.symmetric(horizontal: 8),
-              ),
-            ),
-            TextButton.icon(
-              onPressed: onPaste,
-              icon: const Icon(Icons.content_paste, size: 16),
-              label: const Text('Paste'),
-              style: TextButton.styleFrom(
-                minimumSize: Size.zero,
-                padding: const EdgeInsets.symmetric(horizontal: 8),
-              ),
-            ),
-            FilledButton.icon(
-              onPressed: onCopy,
-              icon: const Icon(Icons.copy, size: 16),
-              label: const Text('Copy'),
-              style: FilledButton.styleFrom(
-                minimumSize: const Size(0, 34),
-                padding: const EdgeInsets.symmetric(horizontal: 12),
-              ),
-            ),
-            const SizedBox(width: 8),
-          ],
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            // A small phone, large text or a language with long words has no
+            // room for three labelled buttons: Select all and Paste keep
+            // their icons, named in tooltips, and Copy keeps its word.
+            final labelled = constraints.maxWidth >=
+                _labelledWidth(
+                  context,
+                  theme.textTheme.labelLarge,
+                  [l10n.terminalSelectAll, l10n.terminalPaste, l10n.terminalCopy],
+                  l10n.terminalSelected,
+                );
+            final compact = TextButton.styleFrom(
+              minimumSize: Size.zero,
+              padding: const EdgeInsets.symmetric(horizontal: 8),
+            );
+            return Row(
+              children: [
+                const SizedBox(width: 12),
+                Icon(
+                  Icons.highlight_alt,
+                  size: 16,
+                  color: theme.colorScheme.primary,
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    l10n.terminalSelected,
+                    style: _captionStyle,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+                if (labelled) ...[
+                  TextButton.icon(
+                    onPressed: onSelectAll,
+                    icon: const Icon(Icons.select_all, size: 16),
+                    label: Text(l10n.terminalSelectAll),
+                    style: compact,
+                  ),
+                  TextButton.icon(
+                    onPressed: onPaste,
+                    icon: const Icon(Icons.content_paste, size: 16),
+                    label: Text(l10n.terminalPaste),
+                    style: compact,
+                  ),
+                ] else ...[
+                  IconButton(
+                    tooltip: l10n.terminalSelectAll,
+                    onPressed: onSelectAll,
+                    icon: const Icon(Icons.select_all, size: 18),
+                  ),
+                  IconButton(
+                    tooltip: l10n.terminalPaste,
+                    onPressed: onPaste,
+                    icon: const Icon(Icons.content_paste, size: 18),
+                  ),
+                ],
+                // Never wider than what is left, so even the longest word
+                // at the largest text size shortens rather than overflows.
+                ConstrainedBox(
+                  constraints: BoxConstraints(
+                    maxWidth: math.max(0, constraints.maxWidth - 36 - 8 - 96),
+                  ),
+                  child: FilledButton.icon(
+                    onPressed: onCopy,
+                    icon: const Icon(Icons.copy, size: 16),
+                    label: Text(
+                      l10n.terminalCopy,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    style: FilledButton.styleFrom(
+                      minimumSize: const Size(0, 34),
+                      padding: const EdgeInsets.symmetric(horizontal: 12),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 8),
+              ],
+            );
+          },
         ),
       ),
     );
