@@ -7,7 +7,7 @@ import '../services/fleet_push_service.dart';
 import '../services/remote_path.dart';
 import '../services/transfer_hub.dart';
 import '../services/transfer_queue.dart';
-import 'transfer_panel.dart' show iconForDirection;
+import 'transfer_panel.dart' show iconForDirection, interruptedSubtitle;
 
 /// Rebuilds [builder] whenever [hub]'s merged list changes — the
 /// multi-session equivalent of `TransferQueueBuilder` in
@@ -275,6 +275,7 @@ class _HubTile extends StatelessWidget {
           TransferStatus.completed => Icons.check_circle,
           TransferStatus.failed => Icons.error,
           TransferStatus.cancelled => Icons.cancel,
+          TransferStatus.interrupted => Icons.sync_problem,
           _ => iconForDirection(task.direction),
         },
         color: switch (task.status) {
@@ -351,6 +352,8 @@ class _HubTile extends StatelessWidget {
             : '${RemotePath.formatBytes(task.transferredBytes)} · $landed';
       case TransferStatus.cancelled:
         return 'Cancelled';
+      case TransferStatus.interrupted:
+        return interruptedSubtitle(task);
       case TransferStatus.failed:
         return task.error ?? 'Failed';
       case TransferStatus.running:

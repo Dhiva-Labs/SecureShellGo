@@ -111,6 +111,13 @@ class ReconnectPolicy {
 
   final Duration budget;
 
+  /// A fresh schedule with the same backoff and budget, for when a new
+  /// reason to try comes along after this one has finished: the user asking,
+  /// the network coming back, or a later drop of the connection this one
+  /// produced.
+  ReconnectPolicy restarted() =>
+      ReconnectPolicy(backoff: _backoff, budget: budget);
+
   ReconnectPhase get phase => _phase;
   var _phase = ReconnectPhase.idle;
 
@@ -126,6 +133,13 @@ class ReconnectPolicy {
   /// and null after [succeeded] — a success has nothing to explain.
   String? get stopReason => _stopReason;
   String? _stopReason;
+
+  /// Whether the schedule gave up only because its budget ran out — every
+  /// failure along the way was the network's. That, and nothing else, is
+  /// worth trying again without being asked when the network comes back: a
+  /// refused password or a changed host key will be just as wrong then.
+  bool get exhausted => _phase == ReconnectPhase.givenUp && !_fatal;
+  var _fatal = false;
 
   /// Whether this policy has reached a state it will never leave.
   bool get isFinished =>
@@ -197,21 +211,35 @@ class ReconnectPolicy {
         // banner should keep saying across the gap.
         return;
       case ReconnectFailure.authentication:
+        _fatal = true;
         _phase = ReconnectPhase.givenUp;
         _stopReason = message ??
             'The server rejected the saved credentials. Reconnecting stopped '
                 'so repeated attempts cannot lock the account out.';
       case ReconnectFailure.hostKey:
+        _fatal = true;
         _phase = ReconnectPhase.givenUp;
         _stopReason = message ??
             'The host key could not be verified. Reconnecting stopped — '
                 'check the server before connecting again.';
       case ReconnectFailure.noCredentials:
+        _fatal = true;
         _phase = ReconnectPhase.givenUp;
         _stopReason = message ??
             'No saved credentials for this host. Connect again from the host '
                 'list.';
     }
+  }
+
+  /// The connection a success handed over died again almost at once.
+  ///
+  /// Counted as one more failed attempt rather than a reason for a fresh
+  /// schedule: a server that lets the login through and then hangs up every
+  /// time must still run the budget down and stop, not be dialled every two
+  /// seconds for ever.
+  void reopen() {
+    if (_phase != ReconnectPhase.connected) return;
+    _phase = ReconnectPhase.connecting;
   }
 
   /// The user ended it: closed the tab, or pressed Stop. Not a failure, and

@@ -554,18 +554,47 @@ void main() {
       expect(session.controller.reconnectMessage, contains('Reconnecting'));
     });
 
-    test('does not reconnect after an orderly close', () async {
+    test('reconnects after the server closes the connection in order',
+        () async {
       final session = buildSession([FakeTransport(name: 'second')]);
       addTearDown(session.controller.dispose);
 
-      // No error: the far end said goodbye. An idle timeout, an administrator,
-      // or the user's own `exit` — none of them want dialling back.
+      // No error, and no `exit` before it: the server went down under a
+      // session nobody ended — a reboot, sshd restarting. The shell is
+      // wanted back when it returns.
       session.transport.drop();
       await ManualScheduler.pump();
 
       expect(session.controller.isClosed, isTrue);
-      expect(session.controller.isReconnecting, isFalse);
-      expect(session.scheduler.delays, isEmpty);
+      expect(session.controller.isReconnecting, isTrue);
+      expect(session.scheduler.delays, const [Duration(seconds: 2)]);
+    });
+
+    test('does not reconnect an orderly close that follows exit', () async {
+      final transport = ShellTransport();
+      final scheduler = ManualScheduler();
+      final connector = ScriptedConnector([FakeTransport(name: 'second')]);
+      final controller = SessionController(
+        connection: transport,
+        storage: UnusedStorage(),
+        reconnect: ReconnectSupport(
+          loadCredentials: (_) async => testCredentials,
+          connect: connector.connect,
+        ),
+        reconnectScheduler: scheduler.schedule,
+      );
+      addTearDown(controller.dispose);
+      controller.terminal.resize(100, 30);
+      await controller.ensureShell();
+
+      transport.shell.exit();
+      await ManualScheduler.pump();
+      transport.drop();
+      await ManualScheduler.pump();
+
+      expect(controller.isClosed, isTrue);
+      expect(controller.isReconnecting, isFalse);
+      expect(scheduler.delays, isEmpty);
     });
 
     test('puts the new transport in the same session', () async {

@@ -383,6 +383,7 @@ class _ManagedSessionUpload implements FleetOpenSession {
           completer.completeError(const SftpFailure('Cancelled.'));
         case TransferStatus.queued:
         case TransferStatus.running:
+        case TransferStatus.interrupted:
           break;
       }
       unawaited(subscription.cancel());

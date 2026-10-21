@@ -2,12 +2,15 @@ import 'dart:async';
 
 import '../models/host.dart';
 import 'device_storage.dart';
+import 'network_watch.dart';
 import 'session_controller.dart';
 import 'server_side_job.dart';
 import 'session_foreground.dart';
 import 'sftp_service.dart';
 import 'ssh_service.dart';
+import 'transfer_queue.dart';
 
+export 'network_watch.dart' show NetworkWatch;
 export 'session_controller.dart'
     show
         AgentForwardingConnector,
@@ -92,7 +95,10 @@ class SessionManager {
     AgentForwardingConnector? connectWithAgentForwarding,
     ReconnectSupport? reconnect,
     ServerJobStore? serverJobs,
+    NetworkWatch? network,
   })  : _foreground = foreground ?? SessionForegroundController.instance,
+        // ignore: prefer_initializing_formals
+        _network = network,
         // ignore: prefer_initializing_formals
         _createController = createController,
         // ignore: prefer_initializing_formals
@@ -147,6 +153,17 @@ class SessionManager {
 
   final SessionForegroundController _foreground;
   final SessionControllerFactory? _createController;
+
+  /// Network changes, the app coming back on screen, a computer waking up —
+  /// each a moment to check every live link and retry the dropped ones. Null
+  /// in tests, where nothing changes but what the test changes. Listened to
+  /// only while a session is open; see [_syncNetworkWatch].
+  final NetworkWatch? _network;
+  StreamSubscription<NetworkEvent>? _networkEvents;
+
+  /// Which sessions were closed when last looked at, so a drop and a
+  /// reconnect can each be noticed once — see [_noticeTransitions].
+  final Map<String, bool> _wasClosed = {};
 
   /// How a session rebuilds its own transport after an unexpected drop. Null
   /// in tests and anywhere the app has no SSH service and credential store to
@@ -242,10 +259,28 @@ class SessionManager {
       // where the directory gets picked.
       view: uploads.isEmpty ? initialView : SessionView.files,
     );
+    // The lowest slot no other open tab on this host holds, for the name of
+    // the tmux or screen session its shell lives in. Before the add, so it
+    // does not count itself.
+    final taken = {
+      for (final other in _sessions)
+        if (other.host.id == connection.host.id) other.controller.persistentSlot,
+    };
+    var slot = 1;
+    while (taken.contains(slot)) {
+      slot++;
+    }
+    controller.persistentSlot = slot;
+
     _sessions.add(entry);
     _activeId = id;
-    _watchers[id] = controller.changes.listen((_) => _notify());
+    _wasClosed[id] = controller.isClosed;
+    _watchers[id] = controller.changes.listen((_) {
+      _noticeTransitions(entry);
+      _notify();
+    });
     if (uploads.isNotEmpty) controller.requestUpload(uploads);
+    _syncNetworkWatch();
 
     final label = _foregroundLabel();
     unawaited(_foreground.acquire(label));
@@ -302,6 +337,56 @@ class SessionManager {
         .any((t) => t.id == following.taskId && t.status.isActive);
   }
 
+  /// Acts on a session dropping or coming back, for the *other* sessions.
+  ///
+  /// A session sees to its own transfers; what it cannot see is the
+  /// server-to-server copies other sessions are sending to it. Those are
+  /// interrupted when it drops and go back in their queues when it is back,
+  /// exactly like its own. Coming back is also when a server-side copy left
+  /// running across the drop can be followed again.
+  void _noticeTransitions(ManagedSession entry) {
+    final closed = entry.controller.isClosed;
+    final was = _wasClosed[entry.id];
+    if (was == null || was == closed) return;
+    _wasClosed[entry.id] = closed;
+    bool headedThere(TransferTask task) =>
+        task.direction == TransferDirection.serverToServer &&
+        task.destinationSessionId == entry.id;
+    for (final other in _sessions) {
+      if (other.id == entry.id) continue;
+      if (closed) {
+        other.controller.transfers.interruptWhere(headedThere);
+      } else {
+        other.controller.transfers.resumeInterrupted(test: headedThere);
+      }
+    }
+    if (!closed) unawaited(_resumeServerJobs());
+  }
+
+  void _syncNetworkWatch() {
+    final network = _network;
+    if (network == null) return;
+    if (_sessions.isNotEmpty) {
+      _networkEvents ??= network.events.listen(_onNetworkEvent);
+    } else {
+      unawaited(_networkEvents?.cancel());
+      _networkEvents = null;
+    }
+  }
+
+  void _onNetworkEvent(NetworkEvent event) {
+    if (event == NetworkEvent.resumed) {
+      // Android may have stopped the foreground service while the app was
+      // away (see `SessionForegroundService.onTimeout`); being back on screen
+      // is when it may be started again.
+      unawaited(_foreground.reassert());
+    }
+    if (!event.isComeback) return;
+    for (final session in List.of(_sessions)) {
+      unawaited(session.controller.networkCameBack());
+    }
+  }
+
   /// Resolves another session's remote filesystem for a transfer running on
   /// the session identified by [sourceId].
   ///
@@ -323,6 +408,14 @@ class SessionManager {
         );
       }
       if (target.isClosed) {
+        // Waits for it, the way a transfer waits for its own session: the
+        // copy goes back in the queue when that session is back. See
+        // [_noticeTransitions].
+        if (target.controller.canReconnect) {
+          throw TransferInterrupted(
+            'Waiting for ${target.host.displayName} to reconnect…',
+          );
+        }
         throw const SftpFailure(
           'The connection to the destination server has dropped. Reconnect to '
           'finish this transfer.',
@@ -369,6 +462,16 @@ class SessionManager {
 
     final entry = _sessions.removeAt(index);
     await _watchers.remove(id)?.cancel();
+    _wasClosed.remove(id);
+    // Copies that were waiting for this session to come back now never will.
+    for (final other in _sessions) {
+      other.controller.transfers.failInterrupted(
+        (task) => task.destinationSessionId == id,
+        reason: 'That destination session has been closed. Open it again to '
+            'finish this transfer.',
+      );
+    }
+    _syncNetworkWatch();
 
     if (_activeId == id) {
       _activeId = _sessions.isEmpty

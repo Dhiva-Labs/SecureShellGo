@@ -28,20 +28,46 @@ typedef PeriodicScheduler = Timer Function(
 ///    like — leaves that flag latched and no further keep-alive is ever sent
 ///    again. Here the ping is raced against [pingTimeout], so the next tick
 ///    always gets its turn.
-///  * **A failed ping is not reported.** If the transport really is gone,
-///    `connection.done` is what says so, and `SessionController` already
-///    watches it. A keep-alive that throws would otherwise race that with a
-///    worse-worded message.
+///  * **One failed ping is not reported.** If the transport really is gone,
+///    `connection.done` is usually what says so, and `SessionController`
+///    already watches it. A keep-alive that threw on its first miss would race
+///    that with a worse-worded message.
+///
+/// **Dead links.** `done` is not always told, though. A NAT mapping that
+/// expired, a phone that moved from Wi-Fi to mobile data, a laptop that slept
+/// through its lease: the socket stays open on this side, nothing comes back,
+/// and TCP may not give up for a quarter of an hour. So the keep-alive also
+/// judges the link itself, and calls [onDead] when
+///
+///  * the server has answered at least one keep-alive on this connection —
+///    a server that ignores them entirely is never judged by them;
+///  * the last [deadAfterMisses] keep-alives in a row went unanswered; and
+///  * nothing at all has arrived from the server since the first of those
+///    was sent. Shell output, an SFTP reply, anything: a link busy enough to
+///    delay a keep-alive's answer is still a link.
+///
+/// [probe] asks the same question at once, for the moments a link is most
+/// likely to have died — the network changing, the app coming back, the
+/// computer waking up — instead of waiting a minute and a half to find out.
 class SessionKeepalive {
   SessionKeepalive({
     required Future<void> Function() ping,
     PeriodicScheduler scheduler = Timer.periodic,
     Duration timeout = pingTimeout,
+    DateTime? Function()? lastInbound,
+    void Function()? onDead,
+    DateTime Function() clock = DateTime.now,
   })  : _ping = ping, // ignore: prefer_initializing_formals
         // ignore: prefer_initializing_formals
         _scheduler = scheduler,
         // ignore: prefer_initializing_formals
-        _timeout = timeout;
+        _timeout = timeout,
+        // ignore: prefer_initializing_formals
+        _lastInbound = lastInbound,
+        // ignore: prefer_initializing_formals
+        _onDead = onDead,
+        // ignore: prefer_initializing_formals
+        _clock = clock;
 
   /// Deliberately a constant rather than a setting.
   ///
@@ -57,6 +83,17 @@ class SessionKeepalive {
   /// Shorter than [interval] so ticks can never pile up.
   static const Duration pingTimeout = Duration(seconds: 20);
 
+  /// How many keep-alives in a row must go unanswered, with nothing else
+  /// heard in the meantime, before the link is called dead. Three is about a
+  /// minute and a half at [interval]: long enough to ride out a tunnel or a
+  /// lift, short enough that the user is not left typing into nothing.
+  static const int deadAfterMisses = 3;
+
+  /// How long [probe] waits for its answer. Shorter than [pingTimeout]: a
+  /// probe runs because something just changed, and a radio coming out of
+  /// idle answers within a few seconds or not at all.
+  static const Duration probeTimeout = Duration(seconds: 10);
+
   final Future<void> Function() _ping;
   final PeriodicScheduler _scheduler;
 
@@ -64,9 +101,31 @@ class SessionKeepalive {
   /// waiting [pingTimeout] of real time. Production takes the default.
   final Duration _timeout;
 
+  /// When bytes last arrived from the server. Null (no way to tell) means
+  /// only the keep-alives themselves are counted.
+  final DateTime? Function()? _lastInbound;
+  final void Function()? _onDead;
+  final DateTime Function() _clock;
+
   Timer? _timer;
   var _inFlight = false;
   var _stopped = false;
+
+  /// Whether the server has answered a keep-alive on this connection yet.
+  bool get hasAnswered => _answered;
+  var _answered = false;
+
+  /// When each keep-alive in the current run of unanswered ones was sent.
+  final List<DateTime> _misses = [];
+
+  /// How many keep-alives in a row have gone unanswered.
+  int get missedInARow => _misses.length;
+
+  /// True once [onDead] has been called. Permanent, like [stop].
+  bool get isDead => _dead;
+  var _dead = false;
+
+  Future<bool>? _probing;
 
   /// How many keep-alives have been dispatched. Diagnostics, and what the
   /// scheduling test asserts on.
@@ -80,9 +139,15 @@ class SessionKeepalive {
   /// Begins the schedule. Idempotent, and a no-op after [stop] — a session
   /// ends once, and a keep-alive restarted on a dead transport would only
   /// produce noise.
-  void start() {
+  ///
+  /// [pingNow] sends the first keep-alive straight away rather than one
+  /// [interval] in, so the link has a known-good answer behind it from its
+  /// first seconds. Without one, nothing — not even [probe] — can call it
+  /// dead.
+  void start({bool pingNow = false}) {
     if (_stopped || _timer != null) return;
     _timer = _scheduler(interval, (_) => unawaited(_tick()));
+    if (pingNow) unawaited(_tick());
   }
 
   Future<void> _tick() async {
@@ -94,13 +159,68 @@ class SessionKeepalive {
     _inFlight = true;
     pingCount++;
     try {
-      await _ping().timeout(_timeout);
-    } catch (_) {
-      // Swallowed on purpose — see the class doc. `connection.done` is the
-      // single source of truth for "the session is gone".
+      await _send(_timeout);
     } finally {
       _inFlight = false;
     }
+  }
+
+  /// Sends one keep-alive and records how it went. True when it was answered.
+  Future<bool> _send(Duration timeout) async {
+    final sentAt = _clock();
+    try {
+      await _ping().timeout(timeout);
+      if (_stopped) return true;
+      _answered = true;
+      _misses.clear();
+      return true;
+    } catch (_) {
+      // Not reported — see the class doc. It is only counted.
+      if (_stopped) return false;
+      _misses.add(sentAt);
+      if (_misses.length >= deadAfterMisses &&
+          !_heardSince(_misses[_misses.length - deadAfterMisses])) {
+        _declareDead();
+      }
+      return false;
+    }
+  }
+
+  /// Whether anything arrived from the server at or after [moment].
+  bool _heardSince(DateTime moment) {
+    final heard = _lastInbound?.call();
+    return heard != null && !heard.isBefore(moment);
+  }
+
+  void _declareDead() {
+    if (!_answered || _dead || _stopped) return;
+    _dead = true;
+    stop();
+    _onDead?.call();
+  }
+
+  /// Checks the link now, with one keep-alive outside the schedule.
+  ///
+  /// True when the link answered — or when it cannot honestly be called dead:
+  /// something else arrived while the probe waited, or this server has never
+  /// answered a keep-alive and so a silence from it proves nothing. False
+  /// only after [onDead] has been called. A probe asked for while one is
+  /// already out shares its answer.
+  Future<bool> probe({Duration timeout = probeTimeout}) {
+    if (_dead) return Future<bool>.value(false);
+    if (_stopped) return Future<bool>.value(true);
+    return _probing ??= () async {
+      try {
+        final startedAt = _clock();
+        if (await _send(timeout)) return true;
+        if (_dead) return false;
+        if (_heardSince(startedAt)) return true;
+        _declareDead();
+        return !_dead;
+      } finally {
+        _probing = null;
+      }
+    }();
   }
 
   /// Ends the schedule permanently. Idempotent.

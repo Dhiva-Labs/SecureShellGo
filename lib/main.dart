@@ -168,6 +168,10 @@ class _SecureShellGoAppState extends State<SecureShellGoApp> {
     // are remembered here, so closing the app does not stop them — see
     // `server_side_job.dart`.
     serverJobs: ServerJobStore(),
+    // Network changes, coming back on screen and waking from sleep: when
+    // every session checks its link instead of waiting for keep-alives to
+    // notice — see `network_watch.dart`.
+    network: NetworkWatch.forPlatform(),
     resolveDestinationCredentials: _credentialStore.load,
     connectWithAgentForwarding: (host, credentials) => _sshService.connect(
       host: host,

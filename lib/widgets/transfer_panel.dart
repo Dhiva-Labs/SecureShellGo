@@ -18,6 +18,17 @@ IconData iconForDirection(TransferDirection direction) => switch (direction) {
       TransferDirection.serverToServer => Icons.swap_horiz,
     };
 
+/// What an interrupted row says: how far it had got, and that it carries on
+/// by itself — shared by the session sheet and the all-sessions panel, for
+/// the same reason [iconForDirection] is.
+String interruptedSubtitle(TransferTask task) {
+  final percent = task.percent;
+  final where = percent == null || task.transferredBytes == 0
+      ? 'Interrupted'
+      : 'Interrupted at $percent%';
+  return '$where · ${task.error ?? 'continues when the connection is back'}';
+}
+
 /// Rebuilds [builder] whenever anything in [queue] changes.
 class TransferQueueBuilder extends StatelessWidget {
   const TransferQueueBuilder({
@@ -291,6 +302,7 @@ class _TransferTile extends StatelessWidget {
           TransferStatus.completed => Icons.check_circle,
           TransferStatus.failed => Icons.error,
           TransferStatus.cancelled => Icons.cancel,
+          TransferStatus.interrupted => Icons.sync_problem,
           _ => iconForDirection(task.direction),
         },
         color: switch (task.status) {
@@ -363,6 +375,8 @@ class _TransferTile extends StatelessWidget {
             : '${RemotePath.formatBytes(task.transferredBytes)} · $landed';
       case TransferStatus.cancelled:
         return 'Cancelled';
+      case TransferStatus.interrupted:
+        return interruptedSubtitle(task);
       case TransferStatus.failed:
         return task.error ?? 'Failed';
       case TransferStatus.running:
