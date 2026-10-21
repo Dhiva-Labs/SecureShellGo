@@ -1,5 +1,8 @@
 # Changes waiting for a release
 
+1.5.0's notes have been folded into `CHANGELOG.md`. Start new files here for
+the next release.
+
 Several parts of 1.5 are built side by side, on separate branches. If each
 added its lines to `CHANGELOG.md`, every merge would conflict there. So each
 piece of work writes its own file here instead, and nobody edits
