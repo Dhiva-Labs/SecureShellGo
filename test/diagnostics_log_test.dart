@@ -482,7 +482,7 @@ void main() {
       log.applySettings(const AppSettings(diagnosticsLog: false));
       await log.record(StateError('x'), null);
       expect(await current().exists(), isFalse);
-      log.applySettings(const AppSettings());
+      log.applySettings(const AppSettings(diagnosticsLog: true));
       await log.record(StateError('y'), null);
       expect(await log.read(), contains('Bad state: y'));
     });
