@@ -13,6 +13,8 @@ import 'package:dartssh2/dartssh2.dart'
         SSHRawSignature,
         SSHSignature;
 
+import 'windows_agent_pipe.dart';
+
 /// Why the operating system's ssh-agent could not be used.
 ///
 /// Separated by kind because the fixes are unrelated: no agent running is
@@ -622,7 +624,13 @@ class SshAgentClient {
       );
     }
 
-    if (Platform.isWindows) return _openWindowsPipe();
+    if (Platform.isWindows) {
+      return openWindowsAgent(
+        environment: Platform.environment,
+        openPipe: _openPipe,
+        findPageant: PageantPipe.find,
+      );
+    }
     return _openUnixSocket();
   }
 
@@ -653,63 +661,83 @@ class SshAgentClient {
     }
   }
 
+  /// The Windows OpenSSH agent's pipe.
+  static const String openSshAgentPipe = r'\\.\pipe\openssh-ssh-agent';
+
+  /// Whether [path] names a pipe (`\\.\pipe\…`) rather than a file.
+  static bool isWindowsPipePath(String path) {
+    const prefix = r'\\.\pipe\';
+    return path.length > prefix.length &&
+        path.substring(0, prefix.length).toLowerCase() == prefix &&
+        !path.substring(prefix.length).contains(r'\');
+  }
+
   /// Windows: an agent listens on a named pipe rather than a socket.
+  ///
+  /// Tried in order: `SSH_AUTH_SOCK` when it names a pipe (any agent the
+  /// user points it at), the Windows OpenSSH agent's own pipe, then Pageant
+  /// ([findPageant], which only answers with a pipe this user owns — see
+  /// `PageantPipe`). An `SSH_AUTH_SOCK` that is not a `\\.\pipe\` path —
+  /// a Git Bash or Cygwin socket file, say — is not something this can talk
+  /// to, and is passed over rather than opened: opening it as a file would
+  /// create it, or append agent requests to whatever it is, and stop the
+  /// search there.
+  ///
+  /// Public, with the opening passed in, so a test can check the order and
+  /// what is skipped without Windows.
+  static Future<SshAgentConnection> openWindowsAgent({
+    required Map<String, String> environment,
+    required Future<SshAgentConnection> Function(String path) openPipe,
+    required Future<SshAgentConnection?> Function() findPageant,
+  }) async {
+    final configured = environment['SSH_AUTH_SOCK'];
+    final notAPipe = configured != null &&
+        configured.isNotEmpty &&
+        !isWindowsPipePath(configured);
+    final candidates = <String>[
+      if (configured != null && isWindowsPipePath(configured)) configured,
+      openSshAgentPipe,
+    ];
+    Object? lastError;
+    for (final path in candidates) {
+      try {
+        return await openPipe(path);
+      } catch (e) {
+        lastError = e;
+      }
+    }
+    final pageant = await findPageant();
+    if (pageant != null) return pageant;
+    throw SshAgentException(
+      SshAgentErrorKind.noAgent,
+      'No SSH agent found. Start the OpenSSH Authentication Agent service '
+      'or Pageant, and add a key.',
+      details: [
+        if (notAPipe)
+          'SSH_AUTH_SOCK ($configured) is not a named pipe, so it was not '
+              'used.',
+        if (lastError != null) '$lastError',
+      ].join(' '),
+    );
+  }
+
+  /// Opens a named pipe for the agent protocol.
   ///
   /// `dart:io` has no named-pipe client, but a pipe has a filesystem-style
   /// path and `File.open` goes through `CreateFile`, which is the documented
   /// way to open one. The pipe is byte-mode, so ordinary reads and writes are
-  /// the correct framing.
-  ///
-  /// Tried in order: `SSH_AUTH_SOCK` when it is set (it can name a pipe —
-  /// Pageant's `--openssh-config` setup, or any agent the user points it
-  /// at), the Windows OpenSSH agent's own pipe, then Pageant's, which is
-  /// named after the user and a hash and so has to be looked for. Pageant
-  /// 0.75 and later speak the ordinary agent protocol on it.
+  /// the correct framing. Only ever called with a `\\.\pipe\` path: a
+  /// pipe cannot be created by opening it, so a missing one fails here
+  /// rather than leaving a file behind.
   ///
   /// Caveat, stated plainly: this path could not be exercised on the machine
   /// this was written on. Every failure mode routes to the same clear
   /// [SshAgentErrorKind.noAgent] message as a missing agent, and the reads
   /// are bounded by [timeout], so the worst case is "agent auth is not
   /// available on Windows" rather than a hang or a crash.
-  static Future<SshAgentConnection> _openWindowsPipe() async {
-    final configured = Platform.environment['SSH_AUTH_SOCK'];
-    final candidates = <String>[
-      if (configured != null && configured.isNotEmpty) configured,
-      r'\\.\pipe\openssh-ssh-agent',
-      ...await _pageantPipes(),
-    ];
-    Object? lastError;
-    for (final path in candidates) {
-      try {
-        final handle = await File(path).open(mode: FileMode.append);
-        return _RandomAccessAgentConnection(handle);
-      } catch (e) {
-        lastError = e;
-      }
-    }
-    throw SshAgentException(
-      SshAgentErrorKind.noAgent,
-      'No SSH agent found. Start the OpenSSH Authentication Agent service '
-      'or Pageant, and add a key.',
-      details: lastError?.toString(),
-    );
-  }
-
-  /// Pageant's pipes, `\\.\pipe\pageant.<user>.<hash>`, by listing the pipe
-  /// namespace. Empty on any failure: this is a fallback, not a requirement.
-  static Future<List<String>> _pageantPipes() async {
-    try {
-      final names = await Directory(r'\\.\pipe\')
-          .list()
-          .map((entity) => entity.path)
-          .where((path) =>
-              path.split(r'\').last.toLowerCase().startsWith('pageant.'))
-          .toList()
-          .timeout(const Duration(seconds: 2));
-      return names;
-    } catch (_) {
-      return const [];
-    }
+  static Future<SshAgentConnection> _openPipe(String path) async {
+    final handle = await File(path).open(mode: FileMode.append);
+    return _RandomAccessAgentConnection(handle);
   }
 }
 
