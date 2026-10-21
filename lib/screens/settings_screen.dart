@@ -14,6 +14,11 @@ import '../services/tunnel_runtime.dart';
 import '../theme.dart';
 import 'backup_screen.dart';
 import 'known_hosts_screen.dart';
+import 'settings/diagnostics_section.dart';
+import 'settings/editor_section.dart';
+import 'settings/input_section.dart';
+import 'settings/settings_section.dart';
+import 'settings/terminal_section.dart';
 import 'snippets_screen.dart';
 import 'tunnels_screen.dart';
 
@@ -284,7 +289,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
           constraints: const BoxConstraints(maxWidth: 600),
           child: ListView(
             children: [
-              _SectionHeader('Appearance', style: _settings.uiStyle),
+              SettingsSectionHeader('Appearance', style: _settings.uiStyle),
               Padding(
                 padding: const EdgeInsets.fromLTRB(16, 4, 16, 4),
                 child: Text('UI style', style: theme.textTheme.bodyLarge),
@@ -341,7 +346,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 ),
               ),
               const Divider(height: 32),
-              _SectionHeader('Terminal', style: _settings.uiStyle),
+              SettingsSectionHeader('Terminal', style: _settings.uiStyle),
               _TerminalPreview(settings: _settings),
               Padding(
                 padding: const EdgeInsets.fromLTRB(16, 14, 16, 0),
@@ -393,8 +398,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   ],
                 ),
               ),
+              TerminalOptionsSection(settings: _settings, apply: _apply),
               const Divider(height: 32),
-              _SectionHeader('Session', style: _settings.uiStyle),
+              EditorSettingsSection(settings: _settings, apply: _apply),
+              const Divider(height: 32),
+              InputSettingsSection(settings: _settings, apply: _apply),
+              const Divider(height: 32),
+              SettingsSectionHeader('Session', style: _settings.uiStyle),
               SwitchListTile(
                 title: const Text('Keep screen awake'),
                 subtitle: const Text(
@@ -416,7 +426,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 ),
               ),
               const Divider(height: 32),
-              _SectionHeader('Commands', style: _settings.uiStyle),
+              SettingsSectionHeader('Commands', style: _settings.uiStyle),
               ListTile(
                 leading: const Icon(Icons.bolt_outlined),
                 title: const Text('Snippets'),
@@ -426,7 +436,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
               ),
               if (widget.tunnels != null && widget.hostStore != null) ...[
                 const Divider(height: 32),
-                _SectionHeader('Networking', style: _settings.uiStyle),
+                SettingsSectionHeader('Networking', style: _settings.uiStyle),
                 ListTile(
                   leading: const Icon(Icons.swap_horiz),
                   title: const Text('Tunnels'),
@@ -438,7 +448,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 ),
               ],
               const Divider(height: 32),
-              _SectionHeader('Security', style: _settings.uiStyle),
+              SettingsSectionHeader('Security', style: _settings.uiStyle),
               if (widget.appLock != null) ..._appLockRows(theme),
               ListTile(
                 leading: const Icon(Icons.vpn_key_outlined),
@@ -458,6 +468,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   onTap: _openBackup,
                 ),
               const Divider(height: 32),
+              DiagnosticsSettingsSection(settings: _settings, apply: _apply),
+              const Divider(height: 32),
               ListTile(
                 leading: const Icon(Icons.info_outline),
                 title: const Text('About SecureShell Go'),
@@ -470,57 +482,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
         ),
       ),
     );
-  }
-}
-
-/// A settings section title. Picks up [SectionHeaderChrome] for [style] —
-/// aws's tinted bar, gcp's extra whitespace, azure's left accent stripe — so
-/// Settings reads as the same system as the host list's own group headers,
-/// not just a name in the app's stock text colour regardless of style.
-class _SectionHeader extends StatelessWidget {
-  const _SectionHeader(this.label, {this.style = UiStyle.aurora});
-
-  final String label;
-  final UiStyle style;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final chrome = AppTheme.sectionHeaderChromeFor(style, theme.colorScheme);
-
-    final text = Text(
-      label,
-      style: theme.textTheme.labelLarge?.copyWith(
-        color: theme.colorScheme.primary,
-        fontWeight: FontWeight.w600,
-      ),
-    );
-
-    final content = Padding(
-      padding: EdgeInsets.fromLTRB(
-        chrome.leftAccent != null ? 13 : 16,
-        chrome.tight
-            ? 10
-            : chrome.airy
-                ? 26
-                : 20,
-        16,
-        4,
-      ),
-      child: chrome.leftAccent == null
-          ? text
-          : Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Container(width: 3, height: 14, color: chrome.leftAccent),
-                const SizedBox(width: 10),
-                text,
-              ],
-            ),
-    );
-
-    if (chrome.background == null) return content;
-    return ColoredBox(color: chrome.background!, child: content);
   }
 }
 

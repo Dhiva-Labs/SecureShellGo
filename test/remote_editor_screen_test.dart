@@ -5,6 +5,7 @@ import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:secure_shell_go/models/app_settings.dart';
 import 'package:secure_shell_go/models/remote_entry.dart';
 import 'package:secure_shell_go/screens/remote_editor_screen.dart';
 import 'package:secure_shell_go/services/settings_store.dart';
@@ -169,8 +170,9 @@ Future<void> pumpEditor(
   ScreenFs fs,
   List<String> paths, {
   TargetPlatform platform = TargetPlatform.android,
+  SettingsStore? settings,
 }) async {
-  final settings = SettingsStore(file: File('/nonexistent/settings.json'));
+  settings ??= SettingsStore(file: File('/nonexistent/settings.json'));
   await tester.pumpWidget(MaterialApp(
     theme: AppTheme.dark.copyWith(platform: platform),
     home: Scaffold(
@@ -179,7 +181,7 @@ Future<void> pumpEditor(
           onPressed: () => openRemoteEditor(
             context,
             filesystem: fs,
-            settingsStore: settings,
+            settingsStore: settings!,
             paths: paths,
             hostLabel: 'demo',
           ),
@@ -1053,6 +1055,40 @@ void main() {
       await pumpEditor(tester, fs, ['/etc/app.conf']);
       expect(find.byIcon(Icons.warning_amber_rounded), findsNothing,
           reason: 'a config file reads the same either way');
+    });
+
+    testWidgets('a zoom is saved as the editor size for the next file',
+        (tester) async {
+      final dir = Directory.systemTemp.createTempSync('editor_zoom_test');
+      addTearDown(() => dir.deleteSync(recursive: true));
+      // Made, loaded and seeded on the real event loop: a store made on the
+      // test's fake clock chains its first write onto a future of that
+      // clock, which never moves while `runAsync` is waiting on it.
+      late final SettingsStore store;
+      await tester.runAsync(() async {
+        store = SettingsStore(file: File('${dir.path}/settings.json'));
+        await store.ensureLoaded();
+        await store.update((s) => s.copyWith(editorFontSize: 20));
+      });
+      addTearDown(store.dispose);
+
+      final fs = ScreenFs()..put('/etc/nginx.conf', conf);
+      await pumpEditor(tester, fs, ['/etc/nginx.conf'],
+          platform: TargetPlatform.linux, settings: store);
+      expect(fieldOf(tester).style!.fontSize, 20,
+          reason: 'opens at the editor size from Settings');
+
+      await chord(tester, LogicalKeyboardKey.equal);
+      expect(fieldOf(tester).style!.fontSize, 21);
+      expect(store.current.editorFontSize, 21);
+      expect(store.current.terminalFontSize, AppSettings.defaultFontSize,
+          reason: 'the terminal keeps its own size');
+
+      // A fresh editor, as for the next file opened.
+      await tester.pumpWidget(const SizedBox());
+      await pumpEditor(tester, fs, ['/etc/nginx.conf'],
+          platform: TargetPlatform.linux, settings: store);
+      expect(fieldOf(tester).style!.fontSize, 21);
     });
 
     testWidgets('Ctrl+= and Ctrl+- zoom the text, Ctrl+0 resets it',

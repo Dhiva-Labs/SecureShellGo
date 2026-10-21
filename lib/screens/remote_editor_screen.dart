@@ -130,14 +130,13 @@ class _RemoteEditorScreenState extends State<RemoteEditorScreen> {
   /// whitespace apart. See `CodeEditorField.showWhitespace`.
   bool _showWhitespace = false;
 
-  /// The editor's own zoom, from Ctrl+=/−/0 or a pinch. Null follows the
-  /// terminal font size from Settings.
+  /// The size on screen while a zoom has not reached Settings yet: during a
+  /// pinch, and until the save after a keyboard zoom comes back. Null shows
+  /// the editor size from Settings, which every zoom is saved to.
   double? _zoomedFontSize;
-  static const double _minFontSize = 8;
-  static const double _maxFontSize = 32;
 
-  double get _editorFontSize => (_zoomedFontSize ?? _settings.terminalFontSize)
-      .clamp(_minFontSize, _maxFontSize);
+  double get _editorFontSize =>
+      _zoomedFontSize ?? _settings.editorFontSize;
 
   /// Pointers down on the editor, for a two-finger pinch — hand-rolled with
   /// a `Listener` like the terminal's, so it never fights the field's own
@@ -172,6 +171,9 @@ class _RemoteEditorScreenState extends State<RemoteEditorScreen> {
       if (!mounted) return;
       setState(() {
         _settings = settings;
+        // Settings has caught up with the zoom (or been changed under it);
+        // mid-pinch the fingers still win.
+        if (_pinchStartDistance == null) _zoomedFontSize = null;
         for (final tab in _tabs) {
           tab.controller.theme = _terminalTheme;
         }
@@ -1070,12 +1072,26 @@ class _RemoteEditorScreenState extends State<RemoteEditorScreen> {
     tab.focusNode.requestFocus();
   }
 
-  void _zoom(double delta) => setState(() {
-        _zoomedFontSize =
-            (_editorFontSize + delta).clamp(_minFontSize, _maxFontSize);
-      });
+  void _zoom(double delta) =>
+      _setFontSize(AppSettings.clampEditorFontSize(_editorFontSize + delta));
 
-  void _resetZoom() => setState(() => _zoomedFontSize = null);
+  void _resetZoom() => _setFontSize(AppSettings.defaultFontSize);
+
+  void _setFontSize(double size) {
+    setState(() => _zoomedFontSize = size);
+    _saveFontSize(size);
+  }
+
+  /// Saves a zoom as the editor's size, so the next file opens at it too.
+  void _saveFontSize(double size) {
+    // `SettingsStore.update` does not swallow I/O failures; the size is on
+    // screen either way, so a full disk must not become an unhandled error.
+    unawaited(
+      widget.settingsStore
+          .update((s) => s.copyWith(editorFontSize: size))
+          .catchError((Object _) {}),
+    );
+  }
 
   void _onPointerDown(PointerDownEvent event) {
     _pointers[event.pointer] = event.position;
@@ -1096,15 +1112,18 @@ class _RemoteEditorScreenState extends State<RemoteEditorScreen> {
     final points = _pointers.values.toList();
     final scale = (points[0] - points[1]).distance / start;
     final size =
-        (startSize * scale).clamp(_minFontSize, _maxFontSize).roundToDouble();
+        AppSettings.clampEditorFontSize(startSize * scale).roundToDouble();
     if (size != _editorFontSize) setState(() => _zoomedFontSize = size);
   }
 
   void _onPointerUp(PointerEvent event) {
     _pointers.remove(event.pointer);
-    if (_pointers.length < 2) {
+    if (_pointers.length < 2 && _pinchStartDistance != null) {
       _pinchStartDistance = null;
       _pinchStartFontSize = null;
+      // Saved once, when the fingers lift, not on every frame of the pinch.
+      final pinched = _zoomedFontSize;
+      if (pinched != null) _saveFontSize(pinched);
     }
   }
 

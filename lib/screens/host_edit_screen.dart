@@ -15,11 +15,12 @@ import '../services/ssh_keygen.dart';
 import '../services/ssh_service.dart';
 import '../theme.dart';
 import '../widgets/error_banner.dart';
+import '../widgets/host_advanced_section.dart';
 import '../widgets/host_color_dot.dart';
 import '../widgets/host_key_dialog.dart';
-import '../widgets/login_prompt_dialog.dart';
 import '../widgets/import_key_file_button.dart';
 import '../widgets/inline_hint.dart';
+import '../widgets/login_prompt_dialog.dart';
 import '../widgets/public_key_dialog.dart';
 
 /// Dropdown value for "New group…". Every real group name is the trimmed
@@ -106,8 +107,13 @@ class _HostEditScreenState extends State<HostEditScreen> {
   bool _generatingKey = false;
   bool _installingKey = false;
 
-  /// See [Host.legacyAlgorithms]. Off for every new host.
-  bool _legacyAlgorithms = false;
+  /// The "Advanced" fold: transport, persistent session, forwarding and
+  /// legacy algorithms. All off for every new host.
+  HostAdvancedOptions _advanced = const HostAdvancedOptions();
+
+  /// See [Host.certificate]. Carried through an edit so saving the form never
+  /// drops one; it is chosen in the sign-in area.
+  String? _certificate;
   String? _error;
   String? _errorDetails;
 
@@ -159,7 +165,8 @@ class _HostEditScreenState extends State<HostEditScreen> {
       _selectedColorLabel = host.colorLabel;
       _startupCommandController.text = host.startupCommand ?? '';
       _jumpHostId = host.jumpHostId;
-      _legacyAlgorithms = host.legacyAlgorithms;
+      _advanced = HostAdvancedOptions.of(host);
+      _certificate = host.certificate;
       _loadExistingCredentials(host.id);
     }
     unawaited(_loadGroupNames());
@@ -256,7 +263,12 @@ class _HostEditScreenState extends State<HostEditScreen> {
       colorLabel: _selectedColorLabel,
       startupCommand: startupCommand.isEmpty ? null : startupCommand,
       jumpHostId: _jumpHostId,
-      legacyAlgorithms: _legacyAlgorithms,
+      legacyAlgorithms: _advanced.legacyAlgorithms,
+      agentForwarding: _advanced.agentForwarding,
+      x11Forwarding: _advanced.x11Forwarding,
+      persistentSession: _advanced.persistentSession,
+      certificate: _certificate,
+      transport: _advanced.transport,
     );
   }
 
@@ -981,17 +993,9 @@ class _HostEditScreenState extends State<HostEditScreen> {
           ),
         ),
         const SizedBox(height: 8),
-        SwitchListTile(
-          contentPadding: EdgeInsets.zero,
-          value: _legacyAlgorithms,
-          onChanged: (value) => setState(() => _legacyAlgorithms = value),
-          secondary: const Icon(Icons.history_toggle_off),
-          title: const Text('Allow legacy algorithms'),
-          subtitle: const Text(
-            'Only for an old router or NAS that cannot connect otherwise. '
-            'Adds SHA-1 key exchange and host-key signatures and CBC '
-            'ciphers, which are weaker, for this host only.',
-          ),
+        HostAdvancedSection(
+          options: _advanced,
+          onChanged: (value) => setState(() => _advanced = value),
         ),
         const SizedBox(height: 12),
         const InlineHint(

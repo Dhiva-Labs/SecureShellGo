@@ -293,6 +293,36 @@ void main() {
         );
       });
 
+      testWidgets('edit host form, Advanced open', skip: _skip,
+          (tester) async {
+        // Something in it set, so it opens unfolded: the widest it gets.
+        const host = Host(
+          id: 'adv',
+          label: 'Build box',
+          hostname: 'build.example.com',
+          port: 22,
+          username: 'ci',
+          authMethod: SshAuthMethod.password,
+          transport: HostTransport.mosh,
+          persistentSession: PersistentSession.screen,
+          agentForwarding: true,
+        );
+        await render(
+          tester,
+          'host_edit_advanced',
+          device,
+          push: true,
+          () => HostEditScreen(
+            hostStore: hosts,
+            credentialStore: credentials,
+            sshService: ssh,
+            settingsStore: settings,
+            sessions: sessions,
+            host: host,
+          ),
+        );
+      });
+
       testWidgets('settings', skip: _skip, (tester) async {
         await render(
           tester,

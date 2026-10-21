@@ -537,4 +537,105 @@ void main() {
       expect(ssh.lastHost?.port, 22303);
     });
   });
+
+  group('the Advanced section', () {
+    testWidgets('a new host starts folded, with every option off',
+        (tester) async {
+      await pumpForm(tester, noKeyringStore());
+
+      expect(find.text('Advanced'), findsOneWidget);
+      expect(find.text('Connection, session and forwarding'), findsOneWidget);
+      expect(find.text('Forward SSH agent'), findsNothing,
+          reason: 'folded away until asked for');
+
+      await tester.tap(find.text('Advanced'));
+      await tester.pumpAndSettle();
+      for (final title in [
+        'Forward SSH agent',
+        'Forward X11',
+        'Allow legacy algorithms',
+      ]) {
+        final tile = tester.widget<SwitchListTile>(
+          find.widgetWithText(SwitchListTile, title),
+        );
+        expect(tile.value, isFalse, reason: title);
+      }
+    });
+
+    testWidgets('its choices are saved with the host', (tester) async {
+      await pumpForm(tester, noKeyringStore());
+      await fillIn(tester);
+      await tester.tap(find.text('Advanced'));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('Mosh'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byType(DropdownButtonFormField<PersistentSession>));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('tmux').last);
+      await tester.pumpAndSettle();
+      for (final title in [
+        'Forward SSH agent',
+        'Forward X11',
+        'Allow legacy algorithms',
+      ]) {
+        await tester.tap(find.text(title));
+        await tester.pumpAndSettle();
+      }
+      expect(
+        find.text('Mosh · tmux · agent forwarding · X11 · legacy algorithms'),
+        findsOneWidget,
+        reason: 'the folded header says what is changed',
+      );
+
+      await tapAndRun(tester, 'Save host', checks: () async {
+        final saved = (await hosts.all()).single;
+        expect(saved.transport, HostTransport.mosh);
+        expect(saved.persistentSession, PersistentSession.tmux);
+        expect(saved.agentForwarding, isTrue);
+        expect(saved.x11Forwarding, isTrue);
+        expect(saved.legacyAlgorithms, isTrue);
+      });
+    });
+
+    testWidgets('a host using it opens unfolded, and an edit keeps all of it',
+        (tester) async {
+      final original = Host(
+        id: hosts.newId(),
+        label: 'Build box',
+        hostname: 'build.example.com',
+        port: 22,
+        username: 'ci',
+        authMethod: SshAuthMethod.password,
+        agentForwarding: true,
+        persistentSession: PersistentSession.screen,
+        certificate: 'ssh-ed25519-cert-v01@openssh.com AAAA ci@build',
+      );
+      await withRealIo(tester, () => hosts.add(original));
+      await pumpForm(tester, noKeyringStore(), host: original);
+
+      expect(find.text('Forward SSH agent'), findsOneWidget,
+          reason: 'something in it is set, so it is shown');
+      expect(find.text('GNU screen · agent forwarding'), findsOneWidget);
+
+      await tester.enterText(
+        find.widgetWithText(TextFormField, 'Build box'),
+        'Build box 2',
+      );
+      // Nothing saved for it yet, and a password host needs one to save.
+      await tester.enterText(
+        find.widgetWithText(TextFormField, 'Password'),
+        'hunter2',
+      );
+      await tapAndRun(tester, 'Save changes', checks: () async {
+        final saved = (await hosts.all()).single;
+        expect(saved.label, 'Build box 2');
+        expect(saved.agentForwarding, isTrue);
+        expect(saved.persistentSession, PersistentSession.screen);
+        expect(saved.transport, HostTransport.ssh);
+        expect(saved.certificate, original.certificate,
+            reason: 'nothing on this form shows it, and saving must keep it');
+      });
+    });
+  });
 }
