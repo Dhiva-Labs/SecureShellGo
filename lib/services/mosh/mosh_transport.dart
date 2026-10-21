@@ -362,9 +362,12 @@ class MoshTransport {
 
     final state = reference.state.copy();
     if (inst.diff.isNotEmpty) {
+      // Anything at all: this runs inside the socket's listener, and one bad
+      // datagram must not throw out of it. The state is a copy, so whatever
+      // half of the diff applied is thrown away with it.
       try {
         state.applyDiff(inst.diff);
-      } on ProtobufFormatException {
+      } catch (_) {
         malformed++;
         return;
       }

@@ -108,7 +108,9 @@ class ProtoReader {
 
   Uint8List readBytes() {
     final length = _varint();
-    if (length < 0 || _at + length > _bytes.length) {
+    // Compared against what is left rather than as `_at + length`, which a
+    // huge varint overflows into a negative number that passes.
+    if (length < 0 || length > _bytes.length - _at) {
       throw const ProtobufFormatException('truncated length-delimited field');
     }
     final out = Uint8List.sublistView(_bytes, _at, _at + length);
@@ -132,7 +134,7 @@ class ProtoReader {
   }
 
   void _advance(int n) {
-    if (_at + n > _bytes.length) {
+    if (n > _bytes.length - _at) {
       throw const ProtobufFormatException('truncated fixed-width field');
     }
     _at += n;

@@ -353,15 +353,15 @@ void main() {
       final second = manager.open(on('h1', label: 'Box'));
       final other = manager.open(on('h2', label: 'Other'));
 
-      expect(first.controller.persistentName, 'ssg-box-1');
-      expect(second.controller.persistentName, 'ssg-box-2');
-      expect(other.controller.persistentName, 'ssg-other-1');
+      expect(first.controller.persistentName, 'ssg-box-1_');
+      expect(second.controller.persistentName, 'ssg-box-2_');
+      expect(other.controller.persistentName, 'ssg-other-1_');
 
       // The first tab's slot is free again once it closes, so the next tab
       // goes back to the shell it left running.
       await manager.close(first.id);
       final third = manager.open(on('h1', label: 'Box'));
-      expect(third.controller.persistentName, 'ssg-box-1');
+      expect(third.controller.persistentName, 'ssg-box-1_');
     });
 
     group('a copy to a session that dropped', () {

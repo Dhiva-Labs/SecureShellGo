@@ -92,15 +92,15 @@ exit $screenExit''');
 void main() {
   group('session names', () {
     test('are the host and the tab slot, in characters tmux keeps', () {
-      expect(persistentSessionName(hostNamed('Test box'), 1), 'ssg-test-box-1');
+      expect(persistentSessionName(hostNamed('Test box'), 1), 'ssg-test-box-1_');
       expect(
         persistentSessionName(hostNamed('prod.db:5432'), 2),
-        'ssg-prod-db-5432-2',
+        'ssg-prod-db-5432-2_',
       );
     });
 
     test('fall back to the address when the host has no label', () {
-      expect(persistentSessionName(hostNamed(''), 1), 'ssg-dev-example-com-1');
+      expect(persistentSessionName(hostNamed(''), 1), 'ssg-dev-example-com-1_');
     });
 
     test('stay short, and never empty', () {
@@ -108,8 +108,23 @@ void main() {
         hostNamed('a very long label for a very long server name indeed'),
         3,
       );
-      expect(long, 'ssg-a-very-long-label-for-a-3');
-      expect(persistentSessionName(hostNamed('???'), 1), 'ssg-host-1');
+      expect(long, 'ssg-a-very-long-label-for-a-3_');
+      expect(persistentSessionName(hostNamed('???'), 1), 'ssg-host-1_');
+    });
+
+    test('are never the start of one another', () {
+      // GNU screen looks names up by how they start, so tab 1 of `box`
+      // must not be the start of tab 10's name, nor of any tab of `box-1`.
+      final names = [
+        for (final label in ['box', 'box-1', 'box-10', 'box 1 2'])
+          for (var slot = 1; slot <= 25; slot++)
+            persistentSessionName(hostNamed(label), slot),
+      ];
+      for (final a in names) {
+        for (final b in names) {
+          if (a != b) expect(b.startsWith(a), isFalse, reason: '$a / $b');
+        }
+      }
     });
 
     test('differ by tab and repeat for the same tab', () {
@@ -315,5 +330,51 @@ void main() {
       expect(persistentProbeSaysNew('Welcome!\nnew\n'), isTrue);
       expect(persistentProbeSaysNew('sh: tmux: not found'), isNull);
     });
+  });
+
+  group('with real GNU screen', () {
+    final noScreen =
+        Process.runSync('sh', ['-c', 'command -v screen']).exitCode != 0;
+
+    test("a tab's probe does not find another tab's session", () async {
+      // A socket directory of its own, so the developer's sessions are
+      // neither seen nor touched.
+      final dir = await Directory.systemTemp.createTemp('ssg_screen_');
+      await Process.run('chmod', ['700', dir.path]);
+      final env = {'SCREENDIR': dir.path};
+      final host = hostNamed('box');
+      final tenth = persistentSessionName(host, 10);
+      addTearDown(() async {
+        await Process.run('screen', ['-S', tenth, '-X', 'quit'],
+            environment: env);
+        await dir.delete(recursive: true);
+      });
+      await Process.run('screen', ['-dmS', tenth, 'sleep', '60'],
+          environment: env);
+
+      Future<bool?> probe(int slot) async {
+        final result = await Process.run(
+          '/bin/sh',
+          [
+            '-c',
+            persistentProbeCommand(
+              PersistentSession.screen,
+              persistentSessionName(host, slot),
+            )!,
+          ],
+          environment: env,
+        );
+        return persistentProbeSaysNew(result.stdout as String);
+      }
+
+      // Tab 10 finds its own, once screen has it running...
+      final deadline = DateTime.now().add(const Duration(seconds: 5));
+      while (await probe(10) != false) {
+        if (DateTime.now().isAfter(deadline)) fail('screen never started');
+        await Future<void>.delayed(const Duration(milliseconds: 50));
+      }
+      // ...and tab 1, whose name tab 10's used to start with, does not.
+      expect(await probe(1), isTrue);
+    }, skip: noScreen ? 'needs GNU screen' : null);
   });
 }

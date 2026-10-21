@@ -3,10 +3,10 @@
 - A Mosh terminal carries on through what drops SSH: switching between Wi-Fi and mobile data, a new address, a phone or laptop asleep for hours. It picks up where the server is when the network comes back, with nothing to reconnect.
 - When the server has been out of touch for a few seconds, a bar across the top of a Mosh terminal says how long ("mosh: Last contact 12 seconds ago."), and goes once it catches up.
 - On a slow connection, what you type appears straight away, underlined until the server confirms it (Mosh's local echo). It only switches on when the link is slow, and never shows at a password prompt.
-- If SSH drops while a Mosh terminal is open, the terminal keeps working; files and tunnels reconnect in the background, and the strip above the terminal says so.
+- If SSH drops while a Mosh terminal is open, the terminal keeps working; files and tunnels reconnect in the background, and the strip above the terminal says so. If reconnecting SSH gives up or is stopped, the strip says that too and offers Reconnect, and SSH is tried again by itself when the network comes back. Typing `exit` in the terminal meanwhile ends the session; nothing starts it again unless you press Reconnect.
 - Where Mosh cannot be used — `mosh-server` not installed, no UTF-8 locale on the host, or UDP blocked by a firewall — the terminal opens over SSH instead, with one line saying why. A `mosh-server` started for a connection that never got through is stopped again.
 - `mosh-server` is found in Homebrew and other common install locations as well as on the PATH.
-- Hosts set to keep their shell in tmux or screen run it under Mosh too, so a Mosh terminal can also be re-attached after the app closes.
+- Hosts set to keep their shell in tmux or screen run it under Mosh too, so a Mosh terminal can also be re-attached after the app closes. If tmux or screen will not start there, the terminal falls back to an ordinary shell with a one-line notice, as it does over SSH.
 - A Mosh terminal keeps a scrollback of what scrolled past while you watched. Mosh sends screens rather than every line of output, so a burst that flashed by between two screens is not in it.
-- Closing a Mosh tab ends the session on the server, as Mosh's own Ctrl-^ . does.
+- Closing a Mosh tab ends the session on the server, as Mosh's own Ctrl-^ . does. If the goodbye cannot get through over UDP, `mosh-server` is stopped over SSH instead, so neither it nor the shell under it is left running.
 - Agent and X11 forwarding reach SSH terminals only; Mosh cannot carry them, so a Mosh terminal has neither.

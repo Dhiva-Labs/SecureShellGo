@@ -322,4 +322,25 @@ void main() {
       expect(terminal.buffer.cursorX, 2);
     });
   });
+
+  test('a resize far past any real terminal is refused, not allocated', () {
+    final state = MoshTerminalState(80, 24);
+    final diff = HostMessageCodec.encode([
+      const HostInstruction(resize: (width: 2000000000, height: 2000000000)),
+    ]);
+    expect(
+      () => state.applyDiff(diff),
+      throwsA(isA<ProtobufFormatException>()),
+    );
+    expect(state.fb.ds.width, 80);
+
+    state.applyDiff(
+      HostMessageCodec.encode([
+        const HostInstruction(
+          resize: (width: moshMaxTerminalSize, height: 50),
+        ),
+      ]),
+    );
+    expect(state.fb.ds.width, moshMaxTerminalSize);
+  });
 }

@@ -1,4 +1,4 @@
-import 'dart:io' show ZLibCodec;
+import 'dart:io' show ZLibCodec, ZLibDecoder;
 import 'dart:typed_data';
 
 import 'mosh_protobuf.dart';
@@ -55,6 +55,39 @@ final _zlib = ZLibCodec();
 /// buffer), which bounds what a hostile peer can make this allocate.
 const _maxInstructionBytes = 2048 * 2048;
 
+/// What one instruction may arrive as before it is given up on: compressed
+/// bytes (an instruction that inflates to 4 MiB deflates to no more than
+/// that, plus a little) and fragments (far more than a 4 MiB instruction
+/// needs at Mosh's smallest MTU).
+const _maxCompressedBytes = _maxInstructionBytes + 64 * 1024;
+const _maxFragments = 16384;
+
+/// Inflates [compressed], stopping as soon as the output passes
+/// [_maxInstructionBytes] rather than after inflating all of it — a few
+/// kilobytes of zlib can stand for gigabytes.
+Uint8List _inflateBounded(Uint8List compressed) {
+  final out = _BoundedSink();
+  ZLibDecoder().startChunkedConversion(out)
+    ..add(compressed)
+    ..close();
+  return out.bytes.takeBytes();
+}
+
+class _BoundedSink implements Sink<List<int>> {
+  final bytes = BytesBuilder(copy: false);
+
+  @override
+  void add(List<int> chunk) {
+    if (bytes.length + chunk.length > _maxInstructionBytes) {
+      throw const FormatException('Mosh instruction too large');
+    }
+    bytes.add(chunk);
+  }
+
+  @override
+  void close() {}
+}
+
 /// Collects fragments until one instruction is complete.
 ///
 /// Like Mosh's, it only ever assembles the newest instruction: a fragment
@@ -65,6 +98,15 @@ class MoshFragmentAssembly {
   int? _currentId;
   var _arrived = 0;
   var _total = -1;
+  var _buffered = 0;
+
+  void _reset() {
+    _fragments.clear();
+    _currentId = null;
+    _arrived = 0;
+    _total = -1;
+    _buffered = 0;
+  }
 
   /// Adds [fragment]; returns the instruction once it is whole.
   ///
@@ -72,6 +114,10 @@ class MoshFragmentAssembly {
   /// instruction that does not decompress or parse — a misbehaving peer, not
   /// a lossy network, since every datagram was authenticated first.
   TransportInstruction? add(MoshFragment fragment) {
+    if (fragment.number >= _maxFragments) {
+      _reset();
+      throw const FormatException('Mosh fragment number out of range');
+    }
     if (_currentId != fragment.id) {
       _fragments
         ..clear()
@@ -79,6 +125,7 @@ class MoshFragmentAssembly {
       _fragments[fragment.number] = fragment;
       _arrived = 1;
       _total = -1;
+      _buffered = fragment.contents.length;
       _currentId = fragment.id;
     } else if (_fragments.length > fragment.number &&
         _fragments[fragment.number] != null) {
@@ -89,6 +136,11 @@ class MoshFragmentAssembly {
       }
       _fragments[fragment.number] = fragment;
       _arrived++;
+      _buffered += fragment.contents.length;
+    }
+    if (_buffered > _maxCompressedBytes) {
+      _reset();
+      throw const FormatException('Mosh instruction too large');
     }
 
     if (fragment.isFinal) {
@@ -109,14 +161,12 @@ class MoshFragmentAssembly {
     for (final piece in _fragments) {
       encoded.add(piece!.contents);
     }
-    _fragments.clear();
-    _arrived = 0;
-    _total = -1;
-    final inflated = _zlib.decode(encoded.takeBytes());
-    if (inflated.length > _maxInstructionBytes) {
-      throw const FormatException('Mosh instruction too large');
-    }
-    return TransportInstruction.decode(Uint8List.fromList(inflated));
+    final id = _currentId;
+    _reset();
+    // Still this instruction's: a late duplicate of one of its fragments
+    // must not start assembling it again.
+    _currentId = id;
+    return TransportInstruction.decode(_inflateBounded(encoded.takeBytes()));
   }
 }
 

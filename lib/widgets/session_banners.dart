@@ -36,6 +36,17 @@ class SessionBanners extends StatelessWidget {
         onStop: controller.stopReconnecting,
       );
     }
+    if (controller.isSshLostUnderMosh) {
+      // The terminal is fine, so nothing here is an error or a dead end;
+      // only what needs SSH is waiting.
+      return _SshLostUnderMoshBanner(
+        message: controller.reconnectGaveUp
+            ? controller.reconnectMessage
+            : null,
+        onReconnect:
+            controller.canReconnect ? controller.reconnectNow : null,
+      );
+    }
     if (session.isClosed) {
       return _DisconnectedBanner(
         message: controller.reconnectGaveUp
@@ -151,6 +162,44 @@ class _DisconnectedBanner extends StatelessWidget {
               onPressed: onClose,
               child: const Text('Close'),
             ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// SSH is gone but the terminal is not: it runs over Mosh, and carries on.
+/// Shown once reconnecting SSH has stopped — given up, or stopped by the
+/// user — while files, tunnels and commands wait for it.
+class _SshLostUnderMoshBanner extends StatelessWidget {
+  const _SshLostUnderMoshBanner({this.message, this.onReconnect});
+
+  final String? message;
+  final VoidCallback? onReconnect;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Material(
+      color: theme.colorScheme.tertiary.withValues(alpha: 0.13),
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
+        child: Row(
+          children: [
+            Icon(Icons.link_off, color: theme.colorScheme.tertiary, size: 20),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Text(
+                message ??
+                    'SSH connection lost. The terminal carries on over Mosh; '
+                        'files, tunnels and commands need SSH.',
+                style: const TextStyle(fontSize: 13, height: 1.3),
+              ),
+            ),
+            const SizedBox(width: 8),
+            if (onReconnect != null)
+              TextButton(onPressed: onReconnect, child: const Text('Reconnect')),
           ],
         ),
       ),

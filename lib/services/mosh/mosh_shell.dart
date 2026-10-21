@@ -119,14 +119,29 @@ class MoshShell {
   void repaint() => _client.repaint();
 
   /// Ends the session, shell and all, as Mosh's Ctrl-^ . does.
-  Future<void> close() async {
-    await _client.close();
+  ///
+  /// When the server never answers the goodbye — UDP that no longer gets
+  /// through — it would keep running, and the shell under it, for ever: it
+  /// only gives up on its own before a client has ever connected. Given
+  /// [ssh], it is then stopped by its pid over that instead.
+  Future<MoshExit> close({SessionTransport? ssh}) async {
+    final exit = await _client.close();
+    final pid = server.pid;
+    if (!exit.clean && ssh != null && pid != null && !ssh.isClosed) {
+      await stopMoshServer(ssh, pid);
+    }
+    return exit;
   }
 
   /// After the SSH connection came back from a drop: if Mosh has heard
   /// nothing either, checks whether `mosh-server` is still running at all —
   /// a host that rebooted took it with it, and no amount of waiting will
   /// bring that session back. Ends this one then, so a new one can start.
+  ///
+  /// A pid the host has since given to another process reads as running,
+  /// so a server that is gone can still look alive here; that only means
+  /// waiting on, as before. Stopping one is more careful — see
+  /// [stopMoshServer].
   Future<void> checkServer(SessionTransport ssh) async {
     final pid = server.pid;
     if (pid == null || isClosed || !isLate) return;

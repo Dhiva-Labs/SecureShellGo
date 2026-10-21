@@ -40,8 +40,7 @@ void main() {
       now = 1 << 32;
     });
 
-    test('nothing is shown until a first guess has been confirmed — so a '
-        'password prompt echoes nothing', () {
+    test('nothing is shown until a first guess has been confirmed', () {
       final prompt = screen(r'$ ');
       type('a', prompt, frame: 0);
       expect(rowText(shown(prompt), 0), r'$');
@@ -57,6 +56,36 @@ void main() {
       final predicted = shown(echoed);
       expect(rowText(predicted, 0), r'$ abc');
       expect(predicted.ds.cursorCol, 5);
+    });
+
+    test('after Enter, guesses wait to be confirmed again — so a password '
+        'prompt echoes nothing', () {
+      final prompt = screen(r'$ ');
+      type('a', prompt, frame: 0);
+      engine.localFrameLateAcked = 1;
+      now += 40;
+      final echoed = screen(r'$ a');
+      shown(echoed);
+      // Confident by now: typing shows at once.
+      type('b', echoed, frame: 1);
+      expect(rowText(shown(echoed), 0), r'$ ab');
+
+      // Enter runs a command that will ask for a password with echo off,
+      // and the password is typed straight after, before the prompt is
+      // even back: none of it may show.
+      type('\r', echoed, frame: 2);
+      type('hunter2', echoed, frame: 2);
+      final typedAhead = shown(echoed);
+      expect(rowText(typedAhead, 0), r'$ ab');
+      expect(rowText(typedAhead, 1), '');
+
+      // Nor once the prompt is there and the server has had all of it.
+      engine.localFrameLateAcked = 3;
+      now += 40;
+      final asked = screen('\$ ab\r\nPassword: ');
+      final answered = shown(asked);
+      expect(rowText(answered, 1), 'Password:');
+      expect(answered.ds.cursorCol, 10);
     });
 
     test('a guess the server contradicts is withdrawn, with its epoch', () {

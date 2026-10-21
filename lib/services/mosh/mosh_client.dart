@@ -46,8 +46,8 @@ class MoshClient {
     MoshClock clock = moshMonotonicNow,
     MoshPredictionMode prediction = MoshPredictionMode.adaptive,
   }) : _clock = clock,
-       _columns = columns < 1 ? 80 : columns,
-       _rows = rows < 1 ? 24 : rows,
+       _columns = columns < 1 ? 80 : columns.clamp(1, moshMaxTerminalSize),
+       _rows = rows < 1 ? 24 : rows.clamp(1, moshMaxTerminalSize),
        _predictions = MoshPredictionEngine(mode: prediction),
        _notifications = MoshNotificationEngine(clock()) {
     connection = MoshConnection(
@@ -153,6 +153,9 @@ class MoshClient {
   /// The terminal is now [columns] × [rows].
   void resize(int columns, int rows) {
     if (_closed || columns < 1 || rows < 1) return;
+    // The server echoes the size back, and the client refuses one past this.
+    if (columns > moshMaxTerminalSize) columns = moshMaxTerminalSize;
+    if (rows > moshMaxTerminalSize) rows = moshMaxTerminalSize;
     if (columns == _columns && rows == _rows) return;
     _columns = columns;
     _rows = rows;

@@ -3,7 +3,7 @@
 - Sessions check their connection straight away when the network changes, when the app comes back on screen and when a computer wakes from sleep, and reconnect over the new network at once.
 - A disconnected session always has a Reconnect button, and one that stopped trying because there was no network tries again by itself when the network comes back.
 - When the shell exits but the connection is fine, a "Shell ended" strip offers Restart: a new shell in the same tab, with no new login.
-- Persistent sessions: a host set to tmux or GNU screen runs its shell inside one, named per tab, so a reconnect — or reopening the app — lands back in the same shell with whatever was running in it. tmux falls back to screen, and either falls back to an ordinary shell with a one-line notice — when it is not installed, and also when it is installed but will not start. The host's startup command is only typed into a new shell, never into one left running.
+- Persistent sessions: a host set to tmux or GNU screen runs its shell inside one, named per tab (`ssg-<host>-<tab>_`, as `tmux ls` and `screen -ls` show it), so a reconnect — or reopening the app — lands back in the same shell with whatever was running in it. tmux falls back to screen, and either falls back to an ordinary shell with a one-line notice — when it is not installed, and also when it is installed but will not start. The host's startup command is only typed into a new shell, never into one left running.
 
 ### Changed
 - Transfers cut off by a dropped connection are marked interrupted rather than cancelled, and start again by themselves once the session reconnects — including copies to another server whose session dropped.

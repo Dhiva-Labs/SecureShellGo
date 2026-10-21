@@ -516,7 +516,7 @@ void main() {
       await harness.controller.ensureShell();
 
       expect(harness.first.shellCommands, [
-        persistentShellCommand(PersistentSession.tmux, 'ssg-test-box-2'),
+        persistentShellCommand(PersistentSession.tmux, 'ssg-test-box-2_'),
       ]);
     });
 
@@ -526,7 +526,7 @@ void main() {
       await harness.controller.ensureShell();
 
       expect(harness.first.executed, [
-        persistentProbeCommand(PersistentSession.tmux, 'ssg-test-box-1'),
+        persistentProbeCommand(PersistentSession.tmux, 'ssg-test-box-1_'),
       ]);
       expect(harness.first.shells.single.writes, ['htop\n']);
     });
@@ -562,7 +562,7 @@ void main() {
       await harness.controller.ensureShell();
 
       expect(harness.first.shellCommands, [
-        persistentShellCommand(PersistentSession.screen, 'ssg-test-box-1'),
+        persistentShellCommand(PersistentSession.screen, 'ssg-test-box-1_'),
       ]);
     });
 
@@ -578,7 +578,7 @@ void main() {
       await pump();
 
       expect(harness.first.shellCommands, [
-        persistentShellCommand(PersistentSession.tmux, 'ssg-test-box-1'),
+        persistentShellCommand(PersistentSession.tmux, 'ssg-test-box-1_'),
         null,
       ]);
       expect(harness.screen, contains('could not be started'));

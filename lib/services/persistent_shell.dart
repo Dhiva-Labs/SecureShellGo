@@ -19,14 +19,21 @@ library;
 import '../models/host.dart';
 import 'shell_quote.dart';
 
-/// The tmux or screen session name for a session tab: `ssg-<host>-<slot>`.
+/// The tmux or screen session name for a session tab: `ssg-<host>-<slot>_`.
 ///
 /// [slot] is the lowest number not taken by another open tab on the same
 /// host, so two tabs never share a shell, a reconnect finds the same one, and
 /// the first tab opened after the app was closed goes back to the shell the
-/// last first tab left running. Only letters, digits and dashes survive —
-/// tmux turns `.` and `:` into something else, and a name that needs quoting
-/// is a name nobody can type at `tmux attach -t`.
+/// last first tab left running. Only letters, digits and dashes survive from
+/// the host's name — tmux turns `.` and `:` into something else, and a name
+/// that needs quoting is a name nobody can type at `tmux attach -t`.
+///
+/// The `_` at the end is what keeps tab 1 out of tab 10's shell. GNU screen
+/// looks a name up as the *start* of a session name, with no way to ask for
+/// an exact match: `ssg-box-1` finds `ssg-box-10` when only that is running,
+/// and `screen -dRR` would take it over. No generated name has a `_`
+/// anywhere but at its end, so none is the start of another, and every
+/// lookup — screen's attach and the probe's alike — finds only its own.
 String persistentSessionName(Host host, int slot) {
   final slug = host.displayName
       .toLowerCase()
@@ -34,7 +41,7 @@ String persistentSessionName(Host host, int slot) {
       .replaceAll(RegExp(r'^-+|-+$'), '');
   final short = slug.length > 24 ? slug.substring(0, 24) : slug;
   final trimmed = short.replaceAll(RegExp(r'-+$'), '');
-  return 'ssg-${trimmed.isEmpty ? 'host' : trimmed}-$slot';
+  return 'ssg-${trimmed.isEmpty ? 'host' : trimmed}-${slot}_';
 }
 
 /// What the one-line notices printed by [persistentShellCommand] say, so a
@@ -109,9 +116,10 @@ String? persistentShellCommand(PersistentSession kind, String name) {
 /// an editor included.
 String? persistentProbeCommand(PersistentSession kind, String name) {
   final quoted = posixSingleQuote(name);
-  // tmux matches a bare target against the start of session names too, so
-  // `ssg-box-1` would find tab 10's `ssg-box-10`; `=` asks for this name and
-  // no other. (`new -A -s`, which attaches, already looks up names exactly.)
+  // tmux matches a bare target against the start of session names too; `=`
+  // asks for this name and no other. (`new -A -s`, which attaches, already
+  // looks up names exactly.) screen has no such way to ask, and relies on
+  // the names themselves: see [persistentSessionName].
   final exactly = posixSingleQuote('=$name');
   const quiet = '>/dev/null 2>&1';
   final String script;
