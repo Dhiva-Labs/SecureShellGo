@@ -356,9 +356,22 @@ mv -f @PART@ @OUT@''', {
   /// name, and BusyBox lists the rewritten name, so that warning refuses it
   /// too.
   ///
+  /// Links are held to the same rule: one whose target is absolute or
+  /// climbs with `..` refuses the archive (exit 18). `tar -tv` shows each
+  /// link's target beside its name, so the one listing covers both. A zip
+  /// keeps its link targets as the links' contents: Info-ZIP's `zipinfo`
+  /// says which entries are links, and each one's target is read with
+  /// `unzip -p`. BusyBox's `unzip` lists neither, so there the links it
+  /// made are checked once it is done, and any pointing out are removed
+  /// (still exit 18). Every one of these `tar`s and `unzip`s makes an
+  /// archive's own links last, after its files, so none of them writes
+  /// through a link the same archive brought.
+  ///
   /// [ExtractMode.newFolder] makes [destination] and refuses (exit 17) if
   /// something is already there; the merge modes go into the folder as it
-  /// is, keeping or replacing the files the archive also has.
+  /// is, keeping or replacing the files the archive also has — unless it
+  /// already holds a link pointing out of it, which BusyBox `tar` and
+  /// either `unzip` would write through (exit 18).
   static String extract({
     required String archivePath,
     required ArchiveKind kind,
@@ -383,23 +396,36 @@ mv -f @PART@ @OUT@''', {
 
     final String list;
     final String unsafe;
+    var links = ':';
     final String unpack;
     if (kind == ArchiveKind.zip) {
       // Info-ZIP lists one name a line. BusyBox has only `unzip -l`, a
       // table with the archive's own path in its header: its entry rows
       // are cut down to the name, which follows the time and three spaces.
-      list = tools.flavourOf('unzip') == ToolFlavour.infozip
+      final infozip = tools.flavourOf('unzip') == ToolFlavour.infozip;
+      list = infozip
           ? 'unzip -Z1 "\$a"'
           : '{ unzip -l "\$a"; echo \$? > "\$d/st"; } | '
               "sed -n 's/^ *[0-9][0-9]*  *[0-9][0-9-]*  *[0-9][0-9:]*   //p'"
               ' && [ "\$(cat "\$d/st")" = 0 ]';
       unsafe = r'^/|(^|/)\.\.(/|$)';
-      unpack = mode == ExtractMode.replaceExisting
+      final unzip = mode == ExtractMode.replaceExisting
           ? 'unzip -q -o "\$a" -d "\$t"'
           : 'unzip -q -n "\$a" -d "\$t"';
+      if (infozip) {
+        links = _zipLinks;
+        unpack = unzip;
+      } else {
+        unpack = _fill(_unzipThenLinks, {'UNZIP': unzip});
+      }
     } else {
-      list = viaTar('t', '');
-      unsafe = r'^/|(^|/)\.\.(/|$)';
+      // A `tar -tv` row: mode, owner, size, date and time, then the name
+      // and, for a link, ` -> ` or ` link to ` and its target. A name or
+      // target that is absolute starts after a space; a `..` part sits
+      // between spaces or slashes. Nothing else in a row looks like either,
+      // so an odd owner or name can only make this refuse more.
+      list = viaTar('tv', '');
+      unsafe = r'(^| )/|(^|[ /])\.\.([ /]|$)';
       // Every tar replaces an existing file by default. `-k` keeps it, and
       // GNU, BusyBox and bsdtar all have it — but GNU and BusyBox then exit
       // non-zero for each file kept, which here is what was asked for. So
@@ -414,6 +440,7 @@ mv -f @PART@ @OUT@''', {
       'DEST': _arg(destination),
       'LIST': list,
       'UNSAFE': posixSingleQuote(unsafe),
+      'LINKS': links,
       'PREPARE': mode == ExtractMode.newFolder ? _makeFolder : _useFolder,
       'UNPACK': unpack,
     });
@@ -427,15 +454,50 @@ t=@DEST@
 if { @LIST@; } > "$d/list" 2> "$d/lerr"; then :; else cat "$d/lerr" >&2; echo "The archive could not be read." >&2; exit 72; fi
 if [ -s "$d/list" ]; then :; else cat "$d/lerr" >&2; echo "The archive is empty or could not be read." >&2; exit 72; fi
 if grep -E -q @UNSAFE@ "$d/list" || grep -i -q "removing leading" "$d/lerr"; then echo "The archive has entries that would land outside the folder." >&2; exit 18; fi
+@LINKS@
 @PREPARE@
 @UNPACK@''';
+
+  /// Every link under `$t` whose target is absolute or climbs with `..`,
+  /// as one `x` each — and, given `rm`, removed (the link, never what it
+  /// points to). A link that cannot be read counts as one. Through
+  /// `"$t/"`, so a destination that is itself a link is looked inside.
+  static const String _outwardLinks =
+      r'''find "$t/" -type l -exec sh -c 'm="$1"; shift; for l do r=$(readlink "$l") || r=/; case "$r" in /*|..|../*|*/..|*/../*) if [ "$m" = rm ]; then rm -f "$l"; fi; printf x;; esac; done' ssg-links''';
+
+  /// Info-ZIP: the targets of the archive's links, read before anything is
+  /// written. `zipinfo` rows are mode, version, system, size, type,
+  /// method, date and time, then the name; a link's row starts with `l`.
+  /// Each name goes back to `unzip -p` as a pattern, its `*`, `?`, `[`,
+  /// `]` and `\` escaped. A target that comes back empty — a name
+  /// `zipinfo` showed with `^J` for a control character, say — refuses.
+  static const String _zipLinks = r'''
+if unzip -Z "$a" > "$d/zi"; then :; else echo "The archive could not be read." >&2; exit 72; fi
+b=$(sed -n 's/^l[^ ]*\(  *[^ ]*\)\{7\} //p' "$d/zi" | while IFS= read -r n; do r=$(unzip -p "$a" "$(printf '%s\n' "$n" | sed 's/[][\\*?]/\\&/g')" < /dev/null 2>/dev/null); case "$r" in ""|/*|..|../*|*/..|*/../*) printf x;; esac; done)
+if [ -n "$b" ]; then echo "The archive has links that point outside the folder." >&2; exit 18; fi''';
+
+  /// BusyBox `unzip`, whose listing shows no links: the ones it made that
+  /// point out are removed once it is done. In a merge the folder held
+  /// none before ([_useFolder] saw to that), so any found came from the
+  /// archive.
+  static final String _unzipThenLinks = '''
+@UNZIP@
+s=\$?
+b=\$($_outwardLinks rm {} +)
+if [ -n "\$b" ]; then echo "The archive had links that point outside the folder. They were removed." >&2; exit 18; fi
+exit \$s''';
 
   static const String _makeFolder = r'''
 if [ -e "$t" ] || [ -L "$t" ]; then echo "The folder already exists." >&2; exit 17; fi
 mkdir "$t" || exit 73''';
 
-  static const String _useFolder = r'''
-if [ -d "$t" ]; then :; else mkdir "$t" || exit 73; fi''';
+  /// A merge goes ahead only into a folder with no link pointing out of
+  /// it, and only once the whole of it could be looked through.
+  static final String _useFolder = '''
+if [ -d "\$t" ]; then
+  if b=\$($_outwardLinks check {} +); then :; else echo "The folder could not be checked all the way through for links." >&2; exit 18; fi
+  if [ -n "\$b" ]; then echo "The folder has links that point outside it, which the archive could write through." >&2; exit 18; fi
+else mkdir "\$t" || exit 73; fi''';
 
   static const String _keepExisting = r'''
 if { @TAR@; } 2> "$d/err"; then s=0; else s=$?; fi

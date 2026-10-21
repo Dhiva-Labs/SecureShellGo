@@ -284,7 +284,7 @@ mv -f './.out.tar.gz.ssg-part-1' './out.tar.gz\'''');
       );
       expect(script, contains("a='/srv/x.tar.xz'"));
       expect(script,
-          contains('if { tar -tJf "\$a"; } > "\$d/list" 2> "\$d/lerr"; then'));
+          contains('if { tar -tvJf "\$a"; } > "\$d/list" 2> "\$d/lerr"; then'));
       expect(script, contains('if { tar -xJf "\$a" -k -C "\$t"; } 2> "\$d/err"'));
     });
 
@@ -594,6 +594,142 @@ mv -f './.out.tar.gz.ssg-part-1' './out.tar.gz\'''');
           expect(Directory('${box.root}/evil_out').existsSync(), isFalse);
           expect(File('${box.root}/escaped').existsSync(), isFalse);
         });
+
+        /// A `.tar.gz` of [entries] (paths relative to a fresh folder,
+        /// links already made by [make]) in the order given.
+        Future<String> tarOf(String name, void Function(String dir) make,
+            List<String> entries) async {
+          final dir = Directory('${box.root}/$name.src')..createSync();
+          make(dir.path);
+          final archive = '${box.root}/$name.tar.gz';
+          final made = await Process.run('tar', ['-czf', archive, ...entries],
+              workingDirectory: dir.path);
+          expect(made.exitCode, 0, reason: '${made.stderr}');
+          return archive;
+        }
+
+        test('an archive with a link pointing out of the folder is refused',
+            () async {
+          Directory('${box.root}/outside').createSync();
+          for (final (name, target) in [
+            ('up', '../outside'),
+            ('abs', '/etc'),
+            ('deep', 'a/../../outside'),
+          ]) {
+            final archive = await tarOf(
+              name,
+              (dir) => Link('$dir/l').createSync(target),
+              ['l'],
+            );
+            final dest = '${box.root}/${name}_out';
+            final result = await box.run(RemoteFileCommands.extract(
+              archivePath: archive,
+              kind: ArchiveKind.tarGz,
+              destination: dest,
+              mode: ExtractMode.newFolder,
+              tools: kit,
+            ));
+            expect(result.exitCode, RemoteOpExit.unsafeArchive,
+                reason: '$target: ${result.stderr}');
+            expect(Directory(dest).existsSync(), isFalse);
+          }
+        });
+
+        test('a link that stays inside is unpacked as one', () async {
+          final archive = await tarOf('ok', (dir) {
+            Directory('$dir/sub').createSync();
+            File('$dir/sub/f').writeAsStringSync('f');
+            Link('$dir/l').createSync('sub/f');
+            Link('$dir/dots..').createSync('sub');
+          }, ['sub', 'l', 'dots..']);
+          final dest = '${box.root}/ok_out';
+          final result = await box.run(RemoteFileCommands.extract(
+            archivePath: archive,
+            kind: ArchiveKind.tarGz,
+            destination: dest,
+            mode: ExtractMode.newFolder,
+            tools: kit,
+          ));
+          expect(result.exitCode, 0, reason: '${result.stderr}');
+          expect(Link('$dest/l').targetSync(), 'sub/f');
+          expect(File('$dest/l').readAsStringSync(), 'f');
+        });
+
+        test('no merge into a folder holding a link that points out of it',
+            () async {
+          final outside = Directory('${box.root}/outside')..createSync();
+          final archive = await tarOf('x', (dir) {
+            Directory('$dir/l').createSync();
+            File('$dir/l/x').writeAsStringSync('pwned');
+          }, ['l/x']);
+          final dest = Directory('${box.root}/merge')..createSync();
+          Link('${dest.path}/l').createSync('../outside');
+          for (final mode in [ExtractMode.keepExisting, ExtractMode.replaceExisting]) {
+            final result = await box.run(RemoteFileCommands.extract(
+              archivePath: archive,
+              kind: ArchiveKind.tarGz,
+              destination: dest.path,
+              mode: mode,
+              tools: kit,
+            ));
+            expect(result.exitCode, RemoteOpExit.unsafeArchive,
+                reason: '$mode: ${result.stderr}');
+            expect(outside.listSync(), isEmpty, reason: '$mode wrote through');
+          }
+          // A link that stays inside is no reason to refuse.
+          Link('${dest.path}/l').deleteSync();
+          Directory('${dest.path}/real').createSync();
+          Link('${dest.path}/l').createSync('real');
+          final merged = await box.run(RemoteFileCommands.extract(
+            archivePath: archive,
+            kind: ArchiveKind.tarGz,
+            destination: dest.path,
+            mode: ExtractMode.replaceExisting,
+            tools: kit,
+          ));
+          expect(merged.exitCode, 0, reason: '${merged.stderr}');
+          expect(File('${dest.path}/real/x').readAsStringSync(), 'pwned');
+        });
+
+        test('a zip link pointing out of the folder is not kept', () async {
+          final src = Directory('${box.root}/zsrc')..createSync();
+          File('${src.path}/f').writeAsStringSync('f');
+          // Names a careless pattern would not find, each linked inward.
+          for (final name in ['a*b', 'a[b', 'a?b', r'a\b', 'a b']) {
+            Link('${src.path}/$name').createSync('f');
+          }
+          final safe = '${box.root}/safe.zip';
+          await Process.run('zip', ['-q', '-y', safe, 'f', 'a*b', 'a[b', 'a?b', r'a\b', 'a b'],
+              workingDirectory: src.path);
+          final ok = await box.run(RemoteFileCommands.extract(
+            archivePath: safe,
+            kind: ArchiveKind.zip,
+            destination: '${box.root}/safe_out',
+            mode: ExtractMode.newFolder,
+            tools: kit,
+          ));
+          expect(ok.exitCode, 0, reason: '${ok.stderr}');
+          expect(Link('${box.root}/safe_out/a[b').targetSync(), 'f');
+
+          Link('${src.path}/up').createSync('../outside');
+          final bad = '${box.root}/bad.zip';
+          await Process.run('zip', ['-q', '-y', bad, 'f', 'up'],
+              workingDirectory: src.path);
+          final dest = '${box.root}/bad_out';
+          final refused = await box.run(RemoteFileCommands.extract(
+            archivePath: bad,
+            kind: ArchiveKind.zip,
+            destination: dest,
+            mode: ExtractMode.newFolder,
+            tools: kit,
+          ));
+          expect(refused.exitCode, RemoteOpExit.unsafeArchive,
+              reason: '${refused.stderr}');
+          // Info-ZIP's is refused before anything is written; BusyBox's,
+          // whose listing shows no links, is cleared of it afterwards.
+          expect(Link('$dest/up').existsSync(), isFalse);
+          expect(File('$dest/up').existsSync(), isFalse);
+        }, skip: !_hasZip);
 
         test('extract refuses a folder that exists unless told how', () async {
           await box.seed();
