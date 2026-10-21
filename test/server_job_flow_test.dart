@@ -357,6 +357,12 @@ void main() {
       expect(task.status, TransferStatus.completed);
       expect(task.routeUsed, TransferRoute.direct);
       expect(await store.all(), isEmpty);
+      // The removal reaches the file in the background. Waiting for it keeps
+      // tearDown from deleting the folder under its rename, which on a busy
+      // machine failed this test after it had passed.
+      final file = File('${dir.path}/jobs.json');
+      await until(() => !file.readAsStringSync().contains(record.jobId));
+      expect(file.readAsStringSync(), isNot(contains(record.jobId)));
     });
 
     test('a job still running when its session closes is kept', () async {
