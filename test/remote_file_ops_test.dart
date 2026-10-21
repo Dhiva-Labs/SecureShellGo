@@ -124,6 +124,29 @@ void main() {
       if (_hasZip) expect(kit.flavourOf('zip'), ToolFlavour.infozip);
     }, skip: !_posix);
 
+    test('a BSD grep that says it is GNU compatible is BSD', () async {
+      // FreeBSD's and macOS's grep, whose -Z decompresses rather than
+      // ending names with NUL.
+      final shim = await Directory.systemTemp.createTemp('ssg_grep');
+      addTearDown(() => shim.delete(recursive: true));
+      File('${shim.path}/grep').writeAsStringSync(
+        '#!/bin/sh\n'
+        'if [ "\$1" = --version ]; then\n'
+        '  echo "grep (BSD grep, GNU compatible) 2.6.0-FreeBSD"; exit 0\n'
+        'fi\n'
+        'PATH=\${PATH#*:} exec grep "\$@"\n',
+      );
+      await Process.run('chmod', ['+x', '${shim.path}/grep']);
+      final result = await Process.run(
+        'sh',
+        ['-c', RemoteToolkit.probeCommand],
+        environment: {'PATH': '${shim.path}:${Platform.environment['PATH']}'},
+      );
+      final kit = RemoteToolkit.parse(result.stdout as String);
+      expect(kit.flavourOf('grep'), ToolFlavour.bsd);
+      expect(kit.grepNulNames, isFalse);
+    }, skip: !_posix);
+
     test('against a BusyBox userland', () async {
       final bin = await _busyboxBin();
       final result = await Process.run(

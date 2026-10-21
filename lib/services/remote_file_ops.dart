@@ -197,9 +197,11 @@ class RemoteToolkit {
   /// The build is read off `--version` (`-v` for the Info-ZIP pair), which
   /// GNU answers with its name, BusyBox with its usage banner, and the BSDs
   /// with an "illegal option" — plus the path's own `ls -l`, because on
-  /// Alpine `/bin/tar` is a link to `/bin/busybox`. A BusyBox shell built
-  /// to prefer its own applets answers `command -v tar` with a bare `tar`,
-  /// and those count too. Every probe reads
+  /// Alpine `/bin/tar` is a link to `/bin/busybox`. BSD is looked for
+  /// before GNU: the BSDs' and macOS's grep call themselves "BSD grep, GNU
+  /// compatible", and `-Z` means something else to them. A BusyBox shell
+  /// built to prefer its own applets answers `command -v tar` with a bare
+  /// `tar`, and those count too. Every probe reads
   /// `/dev/null`, so none of them can sit waiting for input.
   static const String probeCommand = r'''sh -c '
 for t in tar gzip xz zip unzip find grep cp chown; do
@@ -213,9 +215,9 @@ for t in tar gzip xz zip unzip find grep cp chown; do
   esac
   case "$l $v" in
     *busybox*|*BusyBox*) f=busybox ;;
+    *bsdtar*|*libarchive*|*BSD*) f=bsd ;;
     *GNU*) f=gnu ;;
     *Info-ZIP*|*"This is Zip"*|*UnZip*) f=infozip ;;
-    *bsdtar*|*libarchive*|*BSD*) f=bsd ;;
     *) f=other ;;
   esac
   echo "tool $t $f"
