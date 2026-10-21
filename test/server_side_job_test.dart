@@ -175,6 +175,29 @@ exit $code
     expect((await status(id)).state, ServerJobState.gone);
   }, skip: skip);
 
+  test('a job finishing while its status is read reads as finished',
+      () async {
+    final id = ServerSideJob.newId(Random(11));
+    final dir = Directory('${home.path}/.cache/secureshellgo/jobs/$id')
+      ..createSync(recursive: true);
+    File('${dir.path}/pid').writeAsStringSync('999999\n');
+    // The status check reads `pid` with `cat`; this one makes that the
+    // moment the job ends: it writes `exit`, then hands back a runner that
+    // is no longer there. Checked in the wrong order, that read as GONE.
+    final cat = File('${bin.path}/cat');
+    await cat.writeAsString('''#!/bin/sh
+case "\$1" in
+  */pid) echo 0 > "\${1%/pid}/exit"; echo 999999 ;;
+  *) exec /bin/cat "\$@" ;;
+esac
+''');
+    await Process.run('chmod', ['+x', cat.path]);
+
+    final s = await status(id);
+    expect(s.state, ServerJobState.finished);
+    expect(s.exitCode, 0);
+  }, skip: skip);
+
   test('only hex job ids reach the shell', () {
     expect(
       () => ServerSideJob.statusCommand(r'x"; rm -rf ~; "'),

@@ -96,12 +96,18 @@ echo $timeoutMarker''';
   /// Prints `EXIT <code>` once the job has finished, `RUNNING` while its
   /// runner is alive, `GONE` when neither (the source rebooted, or something
   /// killed it), then `---` and the last lines of the log.
+  ///
+  /// The runner is asked about first and `exit` second. The other way round,
+  /// a job finishing between the two checks — `exit` not there yet, then the
+  /// runner already gone — read as GONE, a successful copy reported lost.
+  /// The runner writes `exit` before it ends, so once it is found dead,
+  /// `exit` is there if it ever will be.
   static String statusCommand(String jobId) {
     final d = _dir(jobId);
     final script = '''
 d="$d"
-if [ -f "\$d/exit" ]; then echo "EXIT \$(cat "\$d/exit")"
-elif [ -f "\$d/pid" ] && kill -0 "\$(cat "\$d/pid")" 2>/dev/null; then echo RUNNING
+if [ ! -f "\$d/exit" ] && [ -f "\$d/pid" ] && kill -0 "\$(cat "\$d/pid")" 2>/dev/null; then echo RUNNING
+elif [ -f "\$d/exit" ]; then echo "EXIT \$(cat "\$d/exit")"
 else echo GONE; fi
 echo ---
 tail -n 20 "\$d/log" 2>/dev/null''';
