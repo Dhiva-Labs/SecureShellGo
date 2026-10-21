@@ -154,12 +154,14 @@ class MoshFragmenter {
     var at = 0;
     while (at < payload.length) {
       final end = payload.length - at > room ? at + room : payload.length;
-      out.add(MoshFragment(
-        id: _nextId,
-        number: number++,
-        isFinal: end == payload.length,
-        contents: Uint8List.sublistView(payload, at, end),
-      ));
+      out.add(
+        MoshFragment(
+          id: _nextId,
+          number: number++,
+          isFinal: end == payload.length,
+          contents: Uint8List.sublistView(payload, at, end),
+        ),
+      );
       at = end;
     }
     return out;

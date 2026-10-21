@@ -54,8 +54,10 @@ class MoshShell {
     try {
       final address = resolve != null
           ? await resolve(info)
-          : await moshServerAddress(ssh.host.hostname,
-              sshConnection: info.sshConnection);
+          : await moshServerAddress(
+              ssh.host.hostname,
+              sshConnection: info.sshConnection,
+            );
       client = MoshClient(
         key: parseMoshKey(info.key),
         address: address,
@@ -73,7 +75,8 @@ class MoshShell {
       if (pid != null) unawaited(stopMoshServer(ssh, pid));
       if (error is SocketException) {
         throw MoshUnreachableException(
-            'Could not find an address for ${ssh.host.hostname}.');
+          'Could not find an address for ${ssh.host.hostname}.',
+        );
       }
       rethrow;
     }

@@ -16,8 +16,7 @@ import 'dart:typed_data';
 /// [compareUint64], never `<`.
 
 /// Orders two uint64 values held in Dart's signed 64-bit ints.
-int compareUint64(int a, int b) =>
-    (a ^ _signBit).compareTo(b ^ _signBit);
+int compareUint64(int a, int b) => (a ^ _signBit).compareTo(b ^ _signBit);
 
 // 0x8000000000000000: the sign bit, spelled so it also compiles where integer
 // literals are limited to 53 bits.
@@ -243,8 +242,7 @@ abstract final class UserMessageCodec {
     void flushKeys() {
       if (pending.isEmpty) return;
       final keystroke = ProtoWriter()..bytesField(4, pending.takeBytes());
-      final instruction = ProtoWriter()
-        ..bytesField(2, keystroke.takeBytes());
+      final instruction = ProtoWriter()..bytesField(2, keystroke.takeBytes());
       message.bytesField(1, instruction.takeBytes());
     }
 
@@ -282,7 +280,9 @@ abstract final class UserMessageCodec {
           while (!keystroke.isAtEnd) {
             final kk = keystroke.next();
             if (kk.field == 4 && kk.wireType == 2) {
-              events.add(UserKeystroke(Uint8List.fromList(keystroke.readBytes())));
+              events.add(
+                UserKeystroke(Uint8List.fromList(keystroke.readBytes())),
+              );
             } else {
               keystroke.skip(kk.wireType);
             }
@@ -360,11 +360,9 @@ abstract final class HostMessageCodec {
           inner.skip(k.wireType);
         }
       }
-      out.add(HostInstruction(
-        hostBytes: hostBytes,
-        resize: resize,
-        echoAck: echoAck,
-      ));
+      out.add(
+        HostInstruction(hostBytes: hostBytes, resize: resize, echoAck: echoAck),
+      );
     }
     return out;
   }
@@ -376,7 +374,10 @@ abstract final class HostMessageCodec {
       final inner = ProtoWriter();
       final echoAck = instruction.echoAck;
       if (echoAck != null) {
-        inner.bytesField(7, (ProtoWriter()..varintField(8, echoAck)).takeBytes());
+        inner.bytesField(
+          7,
+          (ProtoWriter()..varintField(8, echoAck)).takeBytes(),
+        );
       }
       final resize = instruction.resize;
       if (resize != null) {
@@ -390,7 +391,10 @@ abstract final class HostMessageCodec {
       }
       final hostBytes = instruction.hostBytes;
       if (hostBytes != null) {
-        inner.bytesField(2, (ProtoWriter()..bytesField(4, hostBytes)).takeBytes());
+        inner.bytesField(
+          2,
+          (ProtoWriter()..bytesField(4, hostBytes)).takeBytes(),
+        );
       }
       message.bytesField(1, inner.takeBytes());
     }
@@ -399,8 +403,8 @@ abstract final class HostMessageCodec {
 
   /// Convenience for tests: one instruction of host bytes from a string.
   static Uint8List hostString(String text) => encode([
-        HostInstruction(hostBytes: Uint8List.fromList(utf8.encode(text))),
-      ]);
+    HostInstruction(hostBytes: Uint8List.fromList(utf8.encode(text))),
+  ]);
 }
 
 ({int width, int height}) _readSize(Uint8List bytes) {

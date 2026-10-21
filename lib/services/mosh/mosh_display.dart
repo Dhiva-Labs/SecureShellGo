@@ -23,7 +23,8 @@ class MoshDisplay {
   static const open = '\x1b[?1h';
 
   /// Puts every mode Mosh may have changed back as a plain shell expects.
-  static const close = '\x1b[?1l\x1b[0m\x1b[?25h'
+  static const close =
+      '\x1b[?1l\x1b[0m\x1b[?25h'
       '\x1b[?1003l\x1b[?1002l\x1b[?1001l\x1b[?1000l'
       '\x1b[?1015l\x1b[?1006l\x1b[?1005l\x1b[?2004l\x1b[?1004l\x1b[?5l';
 
@@ -115,9 +116,11 @@ class MoshDisplay {
         if (row == 0) break;
         linesScrolled = row;
         scrollHeight = 1;
-        for (var regionHeight = 1;
-            linesScrolled + regionHeight < f.ds.height;
-            regionHeight++) {
+        for (
+          var regionHeight = 1;
+          linesScrolled + regionHeight < f.ds.height;
+          regionHeight++
+        ) {
           if (f.rows[regionHeight].sameAs(rows[linesScrolled + regionHeight])) {
             scrollHeight = regionHeight + 1;
           } else {
@@ -153,8 +156,9 @@ class MoshDisplay {
             frame.cursorX = frame.cursorY = -1;
           }
           for (var i = topMargin; i <= bottomMargin; i++) {
-            rows[i] =
-                i + linesScrolled <= bottomMargin ? rows[i + linesScrolled] : blankRow;
+            rows[i] = i + linesScrolled <= bottomMargin
+                ? rows[i + linesScrolled]
+                : blankRow;
           }
         }
       }
@@ -215,8 +219,14 @@ class MoshDisplay {
     return frame.out.toString();
   }
 
-  bool _putRow(bool initialized, _FrameState frame, MoshFramebuffer f,
-      int frameY, MoshRow oldRow, bool wrap) {
+  bool _putRow(
+    bool initialized,
+    _FrameState frame,
+    MoshFramebuffer f,
+    int frameY,
+    MoshRow oldRow,
+    bool wrap,
+  ) {
     var frameX = 0;
     final row = f.rows[frameY];
     final cells = row.cells;
@@ -286,9 +296,18 @@ class MoshDisplay {
       }
       frame.appendSilentMove(frameY, frameX);
       frame.updateRendition(cell.renditions);
-      frame.appendCell(cell);
-      frameX += cellWidth;
-      frame.cursorX += cellWidth;
+      if (cell.wide && frameX + 1 >= rowWidth) {
+        // Inserted cells can push a wide character into the last column,
+        // where no terminal can draw it: Mosh's display would wrap it onto
+        // the next row. A blank keeps every other cell in place.
+        frame.append(' ');
+        frameX++;
+        frame.cursorX++;
+      } else {
+        frame.appendCell(cell);
+        frameX += cellWidth;
+        frame.cursorX += cellWidth;
+      }
       if (frameX >= rowWidth) wroteLastCell = true;
     }
 
@@ -304,6 +323,14 @@ class MoshDisplay {
       }
     }
 
+    if (wroteLastCell && frameY == f.ds.height - 1) {
+      // The terminal's cursor now waits on the last column, not one past it
+      // as the count above has it, and a backspace from there lands one
+      // column short. Mosh moves relatively from here; position absolutely
+      // instead. (Only this drawing side differs from Mosh: what the server
+      // sends is applied exactly as Mosh applies it.)
+      frame.cursorX = frame.cursorY = -1;
+    }
     if (!(wroteLastCell && frameY < f.ds.height - 1)) return false;
 
     // Let the terminal's own cursor wrap where the text wrapped, so a

@@ -13,35 +13,48 @@ void main() {
     ]);
   }
 
-  String toHex(List<int> bytes) =>
-      bytes.map((b) => b.toRadixString(16).padLeft(2, '0')).join().toUpperCase();
+  String toHex(List<int> bytes) => bytes
+      .map((b) => b.toRadixString(16).padLeft(2, '0'))
+      .join()
+      .toUpperCase();
 
   // (N, A, P, C) with K = 000102...0F and a 128-bit tag.
   const vectors = [
     ['BBAA99887766554433221100', '', '', '785407BFFFC8AD9EDCC5520AC9111EE6'],
     [
-      'BBAA99887766554433221101', '0001020304050607', '0001020304050607',
+      'BBAA99887766554433221101',
+      '0001020304050607',
+      '0001020304050607',
       '6820B3657B6F615A5725BDA0D3B4EB3A257C9AF1F8F03009',
     ],
     [
-      'BBAA99887766554433221102', '0001020304050607', '',
+      'BBAA99887766554433221102',
+      '0001020304050607',
+      '',
       '81017F8203F081277152FADE694A0A00',
     ],
     [
-      'BBAA99887766554433221103', '', '0001020304050607',
+      'BBAA99887766554433221103',
+      '',
+      '0001020304050607',
       '45DD69F8F5AAE72414054CD1F35D82760B2CD00D2F99BFA9',
     ],
     [
-      'BBAA99887766554433221104', '000102030405060708090A0B0C0D0E0F',
+      'BBAA99887766554433221104',
+      '000102030405060708090A0B0C0D0E0F',
       '000102030405060708090A0B0C0D0E0F',
       '571D535B60B277188BE5147170A9A22C3AD7A4FF3835B8C5701C1CCEC8FC3358',
     ],
     [
-      'BBAA99887766554433221105', '000102030405060708090A0B0C0D0E0F', '',
+      'BBAA99887766554433221105',
+      '000102030405060708090A0B0C0D0E0F',
+      '',
       '8CF761B6902EF764462AD86498CA6B97',
     ],
     [
-      'BBAA99887766554433221106', '', '000102030405060708090A0B0C0D0E0F',
+      'BBAA99887766554433221106',
+      '',
+      '000102030405060708090A0B0C0D0E0F',
       '5CE88EC2E0692706A915C00AEB8B2396F40E1C743F52436BDF06D8FA1ECA343D',
     ],
     [
@@ -53,11 +66,13 @@ void main() {
     ],
     [
       'BBAA99887766554433221108',
-      '000102030405060708090A0B0C0D0E0F1011121314151617', '',
+      '000102030405060708090A0B0C0D0E0F1011121314151617',
+      '',
       '6DC225A071FC1B9F7C69F93B0F1E10DE',
     ],
     [
-      'BBAA99887766554433221109', '',
+      'BBAA99887766554433221109',
+      '',
       '000102030405060708090A0B0C0D0E0F1011121314151617',
       '221BD0DE7FA6FE993ECCD769460A0AF2D6CDED0C395B1C3C'
           'E725F32494B9F914D85C0B1EB38357FF',
@@ -71,11 +86,13 @@ void main() {
     ],
     [
       'BBAA9988776655443322110B',
-      '000102030405060708090A0B0C0D0E0F101112131415161718191A1B1C1D1E1F', '',
+      '000102030405060708090A0B0C0D0E0F101112131415161718191A1B1C1D1E1F',
+      '',
       'FE80690BEE8A485D11F32965BC9D2A32',
     ],
     [
-      'BBAA9988776655443322110C', '',
+      'BBAA9988776655443322110C',
+      '',
       '000102030405060708090A0B0C0D0E0F101112131415161718191A1B1C1D1E1F',
       '2942BFC773BDA23CABC6ACFD9BFD5835BD300F0973792EF4'
           '6040C53F1432BCDFB5E1DDE3BC18A5F840B52E653444D5DF',
@@ -98,7 +115,8 @@ void main() {
       'C5CD9D1850C141E358649994EE701B68',
     ],
     [
-      'BBAA9988776655443322110F', '',
+      'BBAA9988776655443322110F',
+      '',
       '000102030405060708090A0B0C0D0E0F1011121314151617'
           '18191A1B1C1D1E1F2021222324252627',
       '4412923493C57D5DE0D700F753CCE0D1D2D95060122E9F15'
@@ -118,8 +136,10 @@ void main() {
 
       test('N=${v[0]} encrypts', () {
         final ocb = AesOcb(key);
-        expect(toHex(ocb.encrypt(nonce, plain, associatedData: associated)),
-            expected);
+        expect(
+          toHex(ocb.encrypt(nonce, plain, associatedData: associated)),
+          expected,
+        );
       });
 
       test('N=${v[0]} decrypts, and refuses any flipped bit', () {
@@ -128,9 +148,11 @@ void main() {
         expect(ocb.decrypt(nonce, sealed, associatedData: associated), plain);
         for (var i = 0; i < sealed.length; i++) {
           final forged = Uint8List.fromList(sealed)..[i] ^= 0x01;
-          expect(ocb.decrypt(nonce, forged, associatedData: associated),
-              isNull,
-              reason: 'byte $i flipped');
+          expect(
+            ocb.decrypt(nonce, forged, associatedData: associated),
+            isNull,
+            reason: 'byte $i flipped',
+          );
         }
       });
     }
@@ -138,10 +160,15 @@ void main() {
 
   test('a 96-bit tag under a different key', () {
     final ocb = AesOcb(hex('0F0E0D0C0B0A09080706050403020100'), tagLength: 12);
-    final data = hex('000102030405060708090A0B0C0D0E0F1011121314151617'
-        '18191A1B1C1D1E1F2021222324252627');
-    final sealed = ocb.encrypt(hex('BBAA9988776655443322110D'), data,
-        associatedData: data);
+    final data = hex(
+      '000102030405060708090A0B0C0D0E0F1011121314151617'
+      '18191A1B1C1D1E1F2021222324252627',
+    );
+    final sealed = ocb.encrypt(
+      hex('BBAA9988776655443322110D'),
+      data,
+      associatedData: data,
+    );
     expect(
       toHex(sealed),
       '1792A4E31E0755FB03E31B22116E6C2DDF9EFD6E33D536F1'
@@ -149,8 +176,11 @@ void main() {
       'AC4F02AA',
     );
     expect(
-      ocb.decrypt(hex('BBAA9988776655443322110D'), sealed,
-          associatedData: data),
+      ocb.decrypt(
+        hex('BBAA9988776655443322110D'),
+        sealed,
+        associatedData: data,
+      ),
       data,
     );
   });
@@ -173,11 +203,17 @@ void main() {
         final s = Uint8List(i);
         c.add(ocb.encrypt(num2str(3 * i + 1, 12), s, associatedData: s));
         c.add(ocb.encrypt(num2str(3 * i + 2, 12), s));
-        c.add(ocb.encrypt(num2str(3 * i + 3, 12), Uint8List(0),
-            associatedData: s));
+        c.add(
+          ocb.encrypt(num2str(3 * i + 3, 12), Uint8List(0), associatedData: s),
+        );
       }
-      return toHex(ocb.encrypt(num2str(385, 12), Uint8List(0),
-          associatedData: c.toBytes()));
+      return toHex(
+        ocb.encrypt(
+          num2str(385, 12),
+          Uint8List(0),
+          associatedData: c.toBytes(),
+        ),
+      );
     }
 
     test('AES-128, 128-bit tag', () {

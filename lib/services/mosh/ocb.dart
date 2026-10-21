@@ -16,10 +16,14 @@ import 'package:pointycastle/export.dart';
 /// datagrams a second.
 class AesOcb {
   AesOcb(Uint8List key, {this.tagLength = 16})
-      : _encipher = AESEngine()..init(true, KeyParameter(key)),
-        _decipher = AESEngine()..init(false, KeyParameter(key)) {
+    : _encipher = AESEngine()..init(true, KeyParameter(key)),
+      _decipher = AESEngine()..init(false, KeyParameter(key)) {
     if (key.length != 16 && key.length != 24 && key.length != 32) {
-      throw ArgumentError.value(key.length, 'key', 'must be 16, 24 or 32 bytes');
+      throw ArgumentError.value(
+        key.length,
+        'key',
+        'must be 16, 24 or 32 bytes',
+      );
     }
     if (tagLength < 8 || tagLength > 16) {
       throw ArgumentError.value(tagLength, 'tagLength', 'must be 8..16 bytes');
@@ -40,8 +44,11 @@ class AesOcb {
   final List<Uint8List> _l = [];
 
   /// The ciphertext of [plaintext] with its tag appended.
-  Uint8List encrypt(Uint8List nonce, Uint8List plaintext,
-      {Uint8List? associatedData}) {
+  Uint8List encrypt(
+    Uint8List nonce,
+    Uint8List plaintext, {
+    Uint8List? associatedData,
+  }) {
     final out = Uint8List(plaintext.length + tagLength);
     final tag = _crypt(
       nonce,
@@ -56,8 +63,11 @@ class AesOcb {
 
   /// The plaintext inside [ciphertext], or null when its tag does not verify —
   /// a forged, corrupted or replayed-under-another-key datagram.
-  Uint8List? decrypt(Uint8List nonce, Uint8List ciphertext,
-      {Uint8List? associatedData}) {
+  Uint8List? decrypt(
+    Uint8List nonce,
+    Uint8List ciphertext, {
+    Uint8List? associatedData,
+  }) {
     if (ciphertext.length < tagLength) return null;
     final bodyLength = ciphertext.length - tagLength;
     final out = Uint8List(bodyLength);

@@ -32,8 +32,8 @@ void main() {
   final skip = Platform.environment['SSGO_MOSH'] != '1'
       ? 'set SSGO_MOSH=1 to run against a real mosh-server'
       : !Platform.isLinux || !File('/usr/sbin/sshd').existsSync()
-          ? 'needs /usr/sbin/sshd on Linux'
-          : null;
+      ? 'needs /usr/sbin/sshd on Linux'
+      : null;
 
   late _MoshLab lab;
 
@@ -52,6 +52,7 @@ void main() {
   Future<(SshConnection, MoshShell, _Screen)> open({
     int columns = 80,
     int rows = 24,
+    MoshUdpBinder bind = bindRawMoshSocket,
   }) async {
     final ssh = await lab.connect();
     addTearDown(ssh.close);
@@ -63,126 +64,221 @@ void main() {
       // A plain shell with a fixed prompt, whatever the developer's own
       // login shell does at start-up.
       command: r"PS1='mosh$ ' exec sh -i",
+      bind: bind,
     );
     addTearDown(mosh.client.abandon);
     mosh.output.listen(screen.terminal.write);
     return (ssh, mosh, screen);
   }
 
-  test('starts over SSH, and keystrokes come back as screen updates', () async {
-    final (_, mosh, screen) = await open();
-    expect(mosh.server.port, inInclusiveRange(60001, 60999));
-    expect(mosh.server.pid, isNotNull);
-    await screen.waitFor('mosh\$');
+  test(
+    'starts over SSH, and keystrokes come back as screen updates',
+    () async {
+      final (_, mosh, screen) = await open();
+      expect(mosh.server.port, inInclusiveRange(60001, 60999));
+      expect(mosh.server.pid, isNotNull);
+      await screen.waitFor('mosh\$');
 
-    mosh.write('echo typed-\$((6*7))\r');
-    await screen.waitFor('typed-42');
-    // The command line and its output, as a real terminal shows them.
-    expect(screen.text, contains(r'mosh$ echo typed-$((6*7))'));
-    expect(mosh.client.connection.srtt, lessThan(1000));
-  }, skip: skip, timeout: timeout);
+      mosh.write('echo typed-\$((6*7))\r');
+      await screen.waitFor('typed-42');
+      // The command line and its output, as a real terminal shows them.
+      expect(screen.text, contains(r'mosh$ echo typed-$((6*7))'));
+      expect(mosh.client.connection.srtt, lessThan(1000));
+    },
+    skip: skip,
+    timeout: timeout,
+  );
 
-  test('a resize reaches the server, and a full screen scrolls into the '
-      'scrollback', () async {
-    final (_, mosh, screen) = await open();
-    await screen.waitFor('mosh\$');
+  test(
+    'a resize reaches the server, and a full screen scrolls into the '
+    'scrollback',
+    () async {
+      final (_, mosh, screen) = await open();
+      await screen.waitFor('mosh\$');
 
-    screen.terminal.resize(100, 30);
-    mosh.resize(100, 30);
-    mosh.write('stty size\r');
-    await screen.waitFor('30 100');
+      screen.terminal.resize(100, 30);
+      mosh.resize(100, 30);
+      mosh.write('stty size\r');
+      await screen.waitFor('30 100');
 
-    // Slowly enough that consecutive frames overlap: Mosh sends screens,
-    // not output, so a burst that finishes inside one frame never scrolls
-    // at all, but this does — and Mosh scrolls with real line feeds.
-    mosh.write(r'i=0; while [ $i -lt 45 ]; do i=$((i+1)); echo line-$i; '
-        r'sleep 0.03; done' '\r');
-    await screen.waitFor('line-45\nmosh\$');
-    final scrolled = [
-      for (var i = 0; i < screen.terminal.buffer.scrollBack; i++)
-        screen.terminal.buffer.lines[i].toString().trim(),
-    ];
-    expect(scrolled, contains('line-1'));
-  }, skip: skip, timeout: timeout);
+      // Slowly enough that consecutive frames overlap: Mosh sends screens,
+      // not output, so a burst that finishes inside one frame never scrolls
+      // at all, but this does — and Mosh scrolls with real line feeds.
+      mosh.write(
+        r'i=0; while [ $i -lt 45 ]; do i=$((i+1)); echo line-$i; '
+        r'sleep 0.03; done'
+        '\r',
+      );
+      await screen.waitFor('line-45\nmosh\$');
+      final scrolled = [
+        for (var i = 0; i < screen.terminal.buffer.scrollBack; i++)
+          screen.terminal.buffer.lines[i].toString().trim(),
+      ];
+      expect(scrolled, contains('line-1'));
+    },
+    skip: skip,
+    timeout: timeout,
+  );
 
-  test('follows the client to a new address', () async {
-    final (_, mosh, screen) = await open();
-    await screen.waitFor('mosh\$');
-    final connection = mosh.client.connection;
-    final before = connection.localPort;
+  test(
+    'on a slow link, typing shows before the server has echoed it',
+    () async {
+      // 300 ms more on every datagram from the server.
+      final (_, mosh, screen) = await open(
+        bind: (family, onDatagram) => bindRawMoshSocket(
+          family,
+          (datagram) => Timer(
+            const Duration(milliseconds: 300),
+            () => onDatagram(datagram),
+          ),
+        ),
+      );
+      await screen.waitFor('mosh\$');
+      // The first keystroke is only ever shown once the server confirms it —
+      // which is what keeps a password prompt from echoing.
+      mosh.write('e');
+      await screen.waitFor(r'mosh$ e');
 
-    // A network change: a new local port (a new NAT mapping, a new
-    // interface), and the old one gone with whatever was in flight to it.
-    connection.hopPort();
-    await _until(() => connection.localPort != before);
-    connection.closeOldSockets();
+      final typed = DateTime.now();
+      mosh.write('cho predicted');
+      await screen.waitFor(
+        r'mosh$ echo predicted',
+        timeout: const Duration(milliseconds: 250),
+      );
+      expect(
+        DateTime.now().difference(typed),
+        lessThan(const Duration(milliseconds: 250)),
+      );
+      // Underlined while unconfirmed, on a link this slow.
+      final lines = screen.text.split('\n');
+      final y = lines.indexWhere((line) => line.contains('predicted'));
+      final row =
+          screen.terminal.buffer.lines[screen.terminal.buffer.scrollBack + y];
+      expect(
+        row.getAttributes(lines[y].indexOf('predicted')) & CellAttr.underline,
+        isNot(0),
+      );
 
-    mosh.write('echo roamed-\$((40+2))\r');
-    await screen.waitFor('roamed-42');
-    expect(connection.localPort, isNot(before));
-  }, skip: skip, timeout: timeout);
+      mosh.write('\r');
+      await screen.waitFor('predicted\nmosh\$');
+    },
+    skip: skip,
+    timeout: timeout,
+  );
 
-  test('exit ends the session cleanly', () async {
-    final (_, mosh, screen) = await open();
-    await screen.waitFor('mosh\$');
-    mosh.write('exit\r');
-    final exit = await mosh.done.timeout(const Duration(seconds: 15));
-    expect(exit.clean, isTrue);
-  }, skip: skip, timeout: timeout);
+  test(
+    'follows the client to a new address',
+    () async {
+      final (_, mosh, screen) = await open();
+      await screen.waitFor('mosh\$');
+      final connection = mosh.client.connection;
+      final before = connection.localPort;
 
-  test('closing the tab says goodbye, and the server goes', () async {
-    final (ssh, mosh, screen) = await open();
-    await screen.waitFor('mosh\$');
-    await mosh.close().timeout(const Duration(seconds: 15));
-    final pid = mosh.server.pid!;
-    await _until(() async {
-      final result = await RemoteExec.run(ssh, 'kill -0 $pid && echo up');
-      return !result.stdout.contains('up');
-    });
-  }, skip: skip, timeout: timeout);
+      // A network change: a new local port (a new NAT mapping, a new
+      // interface), and the old one gone with whatever was in flight to it.
+      connection.hopPort();
+      await _until(() => connection.localPort != before);
+      connection.closeOldSockets();
 
-  test('a host without mosh-server says so', () async {
-    final ssh = await lab.connect();
-    addTearDown(ssh.close);
-    await expectLater(
-      MoshShell.start(ssh,
-          columns: 80, rows: 24, server: '/nonexistent/mosh-server'),
-      throwsA(isA<MoshStartException>()
-          .having((e) => e.kind, 'kind', MoshStartFailure.notInstalled)),
-    );
-  }, skip: skip, timeout: timeout);
+      mosh.write('echo roamed-\$((40+2))\r');
+      await screen.waitFor('roamed-42');
+      expect(connection.localPort, isNot(before));
+    },
+    skip: skip,
+    timeout: timeout,
+  );
 
-  test('UDP that never gets through is reported, and the server stopped',
-      () async {
-    final ssh = await lab.connect();
-    addTearDown(ssh.close);
-    MoshServerInfo? started;
-    await expectLater(
-      MoshShell.start(
-        ssh,
-        columns: 80,
-        rows: 24,
-        connectTimeout: const Duration(seconds: 3),
-        // A firewall that drops everything going out.
-        bind: (family, onDatagram) async =>
-            _BlackHole(await bindRawMoshSocket(family, onDatagram)),
-        resolve: (info) async {
-          started = info;
-          return InternetAddress.loopbackIPv4;
-        },
-      ),
-      throwsA(isA<MoshUnreachableException>()),
-    );
-    final pid = started!.pid!;
-    await _until(() async {
-      final result = await RemoteExec.run(ssh, 'kill -0 $pid && echo up');
-      return !result.stdout.contains('up');
-    });
-  }, skip: skip, timeout: timeout);
+  test(
+    'exit ends the session cleanly',
+    () async {
+      final (_, mosh, screen) = await open();
+      await screen.waitFor('mosh\$');
+      mosh.write('exit\r');
+      final exit = await mosh.done.timeout(const Duration(seconds: 15));
+      expect(exit.clean, isTrue);
+    },
+    skip: skip,
+    timeout: timeout,
+  );
+
+  test(
+    'closing the tab says goodbye, and the server goes',
+    () async {
+      final (ssh, mosh, screen) = await open();
+      await screen.waitFor('mosh\$');
+      await mosh.close().timeout(const Duration(seconds: 15));
+      final pid = mosh.server.pid!;
+      await _until(() async {
+        final result = await RemoteExec.run(ssh, 'kill -0 $pid && echo up');
+        return !result.stdout.contains('up');
+      });
+    },
+    skip: skip,
+    timeout: timeout,
+  );
+
+  test(
+    'a host without mosh-server says so',
+    () async {
+      final ssh = await lab.connect();
+      addTearDown(ssh.close);
+      await expectLater(
+        MoshShell.start(
+          ssh,
+          columns: 80,
+          rows: 24,
+          server: '/nonexistent/mosh-server',
+        ),
+        throwsA(
+          isA<MoshStartException>().having(
+            (e) => e.kind,
+            'kind',
+            MoshStartFailure.notInstalled,
+          ),
+        ),
+      );
+    },
+    skip: skip,
+    timeout: timeout,
+  );
+
+  test(
+    'UDP that never gets through is reported, and the server stopped',
+    () async {
+      final ssh = await lab.connect();
+      addTearDown(ssh.close);
+      MoshServerInfo? started;
+      await expectLater(
+        MoshShell.start(
+          ssh,
+          columns: 80,
+          rows: 24,
+          connectTimeout: const Duration(seconds: 3),
+          // A firewall that drops everything going out.
+          bind: (family, onDatagram) async =>
+              _BlackHole(await bindRawMoshSocket(family, onDatagram)),
+          resolve: (info) async {
+            started = info;
+            return InternetAddress.loopbackIPv4;
+          },
+        ),
+        throwsA(isA<MoshUnreachableException>()),
+      );
+      final pid = started!.pid!;
+      await _until(() async {
+        final result = await RemoteExec.run(ssh, 'kill -0 $pid && echo up');
+        return !result.stdout.contains('up');
+      });
+    },
+    skip: skip,
+    timeout: timeout,
+  );
 }
 
-Future<void> _until(FutureOr<bool> Function() condition,
-    {Duration timeout = const Duration(seconds: 10)}) async {
+Future<void> _until(
+  FutureOr<bool> Function() condition, {
+  Duration timeout = const Duration(seconds: 10),
+}) async {
   final deadline = DateTime.now().add(timeout);
   while (!await condition()) {
     if (DateTime.now().isAfter(deadline)) {
@@ -201,14 +297,16 @@ class _Screen {
   final Terminal terminal;
 
   String get text => [
-        for (var i = 0; i < terminal.viewHeight; i++)
-          terminal.buffer.lines[terminal.buffer.scrollBack + i]
-              .toString()
-              .trimRight(),
-      ].join('\n');
+    for (var i = 0; i < terminal.viewHeight; i++)
+      terminal.buffer.lines[terminal.buffer.scrollBack + i]
+          .toString()
+          .trimRight(),
+  ].join('\n');
 
-  Future<void> waitFor(String expected,
-      {Duration timeout = const Duration(seconds: 15)}) async {
+  Future<void> waitFor(
+    String expected, {
+    Duration timeout = const Duration(seconds: 15),
+  }) async {
     final deadline = DateTime.now().add(timeout);
     while (!text.contains(expected)) {
       if (DateTime.now().isAfter(deadline)) {
@@ -253,18 +351,30 @@ class _MoshLab {
     }
 
     for (final name in ['hostkey', 'userkey']) {
-      await run('ssh-keygen',
-          ['-q', '-t', 'ed25519', '-N', '', '-C', name, '-f', at(name)]);
+      await run('ssh-keygen', [
+        '-q',
+        '-t',
+        'ed25519',
+        '-N',
+        '',
+        '-C',
+        name,
+        '-f',
+        at(name),
+      ]);
     }
-    File(at('authorized_keys'))
-        .writeAsStringSync(File(at('userkey.pub')).readAsStringSync());
+    File(
+      at('authorized_keys'),
+    ).writeAsStringSync(File(at('userkey.pub')).readAsStringSync());
 
     final server = await _findMoshServer(dir);
     Directory(at('bin')).createSync();
     final wrapper = File(at('bin/mosh-server'))
-      ..writeAsStringSync('#!/bin/sh\n'
-          '${server.libs == null ? '' : 'LD_LIBRARY_PATH=${server.libs} '}'
-          'exec ${server.exe} "\$@"\n');
+      ..writeAsStringSync(
+        '#!/bin/sh\n'
+        '${server.libs == null ? '' : 'LD_LIBRARY_PATH=${server.libs} '}'
+        'exec ${server.exe} "\$@"\n',
+      );
     await run('chmod', ['+x', wrapper.path]);
 
     final probe = await ServerSocket.bind(InternetAddress.loopbackIPv4, 0);
@@ -282,8 +392,12 @@ PasswordAuthentication no
 KbdInteractiveAuthentication no
 SetEnv PATH=${at('bin')}:/usr/local/bin:/usr/bin:/bin
 ''');
-    final sshd = await Process.start(
-        '/usr/sbin/sshd', ['-D', '-e', '-f', at('sshd_config')]);
+    final sshd = await Process.start('/usr/sbin/sshd', [
+      '-D',
+      '-e',
+      '-f',
+      at('sshd_config'),
+    ]);
     sshd.stdout.drain<void>();
     sshd.stderr.drain<void>();
     for (var i = 0; i < 50; i++) {
@@ -300,7 +414,8 @@ SetEnv PATH=${at('bin')}:/usr/local/bin:/usr/bin:/bin
 
   /// A `mosh-server` to run, and the library path it needs.
   static Future<({String exe, String? libs})> _findMoshServer(
-      Directory dir) async {
+    Directory dir,
+  ) async {
     final explicit = Platform.environment['SSGO_MOSH_SERVER'];
     if (explicit != null) {
       return (exe: explicit, libs: Platform.environment['SSGO_MOSH_LIBS']);
@@ -311,12 +426,16 @@ SetEnv PATH=${at('bin')}:/usr/local/bin:/usr/bin:/bin
     }
     // The distribution's package, unpacked without installing it.
     final debs = Directory('${dir.path}/debs')..createSync();
-    final download = await Process.run(
-        'apt-get', ['download', 'mosh', 'libutempter0'],
-        workingDirectory: debs.path);
+    final download = await Process.run('apt-get', [
+      'download',
+      'mosh',
+      'libutempter0',
+    ], workingDirectory: debs.path);
     if (download.exitCode != 0) {
-      throw StateError('no mosh-server, and apt-get download failed: '
-          '${download.stderr}');
+      throw StateError(
+        'no mosh-server, and apt-get download failed: '
+        '${download.stderr}',
+      );
     }
     final root = '${dir.path}/mosh-root';
     for (final deb in debs.listSync().whereType<File>()) {
@@ -339,19 +458,20 @@ SetEnv PATH=${at('bin')}:/usr/local/bin:/usr/bin:/bin
   }
 
   Host host({HostTransport transport = HostTransport.ssh}) => Host(
-        id: 'mosh-lab',
-        label: 'mosh-lab',
-        hostname: '127.0.0.1',
-        port: port,
-        username: Platform.environment['USER']!,
-        authMethod: SshAuthMethod.privateKey,
-        transport: transport,
-      );
+    id: 'mosh-lab',
+    label: 'mosh-lab',
+    hostname: '127.0.0.1',
+    port: port,
+    username: Platform.environment['USER']!,
+    authMethod: SshAuthMethod.privateKey,
+    transport: transport,
+  );
 
-  SshCredentials get credentials => SshCredentials(
-      privateKeyPem: File(path('userkey')).readAsStringSync());
+  SshCredentials get credentials =>
+      SshCredentials(privateKeyPem: File(path('userkey')).readAsStringSync());
 
-  Future<SshConnection> connect({Host? host}) => SshService(
+  Future<SshConnection> connect({Host? host}) =>
+      SshService(
         knownHosts: KnownHostsService(file: File(path('known_hosts.json'))),
         agent: SshAgentClient(connector: () async => throw StateError('none')),
         x11: () => null,
@@ -364,8 +484,10 @@ SetEnv PATH=${at('bin')}:/usr/local/bin:/usr/bin:/bin
 
   Future<void> stop() async {
     _sshd.kill();
-    await _sshd.exitCode
-        .timeout(const Duration(seconds: 5), onTimeout: () => 0);
+    await _sshd.exitCode.timeout(
+      const Duration(seconds: 5),
+      onTimeout: () => 0,
+    );
     if (dir.existsSync()) dir.deleteSync(recursive: true);
   }
 }

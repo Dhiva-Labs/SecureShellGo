@@ -75,12 +75,12 @@ class MoshRenditions {
   bool attribute(int attr) => attributes & (1 << attr) != 0;
 
   MoshRenditions withAttribute(int attr, bool value) => MoshRenditions(
-        foreground: foreground,
-        background: background,
-        attributes: value
-            ? (attributes | (1 << attr))
-            : (attributes & ~(1 << attr)) & 0xff,
-      );
+    foreground: foreground,
+    background: background,
+    attributes: value
+        ? (attributes | (1 << attr))
+        : (attributes & ~(1 << attr)) & 0xff,
+  );
 
   MoshRenditions _with({int? foreground, int? background, int? attributes}) =>
       MoshRenditions(
@@ -146,8 +146,10 @@ class MoshRenditions {
     if (attribute(invisible)) out.write(';8');
     if (foreground != 0) {
       if (isTrueColor(foreground)) {
-        out.write(';38;2;${(foreground >> 16) & 0xff};'
-            '${(foreground >> 8) & 0xff};${foreground & 0xff}');
+        out.write(
+          ';38;2;${(foreground >> 16) & 0xff};'
+          '${(foreground >> 8) & 0xff};${foreground & 0xff}',
+        );
       } else if (foreground > 37) {
         out.write(';38;5;${foreground - 30}');
       } else {
@@ -156,8 +158,10 @@ class MoshRenditions {
     }
     if (background != 0) {
       if (isTrueColor(background)) {
-        out.write(';48;2;${(background >> 16) & 0xff};'
-            '${(background >> 8) & 0xff};${background & 0xff}');
+        out.write(
+          ';48;2;${(background >> 16) & 0xff};'
+          '${(background >> 8) & 0xff};${background & 0xff}',
+        );
       } else if (background > 47) {
         out.write(';48;5;${background - 40}');
       } else {
@@ -184,15 +188,15 @@ class MoshRenditions {
 /// wide character.
 class MoshCell {
   MoshCell(int background)
-      : contents = '',
-        renditions = MoshRenditions(background: background);
+    : contents = '',
+      renditions = MoshRenditions(background: background);
 
   MoshCell._copy(MoshCell other)
-      : contents = other.contents,
-        renditions = other.renditions,
-        wide = other.wide,
-        fallback = other.fallback,
-        wrap = other.wrap;
+    : contents = other.contents,
+      renditions = other.renditions,
+      wide = other.wide,
+      fallback = other.fallback,
+      wrap = other.wrap;
 
   String contents;
   MoshRenditions renditions;
@@ -222,8 +226,7 @@ class MoshCell {
 
   void clear() => contents = '';
 
-  bool get isBlank =>
-      contents.isEmpty || contents == ' ' || contents == ' ';
+  bool get isBlank => contents.isEmpty || contents == ' ' || contents == ' ';
 
   bool contentsMatch(MoshCell other) =>
       (isBlank && other.isBlank) || contents == other.contents;
@@ -258,12 +261,12 @@ var _genCounter = 0;
 /// moved (scrolled) from one that was rewritten with the same text.
 class MoshRow {
   MoshRow(int width, int background)
-      : cells = List<MoshCell>.generate(width, (_) => MoshCell(background)),
-        gen = _genCounter++;
+    : cells = List<MoshCell>.generate(width, (_) => MoshCell(background)),
+      gen = _genCounter++;
 
   MoshRow._copy(MoshRow other, this.owner)
-      : cells = [for (final cell in other.cells) cell.copy()],
-        gen = other.gen;
+    : cells = [for (final cell in other.cells) cell.copy()],
+      gen = other.gen;
 
   final List<MoshCell> cells;
   int gen;
@@ -343,36 +346,36 @@ abstract final class MoshMouseEncoding {
 /// the cells.
 class MoshDrawState {
   MoshDrawState(this._width, this._height)
-      : _tabs = List<bool>.filled(_width, false),
-        _scrollingRegionBottom = _height - 1 {
+    : _tabs = List<bool>.filled(_width, false),
+      _scrollingRegionBottom = _height - 1 {
     _reinitializeTabs(0);
   }
 
   MoshDrawState._copy(MoshDrawState o)
-      : _width = o._width,
-        _height = o._height,
-        _cursorCol = o._cursorCol,
-        _cursorRow = o._cursorRow,
-        _combiningCharCol = o._combiningCharCol,
-        _combiningCharRow = o._combiningCharRow,
-        _defaultTabs = o._defaultTabs,
-        _tabs = List<bool>.of(o._tabs),
-        _scrollingRegionTop = o._scrollingRegionTop,
-        _scrollingRegionBottom = o._scrollingRegionBottom,
-        renditions = o.renditions,
-        _save = o._save.copy(),
-        nextPrintWillWrap = o.nextPrintWillWrap,
-        originMode = o.originMode,
-        autoWrapMode = o.autoWrapMode,
-        insertMode = o.insertMode,
-        cursorVisible = o.cursorVisible,
-        reverseVideo = o.reverseVideo,
-        bracketedPaste = o.bracketedPaste,
-        mouseReportingMode = o.mouseReportingMode,
-        mouseFocusEvent = o.mouseFocusEvent,
-        mouseAlternateScroll = o.mouseAlternateScroll,
-        mouseEncodingMode = o.mouseEncodingMode,
-        applicationModeCursorKeys = o.applicationModeCursorKeys;
+    : _width = o._width,
+      _height = o._height,
+      _cursorCol = o._cursorCol,
+      _cursorRow = o._cursorRow,
+      _combiningCharCol = o._combiningCharCol,
+      _combiningCharRow = o._combiningCharRow,
+      _defaultTabs = o._defaultTabs,
+      _tabs = List<bool>.of(o._tabs),
+      _scrollingRegionTop = o._scrollingRegionTop,
+      _scrollingRegionBottom = o._scrollingRegionBottom,
+      renditions = o.renditions,
+      _save = o._save.copy(),
+      nextPrintWillWrap = o.nextPrintWillWrap,
+      originMode = o.originMode,
+      autoWrapMode = o.autoWrapMode,
+      insertMode = o.insertMode,
+      cursorVisible = o.cursorVisible,
+      reverseVideo = o.reverseVideo,
+      bracketedPaste = o.bracketedPaste,
+      mouseReportingMode = o.mouseReportingMode,
+      mouseFocusEvent = o.mouseFocusEvent,
+      mouseAlternateScroll = o.mouseAlternateScroll,
+      mouseEncodingMode = o.mouseEncodingMode,
+      applicationModeCursorKeys = o.applicationModeCursorKeys;
 
   int _width;
   int _height;
@@ -558,20 +561,20 @@ class MoshDrawState {
 /// clipboard and bell count that ride along with it.
 class MoshFramebuffer {
   MoshFramebuffer(int width, int height)
-      : assert(width > 0 && height > 0),
-        ds = MoshDrawState(width, height) {
+    : assert(width > 0 && height > 0),
+      ds = MoshDrawState(width, height) {
     final blank = MoshRow(width, 0);
     rows = List<MoshRow>.filled(height, blank, growable: true);
   }
 
   MoshFramebuffer._shared(MoshFramebuffer other)
-      : rows = List<MoshRow>.of(other.rows),
-        iconName = List<int>.of(other.iconName),
-        windowTitle = List<int>.of(other.windowTitle),
-        clipboard = List<int>.of(other.clipboard),
-        bellCount = other.bellCount,
-        titleInitialized = other.titleInitialized,
-        ds = other.ds.copy();
+    : rows = List<MoshRow>.of(other.rows),
+      iconName = List<int>.of(other.iconName),
+      windowTitle = List<int>.of(other.windowTitle),
+      clipboard = List<int>.of(other.clipboard),
+      bellCount = other.bellCount,
+      titleInitialized = other.titleInitialized,
+      ds = other.ds.copy();
 
   late List<MoshRow> rows;
   List<int> iconName = [];
@@ -677,7 +680,9 @@ class MoshFramebuffer {
     rows.removeRange(row, row + n);
     final blank = _newRow();
     rows.insertAll(
-        ds.scrollingRegionBottom + 1 - n, List<MoshRow>.filled(n, blank));
+      ds.scrollingRegionBottom + 1 - n,
+      List<MoshRow>.filled(n, blank),
+    );
   }
 
   void insertCell(int row, int col) =>
@@ -889,7 +894,9 @@ class MoshParser {
         if ((0x30 <= ch && ch <= 0x39) || ch == 0x3b) {
           return (MoshAction.param, _State.csiParam);
         }
-        if (0x3c <= ch && ch <= 0x3f) return (MoshAction.collect, _State.csiParam);
+        if (0x3c <= ch && ch <= 0x3f) {
+          return (MoshAction.collect, _State.csiParam);
+        }
         if (ch == 0x3a) return (MoshAction.ignore, _State.csiIgnore);
         if (0x20 <= ch && ch <= 0x2f) {
           return (MoshAction.collect, _State.csiIntermediate);
@@ -916,7 +923,9 @@ class MoshParser {
         if (0x40 <= ch && ch <= 0x7e) {
           return (MoshAction.csiDispatch, _State.ground);
         }
-        if (0x30 <= ch && ch <= 0x3f) return (MoshAction.ignore, _State.csiIgnore);
+        if (0x30 <= ch && ch <= 0x3f) {
+          return (MoshAction.ignore, _State.csiIgnore);
+        }
         return (MoshAction.ignore, null);
       case _State.csiIgnore:
         if (_c0Prime(ch)) return (MoshAction.execute, null);
@@ -930,7 +939,9 @@ class MoshParser {
         if ((0x30 <= ch && ch <= 0x39) || ch == 0x3b) {
           return (MoshAction.param, _State.dcsParam);
         }
-        if (0x3c <= ch && ch <= 0x3f) return (MoshAction.collect, _State.dcsParam);
+        if (0x3c <= ch && ch <= 0x3f) {
+          return (MoshAction.collect, _State.dcsParam);
+        }
         if (0x40 <= ch && ch <= 0x7e) {
           return (MoshAction.ignore, _State.dcsPassthrough);
         }
@@ -954,7 +965,9 @@ class MoshParser {
         if (0x40 <= ch && ch <= 0x7e) {
           return (MoshAction.ignore, _State.dcsPassthrough);
         }
-        if (0x30 <= ch && ch <= 0x3f) return (MoshAction.ignore, _State.dcsIgnore);
+        if (0x30 <= ch && ch <= 0x3f) {
+          return (MoshAction.ignore, _State.dcsIgnore);
+        }
         return (MoshAction.ignore, null);
       case _State.dcsPassthrough:
         if (_c0Prime(ch) || (0x20 <= ch && ch <= 0x7e)) {
@@ -976,17 +989,17 @@ class MoshParser {
   }
 
   static MoshAction _enterAction(_State state) => switch (state) {
-        _State.escape || _State.csiEntry || _State.dcsEntry => MoshAction.clear,
-        _State.dcsPassthrough => MoshAction.hook,
-        _State.oscString => MoshAction.oscStart,
-        _ => MoshAction.ignore,
-      };
+    _State.escape || _State.csiEntry || _State.dcsEntry => MoshAction.clear,
+    _State.dcsPassthrough => MoshAction.hook,
+    _State.oscString => MoshAction.oscStart,
+    _ => MoshAction.ignore,
+  };
 
   static MoshAction _exitAction(_State state) => switch (state) {
-        _State.dcsPassthrough => MoshAction.unhook,
-        _State.oscString => MoshAction.oscEnd,
-        _ => MoshAction.ignore,
-      };
+    _State.dcsPassthrough => MoshAction.unhook,
+    _State.oscString => MoshAction.oscEnd,
+    _ => MoshAction.ignore,
+  };
 }
 
 /// Mosh's dispatcher, applying what [MoshParser] reports to a
@@ -1204,9 +1217,37 @@ class MoshEmulator {
 
   static const _keepsWrapState = {'I', 'Z', 'g', '?h', '?l', 'm'};
   static const _csiKnown = {
-    'K', 'J', 'A', 'B', 'C', 'D', 'H', 'f', 'c', '>c', 'I', 'Z', 'g', '?h',
-    '?l', 'h', 'l', 'r', 'm', 'n', 'L', 'M', '@', 'P', 'd', 'G', '`', 'X',
-    '!p', 'S', 'T',
+    'K',
+    'J',
+    'A',
+    'B',
+    'C',
+    'D',
+    'H',
+    'f',
+    'c',
+    '>c',
+    'I',
+    'Z',
+    'g',
+    '?h',
+    '?l',
+    'h',
+    'l',
+    'r',
+    'm',
+    'n',
+    'L',
+    'M',
+    '@',
+    'P',
+    'd',
+    'G',
+    '`',
+    'X',
+    '!p',
+    'S',
+    'T',
   };
 
   void _dispatchCsi(String key) {
@@ -1397,7 +1438,10 @@ class MoshEmulator {
           count - i >= 5 &&
           _param(i + 1, -1) == 2) {
         final color = MoshRenditions.makeTrueColor(
-            _param(i + 2, 0), _param(i + 3, 0), _param(i + 4, 0));
+          _param(i + 2, 0),
+          _param(i + 3, 0),
+          _param(i + 4, 0),
+        );
         if (rendition == 38) {
           fb.ds.setForegroundColor(color);
         } else {
@@ -1446,7 +1490,7 @@ class MoshEmulator {
 /// `Terminal::Complete`, minus the parts only a server needs.
 class MoshTerminalState {
   MoshTerminalState(int width, int height)
-      : fb = MoshFramebuffer(width, height);
+    : fb = MoshFramebuffer(width, height);
 
   MoshTerminalState._(this.fb, this.echoAck);
 

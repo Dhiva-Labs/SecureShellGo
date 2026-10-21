@@ -89,7 +89,9 @@ class MoshPacketCodec {
     if (datagram.length < 8 + 16 + 4) return null;
     final directionSeq = ByteData.sublistView(datagram).getInt64(0);
     final plain = _ocb.decrypt(
-        _nonce(directionSeq), Uint8List.sublistView(datagram, 8));
+      _nonce(directionSeq),
+      Uint8List.sublistView(datagram, 8),
+    );
     if (plain == null || plain.length < 4) return null;
     final view = ByteData.sublistView(plain);
     return MoshPacket(
@@ -130,10 +132,11 @@ abstract class MoshUdpSocket {
 
 /// Opens a UDP socket of [family] on a fresh local port and delivers
 /// whatever arrives on it to [onDatagram].
-typedef MoshUdpBinder = Future<MoshUdpSocket> Function(
-  InternetAddressType family,
-  void Function(MoshDatagram datagram) onDatagram,
-);
+typedef MoshUdpBinder =
+    Future<MoshUdpSocket> Function(
+      InternetAddressType family,
+      void Function(MoshDatagram datagram) onDatagram,
+    );
 
 /// The real thing: a [RawDatagramSocket] on every interface.
 Future<MoshUdpSocket> bindRawMoshSocket(
@@ -151,18 +154,23 @@ Future<MoshUdpSocket> bindRawMoshSocket(
 
 class _RawMoshSocket implements MoshUdpSocket {
   _RawMoshSocket(this._socket, void Function(MoshDatagram) onDatagram) {
-    _socket.listen((event) {
-      if (event != RawSocketEvent.read) return;
-      // Drain everything queued: one read event can stand for many datagrams.
-      while (true) {
-        final datagram = _socket.receive();
-        if (datagram == null) return;
-        onDatagram(MoshDatagram(datagram.data, datagram.address, datagram.port));
-      }
-    }, onError: (Object _) {
-      // ICMP "port unreachable" and friends surface here on some platforms.
-      // Mosh ignores them, since the network may well come back.
-    });
+    _socket.listen(
+      (event) {
+        if (event != RawSocketEvent.read) return;
+        // Drain everything queued: one read event can stand for many datagrams.
+        while (true) {
+          final datagram = _socket.receive();
+          if (datagram == null) return;
+          onDatagram(
+            MoshDatagram(datagram.data, datagram.address, datagram.port),
+          );
+        }
+      },
+      onError: (Object _) {
+        // ICMP "port unreachable" and friends surface here on some platforms.
+        // Mosh ignores them, since the network may well come back.
+      },
+    );
   }
 
   final RawDatagramSocket _socket;
@@ -195,14 +203,14 @@ class MoshConnection {
     required this.serverPort,
     MoshUdpBinder bind = bindRawMoshSocket,
     MoshClock clock = moshMonotonicNow,
-  })  : _codec = MoshPacketCodec(key),
-        // ignore: prefer_initializing_formals
-        _bind = bind,
-        // ignore: prefer_initializing_formals
-        _clock = clock,
-        mtu = serverAddress.type == InternetAddressType.IPv6
-            ? _ipv6Mtu - _ipv6HeaderLength
-            : _ipv4Mtu - _ipv4HeaderLength;
+  }) : _codec = MoshPacketCodec(key),
+       // ignore: prefer_initializing_formals
+       _bind = bind,
+       // ignore: prefer_initializing_formals
+       _clock = clock,
+       mtu = serverAddress.type == InternetAddressType.IPv6
+           ? _ipv6Mtu - _ipv6HeaderLength
+           : _ipv4Mtu - _ipv4HeaderLength;
 
   static const _ipv4Mtu = 1280;
   static const _ipv6Mtu = 1280;
@@ -292,13 +300,15 @@ class MoshConnection {
       _savedTimestamp = -1;
       _savedTimestampReceivedAt = 0;
     }
-    final datagram = _codec.seal(MoshPacket(
-      seq: _nextSeq++,
-      toClient: false,
-      timestamp: _timestamp16(),
-      timestampReply: timestampReply,
-      payload: payload,
-    ));
+    final datagram = _codec.seal(
+      MoshPacket(
+        seq: _nextSeq++,
+        toClient: false,
+        timestamp: _timestamp16(),
+        timestampReply: timestampReply,
+        payload: payload,
+      ),
+    );
     try {
       final sent = _sockets.last.send(datagram, serverAddress, serverPort);
       sendError = sent == datagram.length ? null : 'sendto: would block';
@@ -320,18 +330,21 @@ class MoshConnection {
     if (_closed || _binding) return;
     _lastPortChoice = _clock();
     _binding = true;
-    _bind(serverAddress.type, _receive).then((socket) {
-      _binding = false;
-      if (_closed) {
-        socket.close();
-        return;
-      }
-      _sockets.add(socket);
-      _pruneSockets();
-    }, onError: (Object error) {
-      _binding = false;
-      sendError = 'bind: $error';
-    });
+    _bind(serverAddress.type, _receive).then(
+      (socket) {
+        _binding = false;
+        if (_closed) {
+          socket.close();
+          return;
+        }
+        _sockets.add(socket);
+        _pruneSockets();
+      },
+      onError: (Object error) {
+        _binding = false;
+        sendError = 'bind: $error';
+      },
+    );
   }
 
   /// Closes every socket but the newest, as if the network the older ones

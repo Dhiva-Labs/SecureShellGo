@@ -29,9 +29,9 @@ class MoshTransport {
     MoshClock clock = moshMonotonicNow,
     Random? random,
   })
-      // ignore: prefer_initializing_formals
-      : _clock = clock,
-        _random = random ?? Random() {
+    // ignore: prefer_initializing_formals
+    : _clock = clock,
+       _random = random ?? Random() {
     final now = _clock();
     _sentStates = [_SentState(now, 0, 0)];
     _assumedReceiver = _sentStates.first;
@@ -153,8 +153,10 @@ class MoshTransport {
     final current = userStream.size;
     if (current != _sentStates.last.state) {
       final mindelay = _mindelayClock ??= now;
-      _nextSendTime = max(mindelay + sendMinDelay,
-          _sentStates.last.timestamp + sendInterval);
+      _nextSendTime = max(
+        mindelay + sendMinDelay,
+        _sentStates.last.timestamp + sendInterval,
+      );
     } else if (current != _assumedReceiver.state &&
         _lastHeard + activeRetryTimeout > now) {
       _nextSendTime = _sentStates.last.timestamp + sendInterval;
@@ -210,8 +212,9 @@ class MoshTransport {
 
   void _sendEmptyAck() {
     final now = _clock();
-    final newNum =
-        _shutdownInProgress ? moshShutdownNum : _sentStates.last.num + 1;
+    final newNum = _shutdownInProgress
+        ? moshShutdownNum
+        : _sentStates.last.num + 1;
     _addSentState(now, newNum, userStream.size);
     _sendInFragments(Uint8List(0), newNum);
     _nextAckTime = now + ackInterval;
@@ -284,8 +287,7 @@ class MoshTransport {
     }
   }
 
-  void _rationalizeStates() =>
-      userStream.forgetBefore(_sentStates.first.state);
+  void _rationalizeStates() => userStream.forgetBefore(_sentStates.first.state);
 
   Uint8List _attemptProspectiveResendOptimization(Uint8List proposed) {
     if (identical(_assumedReceiver, _sentStates.first)) return proposed;
@@ -326,8 +328,10 @@ class MoshTransport {
 
   void _receiveInstruction(TransportInstruction inst) {
     if (inst.protocolVersion != protocolVersion) {
-      onFatal?.call('The server speaks Mosh protocol version '
-          '${inst.protocolVersion}; this app speaks $protocolVersion.');
+      onFatal?.call(
+        'The server speaks Mosh protocol version '
+        '${inst.protocolVersion}; this app speaks $protocolVersion.',
+      );
       return;
     }
 

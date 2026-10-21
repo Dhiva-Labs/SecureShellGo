@@ -45,11 +45,11 @@ class MoshClient {
     MoshUdpBinder bind = bindRawMoshSocket,
     MoshClock clock = moshMonotonicNow,
     MoshPredictionMode prediction = MoshPredictionMode.adaptive,
-  })  : _clock = clock,
-        _columns = columns < 1 ? 80 : columns,
-        _rows = rows < 1 ? 24 : rows,
-        _predictions = MoshPredictionEngine(mode: prediction),
-        _notifications = MoshNotificationEngine(clock()) {
+  }) : _clock = clock,
+       _columns = columns < 1 ? 80 : columns,
+       _rows = rows < 1 ? 24 : rows,
+       _predictions = MoshPredictionEngine(mode: prediction),
+       _notifications = MoshNotificationEngine(clock()) {
     connection = MoshConnection(
       key: key,
       serverAddress: address,
@@ -57,14 +57,15 @@ class MoshClient {
       bind: bind,
       clock: clock,
     );
-    transport = MoshTransport(
-      connection: connection,
-      width: _columns,
-      height: _rows,
-      clock: clock,
-    )
-      ..onFatal = _fatal
-      ..onRemoteState = _remoteStateArrived;
+    transport =
+        MoshTransport(
+            connection: connection,
+            width: _columns,
+            height: _rows,
+            clock: clock,
+          )
+          ..onFatal = _fatal
+          ..onRemoteState = _remoteStateArrived;
     // Mosh's client sends its keystrokes with a minimal delay.
     transport.sendMinDelay = 1;
     _shown = MoshFramebuffer(_columns, _rows);
@@ -119,8 +120,12 @@ class MoshClient {
     try {
       await _connected.future.timeout(timeout);
     } on TimeoutException {
-      _finish(const MoshExit(
-          clean: false, reason: 'No reply from mosh-server over UDP.'));
+      _finish(
+        const MoshExit(
+          clean: false,
+          reason: 'No reply from mosh-server over UDP.',
+        ),
+      );
       throw MoshUnreachableException(
         'No reply from mosh-server over UDP from '
         '${connection.serverAddress.address} port ${connection.serverPort}. '
@@ -194,8 +199,7 @@ class MoshClient {
   void endBecause(String reason) =>
       _finish(MoshExit(clean: false, reason: reason));
 
-  void _fatal(String reason) =>
-      _finish(MoshExit(clean: false, reason: reason));
+  void _fatal(String reason) => _finish(MoshExit(clean: false, reason: reason));
 
   void _remoteStateArrived() {
     _notifications.serverHeard(transport.latestRemoteStateTimestamp);
@@ -227,8 +231,12 @@ class MoshClient {
       return;
     }
     if (transport.shutdownInProgress && transport.shutdownAckTimedOut) {
-      _finish(const MoshExit(
-          clean: false, reason: 'The server did not acknowledge the goodbye.'));
+      _finish(
+        const MoshExit(
+          clean: false,
+          reason: 'The server did not acknowledge the goodbye.',
+        ),
+      );
       return;
     }
     if (transport.counterpartyShutdownAckSent) {
@@ -303,7 +311,8 @@ class MoshClient {
     if (!_connected.isCompleted) {
       _connected.future.ignore();
       _connected.completeError(
-          MoshUnreachableException(exit.reason ?? 'Mosh stopped.'));
+        MoshUnreachableException(exit.reason ?? 'Mosh stopped.'),
+      );
     }
     unawaited(_output.close());
   }

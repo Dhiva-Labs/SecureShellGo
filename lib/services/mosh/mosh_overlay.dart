@@ -12,8 +12,8 @@ const _never = 1 << 62;
 /// for a while: "mosh: Last contact 12 seconds ago."
 class MoshNotificationEngine {
   MoshNotificationEngine(int now)
-      : _lastWordFromServer = now,
-        _lastAckedState = now;
+    : _lastWordFromServer = now,
+      _lastAckedState = now;
 
   int _lastWordFromServer;
   int _lastAckedState;
@@ -108,7 +108,8 @@ class MoshNotificationEngine {
     } else if (!timeExpired) {
       text = 'mosh: $_message';
     } else {
-      text = 'mosh: $_message (${_duration(elapsed, 's')} without '
+      text =
+          'mosh: $_message (${_duration(elapsed, 's')} without '
           '$explanation.)';
     }
 
@@ -147,7 +148,13 @@ enum MoshPredictionMode {
   never,
 }
 
-enum _Validity { pending, correct, correctNoCredit, incorrectOrExpired, inactive }
+enum _Validity {
+  pending,
+  correct,
+  correctNoCredit,
+  incorrectOrExpired,
+  inactive,
+}
 
 class _ConditionalOverlay {
   _ConditionalOverlay(this.expirationFrame, this.col, this.tentativeUntilEpoch);
@@ -173,7 +180,7 @@ class _ConditionalOverlay {
 
 class _CursorMove extends _ConditionalOverlay {
   _CursorMove(int expirationFrame, this.row, int col, int tentative)
-      : super(expirationFrame, col, tentative);
+    : super(expirationFrame, col, tentative);
 
   int row;
 
@@ -230,8 +237,10 @@ class _OverlayCell extends _ConditionalOverlay {
     if (unknown) {
       if (flag && col != fb.ds.width - 1) {
         final cell = fb.mutableCell(row, col);
-        cell.renditions =
-            cell.renditions.withAttribute(MoshRenditions.underlined, true);
+        cell.renditions = cell.renditions.withAttribute(
+          MoshRenditions.underlined,
+          true,
+        );
       }
       return;
     }
@@ -244,8 +253,10 @@ class _OverlayCell extends _ConditionalOverlay {
         ..fallback = replacement.fallback
         ..wrap = replacement.wrap;
       if (flag) {
-        cell.renditions =
-            cell.renditions.withAttribute(MoshRenditions.underlined, true);
+        cell.renditions = cell.renditions.withAttribute(
+          MoshRenditions.underlined,
+          true,
+        );
       }
     }
   }
@@ -261,8 +272,9 @@ class _OverlayCell extends _ConditionalOverlay {
     // Too easy to be right by accident.
     if (replacement.isBlank) return _Validity.correctNoCredit;
     if (current.contentsMatch(replacement)) {
-      final wasAlreadyThere =
-          originalContents.any((c) => c.contentsMatch(replacement));
+      final wasAlreadyThere = originalContents.any(
+        (c) => c.contentsMatch(replacement),
+      );
       return wasAlreadyThere ? _Validity.correctNoCredit : _Validity.correct;
     }
     return _Validity.incorrectOrExpired;
@@ -346,9 +358,14 @@ class MoshPredictionEngine {
 
   void _killEpoch(int epoch, MoshFramebuffer fb) {
     _cursors.removeWhere((c) => c.tentative(epoch - 1));
-    _cursors.add(_CursorMove(
-        _localFrameSent + 1, fb.ds.cursorRow, fb.ds.cursorCol, _predictionEpoch)
-      ..active = true);
+    _cursors.add(
+      _CursorMove(
+        _localFrameSent + 1,
+        fb.ds.cursorRow,
+        fb.ds.cursorCol,
+        _predictionEpoch,
+      )..active = true,
+    );
     for (final row in _overlays) {
       for (final cell in row.cells) {
         if (cell.tentative(epoch - 1)) cell.reset();
@@ -365,13 +382,23 @@ class MoshPredictionEngine {
 
   void _initCursor(MoshFramebuffer fb) {
     if (_cursors.isEmpty) {
-      _cursors.add(_CursorMove(_localFrameSent + 1, fb.ds.cursorRow,
-          fb.ds.cursorCol, _predictionEpoch)
-        ..active = true);
+      _cursors.add(
+        _CursorMove(
+          _localFrameSent + 1,
+          fb.ds.cursorRow,
+          fb.ds.cursorCol,
+          _predictionEpoch,
+        )..active = true,
+      );
     } else if (_cursor.tentativeUntilEpoch != _predictionEpoch) {
-      _cursors.add(_CursorMove(
-          _localFrameSent + 1, _cursor.row, _cursor.col, _predictionEpoch)
-        ..active = true);
+      _cursors.add(
+        _CursorMove(
+          _localFrameSent + 1,
+          _cursor.row,
+          _cursor.col,
+          _predictionEpoch,
+        )..active = true,
+      );
     }
   }
 
@@ -452,7 +479,8 @@ class MoshPredictionEngine {
       return;
     }
     _cursors.removeWhere(
-        (c) => c.validity(fb, _localFrameLateAcked) != _Validity.pending);
+      (c) => c.validity(fb, _localFrameLateAcked) != _Validity.pending,
+    );
   }
 
   _OverlayRow _rowFor(int rowNum, int numCols) {

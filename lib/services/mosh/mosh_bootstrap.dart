@@ -98,8 +98,8 @@ String moshServerCommand({
   final launch = server != null
       ? 'exec $server $args'
       : 'for m in ${moshServerSearchPath.join(' ')}; do '
-          'if command -v "\$m" >/dev/null 2>&1; then exec "\$m" $args; fi; '
-          'done; echo "$_missingMarker"; exit 127';
+            'if command -v "\$m" >/dev/null 2>&1; then exec "\$m" $args; fi; '
+            'done; echo "$_missingMarker"; exit 127';
   final script = 'echo "$_connectMarker \$SSH_CONNECTION"; $launch';
   return 'sh -c ${posixSingleQuote(script)}';
 }
@@ -109,25 +109,29 @@ String moshServerCommand({
 MoshServerInfo parseMoshServerOutput(ExecResult result) {
   final out = result.stdout;
   final err = result.stderr;
-  final connect =
-      RegExp(r'MOSH CONNECT (\d+) ([A-Za-z0-9/+]{22})(?![A-Za-z0-9/+])')
-          .firstMatch(out);
-  final sshConnection = RegExp('^$_connectMarker (.*)\$', multiLine: true)
-      .firstMatch(out)
-      ?.group(1)
-      ?.trim();
+  final connect = RegExp(
+    r'MOSH CONNECT (\d+) ([A-Za-z0-9/+]{22})(?![A-Za-z0-9/+])',
+  ).firstMatch(out);
+  final sshConnection = RegExp(
+    '^$_connectMarker (.*)\$',
+    multiLine: true,
+  ).firstMatch(out)?.group(1)?.trim();
   if (connect != null) {
     final pid = RegExp(r'mosh-server detached, pid = (\d+)').firstMatch(err);
     return MoshServerInfo(
       port: int.parse(connect.group(1)!),
       key: connect.group(2)!,
       pid: pid == null ? null : int.parse(pid.group(1)!),
-      sshConnection:
-          sshConnection == null || sshConnection.isEmpty ? null : sshConnection,
+      sshConnection: sshConnection == null || sshConnection.isEmpty
+          ? null
+          : sshConnection,
     );
   }
 
-  final details = [out.trim(), err.trim()].where((s) => s.isNotEmpty).join('\n');
+  final details = [
+    out.trim(),
+    err.trim(),
+  ].where((s) => s.isNotEmpty).join('\n');
   if (out.contains(_missingMarker) ||
       (result.exitCode == 127 && err.contains('not found'))) {
     throw MoshStartException(
@@ -151,7 +155,7 @@ MoshServerInfo parseMoshServerOutput(ExecResult result) {
     MoshStartFailure.failed,
     lastLine.isEmpty
         ? 'mosh-server did not start'
-            '${result.exitCode == null ? '' : ' (exit status ${result.exitCode})'}.'
+              '${result.exitCode == null ? '' : ' (exit status ${result.exitCode})'}.'
         : 'mosh-server did not start: $lastLine',
     details: details.isEmpty ? null : details,
   );
@@ -162,8 +166,9 @@ MoshServerInfo parseMoshServerOutput(ExecResult result) {
 /// fails, and the next is tried.
 List<String> moshLocales([String? deviceLocale]) {
   final out = <String>[];
-  final match = RegExp(r'^([a-z]{2,3})[-_]([A-Z]{2})')
-      .firstMatch(deviceLocale ?? Platform.localeName);
+  final match = RegExp(
+    r'^([a-z]{2,3})[-_]([A-Z]{2})',
+  ).firstMatch(deviceLocale ?? Platform.localeName);
   if (match != null) out.add('${match.group(1)}_${match.group(2)}.UTF-8');
   for (final fallback in ['C.UTF-8', 'en_US.UTF-8']) {
     if (!out.contains(fallback)) out.add(fallback);
@@ -200,8 +205,7 @@ Future<MoshServerInfo> startMoshServer(
 /// Stops a `mosh-server` nobody connected to. Best effort.
 Future<void> stopMoshServer(SessionTransport ssh, int pid) async {
   try {
-    await RemoteExec.run(ssh, 'kill $pid',
-        timeout: const Duration(seconds: 5));
+    await RemoteExec.run(ssh, 'kill $pid', timeout: const Duration(seconds: 5));
   } catch (_) {
     // It times out on its own after a minute without a client anyway.
   }
@@ -258,8 +262,10 @@ InternetAddress? _parseAddress(String text) {
   }
   final zone = value.indexOf('%');
   if (zone >= 0) value = value.substring(0, zone);
-  final mapped = RegExp(r'^::ffff:(\d+\.\d+\.\d+\.\d+)$', caseSensitive: false)
-      .firstMatch(value);
+  final mapped = RegExp(
+    r'^::ffff:(\d+\.\d+\.\d+\.\d+)$',
+    caseSensitive: false,
+  ).firstMatch(value);
   if (mapped != null) value = mapped.group(1)!;
   return InternetAddress.tryParse(value);
 }
