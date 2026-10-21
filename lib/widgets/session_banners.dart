@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../l10n/l10n.dart';
 import '../services/session_manager.dart';
 
 /// What the strip above a session's terminal says about its connection:
@@ -98,7 +99,7 @@ class _ReconnectingBanner extends StatelessWidget {
             const SizedBox(width: 12),
             Expanded(
               child: Text(
-                message ?? 'Reconnecting…',
+                message ?? context.l10n.sessionBannerReconnecting,
                 style: const TextStyle(fontSize: 13, height: 1.3),
               ),
             ),
@@ -107,7 +108,7 @@ class _ReconnectingBanner extends StatelessWidget {
               // Reconnecting is a guess about what the user wants; this is how
               // they say otherwise, without having to close the tab to do it.
               onPressed: onStop,
-              child: const Text('Stop'),
+              child: Text(context.l10n.sessionBannerStop),
             ),
           ],
         ),
@@ -143,7 +144,7 @@ class _DisconnectedBanner extends StatelessWidget {
             const SizedBox(width: 10),
             Expanded(
               child: Text(
-                message ?? 'Connection closed.',
+                message ?? context.l10n.sessionBannerClosed,
                 style: const TextStyle(fontSize: 13, height: 1.3),
               ),
             ),
@@ -154,13 +155,13 @@ class _DisconnectedBanner extends StatelessWidget {
                 // server going away — the same tab, scrollback and transfers
                 // are one tap from coming back.
                 onPressed: onReconnect,
-                child: const Text('Reconnect'),
+                child: Text(context.l10n.sessionBannerReconnect),
               ),
             TextButton(
               // Closing the tab is the other useful thing to do with a dead
               // session — the others are unaffected either way.
               onPressed: onClose,
-              child: const Text('Close'),
+              child: Text(context.l10n.sessionBannerClose),
             ),
           ],
         ),
@@ -191,15 +192,13 @@ class _SshLostUnderMoshBanner extends StatelessWidget {
             const SizedBox(width: 10),
             Expanded(
               child: Text(
-                message ??
-                    'SSH connection lost. The terminal carries on over Mosh; '
-                        'files, tunnels and commands need SSH.',
+                message ?? context.l10n.sessionBannerSshLostUnderMosh,
                 style: const TextStyle(fontSize: 13, height: 1.3),
               ),
             ),
             const SizedBox(width: 8),
             if (onReconnect != null)
-              TextButton(onPressed: onReconnect, child: const Text('Reconnect')),
+              TextButton(onPressed: onReconnect, child: Text(context.l10n.sessionBannerReconnect)),
           ],
         ),
       ),
@@ -240,13 +239,15 @@ class _ShellEndedBanner extends StatelessWidget {
             const SizedBox(width: 10),
             Expanded(
               child: Text(
-                detail == null ? 'Shell ended' : 'Shell ended — $detail',
+                detail == null
+                    ? context.l10n.sessionBannerShellEnded
+                    : context.l10n.sessionBannerShellEndedWith(detail),
                 style: const TextStyle(fontSize: 13, height: 1.3),
               ),
             ),
             const SizedBox(width: 8),
-            TextButton(onPressed: onRestart, child: const Text('Restart')),
-            TextButton(onPressed: onClose, child: const Text('Close')),
+            TextButton(onPressed: onRestart, child: Text(context.l10n.sessionBannerRestart)),
+            TextButton(onPressed: onClose, child: Text(context.l10n.sessionBannerClose)),
           ],
         ),
       ),

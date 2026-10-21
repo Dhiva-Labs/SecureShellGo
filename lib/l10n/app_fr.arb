@@ -3,5 +3,14 @@
   "appTitle": "SecureShell Go",
   "languageSystem": "Comme l'appareil",
   "languageLabel": "Langue",
-  "languageHelp": "Les traductions sont nouvelles dans la 1.5. Une erreur ? Signalez-la sur GitHub."
+  "languageHelp": "Les traductions sont nouvelles dans la 1.5. Une erreur ? Signalez-la sur GitHub.",
+  "sessionBannerReconnecting": "Reconnexion…",
+  "sessionBannerStop": "Arrêter",
+  "sessionBannerClosed": "Connexion fermée.",
+  "sessionBannerReconnect": "Se reconnecter",
+  "sessionBannerClose": "Fermer",
+  "sessionBannerSshLostUnderMosh": "Connexion SSH perdue. Le terminal continue via Mosh ; les fichiers, tunnels et commandes nécessitent SSH.",
+  "sessionBannerShellEnded": "Le shell est terminé",
+  "sessionBannerShellEndedWith": "Le shell est terminé — {detail}",
+  "sessionBannerRestart": "Redémarrer"
 }

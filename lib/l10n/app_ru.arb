@@ -3,5 +3,14 @@
   "appTitle": "SecureShell Go",
   "languageSystem": "Как на устройстве",
   "languageLabel": "Язык",
-  "languageHelp": "Переводы появились в версии 1.5. Нашли ошибку? Сообщите на GitHub."
+  "languageHelp": "Переводы появились в версии 1.5. Нашли ошибку? Сообщите на GitHub.",
+  "sessionBannerReconnecting": "Повторное подключение…",
+  "sessionBannerStop": "Остановить",
+  "sessionBannerClosed": "Соединение закрыто.",
+  "sessionBannerReconnect": "Переподключиться",
+  "sessionBannerClose": "Закрыть",
+  "sessionBannerSshLostUnderMosh": "SSH-соединение потеряно. Терминал продолжает работать через Mosh; для файлов, туннелей и команд нужен SSH.",
+  "sessionBannerShellEnded": "Оболочка завершилась",
+  "sessionBannerShellEndedWith": "Оболочка завершилась — {detail}",
+  "sessionBannerRestart": "Перезапустить"
 }

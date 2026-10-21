@@ -3,5 +3,14 @@
   "appTitle": "SecureShell Go",
   "languageSystem": "跟随设备",
   "languageLabel": "语言",
-  "languageHelp": "翻译为 1.5 版新增。发现错误？请在 GitHub 上报告。"
+  "languageHelp": "翻译为 1.5 版新增。发现错误？请在 GitHub 上报告。",
+  "sessionBannerReconnecting": "正在重新连接…",
+  "sessionBannerStop": "停止",
+  "sessionBannerClosed": "连接已关闭。",
+  "sessionBannerReconnect": "重新连接",
+  "sessionBannerClose": "关闭",
+  "sessionBannerSshLostUnderMosh": "SSH 连接已断开。终端会通过 Mosh 继续工作；文件、隧道和命令需要 SSH。",
+  "sessionBannerShellEnded": "Shell 已结束",
+  "sessionBannerShellEndedWith": "Shell 已结束 — {detail}",
+  "sessionBannerRestart": "重新启动"
 }

@@ -3,5 +3,14 @@
   "appTitle": "SecureShell Go",
   "languageSystem": "기기 설정과 동일",
   "languageLabel": "언어",
-  "languageHelp": "번역은 1.5에서 새로 추가되었습니다. 오류를 발견하면 GitHub에 알려 주세요."
+  "languageHelp": "번역은 1.5에서 새로 추가되었습니다. 오류를 발견하면 GitHub에 알려 주세요.",
+  "sessionBannerReconnecting": "다시 연결하는 중…",
+  "sessionBannerStop": "중지",
+  "sessionBannerClosed": "연결이 종료되었습니다.",
+  "sessionBannerReconnect": "다시 연결",
+  "sessionBannerClose": "닫기",
+  "sessionBannerSshLostUnderMosh": "SSH 연결이 끊겼습니다. 터미널은 Mosh로 계속 사용할 수 있지만 파일, 터널, 명령에는 SSH가 필요합니다.",
+  "sessionBannerShellEnded": "셸이 종료되었습니다",
+  "sessionBannerShellEndedWith": "셸이 종료되었습니다 — {detail}",
+  "sessionBannerRestart": "다시 시작"
 }

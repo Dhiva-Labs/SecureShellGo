@@ -3,5 +3,14 @@
   "appTitle": "SecureShell Go",
   "languageSystem": "端末の設定に合わせる",
   "languageLabel": "言語",
-  "languageHelp": "翻訳は 1.5 で追加されました。誤りを見つけたら GitHub で報告してください。"
+  "languageHelp": "翻訳は 1.5 で追加されました。誤りを見つけたら GitHub で報告してください。",
+  "sessionBannerReconnecting": "再接続しています…",
+  "sessionBannerStop": "停止",
+  "sessionBannerClosed": "接続が閉じられました。",
+  "sessionBannerReconnect": "再接続",
+  "sessionBannerClose": "閉じる",
+  "sessionBannerSshLostUnderMosh": "SSH 接続が切れました。ターミナルは Mosh で使い続けられますが、ファイル、トンネル、コマンドには SSH が必要です。",
+  "sessionBannerShellEnded": "シェルが終了しました",
+  "sessionBannerShellEndedWith": "シェルが終了しました — {detail}",
+  "sessionBannerRestart": "再起動"
 }

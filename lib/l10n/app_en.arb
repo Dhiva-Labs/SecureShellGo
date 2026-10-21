@@ -15,5 +15,46 @@
   "languageHelp": "Translations are new in 1.5. Spot a mistake? Report it on GitHub.",
   "@languageHelp": {
     "description": "Settings: helper text under the Language field."
+  },
+  "sessionBannerReconnecting": "Reconnecting…",
+  "@sessionBannerReconnecting": {
+    "description": "Banner above the terminal while the app reconnects to the server."
+  },
+  "sessionBannerStop": "Stop",
+  "@sessionBannerStop": {
+    "description": "Button on the reconnecting banner: stop trying to reconnect."
+  },
+  "sessionBannerClosed": "Connection closed.",
+  "@sessionBannerClosed": {
+    "description": "Banner above the terminal when the connection has ended and no reason is known."
+  },
+  "sessionBannerReconnect": "Reconnect",
+  "@sessionBannerReconnect": {
+    "description": "Button: connect to the server again."
+  },
+  "sessionBannerClose": "Close",
+  "@sessionBannerClose": {
+    "description": "Button: close this session's tab."
+  },
+  "sessionBannerSshLostUnderMosh": "SSH connection lost. The terminal carries on over Mosh; files, tunnels and commands need SSH.",
+  "@sessionBannerSshLostUnderMosh": {
+    "description": "Banner when SSH dropped but the Mosh terminal still works. Keep SSH and Mosh untranslated."
+  },
+  "sessionBannerShellEnded": "Shell ended",
+  "@sessionBannerShellEnded": {
+    "description": "Banner when the remote shell exited but the connection is still up."
+  },
+  "sessionBannerShellEndedWith": "Shell ended — {detail}",
+  "@sessionBannerShellEndedWith": {
+    "description": "Banner when the remote shell exited, with the reason. {detail} is an English message from the app.",
+    "placeholders": {
+      "detail": {
+        "type": "String"
+      }
+    }
+  },
+  "sessionBannerRestart": "Restart",
+  "@sessionBannerRestart": {
+    "description": "Button: start a new shell on the same connection."
   }
 }
