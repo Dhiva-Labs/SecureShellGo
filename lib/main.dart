@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import 'l10n/l10n.dart';
 import 'models/app_settings.dart';
 import 'screens/host_list_screen.dart';
 import 'services/app_lock.dart';
@@ -65,6 +66,9 @@ class _SecureShellGoAppState extends State<SecureShellGoApp> {
   // size, a collapsed group) does not repaint the whole app for nothing.
   UiStyle _uiStyle = UiStyle.aurora;
   ThemeBrightness _themeBrightness = ThemeBrightness.dark;
+
+  /// Settings' language, or null to follow the device.
+  String? _localeOverride;
   StreamSubscription<AppSettings>? _themeWatch;
 
   // Composition root. Services take their dependencies through constructors
@@ -336,12 +340,14 @@ class _SecureShellGoAppState extends State<SecureShellGoApp> {
     // every cold start.
     _uiStyle = _settingsStore.current.uiStyle;
     _themeBrightness = _settingsStore.current.themeBrightness;
+    _localeOverride = _settingsStore.current.localeOverride;
     unawaited(
       _settingsStore.ensureLoaded().then((_) {
         if (!mounted) return;
         setState(() {
           _uiStyle = _settingsStore.current.uiStyle;
           _themeBrightness = _settingsStore.current.themeBrightness;
+          _localeOverride = _settingsStore.current.localeOverride;
         });
         unawaited(_appLock.start(_settingsStore.current));
       }),
@@ -350,12 +356,14 @@ class _SecureShellGoAppState extends State<SecureShellGoApp> {
     _diagnosticsWatch = DiagnosticsLog.instance.follow(_settingsStore);
     _themeWatch = _settingsStore.changes.listen((settings) {
       if (settings.uiStyle == _uiStyle &&
-          settings.themeBrightness == _themeBrightness) {
+          settings.themeBrightness == _themeBrightness &&
+          settings.localeOverride == _localeOverride) {
         return;
       }
       setState(() {
         _uiStyle = settings.uiStyle;
         _themeBrightness = settings.themeBrightness;
+        _localeOverride = settings.localeOverride;
       });
     });
   }
@@ -384,6 +392,11 @@ class _SecureShellGoAppState extends State<SecureShellGoApp> {
     return MaterialApp(
       title: 'SecureShell Go',
       navigatorKey: _navigatorKey,
+      // The device's language unless Settings picks one; anything the app
+      // has no translation for falls back to English.
+      locale: localeForTag(_localeOverride),
+      localizationsDelegates: AppLocalizations.localizationsDelegates,
+      supportedLocales: AppLocalizations.supportedLocales,
       debugShowCheckedModeBanner: false,
       themeMode: AppTheme.themeModeFor(_themeBrightness),
       theme: AppTheme.themeFor(_uiStyle, Brightness.light),

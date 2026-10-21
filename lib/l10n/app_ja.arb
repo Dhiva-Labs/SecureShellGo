@@ -1,0 +1,7 @@
+{
+  "@@locale": "ja",
+  "appTitle": "SecureShell Go",
+  "languageSystem": "端末の設定に合わせる",
+  "languageLabel": "言語",
+  "languageHelp": "翻訳は 1.5 で追加されました。誤りを見つけたら GitHub で報告してください。"
+}

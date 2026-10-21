@@ -19,6 +19,7 @@ import 'known_hosts_screen.dart';
 import 'settings/diagnostics_section.dart';
 import 'settings/editor_section.dart';
 import 'settings/input_section.dart';
+import 'settings/language_section.dart';
 import 'settings/settings_section.dart';
 import 'settings/terminal_section.dart';
 import 'snippets_screen.dart';
@@ -346,6 +347,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   ],
                 ),
               ),
+              LanguageSettingsSection(settings: _settings, apply: _apply),
               const Divider(height: 32),
               SettingsSectionHeader('Terminal', style: _settings.uiStyle),
               _TerminalPreview(settings: _settings),

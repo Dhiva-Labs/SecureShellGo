@@ -1,0 +1,19 @@
+{
+  "@@locale": "en",
+  "appTitle": "SecureShell Go",
+  "@appTitle": {
+    "description": "The app name. Not translated."
+  },
+  "languageSystem": "Same as this device",
+  "@languageSystem": {
+    "description": "Settings > Language: the choice that follows the device language."
+  },
+  "languageLabel": "Language",
+  "@languageLabel": {
+    "description": "Settings: the Language field label."
+  },
+  "languageHelp": "Translations are new in 1.5. Spot a mistake? Report it on GitHub.",
+  "@languageHelp": {
+    "description": "Settings: helper text under the Language field."
+  }
+}

@@ -2,7 +2,9 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:secure_shell_go/l10n/l10n.dart';
 import 'package:secure_shell_go/models/app_settings.dart';
+import 'package:secure_shell_go/screens/settings/language_section.dart';
 import 'package:secure_shell_go/screens/settings/editor_section.dart';
 import 'package:secure_shell_go/screens/settings_screen.dart';
 import 'package:secure_shell_go/services/known_hosts_service.dart';
@@ -106,5 +108,43 @@ void main() {
     expect(store.current.editorFontSize, greaterThan(before));
     expect(store.current.terminalFontSize, AppSettings.defaultFontSize,
         reason: 'the terminal keeps its own size');
+  });
+
+  testWidgets('a language picked in Settings is saved, and cleared again',
+      (tester) async {
+    await pumpSettings(tester);
+    await pick<String>(tester, '日本語');
+    expect(store.current.localeOverride, 'ja');
+    await pick<String>(tester, 'Same as this device');
+    expect(store.current.localeOverride, isNull);
+  });
+
+  testWidgets('the screen speaks the chosen language', (tester) async {
+    await tester.pumpWidget(MaterialApp(
+      locale: localeForTag('ja'),
+      localizationsDelegates: AppLocalizations.localizationsDelegates,
+      supportedLocales: AppLocalizations.supportedLocales,
+      home: Scaffold(
+        body: LanguageSettingsSection(
+          settings: const AppSettings(localeOverride: 'ja'),
+          apply: (_) async {},
+        ),
+      ),
+    ));
+    await tester.pumpAndSettle();
+    expect(find.text('言語'), findsOneWidget);
+    expect(find.text('日本語'), findsOneWidget);
+  });
+
+  test('every language offered has a translation, and unknown tags follow '
+      'the device', () {
+    final supported = {
+      for (final l in AppLocalizations.supportedLocales) l.languageCode,
+    };
+    for (final language in appLanguages) {
+      expect(supported, contains(language.tag), reason: language.name);
+    }
+    expect(localeForTag('xx'), isNull);
+    expect(localeForTag(null), isNull);
   });
 }

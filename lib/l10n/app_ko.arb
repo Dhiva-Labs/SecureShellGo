@@ -1,0 +1,7 @@
+{
+  "@@locale": "ko",
+  "appTitle": "SecureShell Go",
+  "languageSystem": "기기 설정과 동일",
+  "languageLabel": "언어",
+  "languageHelp": "번역은 1.5에서 새로 추가되었습니다. 오류를 발견하면 GitHub에 알려 주세요."
+}

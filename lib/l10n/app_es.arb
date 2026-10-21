@@ -1,0 +1,7 @@
+{
+  "@@locale": "es",
+  "appTitle": "SecureShell Go",
+  "languageSystem": "Igual que el dispositivo",
+  "languageLabel": "Idioma",
+  "languageHelp": "Las traducciones son nuevas en la 1.5. ¿Ves un error? Infórmalo en GitHub."
+}

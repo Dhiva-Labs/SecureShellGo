@@ -1,0 +1,7 @@
+{
+  "@@locale": "zh",
+  "appTitle": "SecureShell Go",
+  "languageSystem": "跟随设备",
+  "languageLabel": "语言",
+  "languageHelp": "翻译为 1.5 版新增。发现错误？请在 GitHub 上报告。"
+}
