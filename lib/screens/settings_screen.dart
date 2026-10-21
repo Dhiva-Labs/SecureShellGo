@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
+import '../app_version.dart';
 import '../models/app_settings.dart';
 import '../services/app_lock.dart';
 import '../services/app_lock_controller.dart';
@@ -176,7 +177,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     showAboutDialog(
       context: context,
       applicationName: 'SecureShell Go',
-      applicationVersion: '1.0.0',
+      applicationVersion: appDisplayVersion,
       applicationIcon: const Icon(Icons.terminal, size: 40),
       children: const [
         Text(

@@ -5,6 +5,7 @@ import 'dart:typed_data';
 
 import 'package:flutter/foundation.dart';
 
+import '../app_version.dart' as app;
 import '../models/app_settings.dart';
 import 'app_data_paths.dart';
 import 'atomic_file.dart';
@@ -463,10 +464,8 @@ class DiagnosticsLog {
 
   static final DiagnosticsLog instance = DiagnosticsLog();
 
-  /// This build's version, as `pubspec.yaml` has it. The app has no plugin
-  /// that reads the version at run time, so it is written down here, and
-  /// `diagnostics_log_test.dart` fails the build when the two drift apart.
-  static const String appVersion = '1.4.5+12';
+  /// This build's version, as `pubspec.yaml` has it; see `app_version.dart`.
+  static const String appVersion = app.appVersion;
 
   static const String fileName = 'diagnostics.log';
   static const String previousFileName = 'diagnostics.1.log';
