@@ -1539,7 +1539,11 @@ class _FileBrowserPaneState extends State<FileBrowserPane>
     );
     if (!mounted || choice == null) return;
 
-    final part = '.${choice.name}.ssg-part-${ServerSideJob.newId().substring(0, 8)}';
+    // Kept well under the 255-byte name limit whatever the archive's name.
+    final head = choice.name.length > 100
+        ? choice.name.substring(0, 100)
+        : choice.name;
+    final part = '.$head.ssg-part-${ServerSideJob.newId().substring(0, 8)}';
     final what = entries.length == 1
         ? 'Compressing ${entries.single.name}'
         : 'Compressing ${entries.length} items';

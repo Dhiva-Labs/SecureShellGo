@@ -405,10 +405,10 @@ void main() {
       final dir = await Directory.systemTemp.createTemp('ssg_fleet');
       addTearDown(() => dir.delete(recursive: true));
       final pidFile = '${dir.path}/child';
-      // setsid puts the wrapper in a process group of its own, the way sshd
-      // does for each exec — so `kill 0` reaches only what it started.
-      final process = await Process.start('setsid', [
-        'sh',
+      // Run in the test's own process group, as a server that does not
+      // make one per exec would: only the command's group may be signalled,
+      // never the test runner's.
+      final process = await Process.start('sh', [
         '-c',
         FleetExecService.wrap('sleep 60 & echo \$! > $pidFile; wait'),
       ], environment: {'SHELL': '/bin/sh'});
@@ -424,6 +424,33 @@ void main() {
       await Future<void>.delayed(const Duration(milliseconds: 200));
       expect(Process.runSync('kill', ['-0', child]).exitCode, isNot(0),
           reason: 'the background sleep survived');
+    }, skip: Process.runSync('sh', ['-c', 'command -v setsid']).exitCode != 0);
+
+    test('stopping never signals the group the wrapper itself runs in',
+        () async {
+      // A server that does not give each exec a process group of its own
+      // leaves its own processes beside the wrapper — the sentinel here.
+      final dir = await Directory.systemTemp.createTemp('ssg_fleet');
+      addTearDown(() => dir.delete(recursive: true));
+      final sentinel = '${dir.path}/sentinel';
+      final process = await Process.start('sh', [
+        '-c',
+        'sleep 30 >/dev/null 2>&1 & echo \$! > $sentinel; '
+            '${FleetExecService.wrap('sleep 60')}; echo after',
+      ], environment: {'SHELL': '/bin/sh'});
+      final out = process.stdout.transform(const SystemEncoding().decoder).join();
+      unawaited(process.stderr.drain<void>());
+      for (var i = 0; i < 50 && !File(sentinel).existsSync(); i++) {
+        await Future<void>.delayed(const Duration(milliseconds: 20));
+      }
+      await Future<void>.delayed(const Duration(milliseconds: 200));
+      await process.stdin.close();
+      await process.exitCode.timeout(const Duration(seconds: 5));
+      expect(await out, 'after\n', reason: 'the shell around it lived on');
+      final pid = File(sentinel).readAsStringSync().trim();
+      expect(Process.runSync('kill', ['-0', pid]).exitCode, 0,
+          reason: 'a process beside the wrapper was signalled');
+      Process.runSync('kill', [pid]);
     }, skip: Process.runSync('sh', ['-c', 'command -v setsid']).exitCode != 0);
 
     test('a command that ends by itself leaves what it daemonised', () async {

@@ -578,19 +578,29 @@ class FleetExecService {
   ///
   /// The command runs as `"$SHELL" -c command` — the account's own shell,
   /// the way `ssh host 'command'` runs it — in the background, with no
-  /// stdin. Beside it a `cat` waits on the channel's stdin, saved on fd 3
-  /// (a background job's own stdin is `/dev/null`). When this app stops
-  /// the run it closes stdin, `cat` returns, and `kill 0` ends the whole
-  /// process group sshd made for this exec, children included. A command
-  /// that finishes on its own takes the waiting `cat` down with it instead,
-  /// so a daemon it started with `&` is left running.
+  /// stdin, under `setsid` where there is one so that it and everything it
+  /// starts form a process group of their own. Beside it a `cat` waits on
+  /// the channel's stdin, saved on fd 3 (a background job's own stdin is
+  /// `/dev/null`). When this app stops the run it closes stdin, `cat`
+  /// returns, and that group is sent TERM: the command and its children,
+  /// never the SSH server's own processes, whatever group the server put
+  /// the exec in. Without `setsid` only the command's shell is signalled.
+  /// A command that finishes on its own takes the waiting `cat` down with
+  /// it instead, so a daemon it started with `&` is left running.
   ///
   /// The command reaches the server as the wrapper's `$1`, quoted once.
   static String wrap(String command) {
     const wrapper = r'''exec 3<&0
-"${SHELL:-/bin/sh}" -c "$1" 3<&- &
-p=$!
-( cat <&3 >/dev/null 2>&1; kill -TERM 0 2>/dev/null ) >/dev/null 2>&1 &
+if command -v setsid >/dev/null 2>&1; then
+  setsid "${SHELL:-/bin/sh}" -c "$1" 3<&- &
+  p=$!
+  t="-$p"
+else
+  "${SHELL:-/bin/sh}" -c "$1" 3<&- &
+  p=$!
+  t="$p"
+fi
+( cat <&3 >/dev/null 2>&1; kill -s TERM -- "$t" 2>/dev/null ) >/dev/null 2>&1 &
 w=$!
 exec 3<&-
 wait $p
