@@ -1450,12 +1450,15 @@ class _FileBrowserPaneState extends State<FileBrowserPane>
   // ------------------------------------------------- server-side operations
 
   /// Asks the server, once, what it can do; see [RemoteToolkit]. Until it
-  /// answers the actions that need it are simply not offered.
-  Future<RemoteToolkit> _tools() => _toolkitProbe ??=
-          RemoteToolkit.probe(widget.session.connection).then((kit) {
+  /// answers the actions that need it are simply not offered. A probe that
+  /// met a dropped link learnt nothing, so it is asked again next time.
+  Future<RemoteToolkit> _tools() => _toolkitProbe ??= () async {
+        final transport = widget.session.connection;
+        final kit = await RemoteToolkit.probe(transport);
+        if (kit.tools.isEmpty && transport.isClosed) _toolkitProbe = null;
         if (mounted) setState(() => _toolkit = kit);
         return kit;
-      });
+      }();
 
   /// Runs [script] as a job on the server, with a line under the toolbar
   /// that can stop it, and says how it went.
@@ -1793,6 +1796,7 @@ class _FileBrowserPaneState extends State<FileBrowserPane>
     final canChmod = _canChangePermissions(entry);
     // The server-side rows, only for what this server's tools can do.
     final kit = _toolkit;
+    if (kit.tools.isEmpty) unawaited(_tools());
     final archive = entry.isDownloadable ? ArchiveKind.of(entry.name) : null;
     final canExtract = archive != null && kit.canExtract(archive);
     final real = entry.kind != RemoteEntryKind.other;

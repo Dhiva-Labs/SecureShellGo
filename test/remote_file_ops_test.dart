@@ -66,6 +66,13 @@ final bool _hasBusybox = _onPath('busybox');
 final bool _hasZip = _onPath('zip') && _onPath('unzip');
 
 void main() {
+  tearDownAll(() async {
+    final bin = _busyboxBinPath;
+    if (bin != null && Directory(bin).existsSync()) {
+      await Directory(bin).delete(recursive: true);
+    }
+  });
+
   group('probe', () {
     test('reads tools, flavours and what tar can do', () {
       final kit = RemoteToolkit.parse(
