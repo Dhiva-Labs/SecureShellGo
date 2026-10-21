@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -11,11 +12,13 @@ import '../services/host_store.dart';
 import '../services/public_key_push.dart';
 import '../services/session_manager.dart';
 import '../services/settings_store.dart';
+import '../services/ssh_certificate.dart';
 import '../services/ssh_keygen.dart';
 import '../services/ssh_service.dart';
 import '../theme.dart';
 import '../widgets/error_banner.dart';
 import '../widgets/host_advanced_section.dart';
+import '../widgets/host_certificate_field.dart';
 import '../widgets/host_color_dot.dart';
 import '../widgets/host_key_dialog.dart';
 import '../widgets/import_key_file_button.dart';
@@ -112,8 +115,11 @@ class _HostEditScreenState extends State<HostEditScreen> {
   HostAdvancedOptions _advanced = const HostAdvancedOptions();
 
   /// See [Host.certificate]. Carried through an edit so saving the form never
-  /// drops one; it is chosen in the sign-in area.
+  /// drops one; it is chosen in the sign-in area, under the key it goes with.
   String? _certificate;
+
+  /// [_keyBlob]'s last answer, and the key text it was for.
+  (String, String, Uint8List?)? _keyBlobCache;
   String? _error;
   String? _errorDetails;
 
@@ -267,8 +273,47 @@ class _HostEditScreenState extends State<HostEditScreen> {
       agentForwarding: _advanced.agentForwarding,
       x11Forwarding: _advanced.x11Forwarding,
       persistentSession: _advanced.persistentSession,
+      // Kept even while a password is chosen, where it is not shown or
+      // used: switching back to the key should find it still there.
       certificate: _certificate,
       transport: _advanced.transport,
+    );
+  }
+
+  /// The public half of the key in the form, for checking the certificate
+  /// against — remembered, because the certificate row rebuilds on every
+  /// keystroke in the key fields.
+  Uint8List? _keyBlob() {
+    final pem = _keyController.text;
+    final passphrase = _passphraseController.text;
+    final cached = _keyBlobCache;
+    if (cached != null && cached.$1 == pem && cached.$2 == passphrase) {
+      return cached.$3;
+    }
+    final blob = publicKeyBlobOfPem(pem, passphrase: passphrase);
+    _keyBlobCache = (pem, passphrase, blob);
+    return blob;
+  }
+
+  /// The certificate row, kept current with the key, passphrase and user
+  /// name it is checked against as they are typed.
+  Widget _buildCertificateField() {
+    return ListenableBuilder(
+      listenable: Listenable.merge([
+        _keyController,
+        _passphraseController,
+        _usernameController,
+      ]),
+      builder: (context, _) => HostCertificateField(
+        certificate: _certificate,
+        onChanged: (value) => setState(() => _certificate = value),
+        deviceStorage: _deviceStorage,
+        username: _usernameController.text,
+        keyBlob: _authMethod == SshAuthMethod.privateKey && _certificate != null
+            ? _keyBlob()
+            : null,
+        signsWithAgent: _authMethod == SshAuthMethod.agent,
+      ),
     );
   }
 
@@ -666,20 +711,25 @@ class _HostEditScreenState extends State<HostEditScreen> {
 
   /// The auth methods offered for this host.
   ///
-  /// The OS agent is never offered as a *new* choice yet: the agent client
-  /// (`ssh_agent_client.dart`) is complete, but dartssh2's synchronous
-  /// `SSHKeyPair.sign` cannot be satisfied by a socket round-trip, so a
-  /// host configured this way could not connect in this build — see
-  /// `_prepareIdentities` in `ssh_service.dart`. The segment still renders
-  /// when the host already uses it, so such a host (saved by a future
-  /// build, or this one before the option was withdrawn) can be changed to
-  /// something workable instead of tripping SegmentedButton's assertion
-  /// that the selected value is one of the segments.
+  /// The OS agent only where there can be one: the desktops. Android has no
+  /// agent to talk to. The segment still renders when the host already uses
+  /// it, so such a host — restored from a desktop's backup, say — can be
+  /// changed to something workable instead of tripping SegmentedButton's
+  /// assertion that the selected value is one of the segments.
   List<SshAuthMethod> get _offeredAuthMethods => [
         SshAuthMethod.password,
         SshAuthMethod.privateKey,
-        if (_authMethod == SshAuthMethod.agent) SshAuthMethod.agent,
+        if (_osAgentPossible || _authMethod == SshAuthMethod.agent)
+          SshAuthMethod.agent,
       ];
+
+  static bool get _osAgentPossible => switch (defaultTargetPlatform) {
+        TargetPlatform.linux ||
+        TargetPlatform.windows ||
+        TargetPlatform.macOS =>
+          true,
+        _ => false,
+      };
 
   Widget _buildColorField(ThemeData theme) {
     return Row(
@@ -824,23 +874,41 @@ class _HostEditScreenState extends State<HostEditScreen> {
         const SizedBox(height: 16),
         _buildJumpHostField(),
         const SizedBox(height: 20),
-        SegmentedButton<SshAuthMethod>(
-          segments: [
-            for (final method in _offeredAuthMethods)
-              ButtonSegment(
-                value: method,
-                icon: Icon(switch (method) {
-                  SshAuthMethod.password => Icons.password,
-                  SshAuthMethod.privateKey => Icons.key,
-                  SshAuthMethod.agent => Icons.badge_outlined,
-                }),
-                label: Text(method.label),
-              ),
-          ],
-          selected: {_authMethod},
-          onSelectionChanged: (selection) =>
-              setState(() => _authMethod = selection.first),
-        ),
+        LayoutBuilder(builder: (context, constraints) {
+          final methods = _offeredAuthMethods;
+          // Three choices with icons do not fit a phone-width window; there
+          // they go to labels alone, and anything still too wide (a large
+          // text size) is scaled down rather than overflowing.
+          final compact = methods.length > 2 && constraints.maxWidth < 440;
+          return FittedBox(
+            fit: BoxFit.scaleDown,
+            alignment: Alignment.centerLeft,
+            child: SegmentedButton<SshAuthMethod>(
+              showSelectedIcon: !compact,
+              segments: [
+                for (final method in methods)
+                  ButtonSegment(
+                    value: method,
+                    icon: compact
+                        ? null
+                        : Icon(switch (method) {
+                            SshAuthMethod.password => Icons.password,
+                            SshAuthMethod.privateKey => Icons.key,
+                            SshAuthMethod.agent => Icons.badge_outlined,
+                          }),
+                    label: Text(
+                      compact && method == SshAuthMethod.agent
+                          ? 'Agent'
+                          : method.label,
+                    ),
+                  ),
+              ],
+              selected: {_authMethod},
+              onSelectionChanged: (selection) =>
+                  setState(() => _authMethod = selection.first),
+            ),
+          );
+        }),
         const SizedBox(height: 16),
         if (_loadingCredentials)
           const Padding(
@@ -880,14 +948,17 @@ class _HostEditScreenState extends State<HostEditScreen> {
         // Explicit rather than folded into the trailing `else`, which stays
         // the private-key branch: agent auth has no field to show, because
         // there is deliberately nothing about it to store.
-        else if (_authMethod == SshAuthMethod.agent)
+        else if (_authMethod == SshAuthMethod.agent) ...[
           const InlineHint(
             icon: Icons.info_outline,
-            text: 'Signing is done by the operating system\'s SSH agent. No '
-                'password or key is saved for this host, and the private key '
-                'never leaves the agent.',
-          )
-        else ...[
+            text: 'Signing is done by this computer\'s SSH agent — ssh-agent, '
+                'Pageant or the Windows OpenSSH agent — security keys '
+                'included. No password or key is saved for this host, and the '
+                'private key never leaves the agent.',
+          ),
+          const SizedBox(height: 16),
+          _buildCertificateField(),
+        ] else ...[
           ImportKeyFileButton(
             deviceStorage: _deviceStorage,
             onImported: (fileName, content, keyType) =>
@@ -971,6 +1042,8 @@ class _HostEditScreenState extends State<HostEditScreen> {
               ),
             ),
           ),
+          const SizedBox(height: 16),
+          _buildCertificateField(),
         ],
         const SizedBox(height: 20),
         TextFormField(

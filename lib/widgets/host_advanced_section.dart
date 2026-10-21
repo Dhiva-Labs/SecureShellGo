@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import '../models/host.dart';
@@ -99,8 +100,19 @@ class HostAdvancedSection extends StatelessWidget {
   final HostAdvancedOptions options;
   final ValueChanged<HostAdvancedOptions> onChanged;
 
+  /// Where an OS agent and an X server can exist: the desktops, not
+  /// Android. Read from [defaultTargetPlatform] so a test can be either.
+  static bool get _isDesktop => switch (defaultTargetPlatform) {
+        TargetPlatform.linux ||
+        TargetPlatform.windows ||
+        TargetPlatform.macOS =>
+          true,
+        _ => false,
+      };
+
   @override
   Widget build(BuildContext context) {
+    final desktop = _isDesktop;
     final theme = Theme.of(context);
     final muted = theme.textTheme.bodySmall?.copyWith(
       color: theme.colorScheme.onSurfaceVariant,
@@ -165,22 +177,41 @@ class HostAdvancedSection extends StatelessWidget {
               onChanged(options.copyWith(agentForwarding: value)),
           secondary: const Icon(Icons.key_outlined),
           title: const Text('Forward SSH agent'),
-          subtitle: const Text(
-            'Lets git and ssh in the shell use the keys on this device. Only '
-            'for servers you trust: while you are connected, anyone with '
-            'root there can use them.',
+          // Android has no OS agent, so there the one key to forward is the
+          // one this host signs in with.
+          subtitle: Text(
+            desktop
+                ? 'Lets git and ssh in the shell use the keys in this '
+                    'computer\'s SSH agent and this host\'s own key. Only '
+                    'for servers you trust: while you are connected, anyone '
+                    'with root there can use them.'
+                : 'Lets git and ssh in the shell use this host\'s own key, '
+                    'which stays on this device. Only for servers you trust: '
+                    'while you are connected, anyone with root there can use '
+                    'it.',
           ),
         ),
         SwitchListTile(
           contentPadding: EdgeInsets.zero,
-          value: options.x11Forwarding,
-          onChanged: (value) =>
-              onChanged(options.copyWith(x11Forwarding: value)),
+          // Off and disabled where there is no X server to draw on. A host
+          // carried over from a desktop keeps its setting for when it goes
+          // back; it is simply not used here.
+          value: desktop && options.x11Forwarding,
+          onChanged: desktop
+              ? (value) => onChanged(options.copyWith(x11Forwarding: value))
+              : null,
           secondary: const Icon(Icons.picture_in_picture_alt_outlined),
           title: const Text('Forward X11'),
-          subtitle: const Text(
-            'Shows the windows of graphical programs started on the server. '
-            'Needs an X server on this device.',
+          subtitle: Text(
+            !desktop
+                ? 'Not available on this device: it has no X server to draw '
+                    'the windows on.'
+                : defaultTargetPlatform == TargetPlatform.windows
+                    ? 'Shows the windows of graphical programs started on '
+                        'the server. Needs an X server running here, such as '
+                        'VcXsrv or X410.'
+                    : 'Shows the windows of graphical programs started on '
+                        'the server. Needs an X server on this device.',
           ),
         ),
         SwitchListTile(

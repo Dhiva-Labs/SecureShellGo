@@ -2,6 +2,17 @@ import 'dart:async';
 import 'dart:io';
 import 'dart:typed_data';
 
+import 'package:dartssh2/dartssh2.dart'
+    show
+        SSHAgentHandler,
+        SSHHostKey,
+        SSHIdentity,
+        SSHKeyPair,
+        SSHKeyPairAgent,
+        SSHRawHostKey,
+        SSHRawSignature,
+        SSHSignature;
+
 /// Why the operating system's ssh-agent could not be used.
 ///
 /// Separated by kind because the fixes are unrelated: no agent running is
@@ -223,7 +234,8 @@ abstract class SshAgentProtocol {
       throw const SshAgentException(
         SshAgentErrorKind.refused,
         'The SSH agent refused to sign with that key. It may have been '
-        'removed, or a confirmation prompt was declined.',
+        'removed, a confirmation prompt was declined, or a security key was '
+        'not touched in time.',
       );
     }
     if (type != signResponse) {
@@ -238,10 +250,245 @@ abstract class SshAgentProtocol {
 
   /// The signature flags to ask for given a public key algorithm name.
   ///
-  /// Only RSA needs them; ed25519 and ECDSA have exactly one signature
-  /// algorithm each, and sending flags for those is meaningless.
-  static int flagsForKeyType(String keyType) =>
-      keyType == 'ssh-rsa' ? flagRsaSha2_256 : 0;
+  /// Only RSA needs them, certificate or not; ed25519 and ECDSA — security
+  /// key variants included — have exactly one signature algorithm each, and
+  /// sending flags for those is meaningless.
+  static int flagsForKeyType(String keyType) => isRsaKeyType(keyType)
+      ? flagRsaSha2_256
+      : 0;
+
+  static bool isRsaKeyType(String keyType) =>
+      keyType == 'ssh-rsa' || keyType == 'ssh-rsa-cert-v01@openssh.com';
+
+  /// `SSH_AGENT_IDENTITIES_ANSWER`, the reply an agent sends — needed here
+  /// because this app also *is* an agent, for the server it forwards one to.
+  static Uint8List encodeIdentitiesAnswer(List<SshAgentIdentity> identities) {
+    final writer = SshAgentWriter()
+      ..writeUint8(identitiesAnswer)
+      ..writeUint32(identities.length);
+    for (final identity in identities) {
+      writer
+        ..writeString(identity.keyBlob)
+        ..writeUtf8(identity.comment);
+    }
+    return writer.takeBytes();
+  }
+
+  /// `SSH_AGENT_SIGN_RESPONSE` around a signature blob.
+  static Uint8List encodeSignResponse(Uint8List signature) {
+    final writer = SshAgentWriter()
+      ..writeUint8(signResponse)
+      ..writeString(signature);
+    return writer.takeBytes();
+  }
+
+  /// `SSH_AGENT_FAILURE`, the answer to anything this app's agent declines.
+  static Uint8List encodeFailure() => Uint8List.fromList(const [failure]);
+}
+
+/// The `publickey` algorithm name to log in with a key of [keyType] — the
+/// type at the front of its blob.
+///
+/// The same as the key type for everything but RSA, which is offered as
+/// `rsa-sha2-256` (RFC 8332) and signed for with
+/// [SshAgentProtocol.flagRsaSha2_256], because OpenSSH has refused SHA-1
+/// `ssh-rsa` signatures by default since 8.8. Certificates follow suit.
+/// Security keys (`sk-ssh-ed25519@openssh.com`,
+/// `sk-ecdsa-sha2-nistp256@openssh.com`) and their certificates pass
+/// through as they are: the agent and the token do the signing, and the
+/// server checks the result.
+String agentPublicKeyAlgorithm(String keyType) => switch (keyType) {
+      'ssh-rsa' => 'rsa-sha2-256',
+      'ssh-rsa-cert-v01@openssh.com' => 'rsa-sha2-256-cert-v01@openssh.com',
+      _ => keyType,
+    };
+
+/// One key in the operating system's agent, as something dartssh2 can log
+/// in with.
+///
+/// dartssh2 4.1 signs through [SSHIdentity], which may answer with a future;
+/// this is the adapter that turns its "sign this challenge" into an agent
+/// round trip. The key never leaves the agent — what this holds is the
+/// public blob the agent named it by — and that is also how a FIDO2
+/// `sk-ed25519` or `sk-ecdsa` key on a hardware token works: the agent asks
+/// the token, the token waits for a touch, and the signature comes back the
+/// same way any other does.
+///
+/// [presentedBlob] is what the server is shown, which is the key itself
+/// unless a certificate for it was configured: then it is the certificate,
+/// and the agent still signs with the plain key, because a certificate
+/// signature is an ordinary signature by the certified key.
+class SshAgentKeyIdentity implements SSHIdentity {
+  SshAgentKeyIdentity(
+    this._agent,
+    this.key, {
+    Uint8List? presentedBlob,
+    String? presentedType,
+  })  : presentedBlob = presentedBlob ?? key.keyBlob,
+        presentedType = presentedType ?? key.keyType;
+
+  final SshAgentClient _agent;
+
+  /// The agent's key that signs.
+  final SshAgentIdentity key;
+
+  /// What the server sees: the key's blob, or a certificate's.
+  final Uint8List presentedBlob;
+
+  /// The type at the front of [presentedBlob].
+  final String presentedType;
+
+  @override
+  String get type => agentPublicKeyAlgorithm(presentedType);
+
+  @override
+  String? get comment => key.comment.isEmpty ? null : key.comment;
+
+  /// Always ask first. Each probe costs a round trip, but a signature can
+  /// cost a confirmation dialog or a touch of a security key, and nobody
+  /// should be asked to touch their YubiKey for a key the server was going
+  /// to refuse anyway.
+  @override
+  bool get shouldProbe => true;
+
+  @override
+  SSHHostKey toPublicKey() => SSHRawHostKey(presentedBlob);
+
+  @override
+  Future<SSHSignature> sign(Uint8List data) async {
+    final signature = await _agent.sign(
+      keyBlob: key.keyBlob,
+      data: data,
+      flags: SshAgentProtocol.flagsForKeyType(key.keyType),
+    );
+    if (SshAgentProtocol.isRsaKeyType(key.keyType)) {
+      // An agent too old to know the flag signs with SHA-1 regardless, and
+      // the server would refuse that with nothing but "permission denied".
+      final algorithm = _signatureAlgorithm(signature);
+      if (algorithm != 'rsa-sha2-256') {
+        throw SshAgentException(
+          SshAgentErrorKind.refused,
+          'The SSH agent signed with SHA-1 (ssh-rsa), which servers refuse. '
+          'Update the agent, or use an ed25519 key.',
+          details: 'Asked for rsa-sha2-256, got "$algorithm".',
+        );
+      }
+    }
+    return SSHRawSignature(signature);
+  }
+
+  static String _signatureAlgorithm(Uint8List signature) {
+    try {
+      return String.fromCharCodes(SshAgentReader(signature).readString());
+    } on FormatException {
+      return '';
+    }
+  }
+}
+
+/// The agent a session forwards to its server, so `git` or `ssh` run in
+/// the shell can sign with keys that stay on this device.
+///
+/// It offers the keys in this device's own SSH agent ([osAgent], desktop
+/// only) and the keys the host itself signs in with ([keys], when they are
+/// saved in this app — the only keys an Android device has). Nothing else:
+/// no other saved host's key is ever reachable through it.
+///
+/// It answers two requests, listing keys and signing, and refuses the rest
+/// with `SSH_AGENT_FAILURE`. A real agent also takes requests to add and
+/// remove keys, lock itself, and extensions; passing those through would
+/// let anyone with root on the server empty, lock or fill the agent on this
+/// device, and nothing a shell needs uses them. OpenSSH's `session-bind`
+/// extension is among the refused, which its client treats as an agent that
+/// does not support it.
+class ForwardedAgent implements SSHAgentHandler {
+  ForwardedAgent({this.osAgent, List<SSHKeyPair> keys = const [], String? comment})
+      : _keys = keys,
+        _comment = comment ?? '',
+        _local = keys.isEmpty ? null : SSHKeyPairAgent(keys, comment: comment);
+
+  final SshAgentClient? osAgent;
+  final List<SSHKeyPair> _keys;
+  final String _comment;
+  final SSHKeyPairAgent? _local;
+
+  @override
+  Future<Uint8List> handleRequest(Uint8List request) async {
+    if (request.isEmpty) return SshAgentProtocol.encodeFailure();
+    try {
+      switch (request[0]) {
+        case SshAgentProtocol.requestIdentities:
+          return SshAgentProtocol.encodeIdentitiesAnswer(await _identities());
+        case SshAgentProtocol.signRequest:
+          return await _sign(request);
+        default:
+          return SshAgentProtocol.encodeFailure();
+      }
+    } on FormatException {
+      return SshAgentProtocol.encodeFailure();
+    } on SshAgentException {
+      return SshAgentProtocol.encodeFailure();
+    }
+  }
+
+  Future<List<SshAgentIdentity>> _identities() async {
+    final seen = <String>{};
+    final identities = <SshAgentIdentity>[];
+    void add(SshAgentIdentity identity) {
+      if (seen.add(String.fromCharCodes(identity.keyBlob))) {
+        identities.add(identity);
+      }
+    }
+
+    final os = osAgent;
+    if (os != null) {
+      try {
+        (await os.listIdentities()).forEach(add);
+      } on SshAgentException {
+        // No agent running, or none holding keys: the forwarded agent is
+        // then just this host's own key, or empty, and `ssh-add -l` on the
+        // server says so.
+      }
+    }
+    for (final key in _keys) {
+      add(SshAgentIdentity(
+        keyBlob: key.toPublicKey().encode(),
+        comment: _comment,
+      ));
+    }
+    return identities;
+  }
+
+  Future<Uint8List> _sign(Uint8List request) async {
+    final reader = SshAgentReader(request)..readUint8();
+    final keyBlob = reader.readString();
+    final data = reader.readString();
+    final flags = reader.readUint32();
+
+    final local = _local;
+    if (local != null && _holdsLocally(keyBlob)) {
+      return local.handleRequest(request);
+    }
+    final os = osAgent;
+    if (os == null) return SshAgentProtocol.encodeFailure();
+    final signature = await os.sign(keyBlob: keyBlob, data: data, flags: flags);
+    return SshAgentProtocol.encodeSignResponse(signature);
+  }
+
+  bool _holdsLocally(Uint8List keyBlob) {
+    for (final key in _keys) {
+      if (_sameBytes(key.toPublicKey().encode(), keyBlob)) return true;
+    }
+    return false;
+  }
+
+  static bool _sameBytes(Uint8List a, Uint8List b) {
+    if (a.length != b.length) return false;
+    for (var i = 0; i < a.length; i++) {
+      if (a[i] != b[i]) return false;
+    }
+    return true;
+  }
 }
 
 /// One open connection to an agent, request/response oriented.
@@ -406,12 +653,18 @@ class SshAgentClient {
     }
   }
 
-  /// Windows: the OpenSSH agent listens on a named pipe rather than a socket.
+  /// Windows: an agent listens on a named pipe rather than a socket.
   ///
-  /// `dart:io` has no named-pipe client, but the pipe has a filesystem-style
+  /// `dart:io` has no named-pipe client, but a pipe has a filesystem-style
   /// path and `File.open` goes through `CreateFile`, which is the documented
   /// way to open one. The pipe is byte-mode, so ordinary reads and writes are
   /// the correct framing.
+  ///
+  /// Tried in order: `SSH_AUTH_SOCK` when it is set (it can name a pipe —
+  /// Pageant's `--openssh-config` setup, or any agent the user points it
+  /// at), the Windows OpenSSH agent's own pipe, then Pageant's, which is
+  /// named after the user and a hash and so has to be looked for. Pageant
+  /// 0.75 and later speak the ordinary agent protocol on it.
   ///
   /// Caveat, stated plainly: this path could not be exercised on the machine
   /// this was written on. Every failure mode routes to the same clear
@@ -419,17 +672,43 @@ class SshAgentClient {
   /// are bounded by [timeout], so the worst case is "agent auth is not
   /// available on Windows" rather than a hang or a crash.
   static Future<SshAgentConnection> _openWindowsPipe() async {
-    const path = r'\\.\pipe\openssh-ssh-agent';
+    final configured = Platform.environment['SSH_AUTH_SOCK'];
+    final candidates = <String>[
+      if (configured != null && configured.isNotEmpty) configured,
+      r'\\.\pipe\openssh-ssh-agent',
+      ...await _pageantPipes(),
+    ];
+    Object? lastError;
+    for (final path in candidates) {
+      try {
+        final handle = await File(path).open(mode: FileMode.append);
+        return _RandomAccessAgentConnection(handle);
+      } catch (e) {
+        lastError = e;
+      }
+    }
+    throw SshAgentException(
+      SshAgentErrorKind.noAgent,
+      'No SSH agent found. Start the OpenSSH Authentication Agent service '
+      'or Pageant, and add a key.',
+      details: lastError?.toString(),
+    );
+  }
+
+  /// Pageant's pipes, `\\.\pipe\pageant.<user>.<hash>`, by listing the pipe
+  /// namespace. Empty on any failure: this is a fallback, not a requirement.
+  static Future<List<String>> _pageantPipes() async {
     try {
-      final handle = await File(path).open(mode: FileMode.append);
-      return _RandomAccessAgentConnection(handle);
-    } catch (e) {
-      throw SshAgentException(
-        SshAgentErrorKind.noAgent,
-        'No SSH agent found. Start the OpenSSH Authentication Agent service '
-        'and add a key with `ssh-add`.',
-        details: e.toString(),
-      );
+      final names = await Directory(r'\\.\pipe\')
+          .list()
+          .map((entity) => entity.path)
+          .where((path) =>
+              path.split(r'\').last.toLowerCase().startsWith('pageant.'))
+          .toList()
+          .timeout(const Duration(seconds: 2));
+      return names;
+    } catch (_) {
+      return const [];
     }
   }
 }
