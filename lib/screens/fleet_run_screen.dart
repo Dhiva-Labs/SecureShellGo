@@ -72,9 +72,11 @@ class _FleetRunScreenState extends State<FleetRunScreen> {
     _command.dispose();
     final service = _service;
     if (service != null) {
-      // Left while still going, by choice — see [_confirmLeave]: it runs to
-      // the end with nobody watching, and is let go of then.
+      // Left while still going, by choice — see [_confirmLeave]: what has
+      // started runs to the end with nobody watching, and is let go of
+      // then. Nothing new starts once nobody is here to see it or stop it.
       if (service.isRunning) {
+        service.cancelQueued();
         unawaited(service.done.then((_) => service.dispose()));
       } else {
         service.dispose();
@@ -232,7 +234,9 @@ class _FleetRunScreenState extends State<FleetRunScreen> {
       builder: (context) => AlertDialog(
         title: const Text('Still running'),
         content: const Text(
-          'Leave the command running on the servers, or stop it there?',
+          'Leave the command running on the servers where it has started, '
+          'or stop it there? Hosts still waiting their turn will not start '
+          'once you leave.',
         ),
         actions: [
           TextButton(
@@ -252,6 +256,7 @@ class _FleetRunScreenState extends State<FleetRunScreen> {
     );
     if (choice == null || !mounted) return;
     if (choice == 'stop') service.cancel();
+    if (choice == 'leave') service.cancelQueued();
     Navigator.of(context).pop();
   }
 
