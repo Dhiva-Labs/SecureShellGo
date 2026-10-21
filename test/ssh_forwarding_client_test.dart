@@ -175,6 +175,8 @@ void main() {
           fakeCookie: Uint8List.fromList(List.filled(16, 0x11)),
           connect: connect ?? () => throw StateError('no X server'),
           realCookie: () async => real,
+          untrustedCookie: () async =>
+              throw const X11UntrustedUnavailable(null),
         );
 
     test('the shell asks for x11 with the fake cookie', () async {
@@ -295,6 +297,40 @@ void main() {
       expect(dialled, isFalse);
     });
 
+    test('a display that can only be forwarded with full access says so',
+        () async {
+      final client = connect(
+        forwarding: ShellForwarding(
+          x11: X11Forwarder(
+            display: const X11Display(number: 0),
+            fakeCookie: Uint8List.fromList(List.filled(16, 0x11)),
+            connect: () => throw StateError('no X server'),
+            realCookie: () async => null,
+            untrustedCookie: () async => throw const X11UntrustedUnavailable(
+                'xauth: couldn\'t query Security extension'),
+          ),
+        ),
+      );
+      final shell = await client.shell();
+      final notice = utf8.decode(await shell.stderr.first);
+      expect(notice, contains('Security extension'));
+      expect(notice, contains('see and control every window'));
+    });
+
+    test('an X server that does not answer is said in the terminal',
+        () async {
+      final client = connect(forwarding: ShellForwarding(x11: forwarder()));
+      final shell = await client.shell();
+      final lines = <String>[];
+      shell.stderr.listen((chunk) => lines.add(utf8.decode(chunk)));
+
+      final channel = peer.openChannel('x11');
+      peer.sendData(channel, _setup(List.filled(16, 0x11)));
+      await _eventually(() => lines.isNotEmpty);
+      expect(lines.single, contains('Could not reach the X server at :0.1'));
+      expect(lines.single, startsWith('\x1b[33m'));
+    });
+
     test('without x11 forwarding an x11 channel is refused', () async {
       final client = connect(forwarding: ShellForwarding(agent: agent));
       await client.shell();
@@ -321,6 +357,8 @@ void main() {
             fakeCookie: Uint8List.fromList(List.filled(16, 0x22)),
             connect: () => throw StateError('no X server'),
             realCookie: () async => null,
+            untrustedCookie: () async =>
+                throw const X11UntrustedUnavailable(null),
           ),
         ),
       );

@@ -206,12 +206,19 @@ class HostAdvancedSection extends StatelessWidget {
             !desktop
                 ? 'Not available on this device: it has no X server to draw '
                     'the windows on.'
+                // Windows X servers have no untrusted mode, so there it is
+                // always ssh -Y's full access, and the row says so.
                 : defaultTargetPlatform == TargetPlatform.windows
                     ? 'Shows the windows of graphical programs started on '
                         'the server. Needs an X server running here, such as '
-                        'VcXsrv or X410.'
+                        'VcXsrv or X410. Only for servers you trust: while '
+                        'you are connected, the server can see and control '
+                        'every window on this display.'
                     : 'Shows the windows of graphical programs started on '
-                        'the server. Needs an X server on this device.',
+                        'the server. Needs an X server on this device. They '
+                        'get limited access, as with ssh -X; if this display '
+                        'cannot do that, they can see and control every '
+                        'window on it, and the terminal says so.',
           ),
         ),
         SwitchListTile(

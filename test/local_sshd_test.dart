@@ -177,6 +177,7 @@ void main() {
         // being tested rather than this device having none.
         x11: () => X11Forwarder(
           display: const X11Display(host: '127.0.0.1', number: 99),
+          untrustedCookie: _trustedOnly,
         ),
       );
       addTearDown(connection.close);
@@ -202,6 +203,7 @@ void main() {
       agent: lab.agent,
       x11: () => X11Forwarder(
         display: const X11Display(host: '127.0.0.1', number: 99),
+        untrustedCookie: _trustedOnly,
       ),
     );
     addTearDown(connection.close);
@@ -232,6 +234,7 @@ void main() {
             name: x11CookieProtocol,
             data: realCookie,
           ),
+          untrustedCookie: _trustedOnly,
         ),
       );
       addTearDown(connection.close);
@@ -249,8 +252,41 @@ void main() {
       expect((await RemoteExec.run(connection, 'echo ok')).exitCode, 0);
       shell.close();
     }, skip: skip, timeout: timeout);
+
+    test('where the display can, it gets an untrusted cookie, not the real '
+        'one', () async {
+      final xServer = await _FakeXServer.start();
+      addTearDown(xServer.close);
+      final untrusted = Uint8List.fromList(List.generate(16, (i) => 0x30 + i));
+
+      final connection = await lab.connect(
+        lab.host(authMethod: SshAuthMethod.privateKey, x11Forwarding: true),
+        SshCredentials(privateKeyPem: lab.read('userkey')),
+        x11: () => X11Forwarder(
+          display: X11Display(host: '127.0.0.1', number: xServer.display),
+          realCookie: () async => throw StateError('must not be read'),
+          untrustedCookie: () async => XauthEntry(
+            family: XauthEntry.familyWild,
+            address: Uint8List(0),
+            number: '',
+            name: x11CookieProtocol,
+            data: untrusted,
+          ),
+        ),
+      );
+      addTearDown(connection.close);
+
+      final shell = await _Shell.open(connection);
+      final reply = await shell.run('python3 ${lab.path('x11client.py')}');
+      expect(reply, contains('X11-REPLY hello-from-x'));
+      expect((await xServer.firstSetup).data, untrusted);
+      shell.close();
+    }, skip: skip, timeout: timeout);
   });
 }
+
+Future<XauthEntry> _trustedOnly() async =>
+    throw const X11UntrustedUnavailable(null);
 
 /// A temporary sshd, CA and agents.
 class _Lab {
