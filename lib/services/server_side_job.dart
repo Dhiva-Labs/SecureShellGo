@@ -188,6 +188,14 @@ tail -n 20 "\$d/log" 2>/dev/null''';
 
   /// Stops the job — its whole process group where `setsid` made one — and
   /// removes its folder.
+  ///
+  /// Without `setsid` (macOS, the BSDs) the job shares a group with
+  /// whatever launched it, so the group cannot be signalled. Its whole tree
+  /// is, instead, found through `ps`: each process is stopped as it is
+  /// found, so none can start another unseen, then all are sent TERM and
+  /// let go. A `tar` or `zip` two levels down hears of it as surely as the
+  /// script that started it — `zip` would otherwise finish on its own and
+  /// rename its temp file to the part name after the part had been removed.
   static String cancelCommand(String jobId) {
     final d = _dir(jobId);
     final script = '''
@@ -195,8 +203,15 @@ d="$d"
 if [ -f "\$d/pid" ]; then
   p="\$(cat "\$d/pid")"
   if ! kill -s TERM -- "-\$p" 2>/dev/null; then
-    pkill -TERM -P "\$p" 2>/dev/null
-    kill -TERM "\$p" 2>/dev/null
+    all=
+    new="\$p"
+    while [ -n "\$new" ]; do
+      kill -s STOP \$new 2>/dev/null
+      all="\$all \$new"
+      new=\$(ps -A -o pid= -o ppid= 2>/dev/null | awk -v all="\$all" 'BEGIN { n = split(all, a, " "); for (i = 1; i <= n; i++) s[a[i]] = 1 } (\$2 in s) && !(\$1 in s) { print \$1 }')
+    done
+    kill -s TERM \$all 2>/dev/null
+    kill -s CONT \$all 2>/dev/null
   fi
 fi
 rm -rf "\$d"''';

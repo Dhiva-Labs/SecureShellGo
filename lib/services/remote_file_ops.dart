@@ -306,7 +306,8 @@ class RemoteFileCommands {
   /// Written under [partName] first and renamed into place only when the
   /// tool succeeded, so a failed or stopped run never leaves something that
   /// looks like the finished archive. Refuses (exit 17) when [archiveName]
-  /// is taken, checked again just before the rename.
+  /// is taken, checked again just before the rename. Nor is it renamed once
+  /// the job folder is gone, which is what stopping the job does first.
   ///
   /// `tar` stores links as links; `zip -y` is told to. Neither follows a
   /// link out of the folder being packed.
@@ -334,6 +335,7 @@ cd @DIR@ || exit 71
 if [ -e @OUT@ ] || [ -L @OUT@ ]; then echo "The archive's name is taken." >&2; exit 17; fi
 if @MAKE@; then :; else s=$?; rm -f @PART@; exit $s; fi
 if [ -e @OUT@ ] || [ -L @OUT@ ]; then rm -f @PART@; echo "The archive's name is taken." >&2; exit 17; fi
+if [ -d "$d" ]; then :; else rm -f @PART@; exit 143; fi
 mv -f @PART@ @OUT@''', {
       'DIR': _arg(directory),
       'OUT': _member(archiveName),

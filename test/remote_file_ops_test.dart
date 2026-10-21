@@ -67,9 +67,8 @@ final bool _hasZip = _onPath('zip') && _onPath('unzip');
 
 void main() {
   tearDownAll(() async {
-    final bin = _busyboxBinPath;
-    if (bin != null && Directory(bin).existsSync()) {
-      await Directory(bin).delete(recursive: true);
+    for (final bin in _busyboxBinPaths.values) {
+      if (Directory(bin).existsSync()) await Directory(bin).delete(recursive: true);
     }
   });
 
@@ -227,6 +226,7 @@ cd '/srv/a b' || exit 71
 if [ -e './out.tar.gz' ] || [ -L './out.tar.gz' ]; then echo "The archive's name is taken." >&2; exit 17; fi
 if tar -czf './.out.tar.gz.ssg-part-1' './-rf' './it'\\''s'; then :; else s=\$?; rm -f './.out.tar.gz.ssg-part-1'; exit \$s; fi
 if [ -e './out.tar.gz' ] || [ -L './out.tar.gz' ]; then rm -f './.out.tar.gz.ssg-part-1'; echo "The archive's name is taken." >&2; exit 17; fi
+if [ -d "\$d" ]; then :; else rm -f './.out.tar.gz.ssg-part-1'; exit 143; fi
 mv -f './.out.tar.gz.ssg-part-1' './out.tar.gz\'''');
     });
 
@@ -819,6 +819,92 @@ mv -f './.out.tar.gz.ssg-part-1' './out.tar.gz\'''');
       expect(status.log, '0022');
     });
 
+    group('on a server without setsid', () {
+      // This machine's own tools less setsid, so the job lands in the
+      // launcher's process group, as under macOS or FreeBSD. Not BusyBox:
+      // its shell finds its own setsid applet whatever PATH says.
+      late String bin;
+      setUp(() async => bin = await _systemBinWithout(const {'setsid'}));
+
+      Future<ProcessResult> bb(String command, {String? pathPrefix}) =>
+          Process.run(
+            '/bin/sh',
+            ['-c', command],
+            environment: {
+              'HOME': home.path,
+              'PATH': pathPrefix == null ? bin : '$pathPrefix:$bin',
+            },
+          );
+
+      Future<void> waitFor(File file) async {
+        for (var i = 0; i < 100 && !file.existsSync(); i++) {
+          await Future<void>.delayed(const Duration(milliseconds: 20));
+        }
+        expect(file.existsSync(), isTrue, reason: '${file.path} never came');
+      }
+
+      test('cancel stops what the script started, not only the script',
+          () async {
+        final id = ServerSideJob.newId();
+        final child = File('${home.path}/child');
+        final launch = await bb(ServerSideJob.launchScriptCommand(
+          jobId: id,
+          script: r'sleep 60 & echo $! > "$HOME/child"; wait',
+        ));
+        expect(ServerSideJob.parseLaunch(launch.stdout as String)!.state,
+            ServerJobState.running);
+        await waitFor(child);
+        final pid = child.readAsStringSync().trim();
+        addTearDown(() => Process.runSync('kill', [pid]));
+        await bb(ServerSideJob.cancelCommand(id));
+        var alive = true;
+        for (var i = 0; i < 50 && alive; i++) {
+          await Future<void>.delayed(const Duration(milliseconds: 20));
+          alive = Process.runSync('kill', ['-0', pid]).exitCode == 0;
+        }
+        expect(alive, isFalse, reason: 'a grandchild of the job lived on');
+      });
+
+      test('a stopped zip puts no part file back after the tidy-up',
+          () async {
+        // A zip that writes a temp file and renames it to the name it was
+        // given when done — Info-ZIP's way — and tidies up on TERM.
+        final shim = Directory('${home.path}/shim')..createSync();
+        File('${shim.path}/zip').writeAsStringSync(
+          '#!/bin/sh\n'
+          "trap 'rm -f ./zi.tmp; exit 143' TERM\n"
+          ': > ./zi.tmp\n'
+          r'sleep 2 & wait $!' '\n'
+          r'mv ./zi.tmp "$4"' '\n',
+        );
+        await Process.run('chmod', ['+x', '${shim.path}/zip']);
+        final src = Directory('${home.path}/src')..createSync();
+        File('${src.path}/a').writeAsStringSync('a');
+        final id = ServerSideJob.newId();
+        final launch = await bb(
+          ServerSideJob.launchScriptCommand(
+            jobId: id,
+            script: RemoteFileCommands.compress(
+              directory: src.path,
+              names: ['a'],
+              archiveName: 'a.zip',
+              partName: '.a.zip.ssg-part-1',
+              format: ArchiveFormat.zip,
+              tools: _gnu,
+            ),
+          ),
+          pathPrefix: shim.path,
+        );
+        expect(ServerSideJob.parseLaunch(launch.stdout as String)!.state,
+            ServerJobState.running);
+        await waitFor(File('${src.path}/zi.tmp'));
+        await bb(ServerSideJob.cancelCommand(id));
+        await bb(RemoteFileCommands.removeFile('${src.path}/.a.zip.ssg-part-1'));
+        await Future<void>.delayed(const Duration(milliseconds: 2500));
+        expect(src.listSync().map((e) => e.path.split('/').last), ['a']);
+      });
+    }, skip: !Directory('/usr/bin').existsSync());
+
     test('old finished operations are swept, copies are not', () async {
       final jobs = Directory('${home.path}/.cache/secureshellgo/jobs')
         ..createSync(recursive: true);
@@ -981,12 +1067,28 @@ class _Box {
   Future<void> dispose() => Directory(root).delete(recursive: true);
 }
 
-String? _busyboxBinPath;
+final Map<String, String> _busyboxBinPaths = {};
+
+/// A directory of links to everything in `/usr/bin` but [without], for a
+/// PATH on which those few are missing.
+Future<String> _systemBinWithout(Set<String> without) async {
+  final key = 'system:${(without.toList()..sort()).join(',')}';
+  final existing = _busyboxBinPaths[key];
+  if (existing != null && Directory(existing).existsSync()) return existing;
+  final dir = await Directory.systemTemp.createTemp('ssg_bin');
+  for (final entry in Directory('/usr/bin').listSync()) {
+    final name = entry.path.split('/').last;
+    if (without.contains(name)) continue;
+    Link('${dir.path}/$name').createSync(entry.path);
+  }
+  return _busyboxBinPaths[key] = dir.path;
+}
 
 /// A directory of links to every BusyBox applet — a BusyBox userland, as
 /// on Alpine or a NAS, for a PATH with nothing else on it.
 Future<String> _busyboxBin() async {
-  final existing = _busyboxBinPath;
+  const key = 'busybox';
+  final existing = _busyboxBinPaths[key];
   if (existing != null && Directory(existing).existsSync()) return existing;
   final dir = await Directory.systemTemp.createTemp('ssg_busybox');
   final busybox = (Process.runSync('sh', ['-c', 'command -v busybox']).stdout
@@ -997,5 +1099,5 @@ Future<String> _busyboxBin() async {
     if (applet.isEmpty || applet.contains('/')) continue;
     Link('${dir.path}/$applet').createSync(busybox);
   }
-  return _busyboxBinPath = dir.path;
+  return _busyboxBinPaths[key] = dir.path;
 }
