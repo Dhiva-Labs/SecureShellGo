@@ -67,9 +67,8 @@ final bool _hasZip = _onPath('zip') && _onPath('unzip');
 
 void main() {
   tearDownAll(() async {
-    final bin = _busyboxBinPath;
-    if (bin != null && Directory(bin).existsSync()) {
-      await Directory(bin).delete(recursive: true);
+    for (final bin in _busyboxBinPaths.values) {
+      if (Directory(bin).existsSync()) await Directory(bin).delete(recursive: true);
     }
   });
 
@@ -123,6 +122,29 @@ void main() {
         expect(kit.tarXz, isTrue);
       }
       if (_hasZip) expect(kit.flavourOf('zip'), ToolFlavour.infozip);
+    }, skip: !_posix);
+
+    test('a BSD grep that says it is GNU compatible is BSD', () async {
+      // FreeBSD's and macOS's grep, whose -Z decompresses rather than
+      // ending names with NUL.
+      final shim = await Directory.systemTemp.createTemp('ssg_grep');
+      addTearDown(() => shim.delete(recursive: true));
+      File('${shim.path}/grep').writeAsStringSync(
+        '#!/bin/sh\n'
+        'if [ "\$1" = --version ]; then\n'
+        '  echo "grep (BSD grep, GNU compatible) 2.6.0-FreeBSD"; exit 0\n'
+        'fi\n'
+        'PATH=\${PATH#*:} exec grep "\$@"\n',
+      );
+      await Process.run('chmod', ['+x', '${shim.path}/grep']);
+      final result = await Process.run(
+        'sh',
+        ['-c', RemoteToolkit.probeCommand],
+        environment: {'PATH': '${shim.path}:${Platform.environment['PATH']}'},
+      );
+      final kit = RemoteToolkit.parse(result.stdout as String);
+      expect(kit.flavourOf('grep'), ToolFlavour.bsd);
+      expect(kit.grepNulNames, isFalse);
     }, skip: !_posix);
 
     test('against a BusyBox userland', () async {
@@ -227,6 +249,7 @@ cd '/srv/a b' || exit 71
 if [ -e './out.tar.gz' ] || [ -L './out.tar.gz' ]; then echo "The archive's name is taken." >&2; exit 17; fi
 if tar -czf './.out.tar.gz.ssg-part-1' './-rf' './it'\\''s'; then :; else s=\$?; rm -f './.out.tar.gz.ssg-part-1'; exit \$s; fi
 if [ -e './out.tar.gz' ] || [ -L './out.tar.gz' ]; then rm -f './.out.tar.gz.ssg-part-1'; echo "The archive's name is taken." >&2; exit 17; fi
+if [ -d "\$d" ]; then :; else rm -f './.out.tar.gz.ssg-part-1'; exit 143; fi
 mv -f './.out.tar.gz.ssg-part-1' './out.tar.gz\'''');
     });
 
@@ -283,7 +306,8 @@ mv -f './.out.tar.gz.ssg-part-1' './out.tar.gz\'''');
         tools: _gnu,
       );
       expect(script, contains("a='/srv/x.tar.xz'"));
-      expect(script, contains('if tar -tJf "\$a" > "\$d/list"; then'));
+      expect(script,
+          contains('if { tar -tvJf "\$a"; } > "\$d/list" 2> "\$d/lerr"; then'));
       expect(script, contains('if { tar -xJf "\$a" -k -C "\$t"; } 2> "\$d/err"'));
     });
 
@@ -328,22 +352,21 @@ mv -f './.out.tar.gz.ssg-part-1' './out.tar.gz\'''');
     });
 
     test('duplicate', () {
-      expect(
-        RemoteFileCommands.duplicate(
-          source: "/srv/it's",
-          destination: "/srv/it's copy",
-          tools: _gnu,
-        ),
-        endsWith("cp -a '/srv/it'\\''s' '/srv/it'\\''s copy'"),
+      final gnu = RemoteFileCommands.duplicate(
+        source: "/srv/it's",
+        destination: "/srv/it's copy",
+        tools: _gnu,
       );
-      expect(
-        RemoteFileCommands.duplicate(
-          source: '/a',
-          destination: '/b',
-          tools: const RemoteToolkit(tools: {'cp': ToolFlavour.bsd}),
-        ),
-        endsWith("cp -pPR '/a' '/b'"),
+      expect(gnu, contains("mkdir '/srv/it'\\''s copy'"));
+      expect(gnu, contains("cp -a '/srv/it'\\''s/.' '/srv/it'\\''s copy'"));
+      expect(gnu, contains("cp -a \$T '/srv/it'\\''s' '/srv/it'\\''s copy'"));
+      final bsd = RemoteFileCommands.duplicate(
+        source: '/a',
+        destination: '/b',
+        tools: const RemoteToolkit(tools: {'cp': ToolFlavour.bsd}),
       );
+      expect(bsd, contains("cp -pPR '/a/.' '/b'"));
+      expect(bsd, contains("cp -pPR \$T '/a' '/b'"));
     });
 
     test('change owner', () {
@@ -584,19 +607,151 @@ mv -f './.out.tar.gz.ssg-part-1' './out.tar.gz\'''');
             mode: ExtractMode.newFolder,
             tools: kit,
           ));
-          // GNU tar lists the member as it is, and the check refuses it.
-          // BusyBox's own tar strips the `inner/../` as it lists and as it
-          // extracts, so the check sees nothing to refuse — and nothing
-          // lands outside the folder either way.
-          if (kit.flavourOf('tar') == ToolFlavour.gnu) {
-            expect(result.exitCode, RemoteOpExit.unsafeArchive,
-                reason: '${result.stderr}');
-            expect(Directory('${box.root}/evil_out').existsSync(), isFalse);
-          } else {
-            expect(result.exitCode, anyOf(0, RemoteOpExit.unsafeArchive));
-          }
+          // GNU tar lists the member as it is; BusyBox's lists it with the
+          // `inner/../` stripped and says so on stderr. Either way, and
+          // through a pipe from gzip as much as through tar's own -z, it
+          // is refused before anything is written.
+          expect(result.exitCode, RemoteOpExit.unsafeArchive,
+              reason: '${result.stderr}');
+          expect(Directory('${box.root}/evil_out').existsSync(), isFalse);
           expect(File('${box.root}/escaped').existsSync(), isFalse);
         });
+
+        /// A `.tar.gz` of [entries] (paths relative to a fresh folder,
+        /// links already made by [make]) in the order given.
+        Future<String> tarOf(String name, void Function(String dir) make,
+            List<String> entries) async {
+          final dir = Directory('${box.root}/$name.src')..createSync();
+          make(dir.path);
+          final archive = '${box.root}/$name.tar.gz';
+          final made = await Process.run('tar', ['-czf', archive, ...entries],
+              workingDirectory: dir.path);
+          expect(made.exitCode, 0, reason: '${made.stderr}');
+          return archive;
+        }
+
+        test('an archive with a link pointing out of the folder is refused',
+            () async {
+          Directory('${box.root}/outside').createSync();
+          for (final (name, target) in [
+            ('up', '../outside'),
+            ('abs', '/etc'),
+            ('deep', 'a/../../outside'),
+          ]) {
+            final archive = await tarOf(
+              name,
+              (dir) => Link('$dir/l').createSync(target),
+              ['l'],
+            );
+            final dest = '${box.root}/${name}_out';
+            final result = await box.run(RemoteFileCommands.extract(
+              archivePath: archive,
+              kind: ArchiveKind.tarGz,
+              destination: dest,
+              mode: ExtractMode.newFolder,
+              tools: kit,
+            ));
+            expect(result.exitCode, RemoteOpExit.unsafeArchive,
+                reason: '$target: ${result.stderr}');
+            expect(Directory(dest).existsSync(), isFalse);
+          }
+        });
+
+        test('a link that stays inside is unpacked as one', () async {
+          final archive = await tarOf('ok', (dir) {
+            Directory('$dir/sub').createSync();
+            File('$dir/sub/f').writeAsStringSync('f');
+            Link('$dir/l').createSync('sub/f');
+            Link('$dir/dots..').createSync('sub');
+          }, ['sub', 'l', 'dots..']);
+          final dest = '${box.root}/ok_out';
+          final result = await box.run(RemoteFileCommands.extract(
+            archivePath: archive,
+            kind: ArchiveKind.tarGz,
+            destination: dest,
+            mode: ExtractMode.newFolder,
+            tools: kit,
+          ));
+          expect(result.exitCode, 0, reason: '${result.stderr}');
+          expect(Link('$dest/l').targetSync(), 'sub/f');
+          expect(File('$dest/l').readAsStringSync(), 'f');
+        });
+
+        test('no merge into a folder holding a link that points out of it',
+            () async {
+          final outside = Directory('${box.root}/outside')..createSync();
+          final archive = await tarOf('x', (dir) {
+            Directory('$dir/l').createSync();
+            File('$dir/l/x').writeAsStringSync('pwned');
+          }, ['l/x']);
+          final dest = Directory('${box.root}/merge')..createSync();
+          Link('${dest.path}/l').createSync('../outside');
+          for (final mode in [ExtractMode.keepExisting, ExtractMode.replaceExisting]) {
+            final result = await box.run(RemoteFileCommands.extract(
+              archivePath: archive,
+              kind: ArchiveKind.tarGz,
+              destination: dest.path,
+              mode: mode,
+              tools: kit,
+            ));
+            expect(result.exitCode, RemoteOpExit.unsafeArchive,
+                reason: '$mode: ${result.stderr}');
+            expect(outside.listSync(), isEmpty, reason: '$mode wrote through');
+          }
+          // A link that stays inside is no reason to refuse.
+          Link('${dest.path}/l').deleteSync();
+          Directory('${dest.path}/real').createSync();
+          Link('${dest.path}/l').createSync('real');
+          final merged = await box.run(RemoteFileCommands.extract(
+            archivePath: archive,
+            kind: ArchiveKind.tarGz,
+            destination: dest.path,
+            mode: ExtractMode.replaceExisting,
+            tools: kit,
+          ));
+          expect(merged.exitCode, 0, reason: '${merged.stderr}');
+          expect(File('${dest.path}/real/x').readAsStringSync(), 'pwned');
+        });
+
+        test('a zip link pointing out of the folder is not kept', () async {
+          final src = Directory('${box.root}/zsrc')..createSync();
+          File('${src.path}/f').writeAsStringSync('f');
+          // Names a careless pattern would not find, each linked inward.
+          for (final name in ['a*b', 'a[b', 'a?b', r'a\b', 'a b']) {
+            Link('${src.path}/$name').createSync('f');
+          }
+          final safe = '${box.root}/safe.zip';
+          await Process.run('zip', ['-q', '-y', safe, 'f', 'a*b', 'a[b', 'a?b', r'a\b', 'a b'],
+              workingDirectory: src.path);
+          final ok = await box.run(RemoteFileCommands.extract(
+            archivePath: safe,
+            kind: ArchiveKind.zip,
+            destination: '${box.root}/safe_out',
+            mode: ExtractMode.newFolder,
+            tools: kit,
+          ));
+          expect(ok.exitCode, 0, reason: '${ok.stderr}');
+          expect(Link('${box.root}/safe_out/a[b').targetSync(), 'f');
+
+          Link('${src.path}/up').createSync('../outside');
+          final bad = '${box.root}/bad.zip';
+          await Process.run('zip', ['-q', '-y', bad, 'f', 'up'],
+              workingDirectory: src.path);
+          final dest = '${box.root}/bad_out';
+          final refused = await box.run(RemoteFileCommands.extract(
+            archivePath: bad,
+            kind: ArchiveKind.zip,
+            destination: dest,
+            mode: ExtractMode.newFolder,
+            tools: kit,
+          ));
+          expect(refused.exitCode, RemoteOpExit.unsafeArchive,
+              reason: '${refused.stderr}');
+          // Info-ZIP's is refused before anything is written; BusyBox's,
+          // whose listing shows no links, is cleared of it afterwards.
+          expect(Link('$dest/up').existsSync(), isFalse);
+          expect(File('$dest/up').existsSync(), isFalse);
+        }, skip: !_hasZip);
 
         test('extract refuses a folder that exists unless told how', () async {
           await box.seed();
@@ -662,6 +817,16 @@ mv -f './.out.tar.gz.ssg-part-1' './out.tar.gz\'''');
 
         test('duplicate keeps everything and will not overwrite', () async {
           await box.seed();
+          final plain = File('${box.src}/plain')..writeAsStringSync('plain');
+          await Process.run('chmod', ['640', plain.path]);
+          final copied = await box.run(RemoteFileCommands.duplicate(
+            source: plain.path,
+            destination: '${plain.path} copy',
+            tools: kit,
+          ));
+          expect(copied.exitCode, 0, reason: '${copied.stderr}');
+          expect(File('${plain.path} copy').readAsStringSync(), 'plain');
+          expect(File('${plain.path} copy').statSync().modeString(), 'rw-r-----');
           for (final name in ['-rf', "it's", 'new\nline']) {
             final result = await box.run(RemoteFileCommands.duplicate(
               source: '${box.src}/$name',
@@ -681,6 +846,50 @@ mv -f './.out.tar.gz.ssg-part-1' './out.tar.gz\'''');
               reason: 'cp must not have copied into the existing copy');
           box.expectNothingRan();
         });
+
+        test('duplicate copies to the name, not into what appeared there',
+            () async {
+          await box.seed();
+          File('${box.src}/plain').writeAsStringSync('plain');
+          // A cp that finds a folder at its destination, as if one had
+          // been made there just after the script looked.
+          final shim = Directory('${box.root}/cpshim')..createSync();
+          File('${shim.path}/cp').writeAsStringSync(
+            '#!/bin/sh\n'
+            'for a; do last=\$a; done\n'
+            'case "\$last" in */t) ;; *) mkdir -p "\$last" ;; esac\n'
+            'PATH=\${PATH#*:} exec cp "\$@"\n',
+          );
+          await Process.run('chmod', ['+x', '${shim.path}/cp']);
+
+          final folder = await box.run(
+            RemoteFileCommands.duplicate(
+              source: '${box.src}/-rf',
+              destination: '${box.src}/-rf copy',
+              tools: kit,
+            ),
+            pathPrefix: shim.path,
+          );
+          expect(folder.exitCode, 0, reason: '${folder.stderr}');
+          expect(File('${box.src}/-rf copy/inside').readAsStringSync(), '-rf');
+          expect(Directory('${box.src}/-rf copy/-rf').existsSync(), isFalse,
+              reason: 'copied into the folder, not to it');
+
+          final file = await box.run(
+            RemoteFileCommands.duplicate(
+              source: '${box.src}/plain',
+              destination: '${box.src}/plain copy',
+              tools: kit,
+            ),
+            pathPrefix: shim.path,
+          );
+          expect(file.exitCode, isNot(0));
+          expect(File('${box.src}/plain copy/plain').existsSync(), isFalse,
+              reason: 'copied into the folder that appeared');
+        },
+            skip: busybox
+                ? "BusyBox's shell runs its own cp, whatever PATH says"
+                : false);
 
         test('change owner to who it already is, recursively', () async {
           await box.seed();
@@ -812,6 +1021,102 @@ mv -f './.out.tar.gz.ssg-part-1' './out.tar.gz\'''');
           reason: 'the job is still alive');
     });
 
+    test('the script runs under the account\'s umask, not 077', () async {
+      final result = await sh('umask 022; ${ServerSideJob.launchScriptCommand(
+        jobId: ServerSideJob.newId(),
+        script: 'umask',
+      )}');
+      final status = ServerSideJob.parseLaunch(result.stdout as String)!;
+      expect(status.state, ServerJobState.finished);
+      expect(status.log, '0022');
+    });
+
+    group('on a server without setsid', () {
+      // This machine's own tools less setsid, so the job lands in the
+      // launcher's process group, as under macOS or FreeBSD. Not BusyBox:
+      // its shell finds its own setsid applet whatever PATH says.
+      late String bin;
+      setUp(() async => bin = await _systemBinWithout(const {'setsid'}));
+
+      Future<ProcessResult> bb(String command, {String? pathPrefix}) =>
+          Process.run(
+            '/bin/sh',
+            ['-c', command],
+            environment: {
+              'HOME': home.path,
+              'PATH': pathPrefix == null ? bin : '$pathPrefix:$bin',
+            },
+          );
+
+      Future<void> waitFor(File file) async {
+        for (var i = 0; i < 100 && !file.existsSync(); i++) {
+          await Future<void>.delayed(const Duration(milliseconds: 20));
+        }
+        expect(file.existsSync(), isTrue, reason: '${file.path} never came');
+      }
+
+      test('cancel stops what the script started, not only the script',
+          () async {
+        final id = ServerSideJob.newId();
+        final child = File('${home.path}/child');
+        final launch = await bb(ServerSideJob.launchScriptCommand(
+          jobId: id,
+          script: r'sleep 60 & echo $! > "$HOME/child"; wait',
+        ));
+        expect(ServerSideJob.parseLaunch(launch.stdout as String)!.state,
+            ServerJobState.running);
+        await waitFor(child);
+        final pid = child.readAsStringSync().trim();
+        addTearDown(() => Process.runSync('kill', [pid]));
+        await bb(ServerSideJob.cancelCommand(id));
+        var alive = true;
+        for (var i = 0; i < 50 && alive; i++) {
+          await Future<void>.delayed(const Duration(milliseconds: 20));
+          alive = Process.runSync('kill', ['-0', pid]).exitCode == 0;
+        }
+        expect(alive, isFalse, reason: 'a grandchild of the job lived on');
+      });
+
+      test('a stopped zip puts no part file back after the tidy-up',
+          () async {
+        // A zip that writes a temp file and renames it to the name it was
+        // given when done — Info-ZIP's way — and tidies up on TERM.
+        final shim = Directory('${home.path}/shim')..createSync();
+        File('${shim.path}/zip').writeAsStringSync(
+          '#!/bin/sh\n'
+          "trap 'rm -f ./zi.tmp; exit 143' TERM\n"
+          ': > ./zi.tmp\n'
+          r'sleep 2 & wait $!' '\n'
+          r'mv ./zi.tmp "$4"' '\n',
+        );
+        await Process.run('chmod', ['+x', '${shim.path}/zip']);
+        final src = Directory('${home.path}/src')..createSync();
+        File('${src.path}/a').writeAsStringSync('a');
+        final id = ServerSideJob.newId();
+        final launch = await bb(
+          ServerSideJob.launchScriptCommand(
+            jobId: id,
+            script: RemoteFileCommands.compress(
+              directory: src.path,
+              names: ['a'],
+              archiveName: 'a.zip',
+              partName: '.a.zip.ssg-part-1',
+              format: ArchiveFormat.zip,
+              tools: _gnu,
+            ),
+          ),
+          pathPrefix: shim.path,
+        );
+        expect(ServerSideJob.parseLaunch(launch.stdout as String)!.state,
+            ServerJobState.running);
+        await waitFor(File('${src.path}/zi.tmp'));
+        await bb(ServerSideJob.cancelCommand(id));
+        await bb(RemoteFileCommands.removeFile('${src.path}/.a.zip.ssg-part-1'));
+        await Future<void>.delayed(const Duration(milliseconds: 2500));
+        expect(src.listSync().map((e) => e.path.split('/').last), ['a']);
+      });
+    }, skip: !Directory('/usr/bin').existsSync());
+
     test('old finished operations are swept, copies are not', () async {
       final jobs = Directory('${home.path}/.cache/secureshellgo/jobs')
         ..createSync(recursive: true);
@@ -938,14 +1243,16 @@ class _Box {
   }
 
   /// Runs an operation script as the job launcher would: `sh run <job>`.
-  Future<ProcessResult> run(String script) async {
+  Future<ProcessResult> run(String script, {String? pathPrefix}) async {
     final job = Directory('$root/job${_jobs++}')..createSync();
     final file = File('${job.path}/run')..writeAsStringSync('$script\n');
     final canary = Directory('$root/canary')..createSync(recursive: true);
     return busyboxBin == null
-        ? Process.run('sh', [file.path, job.path], workingDirectory: canary.path)
+        ? Process.run('sh', [file.path, job.path],
+            workingDirectory: canary.path,
+            environment: pathPrefix == null ? null : _env(pathPrefix))
         : Process.run('busybox', ['sh', file.path, job.path],
-            environment: _env(null), workingDirectory: canary.path);
+            environment: _env(pathPrefix), workingDirectory: canary.path);
   }
 
   /// Runs an exec command as the login shell would: `sh -c <command>`.
@@ -974,12 +1281,28 @@ class _Box {
   Future<void> dispose() => Directory(root).delete(recursive: true);
 }
 
-String? _busyboxBinPath;
+final Map<String, String> _busyboxBinPaths = {};
+
+/// A directory of links to everything in `/usr/bin` but [without], for a
+/// PATH on which those few are missing.
+Future<String> _systemBinWithout(Set<String> without) async {
+  final key = 'system:${(without.toList()..sort()).join(',')}';
+  final existing = _busyboxBinPaths[key];
+  if (existing != null && Directory(existing).existsSync()) return existing;
+  final dir = await Directory.systemTemp.createTemp('ssg_bin');
+  for (final entry in Directory('/usr/bin').listSync()) {
+    final name = entry.path.split('/').last;
+    if (without.contains(name)) continue;
+    Link('${dir.path}/$name').createSync(entry.path);
+  }
+  return _busyboxBinPaths[key] = dir.path;
+}
 
 /// A directory of links to every BusyBox applet — a BusyBox userland, as
 /// on Alpine or a NAS, for a PATH with nothing else on it.
 Future<String> _busyboxBin() async {
-  final existing = _busyboxBinPath;
+  const key = 'busybox';
+  final existing = _busyboxBinPaths[key];
   if (existing != null && Directory(existing).existsSync()) return existing;
   final dir = await Directory.systemTemp.createTemp('ssg_busybox');
   final busybox = (Process.runSync('sh', ['-c', 'command -v busybox']).stdout
@@ -990,5 +1313,5 @@ Future<String> _busyboxBin() async {
     if (applet.isEmpty || applet.contains('/')) continue;
     Link('${dir.path}/$applet').createSync(busybox);
   }
-  return _busyboxBinPath = dir.path;
+  return _busyboxBinPaths[key] = dir.path;
 }

@@ -308,7 +308,7 @@ void main() {
     await settleIo(tester);
     expect(
       _scriptOf(server.launches.single),
-      endsWith("cp -a '/home/dev/notes.md' '/home/dev/notes copy.md'"),
+      contains("cp -a \$T '/home/dev/notes.md' '/home/dev/notes copy.md'"),
     );
   });
 

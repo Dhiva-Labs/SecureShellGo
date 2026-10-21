@@ -349,6 +349,59 @@ void main() {
     );
   });
 
+  testWidgets('leaving it running starts no host that was still waiting',
+      (tester) async {
+    final dials = <String, Completer<SessionTransport>>{};
+    await tester.pumpWidget(MaterialApp(
+      theme: AppTheme.dark,
+      home: Builder(
+        builder: (context) => Scaffold(
+          body: TextButton(
+            onPressed: () => Navigator.of(context).push(MaterialPageRoute<void>(
+              builder: (_) => FleetRunScreen(
+                hosts: _hosts,
+                initialHostIds: _hosts.map((h) => h.id).toSet(),
+                sessions: sessions,
+                credentialStore: credentials,
+                sshService: _ScriptedSsh(File('${temp.path}/kh.json')),
+                dialer: (host, _) =>
+                    (dials[host.id] = Completer<SessionTransport>()).future,
+                initialCommand: 'sleep 100',
+              ),
+            )),
+            child: const Text('open'),
+          ),
+        ),
+      ),
+    ));
+    await tester.tap(find.text('open'));
+    await tester.pumpAndSettle();
+    await tester.tap(await next(tester));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Run on 4'));
+    await settle(tester);
+    expect(dials.keys, ['web1', 'web2', 'stage'], reason: 'three at a time');
+
+    await tester.binding.handlePopRoute();
+    await tester.pump(const Duration(milliseconds: 500));
+    await tester.tap(find.text('Leave it running'));
+    await tester.pump(const Duration(milliseconds: 500));
+    await settle(tester);
+    expect(find.text('open'), findsOneWidget);
+
+    // A slot frees up with nobody watching: the host still waiting must
+    // not be started in it.
+    dials['web1']!.completeError(const SshConnectionException('refused'));
+    await settle(tester);
+    expect(dials.keys, isNot(contains('pi')));
+    for (final dial in dials.values) {
+      if (!dial.isCompleted) {
+        dial.completeError(const SshConnectionException('refused'));
+      }
+    }
+    await settle(tester);
+  });
+
   testWidgets('leaving while it runs asks what to do', (tester) async {
     // A host that never answers, so the run is still going.
     final hung = Completer<SessionTransport>();

@@ -107,7 +107,9 @@ echo $timeoutMarker''';
   ///
   /// The script reaches the server as its own argument, quoted once, never
   /// spliced into the launcher's text, and runs as `sh run <job folder>`:
-  /// its `$1` is where it may keep scratch files.
+  /// its `$1` is where it may keep scratch files. The job folder is made
+  /// under `umask 077`, but the script runs under the account's own umask,
+  /// so what it extracts or copies gets the modes it would from a shell.
   ///
   /// Prints `SSG-JOB-DONE <code>`, `---` and the log's tail when the script
   /// finished within about a second and a half, or `SSG-JOB-STARTED` when it
@@ -120,13 +122,14 @@ echo $timeoutMarker''';
     final launcher = '''
 d="$d"
 j="\$HOME/.cache/secureshellgo/jobs"
+u=\$(umask)
 umask 077
 mkdir -p "\$d" || exit 70
 printf '%s\\n' "\$1" > "\$d/run" || exit 70
 : > "\$d/op"
 find "\$j" -mindepth 1 -maxdepth 1 -type d -mtime +2 -exec sh -c 'for o do [ -f "\$o/op" ] && [ -f "\$o/exit" ] && rm -rf "\$o"; done' ssg-sweep {} + 2>/dev/null
 if command -v setsid >/dev/null 2>&1; then detach=setsid; else detach=nohup; fi
-\$detach sh -c 'd="\$1"; sh "\$d/run" "\$d" > "\$d/log" 2>&1; echo \$? > "\$d/exit.tmp"; mv "\$d/exit.tmp" "\$d/exit"' ssg-job "\$d" < /dev/null > /dev/null 2>&1 &
+\$detach sh -c 'd="\$1"; umask "\$2"; sh "\$d/run" "\$d" > "\$d/log" 2>&1; echo \$? > "\$d/exit.tmp"; mv "\$d/exit.tmp" "\$d/exit"' ssg-job "\$d" "\$u" < /dev/null > /dev/null 2>&1 &
 echo \$! > "\$d/pid"
 n=0
 while [ \$n -lt 8 ]; do
@@ -185,6 +188,14 @@ tail -n 20 "\$d/log" 2>/dev/null''';
 
   /// Stops the job — its whole process group where `setsid` made one — and
   /// removes its folder.
+  ///
+  /// Without `setsid` (macOS, the BSDs) the job shares a group with
+  /// whatever launched it, so the group cannot be signalled. Its whole tree
+  /// is, instead, found through `ps`: each process is stopped as it is
+  /// found, so none can start another unseen, then all are sent TERM and
+  /// let go. A `tar` or `zip` two levels down hears of it as surely as the
+  /// script that started it — `zip` would otherwise finish on its own and
+  /// rename its temp file to the part name after the part had been removed.
   static String cancelCommand(String jobId) {
     final d = _dir(jobId);
     final script = '''
@@ -192,8 +203,15 @@ d="$d"
 if [ -f "\$d/pid" ]; then
   p="\$(cat "\$d/pid")"
   if ! kill -s TERM -- "-\$p" 2>/dev/null; then
-    pkill -TERM -P "\$p" 2>/dev/null
-    kill -TERM "\$p" 2>/dev/null
+    all=
+    new="\$p"
+    while [ -n "\$new" ]; do
+      kill -s STOP \$new 2>/dev/null
+      all="\$all \$new"
+      new=\$(ps -A -o pid= -o ppid= 2>/dev/null | awk -v all="\$all" 'BEGIN { n = split(all, a, " "); for (i = 1; i <= n; i++) s[a[i]] = 1 } (\$2 in s) && !(\$1 in s) { print \$1 }')
+    done
+    kill -s TERM \$all 2>/dev/null
+    kill -s CONT \$all 2>/dev/null
   fi
 fi
 rm -rf "\$d"''';
