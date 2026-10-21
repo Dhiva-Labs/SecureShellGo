@@ -197,6 +197,27 @@ class SessionController {
   /// exec channel instead, as before. See `server_side_job.dart`.
   final ServerJobStore? _serverJobs;
 
+  /// The server-side jobs this session is following, each with the task
+  /// following it: from the moment one is launched, or picked up, until it
+  /// is forgotten or handed off. What keeps `SessionManager` from starting a
+  /// second follower beside it — one that would report a copy the first had
+  /// finished as lost, or run its verify, swap or delete a second time.
+  final Map<String, String> _followedJobs = {};
+
+  /// Whether this session is following the server-side job [jobId]: a task
+  /// of its own is launching it, following it, or queued to pick it up.
+  bool isFollowingServerJob(String jobId) {
+    final taskId = _followedJobs[jobId];
+    if (taskId == null) return false;
+    return transfers.tasks.any((t) => t.id == taskId && t.status.isActive);
+  }
+
+  /// Called when this session stops following a server-side job that goes
+  /// on without it — its connection dropped, or its tab closed — so the job
+  /// can be picked up again as soon as both ends are open, including when
+  /// they already are again. Set by `SessionManager`.
+  void Function()? onServerJobHandedOff;
+
   /// Whether this session can copy files straight to another server.
   bool get canTransferToOtherSessions => _resolveRemoteTarget != null;
 
@@ -218,7 +239,8 @@ class SessionController {
   /// Not `final`: [SessionKeepalive.stop] is deliberately permanent, so a
   /// session that reconnects gets a *new* one bound to the new transport
   /// rather than trying to restart a schedule that has already been retired.
-  late SessionKeepalive _keepalive;
+  /// Null only until the constructor has started the first.
+  SessionKeepalive? _keepalive;
 
   /// Kept so the replacement keep-alive built by [adoptTransport] uses the
   /// same (possibly faked) clock the first one did.
@@ -355,6 +377,17 @@ class SessionController {
   /// still up — which is what `exit` looks like from here. See [_markClosed].
   var _shellExitedCleanly = false;
 
+  /// Set once a persistent shell failed as it started — the wrapper refused
+  /// by a restricted shell, say — so that every shell this session opens
+  /// after it, a Restart's or a reconnect's, is the plain login shell rather
+  /// than the same failure again. See [persistentStartGrace].
+  var _persistentShellFailed = false;
+
+  /// How soon after opening a persistent shell an exit with an error status
+  /// counts as it failing to start, and is answered with the login shell.
+  /// Later than that it is a shell that ran and ended, and is left ended.
+  static const Duration persistentStartGrace = Duration(seconds: 3);
+
   /// Why the shell ended while the connection stayed up, or null while it is
   /// running (or has not started).
   String? _shellEndedReason;
@@ -415,7 +448,7 @@ class SessionController {
   bool get hasShell => _shell != null;
 
   /// Whether keep-alives are still being sent. Diagnostics and tests.
-  bool get isKeepaliveRunning => _keepalive.isRunning;
+  bool get isKeepaliveRunning => _keepalive?.isRunning ?? false;
 
   // ------------------------------------------------------------- reconnect
 
@@ -484,8 +517,9 @@ class SessionController {
   /// dropped link (so it reconnects) when the answer does not come — see
   /// [SessionKeepalive.probe]. True when the link is, or may be, alive.
   Future<bool> checkLink() async {
-    if (_closed || _disposed) return false;
-    return _keepalive.probe();
+    final keepalive = _keepalive;
+    if (_closed || _disposed || keepalive == null) return false;
+    return keepalive.probe();
   }
 
   /// Takes over [next] as this session's transport, in place of the one that
@@ -545,6 +579,10 @@ class SessionController {
   }
 
   void _startKeepalive() {
+    // Never two at once. The one being replaced is normally stopped already
+    // — the drop that led here stopped it — but one that is not would be a
+    // timer nothing can reach any more, not even [dispose].
+    _keepalive?.stop();
     final generation = _transportGeneration;
     _keepalive = SessionKeepalive(
       // Through the field rather than the value it holds today: a reconnect
@@ -615,7 +653,7 @@ class SessionController {
     // matters for the background case: a drop that happens while the app is
     // in the background must not leave a timer pinging a dead socket until
     // the user comes back and pops the route.
-    _keepalive.stop();
+    _keepalive?.stop();
     // Anything still queued or moving is now unrunnable — but it is not
     // cancelled, because nobody cancelled it. It waits as interrupted, and
     // goes back in the queue when [adoptTransport] has a connection again.
@@ -749,6 +787,9 @@ class SessionController {
     try {
       final opened = await _openPersistentOrPlainShell();
       final session = opened.session;
+      final transport = _connection;
+      final generation = _transportGeneration;
+      final openedAt = _clock();
 
       // Decoding through the chunked converter (rather than utf8.decode per
       // chunk) keeps multi-byte characters intact when they straddle a packet
@@ -769,13 +810,26 @@ class SessionController {
 
       unawaited(
         session.done.then((_) {
-          // Completing without an error means the channel was closed properly
-          // at the far end, which is what a shell that has *exited* does. The
-          // exit status may or may not have come with it (servers differ), so
-          // the status is used for the message and the orderliness for the
-          // decision — see [_markClosed].
-          _shellExitedCleanly = true;
+          // A shell of a transport since replaced is nobody's business now.
+          if (generation != _transportGeneration) return;
           final code = session.exitCode;
+          if (opened.persistent &&
+              code != null &&
+              code != 0 &&
+              !transport.isClosed &&
+              _clock().difference(openedAt) < persistentStartGrace) {
+            _fallBackFromPersistentShell(code);
+            return;
+          }
+          // dartssh2 completes `done` normally however a channel ends — the
+          // shell exiting, or the transport under it dying, which ends every
+          // channel on it without an error. So how it completed decides
+          // nothing, and neither may the order in which this and the
+          // transport's own `done` happen to run. A shell that exited either
+          // said so, with an exit status, or closed while its transport was
+          // still up; one that went down with its transport did neither.
+          // The status is used for the message too — see [_markClosed].
+          _shellExitedCleanly = code != null || !transport.isClosed;
           _handleShellEnded(
             code == null
                 ? 'Shell session ended.'
@@ -804,16 +858,19 @@ class SessionController {
   /// command, or this transport cannot ask it to) falls back to the plain
   /// login shell with a line saying so: a shell that will not survive a drop
   /// beats no shell.
-  Future<({SSHSession session, bool fresh})> _openPersistentOrPlainShell()
-      async {
+  Future<({SSHSession session, bool fresh, bool persistent})>
+      _openPersistentOrPlainShell() async {
     final columns = terminal.viewWidth;
     final rows = terminal.viewHeight;
     final kind = host.persistentSession;
-    final command = persistentShellCommand(kind, persistentName);
+    final command = _persistentShellFailed
+        ? null
+        : persistentShellCommand(kind, persistentName);
     if (command == null) {
       return (
         session: await shell(columns: columns, rows: rows),
         fresh: true,
+        persistent: false,
       );
     }
 
@@ -827,6 +884,7 @@ class SessionController {
       return (
         session: await shell(columns: columns, rows: rows, command: command),
         fresh: fresh,
+        persistent: true,
       );
     } catch (error) {
       if (_closed) rethrow;
@@ -840,8 +898,26 @@ class SessionController {
       return (
         session: await shell(columns: columns, rows: rows),
         fresh: true,
+        persistent: false,
       );
     }
+  }
+
+  /// The persistent shell exited with status [code] as soon as it started:
+  /// what the server runs it with could not run it at all — a restricted
+  /// shell refusing `exec`, no `sh` on its path. (tmux or screen failing is
+  /// caught on the server already, by [persistentShellCommand].) The login
+  /// shell takes its place, with a line saying so, here and from now on.
+  void _fallBackFromPersistentShell(int code) {
+    _persistentShellFailed = true;
+    _writeToTerminal(
+      '\r\n\x1b[2m${host.persistentSession.label} could not be started '
+      '(exit status $code), so this shell will not survive a '
+      'disconnect.\x1b[0m\r\n',
+    );
+    _resetShell();
+    _notify();
+    unawaited(ensureShell());
   }
 
   /// Whether the persistent shell about to open is a new one: true, false,
@@ -1173,7 +1249,7 @@ class SessionController {
     ServerJobRecord record, {
     required String destinationSessionId,
   }) {
-    return transfers.enqueueRemoteCopy(
+    final task = transfers.enqueueRemoteCopy(
       remotePath: record.sourcePath,
       name: record.name,
       destinationSessionId: destinationSessionId,
@@ -1188,6 +1264,8 @@ class SessionController {
       serverJobStamp: record.stamp,
       resumingServerJob: true,
     );
+    _followedJobs[record.jobId] = task.id;
+    return task;
   }
 
   /// How a direct copy runs: as a job on the source server when there is a
@@ -1201,6 +1279,7 @@ class SessionController {
     if (jobs == null) return null;
     final jobId = task.serverJobId ?? ServerSideJob.newId();
     final stamp = task.serverJobStamp ?? DateTime.now().millisecondsSinceEpoch;
+    _followedJobs[jobId] = task.id;
     final record = ServerJobRecord(
       jobId: jobId,
       stamp: stamp,
@@ -1228,6 +1307,7 @@ class SessionController {
 
   void _forgetServerJob(DetachedRun? run) {
     if (run == null) return;
+    _followedJobs.remove(run.jobId);
     unawaited(_serverJobs?.remove(run.jobId));
   }
 
@@ -1591,6 +1671,8 @@ class SessionController {
             // remembered, and the next time both servers are open it is
             // picked up and finished. Not something to run again from here,
             // even after a reconnect — that would start a second copy.
+            if (detached != null) _followedJobs.remove(detached.jobId);
+            onServerJobHandedOff?.call();
             throw const TransferHandedOff();
           } on SSHDirectCopyUnavailable catch (e) {
             _forgetServerJob(detached);
@@ -1694,7 +1776,7 @@ class SessionController {
     await _reconnectChanges?.cancel();
     await _reconnector?.dispose();
 
-    _keepalive.stop();
+    _keepalive?.stop();
     transfers.cancelAll();
     await transfers.dispose();
 

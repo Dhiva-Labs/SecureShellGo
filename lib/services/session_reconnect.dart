@@ -222,7 +222,7 @@ class SessionReconnector {
   /// one. Even a refused password gets its one attempt here: someone asked
   /// for it, and one attempt is not a lockout.
   void retryNow() {
-    if (_disposed) return;
+    if (_disposed || _adopting) return;
     if (_policy.phase == ReconnectPhase.connecting) return;
     _timer?.cancel();
     _timer = null;
@@ -244,8 +244,15 @@ class SessionReconnector {
   }
 
   Future<void> _attempt() async {
-    if (_policy.isFinished) return;
-    _policy.attemptStarted();
+    // The schedule this attempt belongs to, held for the whole attempt.
+    // [retryNow] replaces [_policy] once the old one has finished, and Stop
+    // then Reconnect does exactly that while a dial may still be in flight:
+    // read afresh after each await, the old dial would come back to a
+    // schedule that is running again, adopt its transport under it, and the
+    // new dial would adopt a second one.
+    final policy = _policy;
+    if (policy.isFinished) return;
+    policy.attemptStarted();
     _notify();
 
     // Captured by the verifier below, so a refusal can be told apart from any
@@ -254,9 +261,9 @@ class SessionReconnector {
 
     try {
       final credentials = await _support.loadCredentials(host.id);
-      if (_policy.isFinished) return;
+      if (_isStale(policy)) return;
       if (credentials == null) {
-        _policy.failed(ReconnectFailure.noCredentials);
+        policy.failed(ReconnectFailure.noCredentials);
         _notify();
         return;
       }
@@ -271,9 +278,10 @@ class SessionReconnector {
       );
 
       // Stopped while the handshake was in flight — the user closed the tab,
-      // or pressed Stop. The transport we just authenticated is nobody's, so
-      // it has to be closed here or it stays open until the process ends.
-      if (_policy.isFinished) {
+      // or pressed Stop, and perhaps Reconnect after it. The transport we
+      // just authenticated is nobody's, so it has to be closed here or it
+      // stays open until the process ends.
+      if (_isStale(policy)) {
         transport.close();
         return;
       }
@@ -285,7 +293,7 @@ class SessionReconnector {
       } finally {
         _adopting = false;
       }
-      _policy.succeeded();
+      policy.succeeded();
       _notify();
       if (_droppedWhileAdopting) {
         _droppedWhileAdopting = false;
@@ -293,30 +301,35 @@ class SessionReconnector {
       }
       return;
     } catch (error) {
-      if (_policy.isFinished) return;
+      if (_isStale(policy)) return;
       final prompt = refused;
       if (prompt != null) {
-        _policy.failed(
+        policy.failed(
           ReconnectFailure.hostKey,
           message: _describeHostKeyRefusal(prompt),
         );
       } else if (error is SshAuthenticationException) {
-        _policy.failed(ReconnectFailure.authentication, message: error.message);
+        policy.failed(ReconnectFailure.authentication, message: error.message);
       } else if (error is HostKeyRejectedException) {
-        _policy.failed(ReconnectFailure.hostKey, message: error.message);
+        policy.failed(ReconnectFailure.hostKey, message: error.message);
       } else {
-        _policy.failed(ReconnectFailure.transport);
+        policy.failed(ReconnectFailure.transport);
       }
     }
 
     // Only reached on failure. A retryable one leaves the policy runnable and
     // the ladder continues; anything else has already set its own reason.
-    if (_policy.isFinished) {
+    if (policy.isFinished) {
       _notify();
     } else {
       _schedule();
     }
   }
+
+  /// Whether an attempt started under [policy] no longer speaks for this
+  /// reconnector: its schedule was stopped, or replaced by a newer one.
+  bool _isStale(ReconnectPolicy policy) =>
+      policy.isFinished || !identical(policy, _policy);
 
   String _describeHostKeyRefusal(HostKeyPrompt prompt) {
     switch (prompt.kind) {

@@ -49,6 +49,13 @@ class FakeShell implements SSHSession {
     if (!_done.isCompleted) _done.complete();
   }
 
+  /// The transport went: the channel ends normally, with no exit status.
+  void hangUp() {
+    if (_done.isCompleted) return;
+    exitCode = null;
+    _done.complete();
+  }
+
   @override
   dynamic noSuchMethod(Invocation invocation) =>
       throw UnimplementedError('${invocation.memberName} is not faked');
@@ -107,6 +114,13 @@ class LinkTransport extends FakeTransportBase {
     final shell = FakeShell();
     shells.add(shell);
     return shell;
+  }
+
+  @override
+  void endChannels() {
+    for (final shell in shells) {
+      shell.hangUp();
+    }
   }
 
   @override

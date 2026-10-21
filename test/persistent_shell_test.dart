@@ -15,7 +15,12 @@ Host hostNamed(String label) => Host(
 
 /// A directory standing in for a server's PATH: `sh`, and whichever of
 /// tmux and screen the test says is installed, each a stub that prints the
-/// arguments it was given (one per `|`) instead of taking over a terminal.
+/// arguments it was given (one per `|`) instead of taking over a terminal,
+/// then exits with [tmuxExit] or [screenExit].
+///
+/// With [tmuxSessions], the tmux stub answers `has-session -t` the way tmux
+/// does: `=name` is that session and no other, while a bare name is also
+/// any session whose name starts with it.
 class FakeServer {
   FakeServer._(this.dir);
 
@@ -26,19 +31,37 @@ class FakeServer {
     bool screen = false,
     int tmuxHasSession = 1,
     int screenHasSession = 1,
+    List<String>? tmuxSessions,
+    int tmuxExit = 0,
+    int screenExit = 0,
   }) async {
     final dir = await Directory.systemTemp.createTemp('ssg_persistent_');
     final server = FakeServer._(dir);
     await Link('${dir.path}/sh').create('/bin/sh');
     if (tmux) {
+      final hasSession = tmuxSessions == null
+          ? 'exit $tmuxHasSession'
+          : '''
+  t="\$3"
+  for s in ${tmuxSessions.join(' ')}; do
+    case "\$t" in
+      =*) [ "\$s" = "\${t#=}" ] && exit 0 ;;
+      *) case "\$s" in "\$t"*) exit 0 ;; esac ;;
+    esac
+  done
+  exit 1''';
       await server._stub('tmux', '''
-if [ "\$1" = has-session ]; then exit $tmuxHasSession; fi
-printf 'tmux|'; printf '%s|' "\$@"''');
+if [ "\$1" = has-session ]; then
+$hasSession
+fi
+printf 'tmux|'; printf '%s|' "\$@"
+exit $tmuxExit''');
     }
     if (screen) {
       await server._stub('screen', '''
 if [ "\$3" = -X ]; then exit $screenHasSession; fi
-printf 'screen|'; printf '%s|' "\$@"''');
+printf 'screen|'; printf '%s|' "\$@"
+exit $screenExit''');
     }
     await server._stub('loginsh', r'''printf 'login|'; printf '%s|' "$@"''');
     return server;
@@ -170,6 +193,40 @@ void main() {
       expect(out, '$persistentScreenMissingNotice\nlogin|-l|');
     });
 
+    test('falls back to the login shell, saying so, when tmux fails',
+        () async {
+      // Installed, but it will not run here: a server of another protocol
+      // version, a terminal it cannot open.
+      final server = await FakeServer.create(tmux: true, tmuxExit: 1);
+      addTearDown(server.dispose);
+
+      final out = await server.run(
+        persistentShellCommand(PersistentSession.tmux, 'ssg-box-1')!,
+      );
+
+      expect(out, 'tmux|new|-A|-s|ssg-box-1|$persistentTmuxFailedNotice\n'
+          'login|-l|');
+    });
+
+    test('falls back to the login shell when screen fails', () async {
+      final server = await FakeServer.create(screen: true, screenExit: 1);
+      addTearDown(server.dispose);
+
+      expect(
+        await server.run(
+          persistentShellCommand(PersistentSession.screen, 'ssg-box-1')!,
+        ),
+        'screen|-dRR|ssg-box-1|$persistentScreenFailedNotice\nlogin|-l|',
+      );
+      expect(
+        await server.run(
+          persistentShellCommand(PersistentSession.tmux, 'ssg-box-1')!,
+        ),
+        '$persistentScreenFallbackNotice\n'
+        'screen|-dRR|ssg-box-1|$persistentScreenFailedNotice\nlogin|-l|',
+      );
+    });
+
     test('passes any name as one argument, whatever it holds', () async {
       final server = await FakeServer.create(tmux: true);
       addTearDown(server.dispose);
@@ -190,12 +247,14 @@ void main() {
       bool screen = false,
       int tmuxHasSession = 1,
       int screenHasSession = 1,
+      List<String>? tmuxSessions,
     }) async {
       final server = await FakeServer.create(
         tmux: tmux,
         screen: screen,
         tmuxHasSession: tmuxHasSession,
         screenHasSession: screenHasSession,
+        tmuxSessions: tmuxSessions,
       );
       addTearDown(server.dispose);
       final out =
@@ -212,6 +271,26 @@ void main() {
 
     test('says new when tmux does not', () async {
       expect(await probe(PersistentSession.tmux, tmux: true), isTrue);
+    });
+
+    test('does not take another tab\'s tmux session for this one', () async {
+      // tmux would match `ssg-box-1` to tab 10's `ssg-box-10`.
+      expect(
+        await probe(
+          PersistentSession.tmux,
+          tmux: true,
+          tmuxSessions: ['ssg-box-10', 'ssg-box-12'],
+        ),
+        isTrue,
+      );
+      expect(
+        await probe(
+          PersistentSession.tmux,
+          tmux: true,
+          tmuxSessions: ['ssg-box-10', 'ssg-box-1'],
+        ),
+        isFalse,
+      );
     });
 
     test('asks screen when tmux is missing', () async {

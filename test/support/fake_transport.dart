@@ -55,13 +55,23 @@ class FakeTransportBase extends SessionTransport {
   @override
   Future<void> get done => _done.future;
 
+  /// Closed once the session closed it, or once it went away on its own —
+  /// as dartssh2's `isClosed` is from the moment its `done` completes.
   @override
-  bool get isClosed => closeCount > 0;
+  bool get isClosed => closeCount > 0 || _done.isCompleted;
 
   /// The transport going away underneath the session. With an error it is a
   /// break; without one it is an orderly goodbye.
+  ///
+  /// Every channel still open on it ends first ([endChannels]), the way
+  /// dartssh2 ends them: normally, with no exit status. dartssh2 happens to
+  /// run its own listener on the transport first, so a session sees the
+  /// transport's death before its shell's — but nothing promises that, and
+  /// here the shell's comes first, so a session that relied on the order
+  /// would take a dead link for the user typing `exit`.
   void drop([Object? error]) {
     if (_done.isCompleted) return;
+    endChannels();
     if (error == null) {
       _done.complete();
     } else {
@@ -96,6 +106,9 @@ class FakeTransportBase extends SessionTransport {
 
   @override
   Future<void> ping() async => pingCount++;
+
+  /// Ends the channels a fake keeps open, for [drop]. Nothing by default.
+  void endChannels() {}
 
   @override
   void close() => closeCount++;

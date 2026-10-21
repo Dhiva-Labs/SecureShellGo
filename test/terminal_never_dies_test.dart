@@ -196,6 +196,22 @@ void main() {
       expect(harness.controller.isKeepaliveRunning, isTrue);
     });
 
+    test('never leaves a keep-alive running beside its replacement',
+        () async {
+      final harness = Harness();
+      await pump();
+      expect(harness.keepalives, hasLength(1));
+
+      // A transport handed over while the last one's keep-alive still runs.
+      await harness.controller.adoptTransport(LinkTransport(name: 'other'));
+      expect(harness.keepalives, hasLength(2));
+      expect(harness.keepalives.first.cancelled, isTrue);
+
+      await harness.controller.dispose();
+      expect(harness.keepalives.every((timer) => timer.cancelled), isTrue,
+          reason: 'no timer outlives the session');
+    });
+
     test('a quiet link that answers is left alone', () async {
       final harness = Harness();
       addTearDown(harness.controller.dispose);
@@ -437,6 +453,24 @@ void main() {
   });
 
   group('a shell that ends', () {
+    test('with its transport is a drop, whichever is heard of first',
+        () async {
+      final harness = Harness();
+      addTearDown(harness.controller.dispose);
+      await harness.controller.ensureShell();
+
+      // The shell's channel ends first, normally and with no exit status —
+      // what dartssh2 does to every channel of a transport that has died.
+      harness.first.drop(const SocketException('Connection reset'));
+      await pump();
+
+      expect(harness.first.shells.single.exitCode, isNull);
+      expect(harness.controller.isReconnecting, isTrue);
+      await harness.reconnects.fire();
+      expect(harness.controller.isClosed, isFalse);
+      expect(harness.second.shells, hasLength(1));
+    });
+
     test('leaves the connection up and offers a restart', () async {
       final harness = Harness();
       addTearDown(harness.controller.dispose);
@@ -530,6 +564,47 @@ void main() {
       expect(harness.first.shellCommands, [
         persistentShellCommand(PersistentSession.screen, 'ssg-test-box-1'),
       ]);
+    });
+
+    test('that fails as it starts gives way to the login shell', () async {
+      // tmux or screen failing is caught by the script on the server; this
+      // is the script itself not running — a restricted shell refusing
+      // `exec`, say.
+      final harness = Harness(host: persistentHost(startup: null));
+      addTearDown(harness.controller.dispose);
+      await harness.controller.ensureShell();
+
+      harness.first.shells.single.exit(1);
+      await pump();
+
+      expect(harness.first.shellCommands, [
+        persistentShellCommand(PersistentSession.tmux, 'ssg-test-box-1'),
+        null,
+      ]);
+      expect(harness.screen, contains('could not be started'));
+      expect(harness.controller.hasShellEnded, isFalse);
+      expect(harness.controller.isShellReady, isTrue);
+
+      // And it stays the login shell: a reconnect does not run the failing
+      // command again either.
+      harness.first.drop(const SocketException('Connection reset'));
+      await pump();
+      await harness.reconnects.fire();
+      expect(harness.second.shellCommands, [null]);
+    });
+
+    test('that ran a while and then failed is left ended', () async {
+      final harness = Harness(host: persistentHost(startup: null));
+      addTearDown(harness.controller.dispose);
+      await harness.controller.ensureShell();
+
+      harness.now = harness.now.add(const Duration(minutes: 5));
+      harness.first.shells.single.exit(1);
+      await pump();
+
+      expect(harness.first.shellCommands, hasLength(1));
+      expect(harness.controller.hasShellEnded, isTrue);
+      expect(harness.controller.shellEndedReason, contains('status 1'));
     });
 
     test('falls back to the login shell, saying so, when it cannot start',

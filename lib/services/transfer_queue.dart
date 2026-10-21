@@ -349,6 +349,14 @@ class TransferQueue {
   /// run on is gone. Set by [interruptAll], cleared by [resumeInterrupted].
   var _suspended = false;
 
+  /// Interrupted transfers asked back by [resumeInterrupted] while their last
+  /// run was still unwinding — an executor stuck on the dead channel only
+  /// notices its cancel when that channel finally errors. They go back in
+  /// the queue when that run ends, not before: requeued at once, the old
+  /// run's ending (cancelled, or interrupted) would land on top of the new
+  /// one, and the transfer would be lost or left waiting for good.
+  final Set<String> _resumeWhenUnwound = {};
+
   /// Emits the full task list whenever anything changes.
   Stream<List<TransferTask>> get changes => _controller.stream;
 
@@ -547,11 +555,14 @@ class TransferQueue {
   void interruptWhere(bool Function(TransferTask task) test) {
     var changed = false;
     for (final task in _tasks) {
+      if (!test(task)) continue;
+      // Cut off again before its last run had even finished unwinding: it
+      // waits for this connection to come back, like the rest.
+      _resumeWhenUnwound.remove(task.id);
       if (task.status != TransferStatus.queued &&
           task.status != TransferStatus.running) {
         continue;
       }
-      if (!test(task)) continue;
       _handles[task.id]?._cancel(abandoned: true);
       task.status = TransferStatus.interrupted;
       changed = true;
@@ -574,20 +585,29 @@ class TransferQueue {
     for (final task in _tasks) {
       if (task.status != TransferStatus.interrupted) continue;
       if (test != null && !test(task)) continue;
-      task
-        ..status = TransferStatus.queued
-        ..transferredBytes = 0
-        ..error = null
-        ..destination = null
-        ..destinationUri = null
-        ..routeUsed = null
-        ..routeFallbackReason = null
-        ..startedAt = null
-        ..finishedAt = null;
+      if (_handles.containsKey(task.id)) {
+        // Its run has not returned yet; see [_resumeWhenUnwound].
+        _resumeWhenUnwound.add(task.id);
+        continue;
+      }
+      _requeue(task);
       changed = true;
     }
     if (changed) _publish();
     unawaited(_pump());
+  }
+
+  void _requeue(TransferTask task) {
+    task
+      ..status = TransferStatus.queued
+      ..transferredBytes = 0
+      ..error = null
+      ..destination = null
+      ..destinationUri = null
+      ..routeUsed = null
+      ..routeFallbackReason = null
+      ..startedAt = null
+      ..finishedAt = null;
   }
 
   /// Ends interrupted transfers [test] picks as failed, with [reason] — for
@@ -732,6 +752,14 @@ class TransferQueue {
     } finally {
       _handles.remove(task.id);
       task.finishedAt = DateTime.now();
+      // Asked back while this run was unwinding, and still waiting — not
+      // cancelled since, nor finished after all. The pump this run belongs
+      // to picks it up next.
+      if (_resumeWhenUnwound.remove(task.id) &&
+          task.status == TransferStatus.interrupted &&
+          !_closed) {
+        _requeue(task);
+      }
       _publish();
     }
   }
