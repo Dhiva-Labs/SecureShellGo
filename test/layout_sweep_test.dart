@@ -695,6 +695,31 @@ void main() {
         );
       });
 
+      // Tall, so that the whole form is built: a ListView makes only what is
+      // on screen, and the jump host field, with every saved host's name in
+      // it, is below the fold of every phone.
+      testWidgets('add host form, whole length', skip: _skip, (tester) async {
+        await tester.runAsync(seedHosts);
+        await render(
+          tester,
+          'host_edit_whole',
+          (
+            name: device.name,
+            size: Size(device.size.width, 2400),
+            dpr: device.dpr,
+            text: device.text,
+          ),
+          push: true,
+          () => HostEditScreen(
+            hostStore: hosts,
+            credentialStore: credentials,
+            sshService: ssh,
+            settingsStore: settings,
+            sessions: sessions,
+          ),
+        );
+      });
+
       testWidgets('edit host form, Advanced open', skip: _skip,
           (tester) async {
         // Something in it set, so it opens unfolded: the widest it gets.

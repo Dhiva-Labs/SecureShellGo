@@ -1750,7 +1750,9 @@ class _RemoteEditorScreenState extends State<RemoteEditorScreen> {
 
   Widget _tabStrip(TerminalTheme theme) {
     return SizedBox(
-      height: 38,
+      // Touch makes each tab's close button a 48dp target; the strip grows
+      // to hold it rather than clipping it.
+      height: InputProfile.of(context).touch ? 48 : 38,
       child: ListView.builder(
         scrollDirection: Axis.horizontal,
         itemCount: _tabs.length,

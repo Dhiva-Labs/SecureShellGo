@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -1856,29 +1857,27 @@ class _FileBrowserPaneState extends State<FileBrowserPane>
     );
 
     // Drag-to-tab only offers itself when there is somewhere to drag *to* — no
-    // other open session means no drop target. And under a finger the
-    // long-press on a row is what opens the action sheet, which is the only
-    // path into multi-select on a touch screen; a LongPressDraggable would
-    // swallow that gesture and leave no way in. So a mouse gets drag (it has
-    // right-click for the sheet) and a finger keeps the old behaviour, with
-    // the same "Copy to another server…" row on the action sheet. Decided by
-    // the pointer used last, not the platform, so a DeX desk drags and a
-    // Windows tablet does not.
-    if (widget.sessionId == null || _destinations.isEmpty) return tile;
-    if (InputProfile.of(context).pointer != PointerClass.mouse) return tile;
+    // other open session means no drop target — and only to a mouse or a
+    // trackpad, see [_PointerDraggable]; a finger keeps its long-press for the
+    // action sheet, which has the same "Copy to another server…" row. The
+    // wrapper is there whether or not there is anything to drag, idle when
+    // there is not, so the row's place in the tree never changes under a
+    // gesture.
+    final sessionId = widget.sessionId;
+    final dragEntries = sessionId == null || _destinations.isEmpty
+        ? const <RemoteEntry>[]
+        : _dragEntriesFor(entry);
 
-    final dragEntries = _dragEntriesFor(entry);
-    if (dragEntries.isEmpty) return tile;
-
-    final payload = TabDropPayload(
-      sourceSessionId: widget.sessionId!,
-      entries: dragEntries,
-      sourceDirectory: _path,
-    );
-    return LongPressDraggable<TabDropPayload>(
-      data: payload,
-      hapticFeedbackOnStart: true,
-      // A single row keeps its height under the finger; a wider ghost during
+    return _PointerDraggable<TabDropPayload>(
+      data: dragEntries.isEmpty
+          ? null
+          : TabDropPayload(
+              sourceSessionId: sessionId!,
+              entries: dragEntries,
+              sourceDirectory: _path,
+            ),
+      maxSimultaneousDrags: dragEntries.isEmpty ? 0 : null,
+      // A single row keeps its height under the pointer; a wider ghost during
       // a multi-select drag would obscure the tab strip the user is aiming at.
       feedback: _DragFeedback(entries: dragEntries),
       // Fade the source row rather than remove it: pulling a row out from
@@ -2825,7 +2824,9 @@ class _PathBar extends StatelessWidget {
             child: Row(
               children: [
                 for (var i = 0; i < crumbs.length; i++) ...[
-                  if (i > 0)
+                  // None between the root and the first folder: the root's
+                  // own crumb is a slash, and a second read "/ / home".
+                  if (i > 1)
                     Text(
                       '/',
                       style: theme.textTheme.bodySmall?.copyWith(
@@ -3159,6 +3160,44 @@ class _SelectionBar extends StatelessWidget {
 /// tab strip. Named for the batch when the drag carries a selection, so a
 /// user dragging fifteen files sees "15 files" rather than the name of
 /// whichever one happened to be under the finger.
+/// A row's drag onto another session's tab: a long press, by mouse or
+/// trackpad only.
+///
+/// Under a finger the long-press on a row opens the action sheet, the only
+/// way into multi-select on a touch screen, and a drag recognizer would take
+/// that gesture from it. This one never enters the arena for a touch pointer,
+/// so the choice is made per pointer — a DeX desk drags, a Windows tablet's
+/// finger does not — with nothing in the tree that depends on which was used
+/// last. Swapping a bare row in for the draggable one when a finger came down
+/// disposed the row's tap and long-press recognizers in the middle of the
+/// gesture that caused the swap, and the first tap after a mouse was lost.
+class _PointerDraggable<T extends Object> extends LongPressDraggable<T> {
+  const _PointerDraggable({
+    required super.child,
+    required super.feedback,
+    super.data,
+    super.childWhenDragging,
+    super.maxSimultaneousDrags,
+    super.onDragCompleted,
+  }) : super(hapticFeedbackOnStart: false);
+
+  static const Set<PointerDeviceKind> devices = {
+    PointerDeviceKind.mouse,
+    PointerDeviceKind.trackpad,
+  };
+
+  @override
+  DelayedMultiDragGestureRecognizer createRecognizer(
+    GestureMultiDragStartCallback onStart,
+  ) {
+    return DelayedMultiDragGestureRecognizer(
+      delay: delay,
+      supportedDevices: devices,
+      allowedButtonsFilter: allowedButtonsFilter,
+    )..onStart = onStart;
+  }
+}
+
 class _DragFeedback extends StatelessWidget {
   const _DragFeedback({required this.entries});
 

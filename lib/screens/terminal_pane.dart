@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:xterm/xterm.dart';
@@ -75,7 +76,16 @@ class _TerminalPaneState extends State<TerminalPane>
   /// Sticky Ctrl: armed by the extra-keys bar, consumed by the next
   /// keystroke that reaches [_sendToShell] — soft keyboard, hardware
   /// keyboard, or a key-bar character button all funnel through there.
+  ///
+  /// Only while the bar is on screen to show it armed: [build] disarms it
+  /// whenever the bar is not shown, or the next key typed after the bar went
+  /// away would reach the shell as a control code with nothing to say why.
   bool _ctrlSticky = false;
+
+  /// The buttons held at the last pointer down on the terminal. xterm hands
+  /// a middle-button tap to the same callback as a right-button one, and a
+  /// middle click is a paste on Linux, not a request for a menu.
+  int _lastDownButtons = 0;
 
   /// Pointer ids currently down, for the hand-rolled two-finger pinch — see
   /// [_onPointerMove]. Deliberately not a `GestureDetector`/`ScaleGestureRecognizer`:
@@ -321,6 +331,7 @@ class _TerminalPaneState extends State<TerminalPane>
   /// actions, at the pointer, the way every desktop terminal offers them.
   /// Touch keeps the toolbar that slides in under a long-press selection.
   Future<void> _showContextMenu(TapUpDetails details, CellOffset _) async {
+    if (_lastDownButtons & kSecondaryMouseButton == 0) return;
     final overlay =
         Overlay.of(context).context.findRenderObject()! as RenderBox;
     final at = overlay.globalToLocal(details.globalPosition);
@@ -385,6 +396,7 @@ class _TerminalPaneState extends State<TerminalPane>
   // ------------------------------------------------------------ pinch zoom
 
   void _onPointerDown(PointerDownEvent event) {
+    _lastDownButtons = event.buttons;
     _activePointers[event.pointer] = event.position;
     if (_activePointers.length == 2) {
       final points = _activePointers.values.toList(growable: false);
@@ -450,6 +462,13 @@ class _TerminalPaneState extends State<TerminalPane>
     final ready = widget.session.isShellReady;
     final closed = widget.session.isClosed || widget.session.shellError != null;
     final input = InputProfile.of(context);
+    // By Settings' "Extra keys row": automatically, it goes while a hardware
+    // keyboard is doing the typing — a tablet in a keyboard cover, a DeX
+    // desk, a desktop — and comes back with the soft keyboard. See
+    // [InputDevices.showsKeyBar].
+    final keyBar = !closed && ready && input.showsKeyBar(_keyBarMode);
+    // No setState: this build is what draws the bar, and there is no bar.
+    if (!keyBar) _ctrlSticky = false;
 
     return Column(
       children: [
@@ -538,11 +557,7 @@ class _TerminalPaneState extends State<TerminalPane>
                   )
                 : const SizedBox(width: double.infinity, height: 0),
           ),
-          // By Settings' "Extra keys row": automatically, it goes while a
-          // hardware keyboard is doing the typing — a tablet in a keyboard
-          // cover, a DeX desk, a desktop — and comes back with the soft
-          // keyboard. See [InputDevices.showsKeyBar].
-          if (input.showsKeyBar(_keyBarMode))
+          if (keyBar)
             TerminalKeyBar(
               onKey: (key, {bool ctrl = false, bool alt = false}) =>
                   _terminal.keyInput(key, ctrl: ctrl, alt: alt),

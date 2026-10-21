@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../services/input_profile.dart';
 import '../services/session_manager.dart';
 import '../services/terminal_workspace.dart';
 import '../theme.dart';
@@ -272,6 +273,12 @@ class _PaneHeader extends StatelessWidget {
     final theme = Theme.of(context);
     final session = entry;
     final canSplit = workspace.canSplit;
+    // A split, once made, stays whatever was touched since, so a finger can
+    // land here. The touch theme makes the menu button a 48dp target; the
+    // strip grows to hold it rather than clipping it to 30, and the session
+    // picker beside it is as tall.
+    final touch = InputProfile.of(context).touch;
+    final height = touch ? 48.0 : 30.0;
 
     return Material(
       // The focused pane's tint is stronger than its neighbours' in both
@@ -283,7 +290,7 @@ class _PaneHeader extends StatelessWidget {
               ? theme.colorScheme.primary.withValues(alpha: 0.12)
               : theme.colorScheme.surfaceContainerHigh,
       child: SizedBox(
-        height: 30,
+        height: height,
         child: Row(
           children: [
             const SizedBox(width: 8),
@@ -327,26 +334,29 @@ class _PaneHeader extends StatelessWidget {
                     ),
                   ],
                 ],
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Flexible(
-                      child: Text(
-                        session?.host.displayName ?? 'No session',
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          fontSize: 12,
-                          fontWeight:
-                              focused ? FontWeight.w600 : FontWeight.normal,
-                          color: session == null
-                              ? theme.colorScheme.onSurfaceVariant
-                              : theme.colorScheme.onSurface,
+                child: ConstrainedBox(
+                  constraints: BoxConstraints(minHeight: height),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Flexible(
+                        child: Text(
+                          session?.host.displayName ?? 'No session',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontSize: 12,
+                            fontWeight:
+                                focused ? FontWeight.w600 : FontWeight.normal,
+                            color: session == null
+                                ? theme.colorScheme.onSurfaceVariant
+                                : theme.colorScheme.onSurface,
+                          ),
                         ),
                       ),
-                    ),
-                    const Icon(Icons.arrow_drop_down, size: 16),
-                  ],
+                      const Icon(Icons.arrow_drop_down, size: 16),
+                    ],
+                  ),
                 ),
               ),
             ),
