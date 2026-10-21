@@ -24,7 +24,9 @@ export 'mosh_bootstrap.dart'
 /// reconnecting — after a gap it just catches up, with Mosh's own bar across
 /// the top saying how long the server has been out of touch.
 class MoshShell {
-  MoshShell._(this._client, this.server);
+  /// Wraps a client already connected to [server]; [start] is the usual way
+  /// to get one.
+  MoshShell.attach(this._client, this.server);
 
   final MoshClient _client;
 
@@ -52,12 +54,20 @@ class MoshShell {
     final info = await startMoshServer(ssh, command: command, server: server);
     MoshClient? client;
     try {
-      final address = resolve != null
-          ? await resolve(info)
-          : await moshServerAddress(
-              ssh.host.hostname,
-              sshConnection: info.sshConnection,
-            );
+      final InternetAddress address;
+      try {
+        address = resolve != null
+            ? await resolve(info)
+            : await moshServerAddress(
+                ssh.host.hostname,
+                sshConnection: info.sshConnection,
+              );
+      } on SocketException {
+        throw MoshUnreachableException(
+          'Could not find an address for ${ssh.host.hostname} to reach '
+          'mosh-server on.',
+        );
+      }
       client = MoshClient(
         key: parseMoshKey(info.key),
         address: address,
@@ -67,17 +77,18 @@ class MoshShell {
         bind: bind,
         prediction: prediction,
       );
-      await client.connect(timeout: connectTimeout);
-      return MoshShell._(client, info);
-    } catch (error) {
+      try {
+        await client.connect(timeout: connectTimeout);
+      } on SocketException catch (e) {
+        throw MoshUnreachableException(
+          'Could not open a UDP socket: ${e.osError?.message ?? e.message}',
+        );
+      }
+      return MoshShell.attach(client, info);
+    } catch (_) {
       client?.abandon();
       final pid = info.pid;
       if (pid != null) unawaited(stopMoshServer(ssh, pid));
-      if (error is SocketException) {
-        throw MoshUnreachableException(
-          'Could not find an address for ${ssh.host.hostname}.',
-        );
-      }
       rethrow;
     }
   }
@@ -133,6 +144,16 @@ class MoshShell {
     }
   }
 }
+
+/// How a session starts its Mosh terminal: [MoshShell.start], or a stand-in
+/// in tests.
+typedef MoshStarter =
+    Future<MoshShell> Function(
+      SessionTransport ssh, {
+      required int columns,
+      required int rows,
+      String? command,
+    });
 
 /// The one line said in the terminal when a Mosh host gets an SSH terminal
 /// instead, and why.

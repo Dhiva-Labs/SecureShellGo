@@ -62,8 +62,9 @@ class MoshTransport {
   /// version.
   void Function(String reason)? onFatal;
 
-  /// Called after a new screen state has been accepted.
-  void Function()? onRemoteState;
+  /// Called after every complete instruction from the server, whether or
+  /// not it brought a new screen.
+  void Function()? onInstruction;
 
   // ---------------------------------------------------------------- sender
 
@@ -323,7 +324,9 @@ class MoshTransport {
       malformed++;
       return;
     }
-    if (instruction != null) _receiveInstruction(instruction);
+    if (instruction == null) return;
+    _receiveInstruction(instruction);
+    onInstruction?.call();
   }
 
   void _receiveInstruction(TransportInstruction inst) {
@@ -379,7 +382,6 @@ class MoshTransport {
     _ackNum = received.num;
     _lastHeard = received.timestamp;
     if (inst.diff.isNotEmpty) _pendingDataAck = true;
-    onRemoteState?.call();
   }
 
   void _processThrowawayUntil(int throwawayNum) {

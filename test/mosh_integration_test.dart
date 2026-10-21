@@ -7,7 +7,9 @@ import 'package:secure_shell_go/models/host.dart';
 import 'package:secure_shell_go/services/known_hosts_service.dart';
 import 'package:secure_shell_go/services/mosh/mosh_connection.dart';
 import 'package:secure_shell_go/services/mosh/mosh_shell.dart';
+import 'package:secure_shell_go/services/persistent_shell.dart';
 import 'package:secure_shell_go/services/remote_exec.dart';
+import 'package:secure_shell_go/services/session_controller.dart';
 import 'package:secure_shell_go/services/ssh_service.dart';
 import 'package:xterm/core.dart';
 
@@ -273,6 +275,126 @@ void main() {
     skip: skip,
     timeout: timeout,
   );
+
+  group('through a session', () {
+    Future<SessionController> session({
+      PersistentSession persistent = PersistentSession.off,
+    }) async {
+      final host = lab.host(
+        transport: HostTransport.mosh,
+        persistentSession: persistent,
+      );
+      final controller = SessionController(
+        connection: await lab.connect(host: host),
+        reconnect: ReconnectSupport(
+          loadCredentials: (_) async => lab.credentials,
+          connect:
+              ({required host, required credentials, required verifyHostKey}) =>
+                  lab.connect(host: host),
+        ),
+      );
+      addTearDown(controller.dispose);
+      controller.terminal.resize(100, 30);
+      return controller;
+    }
+
+    Future<void> showsOnScreen(SessionController controller, String text) =>
+        _until(
+          () => controller.terminal.buffer.getText().contains(text),
+          timeout: const Duration(seconds: 15),
+        );
+
+    test(
+      'a Mosh host gets its terminal over Mosh',
+      () async {
+        final controller = await session();
+        await controller.ensureShell();
+        controller.terminal.textInput('echo via-\$((20+22))\r');
+        await showsOnScreen(controller, 'via-42');
+        expect(
+          controller.terminal.buffer.getText(),
+          isNot(contains('Using SSH')),
+        );
+      },
+      skip: skip,
+      timeout: timeout,
+    );
+
+    test(
+      'without mosh-server it falls back to SSH, saying so in one line',
+      () async {
+        final missing = File(lab.path('mosh-missing'))..createSync();
+        addTearDown(missing.deleteSync);
+        final controller = await session();
+        await controller.ensureShell();
+        expect(
+          controller.terminal.buffer.getText(),
+          contains(
+            'mosh-server is not installed on this host. Using SSH for '
+            'this terminal.',
+          ),
+        );
+        controller.terminal.textInput('echo over-\$((1+1))-ssh\r');
+        await showsOnScreen(controller, 'over-2-ssh');
+      },
+      skip: skip,
+      timeout: timeout,
+    );
+
+    test(
+      'a persistent session runs inside screen under mosh-server',
+      () async {
+        final controller = await session(persistent: PersistentSession.screen);
+        final name = persistentSessionName(controller.host, 1);
+        addTearDown(() async {
+          final ssh = await lab.connect();
+          await RemoteExec.run(ssh, 'screen -S $name -X quit');
+          ssh.close();
+        });
+        await controller.ensureShell();
+        controller.terminal.textInput('echo "in:\$STY"\r');
+        await showsOnScreen(controller, '.$name');
+      },
+      skip:
+          skip ??
+          (Process.runSync('sh', ['-c', 'command -v screen']).exitCode != 0
+              ? 'needs GNU screen'
+              : null),
+      timeout: timeout,
+    );
+
+    test(
+      'the terminal carries on while SSH drops and comes back',
+      () async {
+        final controller = await session();
+        await controller.ensureShell();
+        controller.terminal.textInput('echo first-\$((1+1))\r');
+        await showsOnScreen(controller, 'first-2');
+
+        final dropped = controller.connection;
+        dropped.close();
+        await _until(
+          () => controller.isReconnecting || dropped != controller.connection,
+        );
+        expect(controller.isClosed, isFalse);
+
+        controller.terminal.textInput('echo during-\$((2+2))\r');
+        await showsOnScreen(controller, 'during-4');
+
+        await _until(
+          () => !controller.isReconnecting && controller.connection != dropped,
+          timeout: const Duration(seconds: 30),
+        );
+        controller.terminal.textInput('echo after-\$((3+3))\r');
+        await showsOnScreen(controller, 'after-6');
+        // Files are back on the new connection.
+        final files = await controller.sftp();
+        expect(await files.home(), isNotEmpty);
+      },
+      skip: skip,
+      timeout: timeout,
+    );
+  });
 }
 
 Future<void> _until(
@@ -372,6 +494,9 @@ class _MoshLab {
     final wrapper = File(at('bin/mosh-server'))
       ..writeAsStringSync(
         '#!/bin/sh\n'
+        // A test switches mosh-server "off" by creating this file.
+        'if [ -e ${at('mosh-missing')} ]; then '
+        'echo "mosh-server: not found" >&2; exit 127; fi\n'
         '${server.libs == null ? '' : 'LD_LIBRARY_PATH=${server.libs} '}'
         'exec ${server.exe} "\$@"\n',
       );
@@ -390,6 +515,7 @@ UsePAM no
 StrictModes no
 PasswordAuthentication no
 KbdInteractiveAuthentication no
+Subsystem sftp internal-sftp
 SetEnv PATH=${at('bin')}:/usr/local/bin:/usr/bin:/bin
 ''');
     final sshd = await Process.start('/usr/sbin/sshd', [
@@ -457,7 +583,10 @@ SetEnv PATH=${at('bin')}:/usr/local/bin:/usr/bin:/bin
     return (exe: '$root/usr/bin/mosh-server', libs: libs);
   }
 
-  Host host({HostTransport transport = HostTransport.ssh}) => Host(
+  Host host({
+    HostTransport transport = HostTransport.ssh,
+    PersistentSession persistentSession = PersistentSession.off,
+  }) => Host(
     id: 'mosh-lab',
     label: 'mosh-lab',
     hostname: '127.0.0.1',
@@ -465,6 +594,7 @@ SetEnv PATH=${at('bin')}:/usr/local/bin:/usr/bin:/bin
     username: Platform.environment['USER']!,
     authMethod: SshAuthMethod.privateKey,
     transport: transport,
+    persistentSession: persistentSession,
   );
 
   SshCredentials get credentials =>

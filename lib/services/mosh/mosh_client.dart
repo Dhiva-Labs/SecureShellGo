@@ -65,7 +65,7 @@ class MoshClient {
             clock: clock,
           )
           ..onFatal = _fatal
-          ..onRemoteState = _remoteStateArrived;
+          ..onInstruction = _instructionArrived;
     // Mosh's client sends its keystrokes with a minimal delay.
     transport.sendMinDelay = 1;
     _shown = MoshFramebuffer(_columns, _rows);
@@ -127,9 +127,8 @@ class MoshClient {
         ),
       );
       throw MoshUnreachableException(
-        'No reply from mosh-server over UDP from '
-        '${connection.serverAddress.address} port ${connection.serverPort}. '
-        'A firewall is probably blocking it.',
+        'mosh-server did not answer on UDP port ${connection.serverPort}; '
+        'a firewall is probably blocking it.',
       );
     }
   }
@@ -201,7 +200,7 @@ class MoshClient {
 
   void _fatal(String reason) => _finish(MoshExit(clean: false, reason: reason));
 
-  void _remoteStateArrived() {
+  void _instructionArrived() {
     _notifications.serverHeard(transport.latestRemoteStateTimestamp);
     _notifications.serverAcked(transport.sentStateAckedTimestamp);
     _predictions

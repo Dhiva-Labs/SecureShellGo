@@ -14,6 +14,7 @@ import 'device_storage.dart';
 import 'direct_remote_copy.dart';
 import 'download_announcer.dart';
 import 'download_plan.dart';
+import 'mosh/mosh_shell.dart';
 import 'persistent_shell.dart';
 import 'remote_copy.dart';
 import 'remote_exec.dart';
@@ -125,7 +126,10 @@ class SessionController {
     ReconnectSupport? reconnect,
     ReconnectDelayScheduler reconnectScheduler = Timer.new,
     DateTime Function() clock = DateTime.now,
+    MoshStarter startMosh = MoshShell.start,
   })  : _connection = connection,
+        // ignore: prefer_initializing_formals
+        _startMosh = startMosh,
         // ignore: prefer_initializing_formals
         _clock = clock,
         _storage = storage ?? createDefaultDeviceStorage(),
@@ -258,6 +262,17 @@ class SessionController {
 
   SSHSession? _shell;
   Future<SSHSession>? _shellOpening;
+
+  /// The terminal, when it runs over Mosh instead of an SSH shell channel —
+  /// see [_openMoshShell]. It outlives SSH drops: the transport below can
+  /// die and be replaced while this carries on.
+  MoshShell? _mosh;
+  final MoshStarter _startMosh;
+
+  /// The transport generation whose SSH connection was lost under a live
+  /// Mosh terminal; see [_markClosed].
+  int? _sshLostUnderMosh;
+
   Future<RemoteFileSystem>? _sftpOpening;
   RemoteFileSystem? _sftp;
 
@@ -412,7 +427,7 @@ class SessionController {
   }
 
   /// True once the shell channel has been opened.
-  bool get hasShell => _shell != null;
+  bool get hasShell => _shell != null || _mosh != null;
 
   /// Whether keep-alives are still being sent. Diagnostics and tests.
   bool get isKeepaliveRunning => _keepalive.isRunning;
@@ -429,7 +444,13 @@ class SessionController {
 
   /// What the terminal area should say about the reconnection, or null when
   /// there is nothing to say.
-  String? get reconnectMessage => _reconnector?.message;
+  String? get reconnectMessage {
+    final message = _reconnector?.message;
+    if (message != null && _mosh != null && !_closed) {
+      return '$message The terminal carries on over Mosh.';
+    }
+    return message;
+  }
 
   /// True once reconnection has been tried and abandoned. Distinguishes "this
   /// session is gone and we did what we could" from "this session is gone".
@@ -468,6 +489,7 @@ class SessionController {
   /// refused login, a changed host key, the user — stays stopped.
   Future<void> networkCameBack() async {
     if (_disposed) return;
+    _mosh?.networkChanged();
     final reconnector = _reconnector;
     if (_closed) {
       if (reconnector != null &&
@@ -520,7 +542,8 @@ class SessionController {
     _connection = next;
     _transportGeneration++;
 
-    _resetShell();
+    // A Mosh terminal never depended on the transport that died.
+    if (_mosh == null) _resetShell();
     // The old channels died with the old transport. Dropping the handles is
     // what makes the file browser's next call open a fresh one rather than
     // write into a closed channel.
@@ -538,6 +561,11 @@ class SessionController {
     transfers.resumeInterrupted();
     _notify();
 
+    final mosh = _mosh;
+    if (mosh != null) {
+      unawaited(mosh.checkServer(next));
+      return;
+    }
     _writeToTerminal(
       '\r\n\x1b[2m── reconnected to ${host.displayName} ──\x1b[0m\r\n',
     );
@@ -609,6 +637,22 @@ class SessionController {
     // it just no longer speaks for this session. See [_transportGeneration].
     if (generation != _transportGeneration) return;
     if (_closed) return;
+    // The terminal is on Mosh and carries on without SSH, so the session is
+    // not closed: the terminal stays usable, and only files, tunnels and
+    // commands wait while the transport is rebuilt underneath.
+    if (_mosh != null && retryable && !_disposed) {
+      if (_sshLostUnderMosh == generation) return;
+      _sshLostUnderMosh = generation;
+      _keepalive.stop();
+      if (_reconnector == null) {
+        transfers.cancelAll();
+      } else {
+        transfers.interruptAll();
+      }
+      _reconnector?.begin();
+      _notify();
+      return;
+    }
     _closed = true;
     _closeReason = reason;
     // Nothing left to keep alive. Stopping here rather than only in dispose()
@@ -688,6 +732,9 @@ class SessionController {
     }
     _shell = null;
     _shellOpening = null;
+    final mosh = _mosh;
+    _mosh = null;
+    if (mosh != null) unawaited(mosh.close());
     _shellReady = null;
     _shellStarted = false;
     _shellError = null;
@@ -747,6 +794,11 @@ class SessionController {
     );
 
     try {
+      if (host.transport == HostTransport.mosh && await _openMoshShell()) {
+        _shellStarted = true;
+        _notify();
+        return;
+      }
       final opened = await _openPersistentOrPlainShell();
       final session = opened.session;
 
@@ -844,6 +896,60 @@ class SessionController {
     }
   }
 
+  /// Starts the terminal on Mosh, for a host whose terminal connection is set
+  /// to it. False, with a line in the terminal saying why, when Mosh cannot
+  /// be used here and an SSH shell should open instead.
+  ///
+  /// A persistent session's tmux or screen runs under `mosh-server` just as
+  /// it would under SSH, so a Mosh terminal can be re-attached too.
+  Future<bool> _openMoshShell() async {
+    // The first Mosh frame clears the screen; a fallback overwrites the line.
+    _writeToTerminal('\x1b[2mStarting Mosh…\x1b[0m');
+    final kind = host.persistentSession;
+    final command = persistentShellCommand(kind, persistentName);
+    var fresh = true;
+    if (command != null && startupCommandPayload(host.startupCommand) != null) {
+      fresh = await _persistentShellIsNew(kind) ?? false;
+    }
+    final MoshShell mosh;
+    try {
+      mosh = await _startMosh(
+        connection,
+        columns: terminal.viewWidth,
+        rows: terminal.viewHeight,
+        command: command,
+      );
+    } catch (error) {
+      if (_closed) rethrow;
+      _writeToTerminal(
+        '\r\x1b[K\x1b[2m${moshFallbackNotice(error)}\x1b[0m\r\n',
+      );
+      return false;
+    }
+    if (_disposed) {
+      unawaited(mosh.close());
+      return true;
+    }
+    _mosh = mosh;
+    _shellOutput.add(mosh.output.listen(_writeToTerminal));
+    unawaited(mosh.done.then((exit) {
+      if (!identical(_mosh, mosh)) return;
+      _mosh = null;
+      if (exit.clean) _shellExitedCleanly = true;
+      // Ended while the SSH connection was also down: the session is now
+      // what it would have been without Mosh — closed, and reconnecting.
+      if (_sshLostUnderMosh == _transportGeneration) {
+        _markClosed('Connection lost.', _transportGeneration, retryable: true);
+        return;
+      }
+      reportShellEnded(exit.clean
+          ? 'Mosh session ended.'
+          : 'Mosh session ended: ${exit.reason}');
+    }));
+    if (fresh) _sendStartupCommand();
+    return true;
+  }
+
   /// Whether the persistent shell about to open is a new one: true, false,
   /// or null when the server could not say (treated as "not new").
   Future<bool?> _persistentShellIsNew(PersistentSession kind) async {
@@ -893,8 +999,14 @@ class SessionController {
   /// channel.
   void _sendStartupCommand() {
     final payload = startupCommandPayload(host.startupCommand);
+    if (payload == null) return;
+    final mosh = _mosh;
+    if (mosh != null) {
+      mosh.write(payload);
+      return;
+    }
     final shell = _shell;
-    if (payload == null || shell == null) return;
+    if (shell == null) return;
     try {
       shell.write(Uint8List.fromList(utf8.encode(payload)));
     } catch (_) {
@@ -903,14 +1015,20 @@ class SessionController {
   }
 
   void _sendToShell(String data) {
+    final mosh = _mosh;
     final shell = _shell;
-    if (shell == null || _closed) return;
+    // A Mosh terminal takes keystrokes whatever SSH is doing.
+    if (mosh == null && (shell == null || _closed)) return;
     final payload = transformInput?.call(data) ?? data;
-    try {
-      shell.write(Uint8List.fromList(utf8.encode(payload)));
-    } catch (_) {
-      // Keystroke arrived after the channel closed; the disconnect banner is
-      // already on its way.
+    if (mosh != null) {
+      mosh.write(payload);
+    } else {
+      try {
+        shell!.write(Uint8List.fromList(utf8.encode(payload)));
+      } catch (_) {
+        // Keystroke arrived after the channel closed; the disconnect banner
+        // is already on its way.
+      }
     }
     // Announced after the local write, never instead of it: this session is
     // the one the user is typing in and it gets its keystroke whatever any
@@ -922,6 +1040,7 @@ class SessionController {
   void _handleTerminalResize(int width, int height, int pixelWidth,
       int pixelHeight) {
     if (!_initialSize.isCompleted) _initialSize.complete();
+    _mosh?.resize(width, height);
     if (_closed) return;
     try {
       // Propagate SIGWINCH so full-screen programs (vim, htop, less) reflow.
@@ -935,6 +1054,14 @@ class SessionController {
   /// Opens the SFTP subsystem, once, on the connection that is already
   /// authenticated. No second login, no second host-key prompt.
   Future<RemoteFileSystem> sftp() {
+    // The terminal is carrying on over Mosh, but the SSH connection under
+    // the files is gone until the reconnect brings it back.
+    if (_sshLostUnderMosh == _transportGeneration) {
+      return Future<RemoteFileSystem>.error(
+        const SftpFailure('The SSH connection dropped and is reconnecting; '
+            'files will be back with it.'),
+      );
+    }
     final existing = _sftp;
     if (existing != null) return Future<RemoteFileSystem>.value(existing);
     if (_closed) {
@@ -1721,6 +1848,10 @@ class SessionController {
     }
     _shell = null;
     _shellOpening = null;
+    // Says goodbye to mosh-server in its own time; the tab is gone either way.
+    final mosh = _mosh;
+    _mosh = null;
+    if (mosh != null) unawaited(mosh.close());
 
     connection.close();
     _closed = true;
