@@ -223,4 +223,200 @@ void main() {
       expect(keepalive.skippedCount, isZero);
     });
   });
+
+  group('dead links', () {
+    /// A keep-alive whose pings the test answers or not, on a clock the test
+    /// moves, with a server whose last inbound byte the test sets.
+    ({
+      SessionKeepalive keepalive,
+      FakeScheduler scheduler,
+      void Function(bool) answer,
+      void Function(Duration) advance,
+      void Function() heard,
+      List<int> deaths,
+    }) build({bool answering = true}) {
+      var answers = answering;
+      var now = DateTime(2026, 10, 21, 12);
+      DateTime? lastInbound;
+      final deaths = <int>[];
+      final scheduler = FakeScheduler();
+      final keepalive = SessionKeepalive(
+        // A ping that is not answered fails at once rather than after
+        // `pingTimeout` of real time; to the keep-alive it is the same miss.
+        ping: () async {
+          if (!answers) throw TimeoutException('no answer');
+        },
+        scheduler: scheduler.create,
+        lastInbound: () => lastInbound,
+        onDead: () => deaths.add(1),
+        clock: () => now,
+      );
+      return (
+        keepalive: keepalive,
+        scheduler: scheduler,
+        answer: (value) => answers = value,
+        advance: (by) => now = now.add(by),
+        heard: () => lastInbound = now,
+        deaths: deaths,
+      );
+    }
+
+    Future<void> tick(
+      ({
+        SessionKeepalive keepalive,
+        FakeScheduler scheduler,
+        void Function(bool) answer,
+        void Function(Duration) advance,
+        void Function() heard,
+        List<int> deaths,
+      }) harness,
+    ) async {
+      harness.advance(SessionKeepalive.interval);
+      harness.scheduler.only.fire();
+      await Future<void>.delayed(Duration.zero);
+    }
+
+    test('three missed pings with nothing heard is a dead link', () async {
+      final harness = build();
+      harness.keepalive.start();
+      addTearDown(harness.keepalive.stop);
+
+      await tick(harness); // answered: the link is known to work
+      harness.answer(false);
+      await tick(harness);
+      await tick(harness);
+      expect(harness.deaths, isEmpty, reason: 'two misses are not enough');
+      await tick(harness);
+
+      expect(harness.deaths, hasLength(1));
+      expect(harness.keepalive.isDead, isTrue);
+      expect(harness.keepalive.isRunning, isFalse,
+          reason: 'nothing left to keep alive');
+    });
+
+    test('a quiet link that answers is never called dead', () async {
+      final harness = build();
+      harness.keepalive.start();
+      addTearDown(harness.keepalive.stop);
+
+      // An idle shell overnight: nothing on screen, every keep-alive
+      // answered.
+      for (var i = 0; i < 50; i++) {
+        await tick(harness);
+      }
+
+      expect(harness.deaths, isEmpty);
+      expect(harness.keepalive.missedInARow, 0);
+    });
+
+    test('bytes from the server keep a slow link alive', () async {
+      final harness = build();
+      harness.keepalive.start();
+      addTearDown(harness.keepalive.stop);
+      await tick(harness);
+
+      // Keep-alive answers stuck behind a big download: no answers, but the
+      // server is plainly still sending.
+      harness.answer(false);
+      for (var i = 0; i < 6; i++) {
+        await tick(harness);
+        harness.advance(const Duration(seconds: 5));
+        harness.heard();
+      }
+      expect(harness.deaths, isEmpty);
+
+      // And then it really does stop.
+      for (var i = 0; i < 3; i++) {
+        await tick(harness);
+      }
+      expect(harness.deaths, hasLength(1));
+    });
+
+    test('a server that never answered is never judged', () async {
+      final harness = build(answering: false);
+      harness.keepalive.start();
+      addTearDown(harness.keepalive.stop);
+
+      for (var i = 0; i < 10; i++) {
+        await tick(harness);
+      }
+
+      expect(harness.deaths, isEmpty);
+      expect(harness.keepalive.hasAnswered, isFalse);
+    });
+
+    test('an answer resets the count', () async {
+      final harness = build();
+      harness.keepalive.start();
+      addTearDown(harness.keepalive.stop);
+      await tick(harness);
+
+      harness.answer(false);
+      await tick(harness);
+      await tick(harness);
+      harness.answer(true);
+      await tick(harness);
+      harness.answer(false);
+      await tick(harness);
+      await tick(harness);
+
+      expect(harness.deaths, isEmpty);
+      expect(harness.keepalive.missedInARow, 2);
+    });
+
+    test('pingNow sends the first one straight away', () async {
+      final harness = build();
+      harness.keepalive.start(pingNow: true);
+      addTearDown(harness.keepalive.stop);
+      await Future<void>.delayed(Duration.zero);
+
+      expect(harness.keepalive.pingCount, 1);
+      expect(harness.keepalive.hasAnswered, isTrue);
+    });
+
+    group('a probe', () {
+      test('answered is alive', () async {
+        final harness = build();
+        harness.keepalive.start();
+        addTearDown(harness.keepalive.stop);
+
+        expect(await harness.keepalive.probe(), isTrue);
+        expect(harness.keepalive.hasAnswered, isTrue);
+      });
+
+      test('unanswered on a link that used to answer is dead at once',
+          () async {
+        final harness = build();
+        harness.keepalive.start(pingNow: true);
+        addTearDown(harness.keepalive.stop);
+        await Future<void>.delayed(Duration.zero);
+
+        harness.answer(false);
+        expect(await harness.keepalive.probe(), isFalse);
+        expect(harness.deaths, hasLength(1));
+      });
+
+      test('unanswered while bytes arrive is still alive', () async {
+        final harness = build();
+        harness.keepalive.start(pingNow: true);
+        addTearDown(harness.keepalive.stop);
+        await Future<void>.delayed(Duration.zero);
+
+        harness.answer(false);
+        harness.heard();
+        expect(await harness.keepalive.probe(), isTrue);
+        expect(harness.deaths, isEmpty);
+      });
+
+      test('unanswered by a server that never answered proves nothing',
+          () async {
+        final harness = build(answering: false);
+        harness.keepalive.start();
+        addTearDown(harness.keepalive.stop);
+
+        expect(await harness.keepalive.probe(), isTrue);
+        expect(harness.deaths, isEmpty);
+      });
+    });
+  });
 }

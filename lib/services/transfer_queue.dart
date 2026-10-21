@@ -36,15 +36,25 @@ enum TransferStatus {
   running,
   completed,
   failed,
-  cancelled;
+  cancelled,
+
+  /// Cut off by the connection dropping — this session's, or the other end's
+  /// for a server-to-server copy. Not a failure and not the user's decision:
+  /// it goes back in the queue by itself once the connection is back. See
+  /// [TransferQueue.interruptAll] and [TransferQueue.resumeInterrupted].
+  interrupted;
 
   bool get isFinished =>
       this == TransferStatus.completed ||
       this == TransferStatus.failed ||
       this == TransferStatus.cancelled;
 
+  /// Still owed to the user: waiting, moving, or waiting for the connection
+  /// to come back. Closing the session would lose it.
   bool get isActive =>
-      this == TransferStatus.queued || this == TransferStatus.running;
+      this == TransferStatus.queued ||
+      this == TransferStatus.running ||
+      this == TransferStatus.interrupted;
 }
 
 /// One queued file transfer, and its live progress.
@@ -171,7 +181,8 @@ class TransferTask {
   TransferStatus status = TransferStatus.queued;
 
   /// Human-readable failure reason, set when [status] is
-  /// [TransferStatus.failed].
+  /// [TransferStatus.failed] — or what an [TransferStatus.interrupted]
+  /// transfer is waiting for, when that is more than its own connection.
   String? error;
 
   /// Where the bytes ended up — the MediaStore display name for a download,
@@ -288,6 +299,26 @@ class TransferCancelled implements Exception {
   String toString() => 'Transfer cancelled';
 }
 
+/// Thrown by an executor whose work goes on without it — a copy running as a
+/// job on the source server, left to finish there when the session went. The
+/// row ends as cancelled even when the session only dropped: running it again
+/// would start a second copy of a job that is still going, and the session
+/// manager follows the job again once both ends are back.
+class TransferHandedOff extends TransferCancelled {
+  const TransferHandedOff();
+}
+
+/// Thrown by an executor that was cut off by a connection going away rather
+/// than by anything about the file — see [TransferStatus.interrupted].
+class TransferInterrupted implements Exception {
+  const TransferInterrupted([this.message]);
+
+  final String? message;
+
+  @override
+  String toString() => message ?? 'Transfer interrupted';
+}
+
 /// Moves the bytes for one task. Injected so the queue's sequencing,
 /// progress and cancellation logic can be tested without an SSH server.
 typedef TransferExecutor = Future<void> Function(
@@ -313,6 +344,10 @@ class TransferQueue {
   var _pumping = false;
   var _closed = false;
   var _idCounter = 0;
+
+  /// While true nothing new is started: the connection the transfers would
+  /// run on is gone. Set by [interruptAll], cleared by [resumeInterrupted].
+  var _suspended = false;
 
   /// Emits the full task list whenever anything changes.
   Stream<List<TransferTask>> get changes => _controller.stream;
@@ -468,7 +503,8 @@ class TransferQueue {
     final task = _find(id);
     if (task == null || task.status.isFinished) return;
 
-    if (task.status == TransferStatus.queued) {
+    if (task.status == TransferStatus.queued ||
+        task.status == TransferStatus.interrupted) {
       task.status = TransferStatus.cancelled;
       task.finishedAt = DateTime.now();
       _publish();
@@ -490,6 +526,87 @@ class TransferQueue {
     for (final task in _tasks.where((t) => t.status.isActive).toList()) {
       _cancelTask(task.id, abandoned: true);
     }
+  }
+
+  /// Stops everything still queued or running, because the connection has
+  /// gone — and keeps it, unlike [cancelAll], to run again once the
+  /// connection is back.
+  ///
+  /// The transfer that was moving is told to stop exactly as a cancel would
+  /// tell it ([TransferHandle.isAbandoned] included, so a copy running as a
+  /// job on the server is left to finish there). Nothing starts again until
+  /// [resumeInterrupted].
+  void interruptAll() {
+    _suspended = true;
+    interruptWhere((_) => true);
+  }
+
+  /// Interrupts the queued and running transfers that [test] picks — the
+  /// copies headed for a server whose connection has just dropped, while
+  /// this session's own carries on with the rest.
+  void interruptWhere(bool Function(TransferTask task) test) {
+    var changed = false;
+    for (final task in _tasks) {
+      if (task.status != TransferStatus.queued &&
+          task.status != TransferStatus.running) {
+        continue;
+      }
+      if (!test(task)) continue;
+      _handles[task.id]?._cancel(abandoned: true);
+      task.status = TransferStatus.interrupted;
+      changed = true;
+    }
+    if (changed) _publish();
+  }
+
+  /// Puts every interrupted transfer [test] picks (all of them by default)
+  /// back in the queue, where it was, and lets the queue run again.
+  ///
+  /// The same row and the same id, reset, rather than a fresh task the way
+  /// [retry] makes one: nothing went wrong with the transfer, and whatever is
+  /// following it by id — a fleet push, an announcement — should see it carry
+  /// on, not vanish. It starts from the beginning; the half it had moved
+  /// was discarded when it stopped.
+  void resumeInterrupted({bool Function(TransferTask task)? test}) {
+    if (_closed) return;
+    if (test == null) _suspended = false;
+    var changed = false;
+    for (final task in _tasks) {
+      if (task.status != TransferStatus.interrupted) continue;
+      if (test != null && !test(task)) continue;
+      task
+        ..status = TransferStatus.queued
+        ..transferredBytes = 0
+        ..error = null
+        ..destination = null
+        ..destinationUri = null
+        ..routeUsed = null
+        ..routeFallbackReason = null
+        ..startedAt = null
+        ..finishedAt = null;
+      changed = true;
+    }
+    if (changed) _publish();
+    unawaited(_pump());
+  }
+
+  /// Ends interrupted transfers [test] picks as failed, with [reason] — for
+  /// when what they were waiting for is never coming back, such as the
+  /// destination session being closed.
+  void failInterrupted(
+    bool Function(TransferTask task) test, {
+    required String reason,
+  }) {
+    var changed = false;
+    for (final task in _tasks) {
+      if (task.status != TransferStatus.interrupted || !test(task)) continue;
+      task
+        ..status = TransferStatus.failed
+        ..error = reason
+        ..finishedAt = DateTime.now();
+      changed = true;
+    }
+    if (changed) _publish();
   }
 
   /// Queues a failed transfer again, and drops the row it failed on.
@@ -555,7 +672,7 @@ class TransferQueue {
     if (_pumping) return;
     _pumping = true;
     try {
-      while (true) {
+      while (!_suspended) {
         final next = _tasks.cast<TransferTask?>().firstWhere(
               (t) => t!.status == TransferStatus.queued,
               orElse: () => null,
@@ -580,19 +697,33 @@ class TransferQueue {
       await _executor(task, handle);
       // A cancel that landed mid-flight has already set the status; do not
       // overwrite it with "completed" just because the executor returned
-      // normally after noticing the flag.
-      if (task.status == TransferStatus.running) {
-        task.status = handle.isCancelled
+      // normally after noticing the flag. An interruption that landed after
+      // the work was done, though, is no reason to do the work twice.
+      if (task.status == TransferStatus.running ||
+          task.status == TransferStatus.interrupted) {
+        task.status = task.status == TransferStatus.running &&
+                handle.isCancelled
             ? TransferStatus.cancelled
             : TransferStatus.completed;
         if (task.status == TransferStatus.completed && task.totalBytes == null) {
           task.totalBytes = task.transferredBytes;
         }
       }
-    } on TransferCancelled {
+    } on TransferHandedOff {
       task.status = TransferStatus.cancelled;
+    } on TransferCancelled {
+      if (task.status != TransferStatus.interrupted) {
+        task.status = TransferStatus.cancelled;
+      }
+    } on TransferInterrupted catch (e) {
+      if (task.status != TransferStatus.cancelled) {
+        task.status = TransferStatus.interrupted;
+        task.error = e.message;
+      }
     } catch (e) {
-      if (handle.isCancelled) {
+      if (task.status == TransferStatus.interrupted) {
+        // The connection going is what broke it; the error is only how.
+      } else if (handle.isCancelled) {
         task.status = TransferStatus.cancelled;
       } else {
         task.status = TransferStatus.failed;

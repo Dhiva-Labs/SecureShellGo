@@ -96,13 +96,21 @@ class SessionReconnector {
     required Future<void> Function(SessionTransport transport) adopt,
     ReconnectPolicy? policy,
     ReconnectDelayScheduler scheduler = Timer.new,
+    DateTime Function() clock = DateTime.now,
   })  : _policy = policy ?? ReconnectPolicy(),
         // ignore: prefer_initializing_formals
         _support = support,
         // ignore: prefer_initializing_formals
         _adopt = adopt,
         // ignore: prefer_initializing_formals
-        _scheduler = scheduler;
+        _scheduler = scheduler,
+        // ignore: prefer_initializing_formals
+        _clock = clock;
+
+  /// How long a connection this produced has to stay up before its death
+  /// counts as a new drop with a fresh schedule, rather than as the last
+  /// attempt failing late. See [ReconnectPolicy.reopen].
+  static const Duration stableAfter = Duration(seconds: 30);
 
   final Host host;
 
@@ -113,8 +121,21 @@ class SessionReconnector {
   /// the same tab and the same pane.
   final Future<void> Function(SessionTransport transport) _adopt;
 
-  final ReconnectPolicy _policy;
+  /// Not final: a schedule that has finished is replaced by a fresh one when
+  /// there is a new reason to try — see [begin] and [retryNow].
+  ReconnectPolicy _policy;
   final ReconnectDelayScheduler _scheduler;
+  final DateTime Function() _clock;
+
+  /// When the last attempt handed a transport over, for [stableAfter].
+  DateTime? _connectedAt;
+  var _disposed = false;
+
+  /// True while [_adopt] runs. A transport can die before its adoption has
+  /// finished (the shell is opened as part of it), and that death must not
+  /// be lost to the schedule still reading as `connecting`.
+  var _adopting = false;
+  var _droppedWhileAdopting = false;
 
   Timer? _timer;
   final _changes = StreamController<void>.broadcast();
@@ -156,12 +177,59 @@ class SessionReconnector {
   /// between the "reconnecting" banner and the ordinary disconnected one.
   bool get hasGivenUp => _policy.phase == ReconnectPhase.givenUp;
 
+  /// Whether the schedule ran out of time against a network that was not
+  /// there — the one way of giving up that the network coming back can undo.
+  bool get mayRetryOnNetwork => _policy.exhausted;
+
+  /// True while counting down to the next attempt (as opposed to dialling).
+  bool get isWaiting => _policy.phase == ReconnectPhase.waiting;
+
   /// The transport died in a way worth retrying. Idempotent: a second call
   /// while a schedule is already running is ignored, so a session that
   /// notices its own death twice does not end up with two ladders of timers.
+  ///
+  /// A transport this reconnector produced dying later is a new drop and
+  /// gets a new schedule — unless it died within [stableAfter], in which case
+  /// it is the same trouble and the old schedule carries on where it was.
+  /// Once given up, or stopped by the user, only [retryNow] starts again.
   void begin() {
-    if (_policy.isFinished || _policy.isActive) return;
+    if (_disposed) return;
+    if (_adopting) {
+      _droppedWhileAdopting = true;
+      return;
+    }
+    if (_policy.isActive) return;
+    if (_policy.phase == ReconnectPhase.connected) {
+      final connectedAt = _connectedAt;
+      if (connectedAt != null &&
+          _clock().difference(connectedAt) < stableAfter) {
+        _policy.reopen();
+      } else {
+        _policy = _policy.restarted();
+      }
+    } else if (_policy.isFinished) {
+      return;
+    }
     _schedule();
+  }
+
+  /// Tries now rather than at the end of the current wait — the Reconnect
+  /// button, or the network coming back.
+  ///
+  /// A schedule still running keeps its count and its budget, and only skips
+  /// the wait. One that has finished — given up, stopped, or never started
+  /// because the session ended in an orderly way — is replaced by a fresh
+  /// one. Even a refused password gets its one attempt here: someone asked
+  /// for it, and one attempt is not a lockout.
+  void retryNow() {
+    if (_disposed) return;
+    if (_policy.phase == ReconnectPhase.connecting) return;
+    _timer?.cancel();
+    _timer = null;
+    if (_policy.isFinished || _policy.phase == ReconnectPhase.idle) {
+      _policy = _policy.restarted();
+    }
+    unawaited(_attempt());
   }
 
   void _schedule() {
@@ -210,9 +278,19 @@ class SessionReconnector {
         return;
       }
 
-      await _adopt(transport);
+      _connectedAt = _clock();
+      _adopting = true;
+      try {
+        await _adopt(transport);
+      } finally {
+        _adopting = false;
+      }
       _policy.succeeded();
       _notify();
+      if (_droppedWhileAdopting) {
+        _droppedWhileAdopting = false;
+        begin();
+      }
       return;
     } catch (error) {
       if (_policy.isFinished) return;
@@ -271,6 +349,7 @@ class SessionReconnector {
   }
 
   Future<void> dispose() async {
+    _disposed = true;
     _timer?.cancel();
     _timer = null;
     _policy.stop();

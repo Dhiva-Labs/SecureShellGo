@@ -315,6 +315,24 @@ abstract class SessionTransport {
     String terminalType,
   });
 
+  /// Runs [command] in place of the login shell, under a PTY of the given
+  /// size — how a persistent session starts its shell inside tmux or screen.
+  ///
+  /// Only [SshConnection] can; a transport that cannot throws
+  /// [UnimplementedError] and the session opens a plain shell instead.
+  Future<SSHSession> startCommandShell(
+    String command, {
+    required int columns,
+    required int rows,
+    String terminalType = 'xterm-256color',
+  }) =>
+      throw UnimplementedError('This transport cannot run a shell command.');
+
+  /// When bytes last arrived from the server, or null when unknown. What
+  /// tells a quiet link that is still alive from one the network dropped —
+  /// see `SessionKeepalive`.
+  DateTime? get lastInboundAt => null;
+
   /// Opens the SFTP subsystem on this same authenticated connection.
   Future<SftpClient> openSftp();
 
@@ -401,6 +419,7 @@ class SshConnection implements SessionTransport {
   /// Anything counts — shell output, an SFTP reply, a keepalive answer — so a
   /// dead-link check can tell a quiet connection that is still alive from
   /// one the network has silently dropped.
+  @override
   DateTime? get lastInboundAt => switch (socket) {
         InboundWatchSocket(:final lastInboundAt) => lastInboundAt,
         _ => null,
@@ -458,6 +477,23 @@ class SshConnection implements SessionTransport {
     String terminalType = 'xterm-256color',
   }) {
     return client.shell(
+      pty: SSHPtyConfig(
+        type: terminalType,
+        width: columns > 0 ? columns : 80,
+        height: rows > 0 ? rows : 24,
+      ),
+    );
+  }
+
+  @override
+  Future<SSHSession> startCommandShell(
+    String command, {
+    required int columns,
+    required int rows,
+    String terminalType = 'xterm-256color',
+  }) {
+    return client.execute(
+      command,
       pty: SSHPtyConfig(
         type: terminalType,
         width: columns > 0 ? columns : 80,

@@ -26,10 +26,31 @@ class MethodChannelSessionForeground implements SessionForegroundChannel {
   static const MethodChannel channel =
       MethodChannel('com.dhivalabs.secure_shell_go/session_service');
 
-  @override
-  Future<void> start(String label) => _invoke('start', <String, dynamic>{
-        'label': label,
+  static var _listening = false;
+
+  /// Takes calls *from* the platform on the same channel: so far only
+  /// `timedOut`, sent when Android stopped the service on its own (see
+  /// `SessionForegroundService.onTimeout`). Installed with the first start,
+  /// which is the first moment there is a service to be stopped.
+  static void _listen() {
+    if (_listening) return;
+    _listening = true;
+    try {
+      channel.setMethodCallHandler((call) async {
+        if (call.method == 'timedOut') {
+          SessionForegroundController.instance.platformStopped();
+        }
       });
+    } catch (_) {
+      // No platform to hear from (a unit test with no binding).
+    }
+  }
+
+  @override
+  Future<void> start(String label) {
+    _listen();
+    return _invoke('start', <String, dynamic>{'label': label});
+  }
 
   @override
   Future<void> stop() => _invoke('stop', const <String, dynamic>{});
@@ -79,6 +100,14 @@ class SessionForegroundController {
   var _holders = 0;
   Future<void> _pending = Future<void>.value();
 
+  /// What the notification was last told to say, for [reassert].
+  String? _label;
+
+  /// True when the platform stopped the service while sessions still held
+  /// it — see [platformStopped].
+  bool get stoppedByPlatform => _stoppedByPlatform;
+  var _stoppedByPlatform = false;
+
   /// How many live sessions are currently holding the service open.
   int get holders => _holders;
 
@@ -91,6 +120,8 @@ class SessionForegroundController {
   Future<void> acquire(String label) {
     _holders++;
     if (_holders > 1) return _pending;
+    _label = label;
+    _stoppedByPlatform = false;
     return _enqueue(() => _channel.start(label));
   }
 
@@ -107,6 +138,29 @@ class SessionForegroundController {
   /// rename, and starting one here would strand it.
   Future<void> relabel(String label) {
     if (_holders == 0) return _pending;
+    _label = label;
+    return _enqueue(() => _channel.start(label));
+  }
+
+  /// The platform stopped the service itself — Android's daily limit on a
+  /// `dataSync` service running out, the only type that has one. The
+  /// sessions are still open, and the process is now one the system may
+  /// reclaim once it is in the background, so the service is started again
+  /// the next time the app is on screen, which is when Android allows it and
+  /// when it resets that limit. See [reassert].
+  void platformStopped() {
+    if (_holders == 0) return;
+    _stoppedByPlatform = true;
+  }
+
+  /// Starts the service again if the platform stopped it while sessions
+  /// still hold it. Called when the app comes back on screen.
+  Future<void> reassert() {
+    final label = _label;
+    if (!_stoppedByPlatform || _holders == 0 || label == null) {
+      return _pending;
+    }
+    _stoppedByPlatform = false;
     return _enqueue(() => _channel.start(label));
   }
 
@@ -117,6 +171,7 @@ class SessionForegroundController {
     if (_holders == 0) return _pending;
     _holders--;
     if (_holders > 0) return _pending;
+    _stoppedByPlatform = false;
     return _enqueue(_channel.stop);
   }
 

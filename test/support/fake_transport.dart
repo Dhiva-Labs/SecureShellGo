@@ -47,6 +47,11 @@ class FakeTransportBase extends SessionTransport {
   var closeCount = 0;
   var pingCount = 0;
 
+  /// When the server last sent bytes, as far as a dead-link check is
+  /// concerned. A test moves it forward to make a quiet link look alive.
+  @override
+  DateTime? lastInboundAt;
+
   @override
   Future<void> get done => _done.future;
 
@@ -66,6 +71,15 @@ class FakeTransportBase extends SessionTransport {
 
   @override
   Future<SSHSession> startShell({
+    required int columns,
+    required int rows,
+    String terminalType = 'xterm-256color',
+  }) =>
+      throw UnimplementedError('the shell needs a real SSH channel');
+
+  @override
+  Future<SSHSession> startCommandShell(
+    String command, {
     required int columns,
     required int rows,
     String terminalType = 'xterm-256color',

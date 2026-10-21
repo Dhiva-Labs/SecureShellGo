@@ -21,14 +21,23 @@ import android.os.IBinder
  * A foreground service is the only sanctioned way to say "this process is
  * doing something the user asked for and can see".
  *
- * `dataSync` is the honest foreground service type here. The alternatives do
- * not fit: `connectedDevice` is for companion hardware, `mediaPlayback` and
- * `location` would be lies, and `specialUse` requires a Play Console
- * justification for a case that an existing type already describes. An SSH
- * connection is a long-running network transfer on the user's behalf, which is
- * what `dataSync` is for. Note that this comes with Android 15+'s cumulative
- * six-hour daily budget for `dataSync` — hence [onTimeout], which shuts the
- * service down cleanly instead of letting the platform kill the app.
+ * `specialUse` on Android 14 and later, `dataSync` before. An interactive
+ * terminal is not a data sync: it has no end, and the user may leave it
+ * idle for a day with a build or a tmux session running in it. Android 15
+ * caps `dataSync` at six hours a day in the background and then stops the
+ * service, which for this app meant a session that died for no reason the
+ * user could see. None of the other types fit (`connectedDevice` is for
+ * companion hardware, `mediaPlayback` and `location` would be lies), so this
+ * is the case `specialUse` exists for. It needs the
+ * PROPERTY_SPECIAL_USE_FGS_SUBTYPE property in the manifest and a
+ * declaration in the Play Console, written out in
+ * `store/play-fgs-declaration.md`.
+ *
+ * `dataSync` stays declared beside it: Android 10–13 have no `specialUse`,
+ * and on 14+ it is the fallback if a `specialUse` start is ever refused.
+ * When a `dataSync` service does reach its limit, [onTimeout] stops it
+ * cleanly and tells Dart, which starts it again the next time the app is on
+ * screen — when Android allows it, and resets the limit.
  *
  * A hand-written service rather than `flutter_foreground_task` or similar, for
  * the same reason `StorageBridge.kt` is hand-written: this project keeps zero
@@ -47,6 +56,14 @@ class SessionForegroundService : Service() {
         const val ACTION_START = "com.dhivalabs.secure_shell_go.SESSION_START"
         const val ACTION_STOP = "com.dhivalabs.secure_shell_go.SESSION_STOP"
         const val EXTRA_LABEL = "label"
+
+        /**
+         * Told when Android stops the service by itself ([onTimeout]). Set by
+         * MainActivity to pass the news to Dart over the session-service
+         * channel; null while no activity is there to hear it.
+         */
+        @Volatile
+        var onTimedOut: (() -> Unit)? = null
 
         private const val CHANNEL_ID = "ssh_session"
         private const val NOTIFICATION_ID = 0x5349
@@ -88,17 +105,7 @@ class SessionForegroundService : Service() {
             ?: "SSH session"
         val notification = buildNotification(label)
 
-        // The typed overload is required from API 29 on, and from API 34 on it
-        // is enforced against the manifest's foregroundServiceType.
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            startForeground(
-                NOTIFICATION_ID,
-                notification,
-                ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC,
-            )
-        } else {
-            startForeground(NOTIFICATION_ID, notification)
-        }
+        startInForeground(notification)
 
         // Not sticky: if the process dies the session dies with it, so having
         // Android resurrect a bare service — notification and all, with no
@@ -107,12 +114,52 @@ class SessionForegroundService : Service() {
     }
 
     /**
+     * The typed overload is required from API 29 on, and from API 34 on it is
+     * enforced against the manifest's foregroundServiceType, which declares
+     * both types used here.
+     */
+    private fun startInForeground(notification: Notification) {
+        when {
+            Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE -> {
+                val started = runCatching {
+                    startForeground(
+                        NOTIFICATION_ID,
+                        notification,
+                        ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE,
+                    )
+                }.isSuccess || runCatching {
+                    // Refused as specialUse (a platform that will not take
+                    // the type): dataSync is the one other honest choice.
+                    startForeground(
+                        NOTIFICATION_ID,
+                        notification,
+                        ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC,
+                    )
+                }.isSuccess
+                // Refused both ways — a background start restriction refuses
+                // every type. The session still works while the app is on
+                // screen; a crash here would end it.
+                if (!started) stopSelf()
+            }
+            Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q -> startForeground(
+                NOTIFICATION_ID,
+                notification,
+                ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC,
+            )
+            else -> startForeground(NOTIFICATION_ID, notification)
+        }
+    }
+
+    /**
      * Android 15+ calls this when a `dataSync` service has used up its daily
-     * budget. Stopping promptly is not optional: the platform throws
-     * `ForegroundServiceDidNotStopInTimeException` at apps that linger.
+     * budget — only reachable here on the fallback, `specialUse` has none.
+     * Stopping promptly is not optional: the platform throws
+     * `ForegroundServiceDidNotStopInTimeException` at apps that linger. Dart
+     * is told, so it can start the service again once the app is on screen.
      */
     override fun onTimeout(startId: Int, fgsType: Int) {
         shutDown()
+        runCatching { onTimedOut?.invoke() }
     }
 
     private fun shutDown() {

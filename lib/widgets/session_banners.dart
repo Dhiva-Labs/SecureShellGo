@@ -3,11 +3,12 @@ import 'package:flutter/material.dart';
 import '../services/session_manager.dart';
 
 /// What the strip above a session's terminal says about its connection:
-/// reconnecting, or gone.
+/// reconnecting, gone, or connected with a shell that has ended.
 ///
 /// Reconnecting takes precedence over disconnected: both describe the same
-/// dead transport, but only one is still a live story. Neither blocks
-/// anything — the scrollback stays on screen, and scrollable, underneath.
+/// dead transport, but only one is still a live story. None of them blocks
+/// anything — the scrollback stays on screen, and scrollable, underneath —
+/// and none is a dead end: each offers the way back that fits it.
 ///
 /// Built from the session itself rather than from flags the screen picks
 /// out, so a new state (a shell that exited, a network that came back) is a
@@ -37,7 +38,18 @@ class SessionBanners extends StatelessWidget {
     }
     if (session.isClosed) {
       return _DisconnectedBanner(
-        message: controller.closeReason,
+        message: controller.reconnectGaveUp
+            ? controller.reconnectMessage ?? controller.closeReason
+            : controller.closeReason,
+        onReconnect:
+            controller.canReconnect ? controller.reconnectNow : null,
+        onClose: onCloseTab,
+      );
+    }
+    if (controller.hasShellEnded) {
+      return _ShellEndedBanner(
+        message: controller.shellEndedReason,
+        onRestart: () => controller.restartShell(),
         onClose: onCloseTab,
       );
     }
@@ -94,9 +106,17 @@ class _ReconnectingBanner extends StatelessWidget {
 }
 
 class _DisconnectedBanner extends StatelessWidget {
-  const _DisconnectedBanner({this.message, required this.onClose});
+  const _DisconnectedBanner({
+    this.message,
+    this.onReconnect,
+    required this.onClose,
+  });
 
   final String? message;
+
+  /// Null when the session has no way to reconnect (nothing saved to log in
+  /// with was ever wired in), which leaves Close as the only way on.
+  final VoidCallback? onReconnect;
   final VoidCallback onClose;
 
   @override
@@ -117,13 +137,67 @@ class _DisconnectedBanner extends StatelessWidget {
               ),
             ),
             const SizedBox(width: 8),
+            if (onReconnect != null)
+              TextButton(
+                // However it ended — a schedule that gave up, a Stop, the
+                // server going away — the same tab, scrollback and transfers
+                // are one tap from coming back.
+                onPressed: onReconnect,
+                child: const Text('Reconnect'),
+              ),
             TextButton(
-              // A dead session's tab is the one thing left to do something
-              // about, and closing it is the only useful thing — the others
-              // are unaffected either way.
+              // Closing the tab is the other useful thing to do with a dead
+              // session — the others are unaffected either way.
               onPressed: onClose,
               child: const Text('Close'),
             ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// "Shell ended — Restart": the shell has exited (or detached, or never
+/// opened) while the connection under it is fine. A new shell is one tap on
+/// the same connection — no login, no host-key prompt — and on a host with a
+/// persistent session it is the same tmux or screen session again.
+class _ShellEndedBanner extends StatelessWidget {
+  const _ShellEndedBanner({
+    this.message,
+    required this.onRestart,
+    required this.onClose,
+  });
+
+  final String? message;
+  final VoidCallback onRestart;
+  final VoidCallback onClose;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final detail = message;
+    return Material(
+      color: theme.colorScheme.secondaryContainer.withValues(alpha: 0.5),
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
+        child: Row(
+          children: [
+            Icon(
+              Icons.terminal,
+              color: theme.colorScheme.onSecondaryContainer,
+              size: 20,
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Text(
+                detail == null ? 'Shell ended' : 'Shell ended — $detail',
+                style: const TextStyle(fontSize: 13, height: 1.3),
+              ),
+            ),
+            const SizedBox(width: 8),
+            TextButton(onPressed: onRestart, child: const Text('Restart')),
+            TextButton(onPressed: onClose, child: const Text('Close')),
           ],
         ),
       ),

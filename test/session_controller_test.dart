@@ -747,7 +747,8 @@ void main() {
         await deliver();
       }
 
-      expect(transport.pingCount, 3);
+      // Three ticks, and the one sent as the session opened.
+      expect(transport.pingCount, 4);
       expect(view.announcedNames, [
         ['notes.txt'],
       ]);

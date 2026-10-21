@@ -14,7 +14,9 @@ import 'device_storage.dart';
 import 'direct_remote_copy.dart';
 import 'download_announcer.dart';
 import 'download_plan.dart';
+import 'persistent_shell.dart';
 import 'remote_copy.dart';
+import 'remote_exec.dart';
 import 'remote_path.dart';
 import 'session_keepalive.dart';
 import 'session_reconnect.dart';
@@ -122,7 +124,10 @@ class SessionController {
     PeriodicScheduler keepaliveScheduler = Timer.periodic,
     ReconnectSupport? reconnect,
     ReconnectDelayScheduler reconnectScheduler = Timer.new,
+    DateTime Function() clock = DateTime.now,
   })  : _connection = connection,
+        // ignore: prefer_initializing_formals
+        _clock = clock,
         _storage = storage ?? createDefaultDeviceStorage(),
         // ignore: prefer_initializing_formals
         _openFileSystem = openFileSystem,
@@ -144,6 +149,7 @@ class SessionController {
         support: reconnect,
         adopt: adoptTransport,
         scheduler: reconnectScheduler,
+        clock: clock,
       );
       _reconnector = reconnector;
       // Folded into this session's own change stream, so the banner in the
@@ -217,6 +223,10 @@ class SessionController {
   /// Kept so the replacement keep-alive built by [adoptTransport] uses the
   /// same (possibly faked) clock the first one did.
   final PeriodicScheduler _keepaliveScheduler;
+
+  /// What "now" is, for the dead-link check and the reconnect schedule. A
+  /// test moves it by hand.
+  final DateTime Function() _clock;
 
   /// Rebuilds the transport when it dies unexpectedly, or null when this
   /// session was built without the means to — no credential store and no SSH
@@ -345,6 +355,20 @@ class SessionController {
   /// still up — which is what `exit` looks like from here. See [_markClosed].
   var _shellExitedCleanly = false;
 
+  /// Why the shell ended while the connection stayed up, or null while it is
+  /// running (or has not started).
+  String? _shellEndedReason;
+
+  /// Which slot of its host this tab holds, for the name of the tmux or
+  /// screen session its shell lives in — see [persistentName]. Assigned by
+  /// `SessionManager` when it opens the tab, before any shell is.
+  int persistentSlot = 1;
+
+  /// The tmux or screen session this tab's shell lives in, when its host
+  /// keeps one ([Host.persistentSession]). The same for the life of the tab,
+  /// which is what makes a reconnect — or a Restart — land back in it.
+  String get persistentName => persistentSessionName(host, persistentSlot);
+
   Host get host => connection.host;
 
   /// Fires whenever the session's own state changes (connected → closed).
@@ -420,6 +444,50 @@ class SessionController {
     _notify();
   }
 
+  /// Whether this session can rebuild its own transport at all — what puts a
+  /// Reconnect button on the disconnected banner.
+  bool get canReconnect => _reconnector != null && !_disposed;
+
+  /// Reconnects now: the Reconnect button. Works from any way of having been
+  /// disconnected — a schedule that gave up, a Stop, an orderly close, an
+  /// `exit` — because a person asked for it.
+  void reconnectNow() {
+    if (!_closed) return;
+    _reconnector?.retryNow();
+    _notify();
+  }
+
+  /// Something just happened that makes a dead link likely and a retry
+  /// worthwhile: the network changed or came back, the app came back into
+  /// view, the computer woke up. See `network_watch.dart`.
+  ///
+  /// A live session checks its link at once ([checkLink]) instead of waiting
+  /// up to a minute and a half for its keep-alives to notice. One waiting out
+  /// a backoff delay tries now. One that gave up only because the network was
+  /// not there starts again; one that stopped for any other reason — a
+  /// refused login, a changed host key, the user — stays stopped.
+  Future<void> networkCameBack() async {
+    if (_disposed) return;
+    final reconnector = _reconnector;
+    if (_closed) {
+      if (reconnector != null &&
+          (reconnector.isWaiting || reconnector.mayRetryOnNetwork)) {
+        reconnector.retryNow();
+        _notify();
+      }
+      return;
+    }
+    await checkLink();
+  }
+
+  /// Asks the server for one keep-alive now, and closes the session as a
+  /// dropped link (so it reconnects) when the answer does not come — see
+  /// [SessionKeepalive.probe]. True when the link is, or may be, alive.
+  Future<bool> checkLink() async {
+    if (_closed || _disposed) return false;
+    return _keepalive.probe();
+  }
+
   /// Takes over [next] as this session's transport, in place of the one that
   /// died.
   ///
@@ -449,20 +517,10 @@ class SessionController {
     // future completing — the socket underneath may still be half-open.
     _connection.close();
 
-    for (final subscription in _shellOutput) {
-      unawaited(subscription.cancel());
-    }
-    _shellOutput.clear();
-
     _connection = next;
     _transportGeneration++;
 
-    _shell = null;
-    _shellOpening = null;
-    _shellReady = null;
-    _shellStarted = false;
-    _shellError = null;
-    _shellExitedCleanly = false;
+    _resetShell();
     // The old channels died with the old transport. Dropping the handles is
     // what makes the file browser's next call open a fresh one rather than
     // write into a closed channel.
@@ -475,6 +533,9 @@ class SessionController {
 
     _startKeepalive();
     _watchTransport();
+    // What the drop cut off goes back in the queue, in the order it was in,
+    // and runs on the new connection.
+    transfers.resumeInterrupted();
     _notify();
 
     _writeToTerminal(
@@ -484,31 +545,56 @@ class SessionController {
   }
 
   void _startKeepalive() {
+    final generation = _transportGeneration;
     _keepalive = SessionKeepalive(
       // Through the field rather than the value it holds today: a reconnect
       // replaces the transport, and a keep-alive still pinging the old one
       // would be pinging a socket nobody is listening on.
       ping: () => _connection.ping(),
       scheduler: _keepaliveScheduler,
-    )..start();
+      lastInbound: () => _connection.lastInboundAt,
+      onDead: () => _linkDead(generation),
+      clock: _clock,
+    )..start(pingNow: true);
+  }
+
+  /// The keep-alives say the link is dead though nothing below has noticed:
+  /// the socket is open and silent, and would stay that way until TCP gives
+  /// up. Closed as a dropped link, so the reconnect takes over, and the dead
+  /// transport is shut so whatever was waiting on it fails now rather than
+  /// in a quarter of an hour.
+  void _linkDead(int generation) {
+    if (generation != _transportGeneration) return;
+    final dead = _connection;
+    _markClosed(
+      'Connection lost: the server stopped answering.',
+      generation,
+      retryable: true,
+    );
+    dead.close();
   }
 
   /// Watches the current transport for its death, and classifies it.
   ///
-  /// The two branches are not cosmetic — they are what decides whether an
-  /// automatic reconnect is appropriate. `done` completing *normally* means
-  /// the far end said goodbye in an orderly way: the user typed `exit`, or an
-  /// administrator's idle policy closed the session, or the server is going
-  /// down. None of those want to be undone by a client that immediately dials
-  /// back. `done` completing with an *error* is the transport breaking
-  /// underneath a session nobody asked to end — a Wi-Fi handover, a closed
-  /// lid, a NAT mapping expiring — which is precisely the case reconnection
-  /// exists for.
+  /// `done` completing with an *error* is the transport breaking underneath a
+  /// session nobody asked to end — a Wi-Fi handover, a closed lid, a NAT
+  /// mapping expiring — which is precisely the case reconnection exists for.
+  ///
+  /// `done` completing *normally* means the far end closed the connection in
+  /// an orderly way. That is retried too: what does it while a shell is still
+  /// running is the server going down — a reboot, sshd restarting — and the
+  /// shell, above all a persistent one, is wanted back when it comes up. The
+  /// one orderly close that must not be dialled back is the user's own: an
+  /// `exit` ends the shell channel first, and [_markClosed] refuses then.
   void _watchTransport() {
     final generation = _transportGeneration;
     final transport = _connection;
     transport.done.then((_) {
-      _markClosed('Connection closed by the remote host.', generation);
+      _markClosed(
+        'Connection closed by the remote host.',
+        generation,
+        retryable: true,
+      );
     }).catchError((Object error) {
       _markClosed('Connection lost: $error', generation, retryable: true);
     });
@@ -530,9 +616,16 @@ class SessionController {
     // in the background must not leave a timer pinging a dead socket until
     // the user comes back and pops the route.
     _keepalive.stop();
-    // Anything still queued is now unrunnable; failing it loudly beats a
-    // progress bar that never moves again.
-    transfers.cancelAll();
+    // Anything still queued or moving is now unrunnable — but it is not
+    // cancelled, because nobody cancelled it. It waits as interrupted, and
+    // goes back in the queue when [adoptTransport] has a connection again.
+    // A session that has no way to reconnect would only be keeping a
+    // promise it cannot keep, so there it ends now.
+    if (_reconnector == null) {
+      transfers.cancelAll();
+    } else {
+      transfers.interruptAll();
+    }
 
     // A shell that exited cleanly before the transport went is the user
     // leaving — `exit`, `logout`, Ctrl-D — and dialling their server back
@@ -547,12 +640,59 @@ class SessionController {
     _notify();
   }
 
-  /// Called by the terminal view when the shell channel itself ends, which can
-  /// happen (a plain `exit`) while the transport is still perfectly alive.
+  /// Called when the shell channel itself ends, which can happen (a plain
+  /// `exit`, a detach from tmux) while the transport is still perfectly
+  /// alive. What the "Shell ended — Restart" banner is built from.
   void reportShellEnded(String reason) {
     if (_closed) return;
     _closeReason ??= reason;
+    _shellEndedReason ??= reason;
     _notify();
+  }
+
+  /// True when the shell has gone — ended, or never opened — but the
+  /// connection under it has not. [restartShell] is the way out.
+  bool get hasShellEnded =>
+      !_closed && (_shellEndedReason != null || _shellError != null);
+
+  /// What to say about the shell that ended, or null while it runs.
+  String? get shellEndedReason =>
+      hasShellEnded ? (_shellEndedReason ?? _shellError) : null;
+
+  /// Opens a new shell on the same connection, after the last one ended.
+  ///
+  /// Same tab, same scrollback, with a rule across the buffer where the new
+  /// shell starts. On a host with a persistent session this re-attaches to
+  /// the tmux or screen session the last one left — a detach, not only an
+  /// exit, is what ends the channel there.
+  Future<void> restartShell() async {
+    if (_disposed || !hasShellEnded) return;
+    _resetShell();
+    _closeReason = null;
+    _notify();
+    _writeToTerminal('\r\n\x1b[2m── new shell ──\x1b[0m\r\n');
+    await ensureShell();
+  }
+
+  /// Forgets the shell channel — ended, failed or belonging to a transport
+  /// that has died — so [ensureShell] opens a fresh one.
+  void _resetShell() {
+    for (final subscription in _shellOutput) {
+      unawaited(subscription.cancel());
+    }
+    _shellOutput.clear();
+    try {
+      _shell?.close();
+    } catch (_) {
+      // Already gone.
+    }
+    _shell = null;
+    _shellOpening = null;
+    _shellReady = null;
+    _shellStarted = false;
+    _shellError = null;
+    _shellExitedCleanly = false;
+    _shellEndedReason = null;
   }
 
   void _notify() {
@@ -565,11 +705,23 @@ class SessionController {
   ///
   /// The size is only honoured on the first call — the PTY is created there,
   /// and every later change flows through [SSHSession.resizeTerminal].
-  Future<SSHSession> shell({required int columns, required int rows}) {
+  ///
+  /// [command], when given, runs in place of the login shell — the tmux or
+  /// screen of a persistent session.
+  Future<SSHSession> shell({
+    required int columns,
+    required int rows,
+    String? command,
+  }) {
     final existing = _shell;
     if (existing != null) return Future<SSHSession>.value(existing);
-    return _shellOpening ??= connection
-        .startShell(columns: columns, rows: rows)
+    return _shellOpening ??= (command == null
+            ? connection.startShell(columns: columns, rows: rows)
+            : connection.startCommandShell(
+                command,
+                columns: columns,
+                rows: rows,
+              ))
         .then((session) {
       _shell = session;
       _notify();
@@ -595,10 +747,8 @@ class SessionController {
     );
 
     try {
-      final session = await shell(
-        columns: terminal.viewWidth,
-        rows: terminal.viewHeight,
-      );
+      final opened = await _openPersistentOrPlainShell();
+      final session = opened.session;
 
       // Decoding through the chunked converter (rather than utf8.decode per
       // chunk) keeps multi-byte characters intact when they straddle a packet
@@ -637,13 +787,78 @@ class SessionController {
       );
 
       _shellStarted = true;
-      _sendStartupCommand();
+      if (opened.fresh) _sendStartupCommand();
     } catch (e) {
       _shellError = e.toString();
       _shellStarted = true;
       _writeToTerminal('\r\n\x1b[31mFailed to open a shell: $e\x1b[0m\r\n');
     }
     _notify();
+  }
+
+  /// Opens the shell — inside tmux or screen when the host keeps a persistent
+  /// session — and says whether it is a new one, which is what decides
+  /// whether the startup command is typed into it.
+  ///
+  /// A persistent shell that cannot be started (the server refuses to run a
+  /// command, or this transport cannot ask it to) falls back to the plain
+  /// login shell with a line saying so: a shell that will not survive a drop
+  /// beats no shell.
+  Future<({SSHSession session, bool fresh})> _openPersistentOrPlainShell()
+      async {
+    final columns = terminal.viewWidth;
+    final rows = terminal.viewHeight;
+    final kind = host.persistentSession;
+    final command = persistentShellCommand(kind, persistentName);
+    if (command == null) {
+      return (
+        session: await shell(columns: columns, rows: rows),
+        fresh: true,
+      );
+    }
+
+    // Only worth a round trip when there is a startup command to decide
+    // about; see [persistentProbeCommand].
+    var fresh = false;
+    if (startupCommandPayload(host.startupCommand) != null) {
+      fresh = await _persistentShellIsNew(kind) ?? false;
+    }
+    try {
+      return (
+        session: await shell(columns: columns, rows: rows, command: command),
+        fresh: fresh,
+      );
+    } catch (error) {
+      if (_closed) rethrow;
+      final why = error is UnimplementedError
+          ? 'this connection cannot start it'
+          : 'the server would not run it';
+      _writeToTerminal(
+        '\x1b[2m${kind.label} could not be started ($why), so this shell '
+        'will not survive a disconnect.\x1b[0m\r\n',
+      );
+      return (
+        session: await shell(columns: columns, rows: rows),
+        fresh: true,
+      );
+    }
+  }
+
+  /// Whether the persistent shell about to open is a new one: true, false,
+  /// or null when the server could not say (treated as "not new").
+  Future<bool?> _persistentShellIsNew(PersistentSession kind) async {
+    final probe = persistentProbeCommand(kind, persistentName);
+    if (probe == null) return true;
+    try {
+      final result = await RemoteExec.run(
+        connection,
+        probe,
+        timeout: const Duration(seconds: 8),
+      );
+      return persistentProbeSaysNew(result.stdout);
+    } catch (_) {
+      return null;
+    }
   }
 
   /// Puts bytes on the screen, with the input tap held shut for the duration.
@@ -1051,22 +1266,41 @@ class SessionController {
 
   Future<void> _runTransfer(TransferTask task, TransferHandle handle) async {
     if (_closed) {
+      if (canReconnect) throw const TransferInterrupted();
       throw const SftpFailure('The session has ended. Reconnect to transfer.');
     }
-    final sftp = await this.sftp();
-    handle.throwIfCancelled();
+    final generation = _transportGeneration;
+    try {
+      final sftp = await this.sftp();
+      handle.throwIfCancelled();
 
-    switch (task.direction) {
-      case TransferDirection.download:
-        await _runDownload(sftp, task, handle);
-      case TransferDirection.upload:
-        if (task.isDirectoryTransfer) {
-          await _runUploadDirectory(sftp, task, handle);
-        } else {
-          await _runUpload(sftp, task, handle);
-        }
-      case TransferDirection.serverToServer:
-        await _runRemoteCopy(sftp, task, handle);
+      switch (task.direction) {
+        case TransferDirection.download:
+          await _runDownload(sftp, task, handle);
+        case TransferDirection.upload:
+          if (task.isDirectoryTransfer) {
+            await _runUploadDirectory(sftp, task, handle);
+          } else {
+            await _runUpload(sftp, task, handle);
+          }
+        case TransferDirection.serverToServer:
+          await _runRemoteCopy(sftp, task, handle);
+      }
+    } on TransferCancelled {
+      rethrow;
+    } on TransferInterrupted {
+      rethrow;
+    } catch (_) {
+      // A channel error from a connection that has just gone is the drop,
+      // not anything about the file. The transport knows it is closed before
+      // the error reaches here, even when [_markClosed] has not run yet.
+      if (canReconnect &&
+          (_closed ||
+              generation != _transportGeneration ||
+              _connection.isClosed)) {
+        throw const TransferInterrupted();
+      }
+      rethrow;
     }
   }
 
@@ -1258,6 +1492,36 @@ class SessionController {
     }
 
     final target = await resolve(destinationId);
+    try {
+      await _copyToTarget(sftp, target, task, handle);
+    } on TransferCancelled {
+      rethrow;
+    } on TransferInterrupted {
+      rethrow;
+    } catch (_) {
+      // The destination's connection dropping under the copy: it waits for
+      // that session to come back, the same as for this one. Not a direct
+      // copy run as a job on the source, though — that job is still going,
+      // and running the copy again would start a second one beside it.
+      final ranAsJob =
+          task.routeUsed == TransferRoute.direct && _serverJobs != null;
+      if (!ranAsJob && (target.isClosed || target.connection.isClosed)) {
+        throw TransferInterrupted(
+          'Waiting for ${task.destinationLabel ?? target.host.displayName} '
+          'to reconnect…',
+        );
+      }
+      rethrow;
+    }
+  }
+
+  Future<void> _copyToTarget(
+    RemoteFileSystem sftp,
+    SessionController target,
+    TransferTask task,
+    TransferHandle handle,
+  ) async {
+    final destinationPath = task.destinationPath!;
     final destination = await target.sftp();
     handle.throwIfCancelled();
 
@@ -1325,9 +1589,9 @@ class SessionController {
           } on ServerJobLeftRunning {
             // The session is going away and the job is not: it stays
             // remembered, and the next time both servers are open it is
-            // picked up and finished. To the queue this is an ordinary
-            // cancel, which it already is.
-            throw const TransferCancelled();
+            // picked up and finished. Not something to run again from here,
+            // even after a reconnect — that would start a second copy.
+            throw const TransferHandedOff();
           } on SSHDirectCopyUnavailable catch (e) {
             _forgetServerJob(detached);
             if (e.reason == DirectCopyUnavailableReason.hostKeyMismatch) {
