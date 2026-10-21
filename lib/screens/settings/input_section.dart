@@ -3,7 +3,9 @@ import 'package:flutter/material.dart';
 import '../../models/app_settings.dart';
 import 'settings_section.dart';
 
-/// Keyboard and touch input: when the terminal's row of extra keys shows.
+/// Keyboard and touch input: when the terminal's and the editor's rows of
+/// extra keys show. What "a hardware keyboard is in use" means is worked out
+/// in `services/input_profile.dart`.
 class InputSettingsSection extends StatelessWidget {
   const InputSettingsSection({
     super.key,
@@ -28,7 +30,9 @@ class InputSettingsSection extends StatelessWidget {
           labelOf: (m) => m.label,
           helper: switch (settings.keyBarMode) {
             KeyBarMode.auto => 'Esc, Tab, Ctrl and arrows over the on-screen '
-                'keyboard. Hidden while a hardware keyboard is in use.',
+                'keyboard, in the terminal and the editor. Hidden while a '
+                'hardware keyboard is in use, and back when the on-screen '
+                'one opens.',
             KeyBarMode.always => 'Shown even with a hardware keyboard.',
             KeyBarMode.never => 'Hidden. Ctrl and Esc then need a hardware '
                 'keyboard.',

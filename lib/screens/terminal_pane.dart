@@ -6,9 +6,11 @@ import 'package:xterm/xterm.dart';
 
 import '../models/app_settings.dart';
 import '../services/clipboard_paste.dart';
+import '../services/input_profile.dart';
 import '../services/session_controller.dart';
 import '../services/settings_store.dart';
 import '../theme.dart';
+import '../widgets/session_shortcuts.dart';
 import '../widgets/terminal_key_bar.dart';
 
 /// The interactive shell, as a *view on* a session rather than an owner of one.
@@ -65,6 +67,11 @@ class _TerminalPaneState extends State<TerminalPane>
   late double _fontSize;
   late TerminalColorScheme _colorScheme;
 
+  /// When the extra-keys row shows; followed live, so changing it in
+  /// Settings takes effect on a session that is already open.
+  late KeyBarMode _keyBarMode;
+  StreamSubscription<AppSettings>? _settingsChanges;
+
   /// Sticky Ctrl: armed by the extra-keys bar, consumed by the next
   /// keystroke that reaches [_sendToShell] — soft keyboard, hardware
   /// keyboard, or a key-bar character button all funnel through there.
@@ -96,6 +103,11 @@ class _TerminalPaneState extends State<TerminalPane>
     final settings = widget.settingsStore.current;
     _fontSize = settings.terminalFontSize;
     _colorScheme = settings.colorScheme;
+    _keyBarMode = settings.keyBarMode;
+    _settingsChanges = widget.settingsStore.changes.listen((settings) {
+      if (!mounted || settings.keyBarMode == _keyBarMode) return;
+      setState(() => _keyBarMode = settings.keyBarMode);
+    });
 
     _terminalController.addListener(_handleSelectionChange);
     // The buffer belongs to the session and may already be full of a shell
@@ -277,8 +289,15 @@ class _TerminalPaneState extends State<TerminalPane>
   /// empty [_shortcuts] map above specifically to disable that, so every key
   /// this handler does not claim falls straight through to the terminal's
   /// normal input handling and reaches the shell untouched.
+  ///
+  /// The session screen's own chords (new session, next tab — see
+  /// `session_shortcuts.dart`) are taken out first, for the same reason: the
+  /// terminal would otherwise send every one of them to the shell.
   KeyEventResult _handleHardwareKeyEvent(FocusNode node, KeyEvent event) {
     if (event is KeyUpEvent) return KeyEventResult.ignored;
+
+    final shortcut = SessionShortcuts.dispatch(context, event);
+    if (shortcut != KeyEventResult.ignored) return shortcut;
 
     final keys = HardwareKeyboard.instance;
     if (!keys.isControlPressed || !keys.isShiftPressed) {
@@ -294,6 +313,73 @@ class _TerminalPaneState extends State<TerminalPane>
       return KeyEventResult.handled;
     }
     return KeyEventResult.ignored;
+  }
+
+  // ---------------------------------------------------------- context menu
+
+  /// Right-click, where a mouse is in use: the selection toolbar's three
+  /// actions, at the pointer, the way every desktop terminal offers them.
+  /// Touch keeps the toolbar that slides in under a long-press selection.
+  Future<void> _showContextMenu(TapUpDetails details, CellOffset _) async {
+    final overlay =
+        Overlay.of(context).context.findRenderObject()! as RenderBox;
+    final at = overlay.globalToLocal(details.globalPosition);
+    final keyboard = InputProfile.of(context).keyboard;
+    final theme = Theme.of(context);
+
+    PopupMenuItem<_TerminalMenu> item(
+      _TerminalMenu value,
+      String label,
+      IconData icon, {
+      String? keys,
+      bool enabled = true,
+    }) {
+      return PopupMenuItem<_TerminalMenu>(
+        value: value,
+        enabled: enabled,
+        child: Row(
+          children: [
+            Icon(icon, size: 18),
+            const SizedBox(width: 12),
+            Expanded(child: Text(label)),
+            if (keyboard && keys != null) ...[
+              const SizedBox(width: 24),
+              Text(
+                keys,
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: theme.colorScheme.onSurfaceVariant,
+                ),
+              ),
+            ],
+          ],
+        ),
+      );
+    }
+
+    final choice = await showMenu<_TerminalMenu>(
+      context: context,
+      position: RelativeRect.fromRect(
+        at & Size.zero,
+        Offset.zero & overlay.size,
+      ),
+      items: [
+        item(_TerminalMenu.copy, 'Copy', Icons.copy,
+            keys: 'Ctrl+Shift+C', enabled: _hasSelection),
+        item(_TerminalMenu.paste, 'Paste', Icons.content_paste,
+            keys: 'Ctrl+Shift+V'),
+        item(_TerminalMenu.selectAll, 'Select all', Icons.select_all),
+      ],
+    );
+    switch (choice) {
+      case _TerminalMenu.copy:
+        await _copySelection();
+      case _TerminalMenu.paste:
+        await _pasteFromClipboard();
+      case _TerminalMenu.selectAll:
+        _selectAll();
+      case null:
+        break;
+    }
   }
 
   // ------------------------------------------------------------ pinch zoom
@@ -345,6 +431,7 @@ class _TerminalPaneState extends State<TerminalPane>
 
   @override
   void dispose() {
+    unawaited(_settingsChanges?.cancel());
     _terminalController.removeListener(_handleSelectionChange);
     // Hand the hooks back. The shell, the connection and the buffer belong to
     // the SessionController — closing or clearing any of them here is exactly
@@ -362,6 +449,7 @@ class _TerminalPaneState extends State<TerminalPane>
     super.build(context);
     final ready = widget.session.isShellReady;
     final closed = widget.session.isClosed || widget.session.shellError != null;
+    final input = InputProfile.of(context);
 
     return Column(
       children: [
@@ -398,6 +486,7 @@ class _TerminalPaneState extends State<TerminalPane>
                     keyboardType: TextInputType.multiline,
                     shortcuts: _shortcuts,
                     onKeyEvent: _handleHardwareKeyEvent,
+                    onSecondaryTapUp: input.mouse ? _showContextMenu : null,
                   ),
                 ),
                 if (!ready && !closed)
@@ -442,25 +531,33 @@ class _TerminalPaneState extends State<TerminalPane>
             alignment: Alignment.bottomCenter,
             child: _hasSelection
                 ? _SelectionToolbar(
+                    touch: input.touch,
                     onCopy: () => unawaited(_copySelection()),
                     onSelectAll: _selectAll,
                     onPaste: () => unawaited(_pasteFromClipboard()),
                   )
                 : const SizedBox(width: double.infinity, height: 0),
           ),
-          TerminalKeyBar(
-            onKey: (key, {bool ctrl = false, bool alt = false}) =>
-                _terminal.keyInput(key, ctrl: ctrl, alt: alt),
-            onText: _terminal.textInput,
-            ctrlActive: _ctrlSticky,
-            onToggleCtrl: _toggleCtrlSticky,
-            onPaste: () => unawaited(_pasteFromClipboard()),
-          ),
+          // By Settings' "Extra keys row": automatically, it goes while a
+          // hardware keyboard is doing the typing — a tablet in a keyboard
+          // cover, a DeX desk, a desktop — and comes back with the soft
+          // keyboard. See [InputDevices.showsKeyBar].
+          if (input.showsKeyBar(_keyBarMode))
+            TerminalKeyBar(
+              onKey: (key, {bool ctrl = false, bool alt = false}) =>
+                  _terminal.keyInput(key, ctrl: ctrl, alt: alt),
+              onText: _terminal.textInput,
+              ctrlActive: _ctrlSticky,
+              onToggleCtrl: _toggleCtrlSticky,
+              onPaste: () => unawaited(_pasteFromClipboard()),
+            ),
         ],
       ],
     );
   }
 }
+
+enum _TerminalMenu { copy, paste, selectAll }
 
 /// Copy / Select all / Paste, shown while the terminal has an active
 /// selection. See the slide-in site in [_TerminalPaneState.build] for why
@@ -470,8 +567,11 @@ class _SelectionToolbar extends StatelessWidget {
     required this.onCopy,
     required this.onSelectAll,
     required this.onPaste,
+    this.touch = false,
   });
 
+  /// Touch has been seen: tall enough for 48dp buttons.
+  final bool touch;
   final VoidCallback onCopy;
   final VoidCallback onSelectAll;
   final VoidCallback onPaste;
@@ -482,7 +582,7 @@ class _SelectionToolbar extends StatelessWidget {
     return Material(
       color: theme.colorScheme.primary.withValues(alpha: 0.12),
       child: SizedBox(
-        height: 44,
+        height: touch ? 48 : 44,
         child: Row(
           children: [
             const SizedBox(width: 12),

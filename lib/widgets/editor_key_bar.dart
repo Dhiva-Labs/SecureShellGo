@@ -60,9 +60,9 @@ class EditorKeyBar extends StatelessWidget {
         },
         borderRadius: BorderRadius.circular(6),
         child: Container(
-          // As tall as the bar allows, and narrow for single characters, so
-          // a row of brackets still fits a phone in one swipe.
-          constraints: const BoxConstraints(minWidth: 40, minHeight: 44),
+          // 48dp each way: this row is for fingers, and a bracket a finger
+          // misses types its neighbour. Swiping the row is cheaper than that.
+          constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
           alignment: Alignment.center,
           padding: const EdgeInsets.symmetric(horizontal: 6),
           child: child,
@@ -76,7 +76,7 @@ class EditorKeyBar extends StatelessWidget {
       child: SafeArea(
         top: false,
         child: SizedBox(
-          height: 46,
+          height: 48,
           child: ListView(
             scrollDirection: Axis.horizontal,
             padding: const EdgeInsets.symmetric(horizontal: 4),

@@ -13,6 +13,7 @@ import 'services/composite_secure_storage.dart';
 import 'services/credential_store.dart';
 import 'services/fleet_push_run_registry.dart';
 import 'services/host_store.dart';
+import 'services/input_profile.dart';
 import 'services/known_hosts_integrity.dart';
 import 'services/known_hosts_service.dart';
 import 'services/secret_vault.dart';
@@ -365,10 +366,13 @@ class _SecureShellGoAppState extends State<SecureShellGoApp> {
       darkTheme: AppTheme.themeFor(_uiStyle, Brightness.dark),
       // `builder`, so the gate is inserted *above* the Navigator rather than
       // inside it. Nothing the app pushes can end up on top of the lock, and
-      // there is no lock route for a back gesture to pop.
-      builder: (context, child) => AppLockGate(
-        controller: _appLock,
-        child: child ?? const SizedBox.shrink(),
+      // there is no lock route for a back gesture to pop. The input profile
+      // goes there too, so every route and dialog can ask what is in hand.
+      builder: (context, child) => InputProfileScope(
+        child: AppLockGate(
+          controller: _appLock,
+          child: child ?? const SizedBox.shrink(),
+        ),
       ),
       home: HostListScreen(
         hostStore: _hostStore,

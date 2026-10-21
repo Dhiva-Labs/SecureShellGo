@@ -10,6 +10,7 @@ import '../services/bookmark_store.dart';
 import '../services/device_storage.dart';
 import '../services/download_plan.dart';
 import '../services/editor_document.dart';
+import '../services/input_profile.dart';
 import '../services/remote_entry_actions.dart';
 import '../services/remote_path.dart';
 import '../services/remote_transfer_plan.dart';
@@ -1457,12 +1458,12 @@ class _FileBrowserPaneState extends State<FileBrowserPane>
         _destinations.isNotEmpty;
     final isFolder = entry.kind == RemoteEntryKind.directory;
     final canChmod = _canChangePermissions(entry);
-    final desktop = _isDesktop(context);
+    final keyboard = InputProfile.of(context).keyboard;
     final theme = Theme.of(context);
 
-    // The keys behind the rows that have one, on desktop where there is a
+    // The keys behind the rows that have one, where there is a hardware
     // keyboard to press them on.
-    Widget? shortcut(String keys) => desktop
+    Widget? shortcut(String keys) => keyboard
         ? Text(
             keys,
             style: theme.textTheme.bodySmall?.copyWith(
@@ -1855,14 +1856,16 @@ class _FileBrowserPaneState extends State<FileBrowserPane>
     );
 
     // Drag-to-tab only offers itself when there is somewhere to drag *to* — no
-    // other open session means no drop target. And on Android the long-press
-    // on a row is what opens the action sheet, which is the only path into
-    // multi-select on a touch device; a LongPressDraggable would swallow that
-    // gesture and leave Android users with no way in. Desktop platforms get
-    // drag; Android/iOS keep the old behaviour, and the same "Copy to another
-    // server…" row on the action sheet still works for them.
+    // other open session means no drop target. And under a finger the
+    // long-press on a row is what opens the action sheet, which is the only
+    // path into multi-select on a touch screen; a LongPressDraggable would
+    // swallow that gesture and leave no way in. So a mouse gets drag (it has
+    // right-click for the sheet) and a finger keeps the old behaviour, with
+    // the same "Copy to another server…" row on the action sheet. Decided by
+    // the pointer used last, not the platform, so a DeX desk drags and a
+    // Windows tablet does not.
     if (widget.sessionId == null || _destinations.isEmpty) return tile;
-    if (!_isDesktop(context)) return tile;
+    if (InputProfile.of(context).pointer != PointerClass.mouse) return tile;
 
     final dragEntries = _dragEntriesFor(entry);
     if (dragEntries.isEmpty) return tile;
@@ -1897,23 +1900,6 @@ class _FileBrowserPaneState extends State<FileBrowserPane>
   /// until the PM lands it — a menu row that silently does nothing is
   /// worse than none.
   bool get _folderPickerAvailable {
-    switch (Theme.of(context).platform) {
-      case TargetPlatform.linux:
-      case TargetPlatform.macOS:
-      case TargetPlatform.windows:
-        return true;
-      case TargetPlatform.android:
-      case TargetPlatform.iOS:
-      case TargetPlatform.fuchsia:
-        return false;
-    }
-  }
-
-  /// Desktop platforms — Linux, macOS, Windows — where a mouse is the primary
-  /// pointer and long-press-to-drag reads as natural. Kept out of the state
-  /// so the platform check can be swapped in tests via
-  /// [debugDefaultTargetPlatformOverride].
-  static bool _isDesktop(BuildContext context) {
     switch (Theme.of(context).platform) {
       case TargetPlatform.linux:
       case TargetPlatform.macOS:
