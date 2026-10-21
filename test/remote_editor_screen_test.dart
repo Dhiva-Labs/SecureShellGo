@@ -995,7 +995,7 @@ void main() {
       await tester.pumpAndSettle();
       expect(controller.text, 'def main():\n        pass\n');
 
-      await tester.tap(find.text('⇤'));
+      await tester.tap(find.byTooltip('Outdent'));
       await tester.pumpAndSettle();
       expect(controller.text, python);
 

@@ -82,7 +82,9 @@ class EditorKeyBar extends StatelessWidget {
             padding: const EdgeInsets.symmetric(horizontal: 4),
             children: [
               key('Tab', onTap: onIndent, tooltip: 'Indent'),
-              key('⇤', onTap: onOutdent, tooltip: 'Outdent'),
+              // An icon, not ⇤: phone fonts often lack the glyph.
+              key('', icon: Icons.format_indent_decrease,
+                  onTap: onOutdent, tooltip: 'Outdent'),
               key('', icon: Icons.keyboard_arrow_left,
                   onTap: () => onArrow(AxisDirection.left), tooltip: 'Left'),
               key('', icon: Icons.keyboard_arrow_up,

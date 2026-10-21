@@ -48,11 +48,15 @@ const double _caretMargin = 3;
 /// not an IDE; the string is the model, and this class is the only thing
 /// between it and the screen.
 ///
-/// **Tabs.** Flutter draws a tab one character wide, so a tab-indented file
-/// looked indented by a single space and mixed tabs and spaces were
-/// invisible. Each tab is now its own span with letter spacing that carries
-/// it to the next tab stop; carets and taps land correctly because the
-/// spacing is part of layout, and the text itself is never changed.
+/// **Tabs.** Flutter draws a tab as a space, one character wide, so a
+/// tab-indented file looked indented by a single space and mixed tabs and
+/// spaces were invisible. Each tab is now its own span with its font size
+/// multiplied by the columns it spans to the next tab stop, and its line
+/// height divided by the same, so it is exactly that wide and no taller.
+/// Carets and taps land correctly because the width is the glyph's own
+/// advance, and the text itself is never changed. (Letter spacing, the
+/// obvious tool, is placed half before the glyph by the engine: the text
+/// after a tab drew half a stop further right than the caret went.)
 class EditorHighlightController extends TextEditingController {
   // Both fields are private because both have setters that invalidate the
   // token cache, and a private *named* parameter is not a thing Dart allows —
@@ -75,7 +79,6 @@ class EditorHighlightController extends TextEditingController {
   bool _showCurrentLine = true;
 
   int _tabSize = 4;
-  double _charWidth = 0;
   bool _showWhitespace = false;
 
   /// Memoised tokenizer output for the whole document.
@@ -123,11 +126,9 @@ class EditorHighlightController extends TextEditingController {
   /// already rebuilding the text that uses it.
   void configureLayout({
     required int tabSize,
-    required double charWidth,
     required bool showWhitespace,
   }) {
     _tabSize = tabSize < 1 ? 1 : tabSize;
-    _charWidth = charWidth;
     _showWhitespace = showWhitespace;
   }
 
@@ -206,7 +207,8 @@ class EditorHighlightController extends TextEditingController {
     final shaping = _TabAndWhitespaceShaper(
       source: source,
       tabSize: _tabSize,
-      charWidth: _charWidth,
+      fontSize: base.fontSize ?? 14,
+      lineHeight: base.height ?? editorLineHeightFactor,
       showWhitespace: _showWhitespace,
       theme: _theme,
     );
@@ -283,14 +285,19 @@ class _TabAndWhitespaceShaper {
   _TabAndWhitespaceShaper({
     required this.source,
     required this.tabSize,
-    required this.charWidth,
+    required this.fontSize,
+    required this.lineHeight,
     required this.showWhitespace,
     required this.theme,
   }) : _shape = showWhitespace || source.contains('\t');
 
   final String source;
   final int tabSize;
-  final double charWidth;
+
+  /// The text's font size and line-height factor, which a tab's span scales
+  /// in opposite directions.
+  final double fontSize;
+  final double lineHeight;
   final bool showWhitespace;
   final TerminalTheme theme;
   final bool _shape;
@@ -393,8 +400,12 @@ class _TabAndWhitespaceShaper {
                 : AppTheme.editorIndentTab(theme),
           );
         }
-        if (charWidth > 0 && width > 1) {
-          tabStyle = tabStyle.copyWith(letterSpacing: (width - 1) * charWidth);
+        if (width > 1) {
+          // Width × the glyph, at 1/width of the line height: the same row.
+          tabStyle = tabStyle.copyWith(
+            fontSize: fontSize * width,
+            height: lineHeight / width,
+          );
         }
         out.add(TextSpan(text: '\t', style: tabStyle));
         runStart = i + 1;
@@ -600,6 +611,16 @@ class CodeEditorFieldState extends State<CodeEditorField> {
   double? _measuredWidth;
   double? _measuredFontSize;
 
+  /// The size the text is actually laid out at: the editor's own size
+  /// through the system text scale. Scaled here, once, and the field is told
+  /// not to scale again — it used to scale its text while the gutter and
+  /// every measurement here used the unscaled size, so on a phone set to
+  /// large text the line numbers walked away from their lines.
+  double _fontSize = 14;
+
+  /// One row's height as the engine lays it out; see [_measureText].
+  double _rowHeight = 14 * editorLineHeightFactor;
+
   @override
   void initState() {
     super.initState();
@@ -691,22 +712,41 @@ class CodeEditorFieldState extends State<CodeEditorField> {
   TextStyle get _textStyle => TextStyle(
     fontFamily: AppTheme.monoFontFamily,
     fontFamilyFallback: AppTheme.monoFontFamilyFallback,
-    fontSize: widget.fontSize,
+    fontSize: _fontSize,
     height: editorLineHeightFactor,
+    // Both pinned rather than inherited from Material 3's field style.
+    // Its 0.5 of letter spacing was seen by none of the measuring here: a
+    // 60-character line drew 30px wider than measured, so it wrapped with
+    // wrapping off and wrapped-line numbers drifted. Its even leading would
+    // make a row holding a tab (a bigger glyph at a smaller line height)
+    // taller than the rest; proportional leading keeps every row one size.
+    letterSpacing: 0,
+    leadingDistribution: TextLeadingDistribution.proportional,
     color: widget.theme.foreground,
   );
 
-  double get _lineHeight => widget.fontSize * editorLineHeightFactor;
+  /// The gutter's row height, for tests that hold it against the field's.
+  @visibleForTesting
+  double get rowHeight => _rowHeight;
 
-  /// Width of one character in the monospace face, measured rather than
-  /// guessed — the fallback font differs per platform and a guess would put
-  /// the horizontal extent visibly wrong on one of them.
-  double _measureCharWidth() {
+  /// The gutter's per-line heights with wrapping on, likewise.
+  @visibleForTesting
+  List<double>? get wrappedLineHeights => _wrappedHeights;
+
+  /// Width of one character and height of one row in the monospace face,
+  /// measured rather than computed. A guessed width is visibly wrong
+  /// wherever the fallback font differs, and the engine rounds row heights:
+  /// font size × line-height factor drifted from the rows actually drawn by
+  /// up to a third of a pixel a line, a row or more by the end of a long
+  /// file.
+  ({double charWidth, double rowHeight}) _measureText() {
     final painter = TextPainter(
       text: TextSpan(text: '0' * 10, style: _textStyle),
       textDirection: TextDirection.ltr,
     )..layout();
-    return painter.width / 10;
+    final metrics = (charWidth: painter.width / 10, rowHeight: painter.height);
+    painter.dispose();
+    return metrics;
   }
 
   /// Per-line heights when wrapping is on.
@@ -719,7 +759,7 @@ class CodeEditorFieldState extends State<CodeEditorField> {
     if (!widget.softWrap) return null;
     if (_measuredText == text &&
         _measuredWidth == width &&
-        _measuredFontSize == widget.fontSize &&
+        _measuredFontSize == _fontSize &&
         _wrappedHeights != null) {
       return _wrappedHeights!;
     }
@@ -736,7 +776,7 @@ class CodeEditorFieldState extends State<CodeEditorField> {
     _wrappedHeights = heights;
     _measuredText = text;
     _measuredWidth = width;
-    _measuredFontSize = widget.fontSize;
+    _measuredFontSize = _fontSize;
     return heights;
   }
 
@@ -785,10 +825,12 @@ class CodeEditorFieldState extends State<CodeEditorField> {
   @override
   Widget build(BuildContext context) {
     final text = widget.controller.text;
-    final charWidth = _measureCharWidth();
+    _fontSize = MediaQuery.textScalerOf(context).scale(widget.fontSize);
+    final metrics = _measureText();
+    final charWidth = metrics.charWidth;
+    _rowHeight = metrics.rowHeight;
     widget.controller.configureLayout(
       tabSize: widget.indentStyle.size,
-      charWidth: charWidth,
       showWhitespace: widget.showWhitespace,
     );
 
@@ -864,6 +906,8 @@ class CodeEditorFieldState extends State<CodeEditorField> {
             ),
           ),
         );
+        // Already scaled, in `_fontSize`.
+        field = MediaQuery.withNoTextScaling(child: field);
         if (!widget.readOnly) {
           // Tab indents instead of moving focus to the next control, and the
           // line operations a programmer reaches for by habit are here.
@@ -887,7 +931,7 @@ class CodeEditorFieldState extends State<CodeEditorField> {
                       scroll: _vertical,
                       count: lineCount,
                       heights: heights,
-                      lineHeight: _lineHeight,
+                      lineHeight: _rowHeight,
                       activeLine: _caretLine,
                       theme: widget.theme,
                       style: _textStyle,
