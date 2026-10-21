@@ -6,16 +6,18 @@ import 'package:xterm/xterm.dart';
 
 import '../models/app_settings.dart';
 import '../models/remote_entry.dart';
-import '../services/editor_indent.dart';
 import '../services/editor_document.dart';
+import '../services/editor_indent.dart';
 import '../services/editor_save.dart';
 import '../services/editor_search.dart';
+import '../services/layout_breakpoints.dart';
 import '../services/remote_path.dart';
 import '../services/settings_store.dart';
 import '../services/sftp_service.dart';
 import '../services/syntax_highlighter.dart';
 import '../theme.dart';
 import '../widgets/code_editor_field.dart';
+import '../widgets/editor_key_bar.dart';
 
 /// What the user chose at the "someone else changed this file" dialog.
 enum _ConflictChoice { keepMine, reloadTheirs, saveAsCopy }
@@ -44,6 +46,12 @@ class _EditorTab {
   String path;
   final EditorHighlightController controller;
   final FocusNode focusNode = FocusNode();
+
+  /// This tab's own editor, kept alive while other tabs are in front — see
+  /// [_RemoteEditorScreenState._body] — and reached through this key by the
+  /// key bar.
+  final GlobalKey<CodeEditorFieldState> fieldKey =
+      GlobalKey<CodeEditorFieldState>();
 
   /// The field's own undo stack, held here so the Edit menu can undo and redo
   /// without a keyboard — and so each tab keeps its own history.
@@ -118,6 +126,26 @@ class _RemoteEditorScreenState extends State<RemoteEditorScreen> {
 
   bool _softWrap = false;
 
+  /// "Show whitespace": tints leading tabs, leading spaces and trailing
+  /// whitespace apart. See `CodeEditorField.showWhitespace`.
+  bool _showWhitespace = false;
+
+  /// The editor's own zoom, from Ctrl+=/−/0 or a pinch. Null follows the
+  /// terminal font size from Settings.
+  double? _zoomedFontSize;
+  static const double _minFontSize = 8;
+  static const double _maxFontSize = 32;
+
+  double get _editorFontSize => (_zoomedFontSize ?? _settings.terminalFontSize)
+      .clamp(_minFontSize, _maxFontSize);
+
+  /// Pointers down on the editor, for a two-finger pinch — hand-rolled with
+  /// a `Listener` like the terminal's, so it never fights the field's own
+  /// scrolling and selection gestures.
+  final Map<int, Offset> _pointers = {};
+  double? _pinchStartDistance;
+  double? _pinchStartFontSize;
+
   bool _findVisible = false;
   bool _replaceVisible = false;
   EditorQuery _query = const EditorQuery(pattern: '');
@@ -181,7 +209,7 @@ class _RemoteEditorScreenState extends State<RemoteEditorScreen> {
   Future<void> _openPath(String path, {bool activate = true}) async {
     final existing = _tabs.indexWhere((t) => t.path == path);
     if (existing >= 0) {
-      setState(() => _active = existing);
+      _activate(existing);
       return;
     }
 
@@ -341,6 +369,14 @@ class _RemoteEditorScreenState extends State<RemoteEditorScreen> {
     // Ctrl+S on a file nobody edited must not rewrite it.
     if (!force && !tab.isDirty) return;
 
+    // Mixed line endings have no style to keep; ask which one to write,
+    // before writing, rather than reporting afterwards which one was used.
+    if (tab.lineEndings == LineEndingStyle.mixed) {
+      final chosen = await _askLineEndings(tab);
+      if (!mounted || chosen == null) return;
+      setState(() => tab.lineEndings = chosen);
+    }
+
     if (tab.hadInvalidUtf8 && !tab.lossyAcknowledged) {
       final go = await _warnAboutLossyEncoding(tab);
       if (!mounted || go != true) return;
@@ -379,15 +415,94 @@ class _RemoteEditorScreenState extends State<RemoteEditorScreen> {
 
   String _savedMessage(_EditorTab tab, SaveOutcome outcome) {
     final notes = <String>[
-      if (tab.lineEndings == LineEndingStyle.mixed)
-        'mixed line endings saved as LF',
       if (tab.lineEndings == LineEndingStyle.crlf) 'CRLF kept',
+      if (tab.hasBom) 'BOM kept',
       if (outcome.permissionsLost)
         'the server would not restore the original permissions',
     ];
     final head = 'Saved ${tab.name} '
         '(${RemotePath.formatBytes(outcome.bytesWritten)})';
     return notes.isEmpty ? head : '$head · ${notes.join(' · ')}';
+  }
+
+  Future<LineEndingStyle?> _askLineEndings(_EditorTab tab) {
+    return showDialog<LineEndingStyle>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Mixed line endings'),
+        content: Text(
+          '"${tab.name}" uses both LF (Linux, macOS) and CRLF (Windows) line '
+          'endings. A save has to write one of them for every line — which '
+          'should it be?',
+          style: const TextStyle(height: 1.35),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(LineEndingStyle.crlf),
+            child: const Text('CRLF (Windows)'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(context).pop(LineEndingStyle.lf),
+            child: const Text('LF (Linux)'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Which indentation new lines and Tab use. Changes nothing already in
+  /// the file — converting existing indentation would rewrite every line,
+  /// which is exactly what this editor promises not to do behind anyone's
+  /// back.
+  Future<void> _pickIndent(_EditorTab tab) async {
+    const options = <IndentStyle>[
+      IndentStyle.spaces(2),
+      IndentStyle.spaces(4),
+      IndentStyle.spaces(8),
+      IndentStyle.tabs(),
+    ];
+    final picked = await showDialog<IndentStyle>(
+      context: context,
+      builder: (context) => SimpleDialog(
+        title: const Text('Indentation'),
+        children: [
+          for (final option in options)
+            SimpleDialogOption(
+              onPressed: () => Navigator.of(context).pop(option),
+              child: Row(
+                children: [
+                  Icon(
+                    option.useTabs == tab.indentStyle.useTabs &&
+                            (option.useTabs ||
+                                option.size == tab.indentStyle.size)
+                        ? Icons.radio_button_checked
+                        : Icons.radio_button_unchecked,
+                    size: 18,
+                  ),
+                  const SizedBox(width: 12),
+                  Text(option.useTabs ? 'Tabs' : '${option.size} spaces'),
+                ],
+              ),
+            ),
+          if (tab.language.requiresTabs)
+            const Padding(
+              padding: EdgeInsets.fromLTRB(24, 8, 24, 0),
+              child: Text(
+                'Makefile recipes must start with a tab.',
+                style: TextStyle(fontSize: 12),
+              ),
+            ),
+        ],
+      ),
+    );
+    if (picked == null || !mounted) return;
+    setState(() => tab.indentStyle = picked.useTabs
+        ? IndentStyle.tabs(tab.indentStyle.size)
+        : picked);
   }
 
   Future<bool?> _warnAboutLossyEncoding(_EditorTab tab) {
@@ -626,7 +741,11 @@ class _RemoteEditorScreenState extends State<RemoteEditorScreen> {
       if (_active >= _tabs.length) _active = _tabs.length - 1;
       if (_active < 0) _active = 0;
     });
-    if (_tabs.isEmpty && mounted) Navigator.of(context).pop();
+    if (_tabs.isEmpty && mounted) {
+      Navigator.of(context).pop();
+    } else {
+      _focusActiveAfterFrame();
+    }
   }
 
   /// True to save first, false to discard, null to stay put.
@@ -752,7 +871,7 @@ class _RemoteEditorScreenState extends State<RemoteEditorScreen> {
     final result = replaceOne(
       tab.controller.text,
       _query,
-      _replaceController.text,
+      _lfOnly(_replaceController.text),
       from: from,
     );
     if (result.count == 0) {
@@ -772,7 +891,7 @@ class _RemoteEditorScreenState extends State<RemoteEditorScreen> {
     final result = replaceAll(
       tab.controller.text,
       _query,
-      _replaceController.text,
+      _lfOnly(_replaceController.text),
     );
     if (result.count == 0) {
       _snack('Nothing to replace.');
@@ -878,7 +997,8 @@ class _RemoteEditorScreenState extends State<RemoteEditorScreen> {
     final tab = _tab;
     if (tab == null) return;
     final data = await Clipboard.getData(Clipboard.kTextPlain);
-    final clip = data?.text;
+    final raw = data?.text;
+    final clip = raw == null ? null : _lfOnly(raw);
     if (!mounted) return;
     if (clip == null || clip.isEmpty) {
       _snack('There is nothing on the clipboard.');
@@ -897,6 +1017,95 @@ class _RemoteEditorScreenState extends State<RemoteEditorScreen> {
       selection: TextSelection.collapsed(offset: before.length + clip.length),
     );
     tab.focusNode.requestFocus();
+  }
+
+  /// Text going into the document from outside the keyboard — the menu's
+  /// Paste, the replace field — with Windows line breaks made `\n`, like the
+  /// field's input formatter does for what is typed and pasted into it. The
+  /// buffer is LF-only; a stray `\r\n` here would save as `\r\r\n`.
+  static String _lfOnly(String text) =>
+      text.replaceAll('\r\n', '\n').replaceAll('\r', '\n');
+
+  /// Moves the caret one step, for the key bar's arrows. Up and down keep
+  /// the column where the next line is long enough.
+  void _moveCaret(_EditorTab tab, AxisDirection direction) {
+    final text = tab.controller.text;
+    final selection = tab.controller.selection;
+    final at = selection.isValid ? selection.extentOffset : text.length;
+    int target;
+    switch (direction) {
+      case AxisDirection.left:
+        target = at - 1;
+      case AxisDirection.right:
+        target = at + 1;
+      case AxisDirection.up:
+      case AxisDirection.down:
+        final lineStart = at == 0 ? 0 : text.lastIndexOf('\n', at - 1) + 1;
+        final column = at - lineStart;
+        if (direction == AxisDirection.up) {
+          if (lineStart == 0) {
+            target = 0;
+          } else {
+            final prevStart = lineStart == 1
+                ? 0
+                : text.lastIndexOf('\n', lineStart - 2) + 1;
+            final prevLength = lineStart - 1 - prevStart;
+            target = prevStart + (column < prevLength ? column : prevLength);
+          }
+        } else {
+          final lineEnd = text.indexOf('\n', at);
+          if (lineEnd < 0) {
+            target = text.length;
+          } else {
+            final nextStart = lineEnd + 1;
+            var nextEnd = text.indexOf('\n', nextStart);
+            if (nextEnd < 0) nextEnd = text.length;
+            final nextLength = nextEnd - nextStart;
+            target = nextStart + (column < nextLength ? column : nextLength);
+          }
+        }
+    }
+    tab.controller.selection =
+        TextSelection.collapsed(offset: target.clamp(0, text.length));
+    tab.focusNode.requestFocus();
+  }
+
+  void _zoom(double delta) => setState(() {
+        _zoomedFontSize =
+            (_editorFontSize + delta).clamp(_minFontSize, _maxFontSize);
+      });
+
+  void _resetZoom() => setState(() => _zoomedFontSize = null);
+
+  void _onPointerDown(PointerDownEvent event) {
+    _pointers[event.pointer] = event.position;
+    if (_pointers.length == 2) {
+      final points = _pointers.values.toList();
+      _pinchStartDistance = (points[0] - points[1]).distance;
+      _pinchStartFontSize = _editorFontSize;
+    }
+  }
+
+  void _onPointerMove(PointerMoveEvent event) {
+    if (!_pointers.containsKey(event.pointer)) return;
+    _pointers[event.pointer] = event.position;
+    final start = _pinchStartDistance;
+    final startSize = _pinchStartFontSize;
+    if (_pointers.length != 2 || start == null || startSize == null) return;
+    if (start < 1) return;
+    final points = _pointers.values.toList();
+    final scale = (points[0] - points[1]).distance / start;
+    final size =
+        (startSize * scale).clamp(_minFontSize, _maxFontSize).roundToDouble();
+    if (size != _editorFontSize) setState(() => _zoomedFontSize = size);
+  }
+
+  void _onPointerUp(PointerEvent event) {
+    _pointers.remove(event.pointer);
+    if (_pointers.length < 2) {
+      _pinchStartDistance = null;
+      _pinchStartFontSize = null;
+    }
   }
 
   void _undo() {
@@ -952,6 +1161,12 @@ class _RemoteEditorScreenState extends State<RemoteEditorScreen> {
       ('Paste', _chord('V')),
       ('Undo', _chord('Z')),
       ('Redo', _chord('Z', shift: true)),
+      ('Indent / outdent', 'Tab / Shift+Tab'),
+      ('Indent / outdent line', '${_chord(']')} / ${_chord('[')}'),
+      ('Comment line', _chord('/')),
+      ('Move line', 'Alt+↑ / Alt+↓'),
+      ('Duplicate line', 'Shift+Alt+↓'),
+      ('Zoom in / out', '${_chord('=')} / ${_chord('-')}'),
     ];
 
     return showDialog<void>(
@@ -1055,6 +1270,18 @@ class _RemoteEditorScreenState extends State<RemoteEditorScreen> {
           const SingleActivator(LogicalKeyboardKey.keyG, meta: true):
               () => unawaited(_goToLine()),
           const SingleActivator(LogicalKeyboardKey.escape): _hideFind,
+          for (final meta in const [false, true]) ...{
+            SingleActivator(LogicalKeyboardKey.equal,
+                control: !meta, meta: meta): () => _zoom(1),
+            SingleActivator(LogicalKeyboardKey.numpadAdd,
+                control: !meta, meta: meta): () => _zoom(1),
+            SingleActivator(LogicalKeyboardKey.minus,
+                control: !meta, meta: meta): () => _zoom(-1),
+            SingleActivator(LogicalKeyboardKey.numpadSubtract,
+                control: !meta, meta: meta): () => _zoom(-1),
+            SingleActivator(LogicalKeyboardKey.digit0,
+                control: !meta, meta: meta): _resetZoom,
+          },
         },
         child: Scaffold(
           backgroundColor: theme.background,
@@ -1141,6 +1368,10 @@ class _RemoteEditorScreenState extends State<RemoteEditorScreen> {
           switch (value) {
             case 'wrap':
               setState(() => _softWrap = !_softWrap);
+            case 'whitespace':
+              setState(() => _showWhitespace = !_showWhitespace);
+            case 'indent':
+              unawaited(_pickIndent(tab));
             case 'goto':
               unawaited(_goToLine());
             case 'replace':
@@ -1174,6 +1405,25 @@ class _RemoteEditorScreenState extends State<RemoteEditorScreen> {
                 const Text('Soft wrap'),
               ],
             ),
+          ),
+          PopupMenuItem(
+            value: 'whitespace',
+            child: Row(
+              children: [
+                Icon(
+                  _showWhitespace
+                      ? Icons.check_box
+                      : Icons.check_box_outline_blank,
+                  size: 18,
+                ),
+                const SizedBox(width: 10),
+                const Text('Show whitespace'),
+              ],
+            ),
+          ),
+          PopupMenuItem(
+            value: 'indent',
+            child: Text('Indentation: ${tab.indentStyle.label}…'),
           ),
           const PopupMenuItem(value: 'goto', child: Text('Go to line…')),
           const PopupMenuItem(value: 'replace', child: Text('Replace…')),
@@ -1308,36 +1558,172 @@ class _RemoteEditorScreenState extends State<RemoteEditorScreen> {
       return const Center(child: Text('Nothing open.'));
     }
 
+    // Wide enough for a list beside the text: open files move from the tab
+    // strip to a side panel, where long names fit.
+    final sidePanel = _tabs.length > 1 &&
+        WindowSizeClass.forWidth(MediaQuery.sizeOf(context).width)
+            .isAtLeastMedium;
+    final active = _active.clamp(0, _tabs.length - 1);
+
+    // One live editor per tab rather than one rebuilt per switch: the undo
+    // history lives inside the field, so rebuilding it for the next file
+    // threw away the last one's — and its scroll position with it.
+    final editors = IndexedStack(
+      index: active,
+      children: [
+        for (final t in _tabs)
+          CodeEditorField(
+            key: t.fieldKey,
+            controller: t.controller,
+            focusNode: t.focusNode,
+            undoController: t.undo,
+            // The field has to *hold* the keyboard for Ctrl+A, Ctrl+S and
+            // the rest to reach it. Desktop only: doing it on a phone would
+            // open the soft keyboard over the file the moment it appeared,
+            // before the user has decided to change anything.
+            autofocus: _isDesktopPlatform && identical(t, tab),
+            theme: theme,
+            fontSize: _editorFontSize,
+            softWrap: _softWrap,
+            indentStyle: t.indentStyle,
+            language: t.language,
+            showWhitespace: _showWhitespace,
+          ),
+      ],
+    );
+
     return Column(
       children: [
-        if (_tabs.length > 1) _tabStrip(theme),
+        if (_tabs.length > 1 && !sidePanel) _tabStrip(theme),
         if (_findVisible) _findBar(theme),
         if (tab.hadInvalidUtf8) _encodingBanner(tab),
         Expanded(
-          child: CodeEditorField(
-            // Keyed by path so switching tabs rebuilds the field's scroll
-            // state against the right document rather than carrying the
-            // previous file's offset into the next one.
-            key: ValueKey(tab.path),
-            controller: tab.controller,
-            focusNode: tab.focusNode,
-            undoController: tab.undo,
-            // The field has to *hold* the keyboard for Ctrl+A, Ctrl+S and the
-            // rest to reach it, and until this it did not until the user
-            // clicked into the text — which is what "the shortcuts don't
-            // work" looks like from the other side. Desktop only: doing it on
-            // a phone would open the soft keyboard over the file the moment
-            // it appeared, before the user has decided to change anything.
-            autofocus: _isDesktopPlatform,
-            theme: theme,
-            fontSize: _settings.terminalFontSize,
-            softWrap: _softWrap,
-            indentStyle: tab.indentStyle,
-            language: tab.language,
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              if (sidePanel) _openFilesPanel(theme),
+              Expanded(
+                child: Listener(
+                  onPointerDown: _onPointerDown,
+                  onPointerMove: _onPointerMove,
+                  onPointerUp: _onPointerUp,
+                  onPointerCancel: _onPointerUp,
+                  child: editors,
+                ),
+              ),
+            ],
           ),
         ),
+        if (!_isDesktopPlatform)
+          EditorKeyBar(
+            theme: theme,
+            onIndent: () => tab.fieldKey.currentState?.indentSelection(),
+            onOutdent: () => tab.fieldKey.currentState?.outdentSelection(),
+            onType: (text) => tab.fieldKey.currentState?.typeText(text),
+            onArrow: (direction) => _moveCaret(tab, direction),
+            onUndo: _undo,
+            onRedo: _redo,
+          ),
         _statusBar(tab, theme),
       ],
+    );
+  }
+
+  void _activate(int index) {
+    setState(() => _active = index);
+    _focusActiveAfterFrame();
+  }
+
+  /// Hands the keyboard to the file now in front, on a desktop.
+  ///
+  /// After the frame, not now: until the stack rebuilds, that field is still
+  /// a hidden child, which `IndexedStack` wraps in an `ExcludeFocus` — a
+  /// request made before then is refused, and the keyboard went nowhere.
+  void _focusActiveAfterFrame() {
+    if (!_isDesktopPlatform) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || _tabs.isEmpty) return;
+      _tabs[_active.clamp(0, _tabs.length - 1)].focusNode.requestFocus();
+    });
+  }
+
+  Widget _openFilesPanel(TerminalTheme theme) {
+    final colorScheme = Theme.of(context).colorScheme;
+    return Container(
+      width: 210,
+      decoration: BoxDecoration(
+        color: colorScheme.surfaceContainerLow,
+        border: Border(right: BorderSide(color: colorScheme.outlineVariant)),
+      ),
+      child: ListView.builder(
+        itemCount: _tabs.length,
+        itemBuilder: (context, i) {
+          final t = _tabs[i];
+          final isActive = i == _active;
+          return Material(
+            color: isActive
+                ? colorScheme.primary.withValues(alpha: 0.14)
+                : Colors.transparent,
+            child: InkWell(
+              onTap: () => _activate(i),
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(12, 6, 4, 6),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            t.name,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              fontSize: 13,
+                              fontWeight:
+                                  isActive ? FontWeight.w600 : FontWeight.w400,
+                              color: isActive
+                                  ? theme.foreground
+                                  : theme.brightBlack,
+                            ),
+                          ),
+                          Text(
+                            RemotePath.parent(t.path),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              fontSize: 11,
+                              color: theme.brightBlack,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    if (t.isDirty)
+                      Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 4),
+                        child: Container(
+                          width: 7,
+                          height: 7,
+                          decoration: BoxDecoration(
+                            color: colorScheme.primary,
+                            shape: BoxShape.circle,
+                          ),
+                        ),
+                      ),
+                    IconButton(
+                      icon: const Icon(Icons.close, size: 15),
+                      tooltip: 'Close ${t.name}',
+                      visualDensity: VisualDensity.compact,
+                      onPressed: () => unawaited(_closeTab(i)),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          );
+        },
+      ),
     );
   }
 
@@ -1352,7 +1738,7 @@ class _RemoteEditorScreenState extends State<RemoteEditorScreen> {
           final active = i == _active;
           final colorScheme = Theme.of(context).colorScheme;
           return InkWell(
-            onTap: () => setState(() => _active = i),
+            onTap: () => _activate(i),
             child: Container(
               padding: const EdgeInsets.symmetric(horizontal: 10),
               decoration: BoxDecoration(
@@ -1587,13 +1973,21 @@ class _RemoteEditorScreenState extends State<RemoteEditorScreen> {
   }
 
   Widget _statusBar(_EditorTab tab, TerminalTheme theme) {
+    final text = tab.controller.text;
     final selection = tab.controller.selection;
-    final line = selection.isValid
-        ? lineForOffset(tab.controller.text, selection.baseOffset)
-        : 1;
-    final total = '\n'.allMatches(tab.controller.text).length + 1;
+    final caret = selection.isValid
+        ? selection.extentOffset.clamp(0, text.length)
+        : 0;
+    final line = lineForOffset(text, caret);
+    final column = visualColumn(text, caret, tab.indentStyle.size) + 1;
+    // Only where it breaks something: Python raises TabError on it, YAML
+    // refuses tabs outright, and a Makefile recipe needs exactly a tab.
+    final checkIndent = tab.language.indentAfterColon ||
+        tab.language.requiresTabs;
+    final mixed = checkIndent && hasMixedIndentation(text);
 
     final colorScheme = Theme.of(context).colorScheme;
+    final dim = TextStyle(fontSize: 11, color: theme.brightBlack);
     return Material(
       color: colorScheme.surfaceContainerHigh,
       child: SizedBox(
@@ -1601,15 +1995,37 @@ class _RemoteEditorScreenState extends State<RemoteEditorScreen> {
         child: Row(
           children: [
             const SizedBox(width: 10),
-            Text(
-              'Ln $line of $total',
-              style: TextStyle(fontSize: 11, color: theme.brightBlack),
-            ),
+            Text('Ln $line, Col $column', style: dim),
             const Spacer(),
-            Text(
-              '${tab.mode.label} · ${tab.lineEndings.label}'
-              '${_softWrap ? ' · wrap' : ''}',
-              style: TextStyle(fontSize: 11, color: theme.brightBlack),
+            if (mixed)
+              Tooltip(
+                message: 'This file mixes tabs and spaces in its indentation. '
+                    'Turn on Show whitespace to see where.',
+                child: Padding(
+                  padding: const EdgeInsets.only(right: 8),
+                  child: Icon(
+                    Icons.warning_amber_rounded,
+                    size: 15,
+                    color: colorScheme.error,
+                  ),
+                ),
+              ),
+            InkWell(
+              onTap: () => unawaited(_pickIndent(tab)),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 6),
+                child: Text(tab.indentStyle.label, style: dim),
+              ),
+            ),
+            Flexible(
+              child: Text(
+                '· ${tab.mode.label} · ${tab.lineEndings.label} · '
+                '${tab.hasBom ? 'UTF-8 BOM' : 'UTF-8'}'
+                '${_softWrap ? ' · wrap' : ''}',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: dim,
+              ),
             ),
             const SizedBox(width: 10),
           ],
