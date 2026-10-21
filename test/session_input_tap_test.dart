@@ -4,11 +4,11 @@ import 'dart:typed_data';
 
 import 'package:dartssh2/dartssh2.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:secure_shell_go/models/host.dart';
 import 'package:secure_shell_go/services/device_storage.dart';
 import 'package:secure_shell_go/services/session_controller.dart';
-import 'package:secure_shell_go/services/ssh_service.dart';
 import 'package:xterm/core.dart';
+
+import 'support/fake_transport.dart';
 
 /// The seam broadcast input hangs off: `SessionController.onInputSent`.
 ///
@@ -55,25 +55,8 @@ class FakeShell implements SSHSession {
       throw UnimplementedError('${invocation.memberName} is not faked');
 }
 
-class FakeTransport implements SessionTransport {
+class FakeTransport extends FakeTransportBase {
   final FakeShell shell = FakeShell();
-  final _done = Completer<void>();
-
-  @override
-  Host get host => const Host(
-        id: 'h1',
-        label: 'Test box',
-        hostname: 'example.com',
-        port: 22,
-        username: 'dev',
-        authMethod: SshAuthMethod.password,
-      );
-
-  @override
-  Future<void> get done => _done.future;
-
-  @override
-  bool get isClosed => false;
 
   @override
   Future<SSHSession> startShell({
@@ -82,22 +65,6 @@ class FakeTransport implements SessionTransport {
     String terminalType = 'xterm-256color',
   }) async =>
       shell;
-
-  @override
-  Future<SftpClient> openSftp() => throw UnimplementedError();
-
-  @override
-  Future<SSHSession> execute(String command) => throw UnimplementedError();
-
-  @override
-  MutableSSHAgentHandler get agentSlot => _agentSlot;
-  final _agentSlot = MutableSSHAgentHandler();
-
-  @override
-  Future<void> ping() async {}
-
-  @override
-  void close() {}
 }
 
 class UnusedStorage implements DeviceStorage {

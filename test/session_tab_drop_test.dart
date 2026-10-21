@@ -1,11 +1,9 @@
 import 'dart:async';
 import 'dart:typed_data';
 
-import 'package:dartssh2/dartssh2.dart';
 import 'package:flutter/gestures.dart' show kLongPressTimeout;
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:secure_shell_go/models/host.dart';
 import 'package:secure_shell_go/models/remote_entry.dart';
 import 'package:secure_shell_go/screens/file_browser_pane.dart';
 import 'package:secure_shell_go/screens/session_screen.dart';
@@ -14,64 +12,27 @@ import 'package:secure_shell_go/services/session_controller.dart';
 import 'package:secure_shell_go/services/session_foreground.dart';
 import 'package:secure_shell_go/services/session_manager.dart';
 import 'package:secure_shell_go/services/sftp_service.dart';
-import 'package:secure_shell_go/services/ssh_service.dart';
 import 'package:secure_shell_go/services/transfer_queue.dart';
+
+import 'support/fake_transport.dart';
 
 /// A stub of the SSH transport that lets us build real ManagedSession objects
 /// without opening any sockets. Copied from `session_manager_test.dart` in
 /// shape — the drag-and-drop behaviour we are testing lives above the
 /// transport, so the details of the fake do not matter as long as
 /// [SessionManager] accepts it.
-class FakeTransport implements SessionTransport {
+class FakeTransport extends FakeTransportBase {
   FakeTransport({
     String id = 'h1',
     String label = 'Alpha',
     String hostname = 'alpha.example.com',
-  }) : host = Host(
-          id: id,
-          label: label,
-          hostname: hostname,
-          port: 22,
-          username: 'dev',
-          authMethod: SshAuthMethod.password,
+  }) : super(
+          host: FakeTransportBase.hostFor(
+            id: id,
+            label: label,
+            hostname: hostname,
+          ),
         );
-
-  final _done = Completer<void>();
-
-  @override
-  final Host host;
-
-  var closeCount = 0;
-
-  @override
-  Future<void> get done => _done.future;
-
-  @override
-  bool get isClosed => closeCount > 0;
-
-  @override
-  Future<SSHSession> startShell({
-    required int columns,
-    required int rows,
-    String terminalType = 'xterm-256color',
-  }) =>
-      throw UnimplementedError();
-
-  @override
-  Future<SftpClient> openSftp() => throw UnimplementedError();
-
-  @override
-  Future<SSHSession> execute(String command) => throw UnimplementedError();
-
-  @override
-  MutableSSHAgentHandler get agentSlot => _agentSlot;
-  final _agentSlot = MutableSSHAgentHandler();
-
-  @override
-  Future<void> ping() async {}
-
-  @override
-  void close() => closeCount++;
 }
 
 class StubFs implements RemoteFileSystem {

@@ -2,11 +2,9 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
-import 'package:dartssh2/dartssh2.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:secure_shell_go/models/host.dart';
 import 'package:secure_shell_go/models/remote_entry.dart';
 import 'package:secure_shell_go/screens/file_browser_pane.dart';
 import 'package:secure_shell_go/services/bookmark_store.dart';
@@ -14,8 +12,9 @@ import 'package:secure_shell_go/services/device_storage.dart';
 import 'package:secure_shell_go/services/session_controller.dart';
 import 'package:secure_shell_go/services/settings_store.dart';
 import 'package:secure_shell_go/services/sftp_service.dart';
-import 'package:secure_shell_go/services/ssh_service.dart';
 import 'package:secure_shell_go/theme.dart';
+
+import 'support/fake_transport.dart';
 
 /// A remote tree with the failure modes a real server has.
 ///
@@ -157,50 +156,14 @@ class JumpFs implements RemoteFileSystem {
 }
 
 /// Opens no sockets; the browser pane never asks it for a shell.
-class FakeTransport implements SessionTransport {
-  final _done = Completer<void>();
-  final _agentSlot = MutableSSHAgentHandler();
-
-  @override
-  final Host host = Host(
-    id: 'h1',
-    label: 'demo',
-    hostname: 'demo.example.com',
-    port: 22,
-    username: 'dev',
-    authMethod: SshAuthMethod.password,
-  );
-
-  var closeCount = 0;
-
-  @override
-  Future<void> get done => _done.future;
-
-  @override
-  bool get isClosed => closeCount > 0;
-
-  @override
-  Future<SSHSession> startShell({
-    required int columns,
-    required int rows,
-    String terminalType = 'xterm-256color',
-  }) =>
-      throw UnimplementedError();
-
-  @override
-  Future<SftpClient> openSftp() => throw UnimplementedError();
-
-  @override
-  Future<SSHSession> execute(String command) => throw UnimplementedError();
-
-  @override
-  MutableSSHAgentHandler get agentSlot => _agentSlot;
-
-  @override
-  Future<void> ping() async {}
-
-  @override
-  void close() => closeCount++;
+class FakeTransport extends FakeTransportBase {
+  FakeTransport()
+      : super(
+          host: FakeTransportBase.hostFor(
+            label: 'demo',
+            hostname: 'demo.example.com',
+          ),
+        );
 }
 
 class StubStorage implements DeviceStorage {

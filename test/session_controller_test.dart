@@ -4,7 +4,6 @@ import 'dart:typed_data';
 
 import 'package:dartssh2/dartssh2.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:secure_shell_go/models/host.dart';
 import 'package:secure_shell_go/models/remote_entry.dart';
 import 'package:secure_shell_go/services/device_storage.dart';
 import 'package:secure_shell_go/services/download_plan.dart';
@@ -14,35 +13,17 @@ import 'package:secure_shell_go/services/ssh_service.dart';
 import 'package:secure_shell_go/services/transfer_queue.dart';
 
 import 'memory_fs.dart';
+import 'support/fake_transport.dart';
 
 /// Stands in for a live [SshConnection]. dartssh2's `SSHClient` cannot be
 /// faked usefully, which is exactly why [SessionTransport] exists.
-class FakeTransport implements SessionTransport {
+class FakeTransport extends FakeTransportBase {
   FakeTransport({this.sftpError});
 
-  final _done = Completer<void>();
   final Object? sftpError;
 
-  var closeCount = 0;
   var openSftpCount = 0;
-  var pingCount = 0;
   var startShellCount = 0;
-
-  @override
-  final Host host = const Host(
-    id: 'h1',
-    label: 'Test box',
-    hostname: 'example.com',
-    port: 22,
-    username: 'dev',
-    authMethod: SshAuthMethod.password,
-  );
-
-  @override
-  Future<void> get done => _done.future;
-
-  @override
-  bool get isClosed => closeCount > 0;
 
   /// The one thing about a shell that can be tested without a real SSH
   /// channel is *how many times it is opened*, which is the whole question
@@ -66,30 +47,6 @@ class FakeTransport implements SessionTransport {
   Future<SftpClient> openSftp() {
     openSftpCount++;
     throw UnimplementedError('tests inject a RemoteFileSystem instead');
-  }
-
-  @override
-  Future<SSHSession> execute(String command) =>
-      throw UnimplementedError('exec needs a real SSH channel');
-
-  @override
-  MutableSSHAgentHandler get agentSlot => _agentSlot;
-  final _agentSlot = MutableSSHAgentHandler();
-
-  @override
-  Future<void> ping() async => pingCount++;
-
-  @override
-  void close() => closeCount++;
-
-  /// Simulates the transport going away underneath the session.
-  void dropConnection([Object? error]) {
-    if (_done.isCompleted) return;
-    if (error == null) {
-      _done.complete();
-    } else {
-      _done.completeError(error);
-    }
   }
 }
 
@@ -439,7 +396,7 @@ void main() {
       addTearDown(session.dispose);
 
       final closed = session.changes.first;
-      transport.dropConnection();
+      transport.drop();
       await closed;
 
       expect(session.isClosed, isTrue);
@@ -451,7 +408,7 @@ void main() {
       addTearDown(session.dispose);
 
       final closed = session.changes.first;
-      transport.dropConnection(StateError('reset by peer'));
+      transport.drop(StateError('reset by peer'));
       await closed;
 
       expect(session.isClosed, isTrue);
@@ -505,7 +462,7 @@ void main() {
       addTearDown(session.dispose);
 
       final closed = session.changes.first;
-      transport.dropConnection();
+      transport.drop();
       await closed;
 
       // The background case is the one that matters: a drop noticed while the
@@ -563,7 +520,7 @@ void main() {
       addTearDown(session.dispose);
 
       final closed = session.changes.first;
-      transport.dropConnection();
+      transport.drop();
       await closed;
 
       await expectLater(session.sftp(), throwsA(isA<SftpFailure>()));
@@ -673,7 +630,7 @@ void main() {
       addTearDown(session.dispose);
 
       final closed = session.changes.first;
-      transport.dropConnection();
+      transport.drop();
       await closed;
 
       final task = session.queueDownload(file('a.txt'));
@@ -1409,7 +1366,7 @@ void main() {
       addTearDown(session.dispose);
 
       final closed = session.changes.first;
-      transport.dropConnection();
+      transport.drop();
       await closed;
 
       expect(

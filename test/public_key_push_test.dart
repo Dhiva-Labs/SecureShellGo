@@ -19,6 +19,8 @@ import 'package:secure_shell_go/services/known_hosts_service.dart';
 import 'package:secure_shell_go/services/public_key_push.dart';
 import 'package:secure_shell_go/services/ssh_service.dart';
 
+import 'support/fake_transport.dart';
+
 const _line = 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBogus secureshellgo@box';
 
 void main() {
@@ -308,7 +310,7 @@ void main() {
 /// instead of a live channel — the exit code for the Nth call is
 /// `exitCodes[n]` (or 0 once the list runs out), and every command string it
 /// was asked to run is recorded for assertion.
-class _ScriptedTransport implements SessionTransport {
+class _ScriptedTransport extends FakeTransportBase {
   _ScriptedTransport(this._exitCodes, {this.stderrText = 'boom'});
 
   final List<int> _exitCodes;
@@ -325,35 +327,6 @@ class _ScriptedTransport implements SessionTransport {
       stderrText: code == 0 ? '' : stderrText,
     );
   }
-
-  @override
-  Host get host => throw UnimplementedError();
-
-  @override
-  Future<void> get done => throw UnimplementedError();
-
-  @override
-  bool get isClosed => false;
-
-  @override
-  Future<SSHSession> startShell({
-    required int columns,
-    required int rows,
-    String terminalType = 'xterm-256color',
-  }) =>
-      throw UnimplementedError();
-
-  @override
-  Future<SftpClient> openSftp() => throw UnimplementedError();
-
-  @override
-  MutableSSHAgentHandler get agentSlot => throw UnimplementedError();
-
-  @override
-  Future<void> ping() => throw UnimplementedError();
-
-  @override
-  void close() {}
 }
 
 /// A real [SSHSession] wired to a channel that is never actually connected to

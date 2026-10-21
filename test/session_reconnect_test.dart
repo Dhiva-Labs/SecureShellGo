@@ -10,6 +10,8 @@ import 'package:secure_shell_go/services/session_controller.dart';
 import 'package:secure_shell_go/services/session_reconnect.dart';
 import 'package:secure_shell_go/services/ssh_service.dart';
 
+import 'support/fake_transport.dart';
+
 const testHost = Host(
   id: 'h1',
   label: 'Test box',
@@ -23,58 +25,10 @@ const testCredentials = SshCredentials(password: 'hunter2');
 
 /// Stands in for a live [SshConnection]. dartssh2's `SSHClient` cannot be
 /// faked usefully, which is exactly why [SessionTransport] exists.
-class FakeTransport implements SessionTransport {
-  FakeTransport({this.name = 'first'});
+class FakeTransport extends FakeTransportBase {
+  FakeTransport({this.name = 'first'}) : super(host: testHost);
 
   final String name;
-  final _done = Completer<void>();
-
-  var closeCount = 0;
-  var pingCount = 0;
-
-  @override
-  Host get host => testHost;
-
-  @override
-  Future<void> get done => _done.future;
-
-  @override
-  bool get isClosed => closeCount > 0;
-
-  @override
-  Future<SSHSession> startShell({
-    required int columns,
-    required int rows,
-    String terminalType = 'xterm-256color',
-  }) =>
-      throw UnimplementedError('the shell needs a real SSH channel');
-
-  @override
-  Future<SftpClient> openSftp() => throw UnimplementedError();
-
-  @override
-  Future<SSHSession> execute(String command) => throw UnimplementedError();
-
-  @override
-  MutableSSHAgentHandler get agentSlot => _agentSlot;
-  final _agentSlot = MutableSSHAgentHandler();
-
-  @override
-  Future<void> ping() async => pingCount++;
-
-  @override
-  void close() => closeCount++;
-
-  /// The transport going away underneath the session. With an error it is a
-  /// break; without one it is an orderly goodbye.
-  void drop([Object? error]) {
-    if (_done.isCompleted) return;
-    if (error == null) {
-      _done.complete();
-    } else {
-      _done.completeError(error);
-    }
-  }
 }
 
 /// A shell channel with no SSH underneath it.
