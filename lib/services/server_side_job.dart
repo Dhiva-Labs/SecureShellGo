@@ -6,6 +6,7 @@ import 'dart:math';
 import '../models/host.dart';
 import 'app_data_paths.dart';
 import 'atomic_file.dart';
+import 'shell_quote.dart';
 
 /// A direct server-to-server copy running as a background job on the source
 /// server, so it finishes whether or not this app is still there.
@@ -91,6 +92,74 @@ while [ \$n -lt 300 ]; do
 done
 echo $timeoutMarker''';
     return 'sh -c ${shellQuote(script)}';
+  }
+
+  /// Starts [script] as a detached job of its own — the file browser's
+  /// compress, extract, duplicate and change-owner — and waits a moment in
+  /// case it is already done.
+  ///
+  /// The same job folder as a copy, with `run` (the script) where a copy has
+  /// `batch`, and an `op` marker so the sweep at the top can tell these from
+  /// copies: a copy has a [ServerJobRecord] on the device and is cleaned up
+  /// through it, while an operation nobody came back for — the app closed
+  /// while it ran — has nothing but this folder. Finished ones older than
+  /// two days are removed by the next launch on that server.
+  ///
+  /// The script reaches the server as its own argument, quoted once, never
+  /// spliced into the launcher's text, and runs as `sh run <job folder>`:
+  /// its `$1` is where it may keep scratch files.
+  ///
+  /// Prints `SSG-JOB-DONE <code>`, `---` and the log's tail when the script
+  /// finished within about a second and a half, or `SSG-JOB-STARTED` when it
+  /// is still going and [statusCommand] should follow it.
+  static String launchScriptCommand({
+    required String jobId,
+    required String script,
+  }) {
+    final d = _dir(jobId);
+    final launcher = '''
+d="$d"
+j="\$HOME/.cache/secureshellgo/jobs"
+umask 077
+mkdir -p "\$d" || exit 70
+printf '%s\\n' "\$1" > "\$d/run" || exit 70
+: > "\$d/op"
+find "\$j" -mindepth 1 -maxdepth 1 -type d -mtime +2 -exec sh -c 'for o do [ -f "\$o/op" ] && [ -f "\$o/exit" ] && rm -rf "\$o"; done' ssg-sweep {} + 2>/dev/null
+if command -v setsid >/dev/null 2>&1; then detach=setsid; else detach=nohup; fi
+\$detach sh -c 'd="\$1"; sh "\$d/run" "\$d" > "\$d/log" 2>&1; echo \$? > "\$d/exit.tmp"; mv "\$d/exit.tmp" "\$d/exit"' ssg-job "\$d" < /dev/null > /dev/null 2>&1 &
+echo \$! > "\$d/pid"
+n=0
+while [ \$n -lt 8 ]; do
+  if [ -f "\$d/exit" ]; then echo "$doneMarker \$(cat "\$d/exit")"; echo ---; tail -n 20 "\$d/log" 2>/dev/null; exit 0; fi
+  sleep 0.2 2>/dev/null || sleep 1
+  n=\$((n + 1))
+done
+echo $startedMarker''';
+    return 'sh -c ${posixSingleQuote(launcher)} ssg-op '
+        '${posixSingleQuote(script)}';
+  }
+
+  /// Reads [launchScriptCommand]'s output: finished already (with its exit
+  /// code and log), still running, or null when the launch itself failed.
+  static ServerJobStatus? parseLaunch(String output) {
+    final text = output.trimLeft();
+    if (text.startsWith(startedMarker)) {
+      return const ServerJobStatus(state: ServerJobState.running);
+    }
+    if (!text.startsWith(doneMarker)) return null;
+    final rest = text.substring(doneMarker.length);
+    final split = rest.indexOf('\n---');
+    final code = int.tryParse(
+      (split < 0 ? rest : rest.substring(0, split)).trim(),
+    );
+    final log = split < 0
+        ? ''
+        : rest.substring(split + 4).replaceFirst(RegExp(r'^\n'), '').trim();
+    return ServerJobStatus(
+      state: ServerJobState.finished,
+      exitCode: code ?? -1,
+      log: log,
+    );
   }
 
   /// Prints `EXIT <code>` once the job has finished, `RUNNING` while its

@@ -21,6 +21,7 @@ class HostListActions {
     this.onHostContextMenu,
     this.onToggleSelect,
     this.onSelectAllInGroup,
+    this.onRunCommandInGroup,
   });
 
   final void Function(HostSection section) onToggleSection;
@@ -44,6 +45,9 @@ class HostListActions {
   /// The group header's own checkbox: select (or clear) every host in that
   /// section at once.
   final void Function(HostSection section)? onSelectAllInGroup;
+
+  /// "Run command on group…" in a named group's menu. Null leaves it out.
+  final void Function(HostSection section)? onRunCommandInGroup;
 }
 
 /// Chooses and builds the saved-hosts list's per-section slivers.
@@ -223,6 +227,9 @@ Widget _listSection({
       onDelete: section.isUngrouped
           ? null
           : () => actions.onDeleteGroup(section.group!),
+      onRunCommand: section.isUngrouped || actions.onRunCommandInGroup == null
+          ? null
+          : () => actions.onRunCommandInGroup!(section),
       selectionMode: selectionMode,
       selectedHostIds: selectedHostIds,
       onSelectAll: actions.onSelectAllInGroup,
@@ -280,6 +287,9 @@ Widget _gridSection({
       onDelete: section.isUngrouped
           ? null
           : () => actions.onDeleteGroup(section.group!),
+      onRunCommand: section.isUngrouped || actions.onRunCommandInGroup == null
+          ? null
+          : () => actions.onRunCommandInGroup!(section),
       selectionMode: selectionMode,
       selectedHostIds: selectedHostIds,
       onSelectAll: actions.onSelectAllInGroup,
@@ -360,6 +370,9 @@ Widget _awsSection({
       onDelete: section.isUngrouped
           ? null
           : () => actions.onDeleteGroup(section.group!),
+      onRunCommand: section.isUngrouped || actions.onRunCommandInGroup == null
+          ? null
+          : () => actions.onRunCommandInGroup!(section),
       selectionMode: selectionMode,
       selectedHostIds: selectedHostIds,
       onSelectAll: actions.onSelectAllInGroup,
@@ -542,6 +555,9 @@ Widget _gcpSection({
       onDelete: section.isUngrouped
           ? null
           : () => actions.onDeleteGroup(section.group!),
+      onRunCommand: section.isUngrouped || actions.onRunCommandInGroup == null
+          ? null
+          : () => actions.onRunCommandInGroup!(section),
       selectionMode: selectionMode,
       selectedHostIds: selectedHostIds,
       onSelectAll: actions.onSelectAllInGroup,
@@ -708,6 +724,7 @@ class _StyledGroupHeader extends StatelessWidget {
     required this.onToggle,
     this.onRename,
     this.onDelete,
+    this.onRunCommand,
     this.selectionMode = false,
     this.selectedHostIds = const <String>{},
     this.onSelectAll,
@@ -719,6 +736,7 @@ class _StyledGroupHeader extends StatelessWidget {
   final VoidCallback? onToggle;
   final VoidCallback? onRename;
   final VoidCallback? onDelete;
+  final VoidCallback? onRunCommand;
 
   /// While true, [onSelectAll] is offered as a tristate checkbox in place of
   /// the collapse chevron's usual neighbour — checked when every host in
@@ -833,7 +851,11 @@ class _StyledGroupHeader extends StatelessWidget {
             color: scheme.onSurfaceVariant,
           ),
         ),
-        _GroupOverflowMenu(onRename: onRename, onDelete: onDelete),
+        _GroupOverflowMenu(
+          onRename: onRename,
+          onDelete: onDelete,
+          onRunCommand: onRunCommand,
+        ),
       ],
     );
 
@@ -851,38 +873,47 @@ class _StyledGroupHeader extends StatelessWidget {
 /// there is nothing to show, so the count column stays aligned whether or
 /// not a given section has the menu.
 class _GroupOverflowMenu extends StatelessWidget {
-  const _GroupOverflowMenu({this.onRename, this.onDelete});
+  const _GroupOverflowMenu({this.onRename, this.onDelete, this.onRunCommand});
 
   final VoidCallback? onRename;
   final VoidCallback? onDelete;
+  final VoidCallback? onRunCommand;
 
   @override
   Widget build(BuildContext context) {
-    if (onRename == null && onDelete == null) {
+    if (onRename == null && onDelete == null && onRunCommand == null) {
       return const SizedBox(width: 40);
     }
     return PopupMenuButton<_GroupMenuAction>(
       tooltip: 'Group actions',
       icon: const Icon(Icons.more_vert, size: 20),
       onSelected: (action) => switch (action) {
+        _GroupMenuAction.run => onRunCommand?.call(),
         _GroupMenuAction.rename => onRename?.call(),
         _GroupMenuAction.delete => onDelete?.call(),
       },
-      itemBuilder: (context) => const [
-        PopupMenuItem(
-          value: _GroupMenuAction.rename,
-          child: Text('Rename group'),
-        ),
-        PopupMenuItem(
-          value: _GroupMenuAction.delete,
-          child: Text('Delete group'),
-        ),
+      itemBuilder: (context) => [
+        if (onRunCommand != null)
+          const PopupMenuItem(
+            value: _GroupMenuAction.run,
+            child: Text('Run command on group…'),
+          ),
+        if (onRename != null)
+          const PopupMenuItem(
+            value: _GroupMenuAction.rename,
+            child: Text('Rename group'),
+          ),
+        if (onDelete != null)
+          const PopupMenuItem(
+            value: _GroupMenuAction.delete,
+            child: Text('Delete group'),
+          ),
       ],
     );
   }
 }
 
-enum _GroupMenuAction { rename, delete }
+enum _GroupMenuAction { run, rename, delete }
 
 // ---------------------------------------------------------------------------
 // Row/card widgets shared or nearly-shared across variants.
