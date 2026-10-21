@@ -1,15 +1,22 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:dartssh2/dartssh2.dart';
 
+import 'ssh_certificate.dart';
 import 'x11_forwarding.dart';
 
 /// What a session's shell channel asks the server to forward back to this
 /// device: the SSH agent ([Host.agentForwarding]), X11 windows
 /// ([Host.x11Forwarding]), or both.
 class ShellForwarding {
-  const ShellForwarding({this.agent, this.x11, this.notices = const []});
+  const ShellForwarding({
+    this.agent,
+    this.x11,
+    this.notices = const [],
+    this.certificate,
+  });
 
   /// Answers the server's `auth-agent@openssh.com` channels.
   final SSHAgentHandler? agent;
@@ -20,6 +27,12 @@ class ShellForwarding {
   /// Things to tell the person at the top of the shell, decided before it
   /// opened — X11 asked for on a device with no display, say.
   final List<String> notices;
+
+  /// The certificate the connection offered first, if any. A certificate
+  /// without `permit-agent-forwarding` or `permit-X11-forwarding` is the
+  /// commonest reason a server refuses those, so a refusal says so. Nothing
+  /// to forward on its own.
+  final SshCertificate? certificate;
 
   bool get isEmpty => agent == null && x11 == null && notices.isEmpty;
 }
@@ -191,7 +204,10 @@ bool get agentRequestWithheld => Zone.current[_withholdAgentRequest] == true;
 /// for servers such as Dropbear that grant it per channel.
 ///
 /// What was dropped, and [ShellForwarding.notices], is written at the top
-/// of the shell's output; see [ShellSessionWithNotices].
+/// of the shell's output; see [ShellSessionWithNotices]. So is the X11
+/// forwarder's [X11Forwarder.prepare] note when this display can only be
+/// forwarded with full access, and, while the shell is open, each X11
+/// connection that fails to reach the X server ([X11Forwarder.problems]).
 Future<SSHSession> openForwardedShell({
   required ShellForwarding forwarding,
   required Future<SSHSession> Function({
@@ -201,22 +217,26 @@ Future<SSHSession> openForwardedShell({
 }) async {
   var agent = forwarding.agent != null;
   var agentGranted = false;
-  var x11 = forwarding.x11?.config;
+  final forwarder = forwarding.x11;
+  var x11 = forwarder?.config;
   final notices = [...forwarding.notices];
+  if (forwarder != null) {
+    final note = await forwarder.prepare();
+    if (note != null) notices.add(note);
+  }
   while (true) {
     try {
       final session = await open(agent: agent, x11: x11);
-      return notices.isEmpty
+      final later = x11 == null ? null : forwarder?.problems;
+      return notices.isEmpty && later == null
           ? session
-          : ShellSessionWithNotices(session, notices);
+          : ShellSessionWithNotices(session, notices, later: later);
     } on SSHChannelRequestError catch (e) {
       final message = e.message.toLowerCase();
       if (agent && message.contains(refusedAgentRequest)) {
         agent = false;
         if (!agentGranted) {
-          notices.add('The server refused agent forwarding, so keys on this '
-              'device cannot be used from this shell. Its sshd_config may '
-              'have AllowAgentForwarding no.');
+          notices.add(_refusedAgentNotice(forwarding.certificate));
         }
         continue;
       }
@@ -224,14 +244,37 @@ Future<SSHSession> openForwardedShell({
         // Asked for after the agent, so the agent was granted.
         if (agent) agentGranted = true;
         x11 = null;
-        notices.add('The server refused X11 forwarding, so graphical '
-            'programs cannot open windows here. Its sshd_config may have '
-            'X11Forwarding no, or xauth may not be installed there.');
+        notices.add(_refusedX11Notice(forwarding.certificate));
         continue;
       }
       rethrow;
     }
   }
+}
+
+/// Why the server may have refused the agent: the sign-in certificate first,
+/// when it does not permit forwarding — sshd checks that before its own
+/// configuration — then the server's settings.
+String _refusedAgentNotice(SshCertificate? certificate) {
+  const lead = 'The server refused agent forwarding, so keys on this device '
+      'cannot be used from this shell.';
+  if (certificate != null && !certificate.permitsAgentForwarding) {
+    return '$lead The certificate this host signs in with does not permit '
+        'it (no permit-agent-forwarding); ask its CA for one that does.';
+  }
+  return '$lead Its sshd_config may have AllowAgentForwarding no.';
+}
+
+/// The same for X11 and `permit-X11-forwarding`.
+String _refusedX11Notice(SshCertificate? certificate) {
+  const lead = 'The server refused X11 forwarding, so graphical programs '
+      'cannot open windows here.';
+  if (certificate != null && !certificate.permitsX11Forwarding) {
+    return '$lead The certificate this host signs in with does not permit '
+        'it (no permit-X11-forwarding); ask its CA for one that does.';
+  }
+  return '$lead Its sshd_config may have X11Forwarding no, or xauth may not '
+      'be installed there.';
 }
 
 /// What dartssh2's `SSHChannelRequestError` says, lowercased, when the
@@ -243,26 +286,75 @@ Future<SSHSession> openForwardedShell({
 const refusedAgentRequest = 'request agent forwarding';
 const refusedX11Request = 'request x11 forwarding';
 
-/// A shell session whose output starts with a few lines from this app.
+/// A shell session whose output starts with a few lines from this app, and
+/// may carry more of them as things happen.
 ///
 /// The lines go out on stderr ahead of anything the server sends, the way
-/// `ssh` writes its own warnings into the terminal; everything else is the
-/// wrapped session's, untouched.
+/// `ssh` writes its own warnings into the terminal; [later] lines are put
+/// between the server's own as they arrive, until the session ends.
+/// Everything else is the wrapped session's, untouched.
 class ShellSessionWithNotices implements SSHSession {
-  ShellSessionWithNotices(this._inner, List<String> notices)
-      : _notice = Uint8List.fromList([
-          for (final notice in notices)
-            ...'\x1b[33m$notice\x1b[0m\r\n'.codeUnits,
-        ]);
+  ShellSessionWithNotices(
+    this._inner,
+    List<String> notices, {
+    Stream<String>? later,
+  })  : _notice = Uint8List.fromList([
+          for (final notice in notices) ..._line(notice),
+        ]),
+        // A named parameter cannot be private.
+        // ignore: prefer_initializing_formals
+        _later = later;
 
   final SSHSession _inner;
   final Uint8List _notice;
+  final Stream<String>? _later;
+
+  static List<int> _line(String notice) =>
+      utf8.encode('\x1b[33m$notice\x1b[0m\r\n');
 
   late final Stream<Uint8List> _stderr = _prefixed();
 
-  Stream<Uint8List> _prefixed() async* {
-    yield _notice;
-    yield* _inner.stderr;
+  Stream<Uint8List> _prefixed() {
+    late final StreamController<Uint8List> out;
+    StreamSubscription<Uint8List>? server;
+    StreamSubscription<String>? notes;
+    Future<void> stop() async {
+      final a = server?.cancel();
+      final b = notes?.cancel();
+      server = null;
+      notes = null;
+      await a;
+      await b;
+    }
+
+    out = StreamController<Uint8List>(
+      onListen: () {
+        if (_notice.isNotEmpty) out.add(_notice);
+        notes = _later?.listen(
+          (notice) => out.add(Uint8List.fromList(_line(notice))),
+        );
+        server = _inner.stderr.listen(
+          out.add,
+          onError: out.addError,
+          onDone: () async {
+            await notes?.cancel();
+            notes = null;
+            server = null;
+            await out.close();
+          },
+        );
+      },
+      onPause: () {
+        server?.pause();
+        notes?.pause();
+      },
+      onResume: () {
+        server?.resume();
+        notes?.resume();
+      },
+      onCancel: stop,
+    );
+    return out.stream;
   }
 
   @override

@@ -169,8 +169,11 @@ void main() {
       final to = await target();
       final payload = await roundTrip(source, to);
       expect(payload.contents.knownHosts, 3);
-      final result =
-          await to.service.apply(payload: payload, mode: ImportMode.merge);
+      final result = await to.service.apply(
+        payload: payload,
+        mode: ImportMode.merge,
+        trustKnownHosts: true,
+      );
       expect(result.knownHostsAdded, 3);
       expect(result.knownHostsKept, 0);
       expect(result.knownHostsNotSaved, isFalse);
@@ -206,8 +209,11 @@ void main() {
       await to.knownHosts.trust(_key('b.example.org', fpOther, port: 2222));
       final payload = await roundTrip(source, to);
 
-      final result =
-          await to.service.apply(payload: payload, mode: ImportMode.merge);
+      final result = await to.service.apply(
+        payload: payload,
+        mode: ImportMode.merge,
+        trustKnownHosts: true,
+      );
       expect(result.knownHostsAdded, 1); // c only
       expect(result.knownHostsKept, 1); // b differs; this device's kept
 
@@ -227,7 +233,11 @@ void main() {
       final to = await target();
       await to.knownHosts.trust(_key('local.example.org', fpOther));
       final payload = await roundTrip(source, to);
-      await to.service.apply(payload: payload, mode: ImportMode.replace);
+      await to.service.apply(
+        payload: payload,
+        mode: ImportMode.replace,
+        trustKnownHosts: true,
+      );
       final all = await to.reopen().all();
       expect(all.map((k) => k.hostname), contains('local.example.org'));
       expect(all, hasLength(4));
@@ -237,8 +247,11 @@ void main() {
       final to = await target();
       await to.knownHosts.trust(_key('local.example.org', fpOther));
       final payload = await roundTrip(source, to, includeKnownHosts: false);
-      final result =
-          await to.service.apply(payload: payload, mode: ImportMode.replace);
+      final result = await to.service.apply(
+        payload: payload,
+        mode: ImportMode.replace,
+        trustKnownHosts: true,
+      );
       expect(result.knownHostsAdded, 0);
       expect(await to.reopen().all(), hasLength(1));
     });
@@ -247,11 +260,74 @@ void main() {
         () async {
       final to = await target(keyring: _LockedKeyring());
       final payload = await roundTrip(source, to);
-      final result =
-          await to.service.apply(payload: payload, mode: ImportMode.merge);
+      final result = await to.service.apply(
+        payload: payload,
+        mode: ImportMode.merge,
+        trustKnownHosts: true,
+      );
       expect(result.knownHostsAdded, 3);
       expect(result.knownHostsNotSaved, isTrue);
       expect(await to.knownHostsFile.exists(), isFalse);
+    });
+
+    test('nothing is trusted unless the person ticks Trust these keys',
+        () async {
+      final to = await target();
+      final payload = await roundTrip(source, to);
+      final result =
+          await to.service.apply(payload: payload, mode: ImportMode.merge);
+      expect(result.knownHostsAdded, 0);
+      expect(result.knownHostsNotTrusted, 3);
+      expect(await to.reopen().all(), isEmpty);
+    });
+
+    test('a backup cannot add another key type for a server already known',
+        () async {
+      // This device checked a.example.org's ed25519 key itself. A backup
+      // that also "trusts" an RSA key for it would let someone in the
+      // middle present RSA and get no warning at all.
+      final to = await target();
+      await to.knownHosts.trust(_key('a.example.org', fpA));
+      await source.knownHosts
+          .trust(_key('a.example.org', fpOther, type: 'ssh-rsa'));
+      final payload = await roundTrip(source, to);
+
+      final preview = await to.service.knownHostsToImport(payload);
+      expect(preview.toAdd.map((k) => k.hostname),
+          ['b.example.org', 'c.example.org']);
+      expect(preview.serversKept, 1);
+
+      final result = await to.service.apply(
+        payload: payload,
+        mode: ImportMode.merge,
+        trustKnownHosts: true,
+      );
+      expect(result.knownHostsAdded, 2);
+      expect(result.knownHostsKept, 1);
+      final reopened = to.reopen();
+      expect(await reopened.lookup('a.example.org', 22, 'ssh-rsa'), isNull);
+      expect(
+        (await reopened.lookup('a.example.org', 22, 'ssh-ed25519'))
+            ?.fingerprint,
+        fpA,
+      );
+    });
+
+    test('a new server brings every key type the backup has for it',
+        () async {
+      final to = await target();
+      await source.knownHosts
+          .trust(_key('c.example.org', fpOther, type: 'ssh-ed25519'));
+      final payload = await roundTrip(source, to);
+      final preview = await to.service.knownHostsToImport(payload);
+      expect(
+        preview.toAdd
+            .where((k) => k.hostname == 'c.example.org')
+            .map((k) => k.keyType)
+            .toSet(),
+        {'ssh-rsa', 'ssh-ed25519'},
+      );
+      expect(preview.serversKept, 0);
     });
   });
 
@@ -326,19 +402,39 @@ void main() {
         passphrase: _passphrase,
         useIsolate: false,
       );
-      await to.service.apply(payload: payload, mode: ImportMode.merge);
 
-      // Whatever got in is sealed with this device's key, not the
-      // attacker's: the attacker's key does not open the store...
+      // Unasked, nothing is trusted — the forged entry least of all — and
+      // nothing is written.
+      await to.service.apply(payload: payload, mode: ImportMode.merge);
+      expect(await to.reopen().all(), isEmpty);
+      expect(await to.knownHostsFile.exists(), isFalse);
+
+      // Asked, the person is shown every server it would trust, the forged
+      // one included, as a plain entry: nothing came from the smuggled
+      // store, MAC or key.
+      final preview = await to.service.knownHostsToImport(payload);
+      expect(preview.toAdd.map((k) => k.hostname), [
+        'a.example.org',
+        'b.example.org',
+        'c.example.org',
+        'evil.example.org',
+      ]);
+      expect(preview.toAdd.last.fingerprint, fpOther);
+      await to.service.apply(
+        payload: payload,
+        mode: ImportMode.merge,
+        trustKnownHosts: true,
+      );
+
+      // What got in is sealed with this device's key, not the attacker's:
+      // the attacker's key does not open the store...
       final check = KnownHostsEnvelope.open(
         await to.knownHostsFile.readAsString(),
         key: attackerKey,
         keyEverEstablished: true,
       );
       expect(check.verdict, IntegrityVerdict.tampered);
-      // ...this device's does. Nothing came from the smuggled store: the
-      // three real entries and the extra one listed beside them are plain
-      // entries like any other, added because this device knew none of them.
+      // ...this device's does, and the attacker's key was not adopted.
       final reopened = to.reopen();
       expect(reopened.integrityFailed, isFalse);
       expect(await reopened.all(), hasLength(4));
@@ -387,8 +483,11 @@ void main() {
         passphrase: _passphrase,
         useIsolate: false,
       );
-      final result =
-          await to.service.apply(payload: payload, mode: ImportMode.merge);
+      final result = await to.service.apply(
+        payload: payload,
+        mode: ImportMode.merge,
+        trustKnownHosts: true,
+      );
       expect(result.knownHostsAdded, 3);
       expect(
         (await to.reopen().lookup('a.example.org', 22, 'ssh-ed25519'))
@@ -411,7 +510,11 @@ void main() {
     );
     final to = await target();
     final payload = await roundTrip(source, to);
-    await to.service.apply(payload: payload, mode: ImportMode.merge);
+    await to.service.apply(
+      payload: payload,
+      mode: ImportMode.merge,
+      trustKnownHosts: true,
+    );
     expect(await to.service.hostStore.all(), hasLength(1));
     expect(await to.reopen().isHostKnown('a.example.org', 22), isTrue);
   });

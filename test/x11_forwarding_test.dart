@@ -25,7 +25,7 @@ void main() {
       final rewrite = rewriteX11Setup(
         _setup(fake, littleEndian: true, extra: [1, 2, 3]),
         fakeCookie: fake,
-        realCookie: real,
+        localCookie: real,
       )!;
       expect(rewrite.rewritten, _setup(real.data, littleEndian: true));
       expect(rewrite.leftover, [1, 2, 3]);
@@ -35,7 +35,7 @@ void main() {
       final rewrite = rewriteX11Setup(
         _setup(fake, littleEndian: false),
         fakeCookie: fake,
-        realCookie: real,
+        localCookie: real,
       )!;
       expect(rewrite.rewritten, _setup(real.data, littleEndian: false));
       expect(rewrite.leftover, isEmpty);
@@ -44,7 +44,7 @@ void main() {
     test('keeps the protocol version the client asked for', () {
       final setup = _setup(fake, littleEndian: true, major: 11, minor: 7);
       final rewrite =
-          rewriteX11Setup(setup, fakeCookie: fake, realCookie: real)!;
+          rewriteX11Setup(setup, fakeCookie: fake, localCookie: real)!;
       expect(rewrite.rewritten.sublist(0, 6), setup.sublist(0, 6));
     });
 
@@ -54,7 +54,7 @@ void main() {
       final rewrite = rewriteX11Setup(
         _setup(fake, littleEndian: true),
         fakeCookie: fake,
-        realCookie: null,
+        localCookie: null,
       )!;
       expect(rewrite.rewritten, _setup(const [], littleEndian: true, name: ''));
     });
@@ -64,7 +64,7 @@ void main() {
       for (var cut = 0; cut < setup.length; cut++) {
         expect(
           rewriteX11Setup(setup.sublist(0, cut),
-              fakeCookie: fake, realCookie: real),
+              fakeCookie: fake, localCookie: real),
           isNull,
           reason: 'only $cut of ${setup.length} bytes',
         );
@@ -76,7 +76,7 @@ void main() {
         () => rewriteX11Setup(
           _setup(List.filled(16, 0), littleEndian: true),
           fakeCookie: fake,
-          realCookie: real,
+          localCookie: real,
         ),
         throwsA(isA<X11SetupRejected>().having(
             (e) => e.message, 'message', contains('wrong authentication'))),
@@ -88,7 +88,7 @@ void main() {
         () => rewriteX11Setup(
           _setup(fake, littleEndian: true, name: 'XDM-AUTHORIZATION-1'),
           fakeCookie: fake,
-          realCookie: real,
+          localCookie: real,
         ),
         throwsA(isA<X11SetupRejected>()),
       );
@@ -99,7 +99,7 @@ void main() {
         () => rewriteX11Setup(
           _setup(const [], littleEndian: true, name: ''),
           fakeCookie: fake,
-          realCookie: real,
+          localCookie: real,
         ),
         throwsA(isA<X11SetupRejected>()),
       );
@@ -110,7 +110,7 @@ void main() {
         () => rewriteX11Setup(
           Uint8List.fromList('GET / HTTP/1.1'.codeUnits),
           fakeCookie: fake,
-          realCookie: real,
+          localCookie: real,
         ),
         throwsA(isA<X11SetupRejected>()),
       );
@@ -120,7 +120,7 @@ void main() {
       final head = Uint8List.fromList(
           [0x6c, 0, 11, 0, 0, 0, 0xff, 0xff, 0x10, 0, 0, 0]);
       expect(
-        () => rewriteX11Setup(head, fakeCookie: fake, realCookie: real),
+        () => rewriteX11Setup(head, fakeCookie: fake, localCookie: real),
         throwsA(isA<X11SetupRejected>()),
       );
     });
@@ -271,6 +271,7 @@ void main() {
         display: const X11Display(number: 0),
         fakeCookie: fake,
         realCookie: () async => real,
+        untrustedCookie: _trustedOnly,
         connect: () => throw StateError('must not be dialled'),
         setupTimeout: const Duration(milliseconds: 50),
       );
@@ -286,6 +287,7 @@ void main() {
         display: const X11Display(number: 0),
         fakeCookie: fake,
         realCookie: () async => real,
+        untrustedCookie: _trustedOnly,
         connect: () => throw const SocketException('Connection refused'),
       );
       final handled = forwarder.handle(channel);
@@ -294,7 +296,224 @@ void main() {
       expect(channel.destroyed, isTrue);
       expect(forwarder.lastProblem, contains('Could not reach the X server'));
     });
+
+    test('says what went wrong as it happens, once per burst', () async {
+      final forwarder = X11Forwarder(
+        display: const X11Display(number: 0),
+        fakeCookie: fake,
+        realCookie: () async => real,
+        untrustedCookie: _trustedOnly,
+        connect: () => throw const SocketException('Connection refused'),
+      );
+      final seen = <String>[];
+      forwarder.problems.listen(seen.add);
+      for (var i = 0; i < 3; i++) {
+        final channel = _FakeChannel();
+        final handled = forwarder.handle(channel);
+        channel.incoming.add(_setup(fake, littleEndian: true));
+        await handled;
+      }
+      await Future<void>.delayed(Duration.zero);
+      expect(seen, hasLength(1));
+      expect(seen.single, contains('Could not reach the X server at :0'));
+    });
   });
+
+  group('untrusted access, as ssh -X', () {
+    XauthEntry cookie(int fill) => XauthEntry(
+          family: XauthEntry.familyLocal,
+          address: Uint8List.fromList('box'.codeUnits),
+          number: '0',
+          name: x11CookieProtocol,
+          data: Uint8List.fromList(List.filled(16, fill)),
+        );
+
+    /// A local X server that records the setup each client sends.
+    Future<(ServerSocket, List<Uint8List>)> xServer() async {
+      final server = await ServerSocket.bind(InternetAddress.loopbackIPv4, 0);
+      addTearDown(server.close);
+      final setups = <Uint8List>[];
+      server.listen((socket) {
+        final got = BytesBuilder();
+        socket.listen((chunk) {
+          got.add(chunk);
+          if (got.length == 48) setups.add(got.toBytes());
+        });
+      });
+      return (server, setups);
+    }
+
+    test('each connection gets a cookie of its own; the real one is never '
+        'read', () async {
+      final (server, setups) = await xServer();
+      var made = 0;
+      var realRead = false;
+      final forwarder = X11Forwarder(
+        display: const X11Display(number: 0),
+        fakeCookie: fake,
+        connect: () => Socket.connect(InternetAddress.loopbackIPv4, server.port),
+        realCookie: () async {
+          realRead = true;
+          return real;
+        },
+        untrustedCookie: () async => cookie(0x40 + made++),
+      );
+      expect(await forwarder.prepare(), isNull);
+      expect(forwarder.trusted, isFalse);
+
+      for (var i = 0; i < 2; i++) {
+        final channel = _FakeChannel();
+        unawaited(forwarder.handle(channel));
+        channel.incoming.add(_setup(fake, littleEndian: true));
+      }
+      await _eventually(() => setups.length == 2);
+      forwarder.closeAll();
+
+      // The probe made 0x40; the two connections 0x41 and 0x42.
+      expect(setups.map((s) => s.sublist(32, 48).first).toSet(), {0x41, 0x42});
+      expect(realRead, isFalse);
+    });
+
+    test('a display that cannot do it falls back to full access, and says '
+        'so', () async {
+      final forwarder = X11Forwarder(
+        display: const X11Display(number: 0),
+        fakeCookie: fake,
+        realCookie: () async => real,
+        untrustedCookie: () async => throw const X11UntrustedUnavailable(
+            'xauth: couldn\'t query Security extension on display ":0"'),
+      );
+      final note = await forwarder.prepare();
+      expect(forwarder.trusted, isTrue);
+      expect(note, contains('Security extension'));
+      expect(note, contains('see and control every window'));
+      expect(note, contains('ssh -Y'));
+    });
+
+    test('Windows, which has no untrusted mode, falls back without a note',
+        () async {
+      final forwarder = X11Forwarder(
+        display: const X11Display(host: 'localhost', number: 0),
+        realCookie: () async => null,
+        untrustedCookie: _trustedOnly,
+      );
+      expect(await forwarder.prepare(), isNull);
+      expect(forwarder.trusted, isTrue);
+    });
+
+    test('if a cookie cannot be made later, the program is turned away, not '
+        'given full access', () async {
+      var first = true;
+      var dialled = false;
+      final forwarder = X11Forwarder(
+        display: const X11Display(number: 0),
+        fakeCookie: fake,
+        connect: () async {
+          dialled = true;
+          throw StateError('must not be dialled');
+        },
+        realCookie: () async => real,
+        untrustedCookie: () async {
+          if (first) {
+            first = false;
+            return cookie(1);
+          }
+          throw const X11UntrustedUnavailable('xauth: unable to open display');
+        },
+      );
+      expect(await forwarder.prepare(), isNull);
+      final channel = _FakeChannel();
+      final handled = forwarder.handle(channel);
+      channel.incoming.add(_setup(fake, littleEndian: true));
+      await handled;
+      expect(channel.destroyed, isTrue);
+      expect(dialled, isFalse);
+      expect(forwarder.lastProblem, contains('unable to open display'));
+    });
+  });
+
+  group('generateUntrustedXauthCookie', () {
+    late Directory dir;
+    setUp(() async {
+      dir = await Directory.systemTemp.createTemp('fake_xauth');
+    });
+    tearDown(() async {
+      if (await dir.exists()) await dir.delete(recursive: true);
+    });
+
+    /// A stand-in `xauth` that logs its arguments and runs [body].
+    Future<String> fakeXauth(String body) async {
+      final script = File('${dir.path}/xauth');
+      await script.writeAsString('#!/bin/sh\n'
+          'printf "%s\\n" "\$@" > "${dir.path}/args"\n'
+          '$body\n');
+      await Process.run('chmod', ['+x', script.path]);
+      return script.path;
+    }
+
+    test('asks xauth for an untrusted cookie and reads it back', () async {
+      final made = File('${dir.path}/made');
+      await made.writeAsBytes(_xauthority([
+        _Entry(XauthEntry.familyLocal, 'box'.codeUnits, '0',
+            List.filled(16, 0x5a)),
+      ]));
+      final xauth = await fakeXauth('cp "${made.path}" "\$2"');
+
+      final entry = await generateUntrustedXauthCookie(
+        X11Display.parse(':0')!,
+        executables: ['/nonexistent/xauth', xauth],
+      );
+      expect(entry.data, List.filled(16, 0x5a));
+
+      final args = (await File('${dir.path}/args').readAsLines());
+      expect(args.first, '-f');
+      expect(args.skip(2), [
+        'generate', ':0', x11CookieProtocol, 'untrusted', 'timeout', '60',
+      ]);
+      // The scratch file was private and is gone; the user's Xauthority
+      // was never named.
+      expect(File(args[1]).existsSync(), isFalse);
+      expect(args[1], isNot(contains('.Xauthority')));
+    }, skip: Platform.isWindows);
+
+    test('says why xauth could not make one', () async {
+      final xauth = await fakeXauth(
+        'echo "xauth:  file \$2 does not exist" >&2\n'
+        'echo "xauth: (argv):1:  couldn\'t query Security extension on '
+        'display \\":0\\"" >&2\n'
+        'exit 1',
+      );
+      await expectLater(
+        generateUntrustedXauthCookie(X11Display.parse(':0')!,
+            executables: [xauth]),
+        throwsA(isA<X11UntrustedUnavailable>().having(
+          (e) => e.reason,
+          'reason',
+          'xauth: couldn\'t query Security extension on display ":0"',
+        )),
+      );
+    }, skip: Platform.isWindows);
+
+    test('and when there is no xauth at all', () async {
+      await expectLater(
+        generateUntrustedXauthCookie(X11Display.parse(':0')!,
+            executables: ['/nonexistent/xauth']),
+        throwsA(isA<X11UntrustedUnavailable>().having(
+            (e) => e.reason, 'reason', contains('not installed'))),
+      );
+    }, skip: Platform.isWindows);
+  });
+}
+
+Future<XauthEntry> _trustedOnly() async =>
+    throw const X11UntrustedUnavailable(null);
+
+Future<void> _eventually(bool Function() condition) async {
+  for (var i = 0; i < 200; i++) {
+    if (condition()) return;
+    await Future<void>.delayed(const Duration(milliseconds: 10));
+  }
+  fail('condition never became true');
 }
 
 /// An X11 connection setup presenting [cookie] under [name].

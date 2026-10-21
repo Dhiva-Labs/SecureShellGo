@@ -275,6 +275,33 @@ void main() {
       );
     });
 
+    test('the forms the first patterns missed', () {
+      final cases = <String, String>{
+        'SSHPASS=Hunter22 sshpass -e ssh h':
+            'SSHPASS=[redacted] sshpass -e ssh h',
+        'export MYPASS=Hunter22': 'export MYPASS=[redacted]',
+        'MYSQL_PWD=Hunter22 mysql': 'MYSQL_PWD=[redacted] mysql',
+        'ssh://u:p@ssw0rd@h.example.org/x':
+            'ssh://u:[redacted]@h.example.org/x',
+        'https://u:pa/ss@h.example.org/': 'https://u:[redacted]@h.example.org/',
+        'rsync -a dir/ root:Hunter22@10.0.0.2:/srv':
+            'rsync -a dir/ root:[redacted]@10.0.0.2:/srv',
+        "printf '%s\\n' 'Hunter22' | sudo -S true":
+            'printf [redacted] | sudo -S true',
+        'echo my long pw | sudo -S true': 'echo [redacted] | sudo -S true',
+        'sudo -S id <<< Hunter22': 'sudo -S id <<< [redacted]',
+        'pw=Hunter22 next': 'pw=[redacted] next',
+        'Password for root@h.example.org: Hunter 22':
+            'Password for root@h.example.org: [redacted]',
+        '[sudo] password for dev: Hunter22':
+            '[sudo] password for dev: [redacted]',
+        "dev@h's password: Hunter22": "dev@h's password: [redacted]",
+      };
+      cases.forEach((input, expected) {
+        expect(scrub(input), expected, reason: input);
+      });
+    });
+
     test('scrubbing twice changes nothing more', () {
       const input = 'password=abc123 Authorization: Bearer x.y.zzzzzzzz '
           'sshpass -p pw ssh h';
@@ -327,6 +354,34 @@ void main() {
       final line = pem.split('\n')[2];
       expect(line.length, greaterThanOrEqualTo(16));
       expect(scrubber.scrub('chunk: [$line]'), 'chunk: [[redacted]]');
+    });
+
+    test('a short saved password does not blind the patterns', () {
+      // "pass" is inside "password", "sshpass" and "passphrase". Matched
+      // anywhere before the patterns, it broke each of them.
+      final scrubber = SecretScrubber()..learn('pass');
+      for (final input in [
+        'password=Hunter22',
+        'sshpass -p Hunter22 ssh h',
+        '{"passphrase": "Hunter22"}',
+      ]) {
+        expect(scrubber.scrub(input), isNot(contains('Hunter22')),
+            reason: input);
+      }
+    });
+
+    test('a saved password that is itself a secret name still hides the '
+        'value after it', () {
+      final scrubber = SecretScrubber()..learn('password');
+      expect(scrubber.scrub('password=Hunter22'), isNot(contains('Hunter22')));
+    });
+
+    test('a saved password with spaces goes whole, not just its first word',
+        () {
+      final scrubber = SecretScrubber()..learn('correct horse battery');
+      final out = scrubber.scrub('password=correct horse battery staple');
+      expect(out, isNot(contains('horse')));
+      expect(out, isNot(contains('battery')));
     });
 
     test('very short secrets are left to the patterns', () {
@@ -427,7 +482,7 @@ void main() {
       log.applySettings(const AppSettings(diagnosticsLog: false));
       await log.record(StateError('x'), null);
       expect(await current().exists(), isFalse);
-      log.applySettings(const AppSettings());
+      log.applySettings(const AppSettings(diagnosticsLog: true));
       await log.record(StateError('y'), null);
       expect(await log.read(), contains('Bad state: y'));
     });
@@ -534,6 +589,55 @@ void main() {
           .watchCredentialStorage(backend)
           .write('credentials:h2', jsonEncode({'password': 'letmein99'}));
       expect(await log.read(), isNot(contains('letmein99')));
+    });
+
+    test('a secret learned after writing is taken out of the file too',
+        () async {
+      final log = makeLog()..learnSecret(null);
+      await log.setEnabled(true);
+      await log.record(StateError('typed letmein99 by mistake'), null);
+      expect(await current().readAsString(), contains('letmein99'));
+
+      log.learnSecret('letmein99');
+      await log.rescrubFiles();
+      final onDisk = await current().readAsString();
+      expect(onDisk, isNot(contains('letmein99')));
+      expect(onDisk, contains('typed [redacted] by mistake'));
+    });
+
+    test('learning schedules that by itself', () async {
+      final log = DiagnosticsLog(
+        directory: () async => dir,
+        rescrubDelay: Duration.zero,
+      );
+      await log.setEnabled(true);
+      await log.record(StateError('the code was 7731-4402-1189'), null);
+      log.learnSecret('7731-4402-1189');
+      for (var i = 0; i < 50; i++) {
+        await Future<void>.delayed(const Duration(milliseconds: 10));
+        if (!(await current().readAsString()).contains('7731')) break;
+      }
+      expect(await current().readAsString(), isNot(contains('7731')));
+    });
+
+    test('a file from an earlier run is scrubbed when the log turns on',
+        () async {
+      final earlier = makeLog();
+      await earlier.setEnabled(true);
+      await earlier.record(StateError('vault pw is OpenSesame42'), null);
+
+      final now = makeLog()..learnSecret('OpenSesame42');
+      await now.setEnabled(true);
+      expect(await current().readAsString(), isNot(contains('OpenSesame42')));
+    });
+
+    test('an enormous error waiting for the setting is cut down first',
+        () async {
+      final log = makeLog();
+      await log.record(StateError('x' * 1000000), null,
+          context: 'y' * 1000000);
+      expect(log.pendingEntryLengths.single,
+          lessThan(3 * DiagnosticsLog.maxEntryChars + 1000));
     });
 
     test('clear deletes both files', () async {

@@ -73,22 +73,63 @@ class SshCertificate {
   /// the server writes in its log on every login with it.
   final String keyId;
 
-  /// The user names it may sign in as. Empty means any — though OpenSSH
-  /// refuses an empty list for user certificates unless the server maps
-  /// principals itself.
+  /// The user names it may sign in as. Empty is not "anyone": a server
+  /// that trusts the CA in its sshd_config (`TrustedUserCAKeys`) refuses a
+  /// user certificate that names no one ("Certificate lacks principal
+  /// list"); only an `authorized_keys` `cert-authority` line takes it as a
+  /// wildcard.
   final List<String> principals;
 
-  /// Null for "from the beginning of time".
+  /// Null for "from the beginning of time". A start past what [DateTime]
+  /// can hold is [farFuture]: not valid yet, and not in any lifetime.
   final DateTime? validAfter;
 
   /// Null for "forever".
   final DateTime? validBefore;
 
-  /// Names only, e.g. `force-command`, `source-address`.
-  final List<String> criticalOptions;
+  /// Each critical option and its value, e.g. `force-command` →
+  /// `/usr/bin/backup`, `source-address` → `10.0.0.0/8`. A server enforces
+  /// these, and refuses a certificate with one it does not know.
+  final Map<String, String> criticalOptions;
 
-  /// Names only, e.g. `permit-pty`, `permit-agent-forwarding`.
+  /// What the certificate permits, e.g. `permit-pty`,
+  /// `permit-agent-forwarding`. Anything not listed is refused.
   final List<String> extensions;
+
+  /// The critical options OpenSSH knows. A certificate carrying any other
+  /// is refused by its servers ("unsupported critical option").
+  static const knownCriticalOptions = {
+    'force-command',
+    'source-address',
+    'verify-required',
+  };
+
+  /// Where a `valid_after` past year 9999 is put: still in the future.
+  static final DateTime farFuture = DateTime.utc(9999, 12, 31, 23, 59, 59);
+
+  /// The command the server runs instead of whatever is asked for — the
+  /// shell included — or null when it does not force one.
+  String? get forceCommand => criticalOptions['force-command'];
+
+  /// The client addresses the server accepts it from, or null for any.
+  List<String>? get sourceAddresses => criticalOptions['source-address']
+      ?.split(',')
+      .map((a) => a.trim())
+      .where((a) => a.isNotEmpty)
+      .toList();
+
+  /// Critical options no OpenSSH server knows, which make it refuse this.
+  List<String> get unknownCriticalOptions => [
+        for (final name in criticalOptions.keys)
+          if (!knownCriticalOptions.contains(name)) name,
+      ];
+
+  /// Whether a session signed in with this may forward the agent.
+  bool get permitsAgentForwarding =>
+      extensions.contains('permit-agent-forwarding');
+
+  /// Whether a session signed in with this may forward X11.
+  bool get permitsX11Forwarding => extensions.contains('permit-X11-forwarding');
 
   /// The CA key's type, e.g. `ssh-ed25519`.
   final String signingKeyType;
@@ -260,8 +301,8 @@ class SshCertificate {
       final principals = _readStringList(reader.readBytes());
       final validAfter = _timestamp(reader.readUint64(), forever: false);
       final validBefore = _timestamp(reader.readUint64(), forever: true);
-      final criticalOptions = _readNames(reader.readBytes());
-      final extensions = _readNames(reader.readBytes());
+      final criticalOptions = _readOptions(reader.readBytes());
+      final extensions = _readOptions(reader.readBytes()).keys.toList();
       reader.readBytes(); // reserved
       final signingKeyBlob = Uint8List.fromList(reader.readBytes());
       reader.readBytes(); // signature
@@ -301,9 +342,10 @@ class SshCertificate {
   /// limit": 0 for valid-after, all ones for valid-before.
   static DateTime? _timestamp(BigInt seconds, {required bool forever}) {
     if (!forever && seconds == BigInt.zero) return null;
-    // Anything past the year 9999 is "forever" in practice, and past what
-    // DateTime can hold.
-    if (seconds > BigInt.from(253402300799)) return null;
+    // Past the year 9999 is past what DateTime can hold. For valid-before
+    // that is "forever" in practice; for valid-after it is "not yet", not
+    // "always" — a start that far off must not read as no start at all.
+    if (seconds > BigInt.from(253402300799)) return forever ? null : farFuture;
     return DateTime.fromMillisecondsSinceEpoch(
       seconds.toInt() * 1000,
       isUtc: true,
@@ -325,14 +367,30 @@ class SshCertificate {
   }
 
   /// Critical options and extensions are `string name, string data` pairs.
-  static List<String> _readNames(Uint8List packed) {
+  /// The data of the options that carry a value (`force-command`,
+  /// `source-address`) is itself a string; anything else that has data is
+  /// shown as base64 rather than guessed at.
+  static Map<String, String> _readOptions(Uint8List packed) {
     final reader = _Reader(packed);
-    final names = <String>[];
+    final options = <String, String>{};
     while (reader.remaining > 0) {
-      names.add(_readString(reader));
-      reader.readBytes();
+      final name = _readString(reader);
+      final data = reader.readBytes();
+      options[name] = _optionValue(data);
     }
-    return names;
+    return options;
+  }
+
+  static String _optionValue(Uint8List data) {
+    if (data.isEmpty) return '';
+    try {
+      final inner = _Reader(data);
+      final value = inner.readBytes();
+      if (inner.remaining == 0) return utf8.decode(value);
+    } on FormatException {
+      // Not a string inside; shown raw below.
+    }
+    return base64.encode(data);
   }
 
   /// The certificate types this reads, and the key each certifies.

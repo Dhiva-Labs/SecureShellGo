@@ -1,11 +1,14 @@
+import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
+import 'package:crypto/crypto.dart' show sha256;
 import 'package:dartssh2/dartssh2.dart'
     show SSHKeyPair, SSHRawSignature, SSHSignature;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:secure_shell_go/services/ssh_agent_client.dart';
 import 'package:secure_shell_go/services/ssh_keygen.dart';
+import 'package:secure_shell_go/services/windows_agent_pipe.dart';
 
 /// An SSH `string`: 4-byte big-endian length, then the bytes.
 List<int> _string(List<int> bytes) => [
@@ -736,4 +739,133 @@ void main() {
       expect(SSHRawSignature(osSignature).encode(), osSignature);
     });
   });
+
+  group('finding the agent on Windows', () {
+    late List<String> opened;
+    late bool askedPageant;
+
+    Future<SshAgentConnection> open(
+      Map<String, String> environment, {
+      Set<String> present = const {},
+      SshAgentConnection? pageant,
+    }) {
+      opened = [];
+      askedPageant = false;
+      return SshAgentClient.openWindowsAgent(
+        environment: environment,
+        openPipe: (path) async {
+          opened.add(path);
+          if (!present.contains(path)) {
+            throw const FileSystemException('The system cannot find the file');
+          }
+          return _NullConnection(path);
+        },
+        findPageant: () async {
+          askedPageant = true;
+          return pageant;
+        },
+      );
+    }
+
+    test('an SSH_AUTH_SOCK that is a file is never opened, and the search '
+        'goes on', () async {
+      final connection = await open(
+        {'SSH_AUTH_SOCK': r'C:\Users\me\.ssh\agent.sock'},
+        present: {SshAgentClient.openSshAgentPipe},
+      );
+      expect(opened, [SshAgentClient.openSshAgentPipe]);
+      expect((connection as _NullConnection).path,
+          SshAgentClient.openSshAgentPipe);
+    });
+
+    test('nor is a Cygwin-style socket path; Pageant is still found',
+        () async {
+      final pageant = _NullConnection('pageant');
+      final connection = await open(
+        {'SSH_AUTH_SOCK': '/tmp/ssh-XXXX/agent.1234'},
+        pageant: pageant,
+      );
+      expect(opened, [SshAgentClient.openSshAgentPipe]);
+      expect(connection, same(pageant));
+    });
+
+    test('an SSH_AUTH_SOCK that names a pipe comes first', () async {
+      const pipe = r'\\.\pipe\my-agent';
+      final connection =
+          await open({'SSH_AUTH_SOCK': pipe}, present: {pipe});
+      expect(opened, [pipe]);
+      expect((connection as _NullConnection).path, pipe);
+      expect(askedPageant, isFalse);
+    });
+
+    test('with none, says so, and why SSH_AUTH_SOCK was passed over',
+        () async {
+      await expectLater(
+        open({'SSH_AUTH_SOCK': r'C:\agent.sock'}),
+        throwsA(isA<SshAgentException>()
+            .having((e) => e.kind, 'kind', SshAgentErrorKind.noAgent)
+            .having((e) => e.details, 'details', contains('not a named pipe'))),
+      );
+      expect(askedPageant, isTrue);
+    });
+
+    test('pipe paths', () {
+      expect(SshAgentClient.isWindowsPipePath(r'\\.\pipe\openssh-ssh-agent'),
+          isTrue);
+      expect(SshAgentClient.isWindowsPipePath(r'\\.\PIPE\x'), isTrue);
+      expect(SshAgentClient.isWindowsPipePath(r'\\.\pipe\'), isFalse);
+      expect(SshAgentClient.isWindowsPipePath(r'\\.\pipe\a\b'), isFalse);
+      expect(SshAgentClient.isWindowsPipePath(r'C:\agent'), isFalse);
+      expect(SshAgentClient.isWindowsPipePath(r'\\server\pipe\x'), isFalse);
+    });
+  });
+
+  group("Pageant's pipe name, as PuTTY makes it", () {
+    test('"Pageant", NUL, zero-padded to a block of sixteen', () {
+      expect(pageantSuffixBlock(),
+          [...ascii.encode('Pageant'), ...List.filled(9, 0)]);
+    });
+
+    test('the user and a SHA-256 of the protected block as an SSH string',
+        () {
+      final block = Uint8List.fromList(List.generate(16, (i) => i * 7));
+      final digest = sha256OfSshString(block);
+      expect(
+        latin1.decode(pageantPipeName(
+          userName: ascii.encode('alice'),
+          protectedBlock: block,
+        )),
+        '\\\\.\\pipe\\pageant.alice.$digest',
+      );
+      expect(digest, hasLength(64));
+    });
+
+    test('the principal name is cut at its @, as PuTTY does', () {
+      expect(pageantUserName(ascii.encode('alice@corp.example')),
+          ascii.encode('alice'));
+      expect(pageantUserName(ascii.encode('bob')), ascii.encode('bob'));
+    });
+  });
+}
+
+/// SHA-256 of [bytes] behind a big-endian uint32 length, in hex — written
+/// out longhand here so the test does not just repeat the code.
+String sha256OfSshString(Uint8List bytes) {
+  final message = [
+    (bytes.length >> 24) & 0xff,
+    (bytes.length >> 16) & 0xff,
+    (bytes.length >> 8) & 0xff,
+    bytes.length & 0xff,
+    ...bytes,
+  ];
+  return sha256.convert(message).toString();
+}
+
+class _NullConnection implements SshAgentConnection {
+  _NullConnection(this.path);
+  final String path;
+  @override
+  Future<Uint8List> request(Uint8List payload) async => Uint8List(0);
+  @override
+  Future<void> close() async {}
 }

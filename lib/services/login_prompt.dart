@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import '../models/host.dart';
+import 'diagnostics_log.dart';
 
 /// One question in a keyboard-interactive round (RFC 4256 §3.2).
 class LoginPromptField {
@@ -276,6 +277,14 @@ class KeyboardInteractiveResponder {
       );
     }
     _personAnswered = true;
+    // Hidden answers are passwords and one-time codes, typed here and saved
+    // nowhere: the diagnostics log learns them, so an error that echoes one
+    // cannot keep it.
+    for (var i = 0; i < answers.length; i++) {
+      if (!challenge.fields[i].echo) {
+        DiagnosticsLog.instance.learnSecret(answers[i]);
+      }
+    }
     return answers;
   }
 

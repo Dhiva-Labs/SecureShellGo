@@ -238,7 +238,8 @@ class MethodChannelAppLock implements AppLockAuthenticator {
 ///  * [support] that cannot reach the runner reports
 ///    [AppLockSupport.unsupportedPlatform], so a build without the native
 ///    half simply never offers the lock.
-///  * [authenticate] that throws, or answers something unknown, reports
+///  * [authenticate] that throws — anything at all, not only a
+///    [PlatformException] — or answers something unknown, reports
 ///    [AppLockOutcome.cancelled]: the gate stays up with Unlock live. Once
 ///    Hello has said it is set up, nothing here may answer
 ///    [AppLockOutcome.unavailable], which opens the gate — the same rule
@@ -290,6 +291,12 @@ class WindowsHelloAppLock implements AppLockAuthenticator {
     } on MissingPluginException {
       return AppLockOutcome.cancelled;
     } on PlatformException {
+      return AppLockOutcome.cancelled;
+    } catch (_) {
+      // Anything else — a reply of the wrong type is a TypeError, not a
+      // PlatformException — must not reach the controller either, which
+      // treats an authenticator that throws as one that cannot run and
+      // opens the gate.
       return AppLockOutcome.cancelled;
     }
   }

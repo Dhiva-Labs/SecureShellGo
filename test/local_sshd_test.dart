@@ -90,6 +90,24 @@ void main() {
       expect(result.stdout.trim(), 'cert-ok');
     }, skip: skip, timeout: timeout);
 
+    test('one without permit-agent-forwarding is named when the agent is '
+        'refused', () async {
+      final connection = await lab.connect(
+        lab.host(
+          authMethod: SshAuthMethod.privateKey,
+          certificate: lab.read('ptyonly-cert.pub'),
+          agentForwarding: true,
+        ),
+        SshCredentials(privateKeyPem: lab.read('certkey')),
+        agent: lab.agent,
+      );
+      addTearDown(connection.close);
+      final shell = await _Shell.open(connection);
+      expect(await shell.run('echo still-here'), contains('still-here'));
+      expect(shell.errors, contains('no permit-agent-forwarding'));
+      shell.close();
+    }, skip: skip, timeout: timeout);
+
     test('and without the certificate the same key is refused', () async {
       await expectLater(
         lab.connect(
@@ -177,6 +195,7 @@ void main() {
         // being tested rather than this device having none.
         x11: () => X11Forwarder(
           display: const X11Display(host: '127.0.0.1', number: 99),
+          untrustedCookie: _trustedOnly,
         ),
       );
       addTearDown(connection.close);
@@ -202,6 +221,7 @@ void main() {
       agent: lab.agent,
       x11: () => X11Forwarder(
         display: const X11Display(host: '127.0.0.1', number: 99),
+        untrustedCookie: _trustedOnly,
       ),
     );
     addTearDown(connection.close);
@@ -232,6 +252,7 @@ void main() {
             name: x11CookieProtocol,
             data: realCookie,
           ),
+          untrustedCookie: _trustedOnly,
         ),
       );
       addTearDown(connection.close);
@@ -249,8 +270,41 @@ void main() {
       expect((await RemoteExec.run(connection, 'echo ok')).exitCode, 0);
       shell.close();
     }, skip: skip, timeout: timeout);
+
+    test('where the display can, it gets an untrusted cookie, not the real '
+        'one', () async {
+      final xServer = await _FakeXServer.start();
+      addTearDown(xServer.close);
+      final untrusted = Uint8List.fromList(List.generate(16, (i) => 0x30 + i));
+
+      final connection = await lab.connect(
+        lab.host(authMethod: SshAuthMethod.privateKey, x11Forwarding: true),
+        SshCredentials(privateKeyPem: lab.read('userkey')),
+        x11: () => X11Forwarder(
+          display: X11Display(host: '127.0.0.1', number: xServer.display),
+          realCookie: () async => throw StateError('must not be read'),
+          untrustedCookie: () async => XauthEntry(
+            family: XauthEntry.familyWild,
+            address: Uint8List(0),
+            number: '',
+            name: x11CookieProtocol,
+            data: untrusted,
+          ),
+        ),
+      );
+      addTearDown(connection.close);
+
+      final shell = await _Shell.open(connection);
+      final reply = await shell.run('python3 ${lab.path('x11client.py')}');
+      expect(reply, contains('X11-REPLY hello-from-x'));
+      expect((await xServer.firstSetup).data, untrusted);
+      shell.close();
+    }, skip: skip, timeout: timeout);
   });
 }
+
+Future<XauthEntry> _trustedOnly() async =>
+    throw const X11UntrustedUnavailable(null);
 
 /// A temporary sshd, CA and agents.
 class _Lab {
@@ -282,9 +336,11 @@ class _Lab {
         'ssh-keygen',
         ['-q', '-t', type, if (type == 'rsa') ...['-b', '2048'], '-N', '',
           '-C', name, '-f', at(name)]);
-    Future<void> sign(String pub, String id, {String validity = '-5m:+1d'}) =>
+    Future<void> sign(String pub, String id,
+            {String validity = '-5m:+1d', List<String> options = const []}) =>
         run('ssh-keygen', ['-q', '-s', at('ca'), '-I', id, '-n',
-          Platform.environment['USER']!, '-V', validity, at(pub)]);
+          Platform.environment['USER']!, '-V', validity,
+          for (final o in options) ...['-O', o], at(pub)]);
 
     for (final name in [
       'hostkey', 'ca', 'userkey', 'agent-only', 'certkey', 'agentcert',
@@ -297,7 +353,10 @@ class _Lab {
     File(at('expired.pub')).writeAsStringSync(slurp('certkey.pub'));
     // Not next to the key, so ssh-add does not load it into the agent too.
     File(at('agentcert-copy.pub')).writeAsStringSync(slurp('agentcert.pub'));
+    File(at('ptyonly.pub')).writeAsStringSync(slurp('certkey.pub'));
     await sign('certkey.pub', 'cert-id');
+    await sign('ptyonly.pub', 'pty-only-id',
+        options: ['clear', 'permit-pty']);
     await sign('rsacert.pub', 'rsa-cert-id');
     await sign('agentcert-copy.pub', 'agent-cert-id');
     await sign('expired.pub', 'expired-id', validity: '20200101:20200102');

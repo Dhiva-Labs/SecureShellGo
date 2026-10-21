@@ -11,8 +11,8 @@ import 'import_key_file_button.dart' show showKeyFileErrorDialog;
 const int _maxCertificateBytes = 16 * 1024;
 
 /// The host form's certificate row, in the sign-in area under the key it
-/// goes with: load a `-cert.pub` or paste one, see its key ID, principals
-/// and validity, and remove it.
+/// goes with: load a `-cert.pub` or paste one, see its key ID, principals,
+/// validity and restrictions, and remove it.
 ///
 /// A [FormField], so a certificate issued for a different key than the one
 /// in the form stops the form from saving with the reason under the row —
@@ -212,8 +212,9 @@ class _CertificateBody extends StatelessWidget {
   }
 }
 
-/// Key ID, principals and validity, as `ssh-keygen -L` would show them, in
-/// a few lines.
+/// Key ID, principals, validity, critical options and extensions, as
+/// `ssh-keygen -L` would show them, in a few lines — with a warning under
+/// anything that changes what signing in with it does.
 class _CertificateSummary extends StatelessWidget {
   const _CertificateSummary({
     required this.certificate,
@@ -231,6 +232,7 @@ class _CertificateSummary extends StatelessWidget {
     final muted = theme.textTheme.bodySmall?.copyWith(
       color: theme.colorScheme.onSurfaceVariant,
     );
+    final warning = muted?.copyWith(color: theme.colorScheme.error);
     final mono = muted?.copyWith(
       fontFamily: AppTheme.monoFontFamily,
       fontFamilyFallback: AppTheme.monoFontFamilyFallback,
@@ -254,6 +256,15 @@ class _CertificateSummary extends StatelessWidget {
             ]),
           ),
         );
+    Widget note(String text, {TextStyle? style}) => Padding(
+          padding: const EdgeInsets.only(top: 2),
+          child: Text(text, style: style ?? muted),
+        );
+
+    final options = certificate.criticalOptions;
+    final forced = certificate.forceCommand;
+    final from = certificate.sourceAddresses;
+    final unknown = certificate.unknownCriticalOptions;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -262,22 +273,60 @@ class _CertificateSummary extends StatelessWidget {
             style: mono),
         row(
           'Principals',
-          principals.isEmpty ? 'any user' : principals.join(', '),
-          style: mono,
+          principals.isEmpty ? '(none)' : principals.join(', '),
+          style: principals.isEmpty ? warning : mono,
         ),
         row('Valid', describeCertificateValidity(certificate)),
+        if (options.isNotEmpty)
+          row(
+            'Critical options',
+            [
+              for (final MapEntry(:key, :value) in options.entries)
+                value.isEmpty ? key : '$key=$value',
+            ].join(', '),
+            style: mono,
+          ),
+        row(
+          'Permits',
+          certificate.extensions.isEmpty
+              ? '(nothing)'
+              : certificate.extensions.join(', '),
+          style: mono,
+        ),
         Text(
           describeCertificateStatus(certificate, now),
           style: muted?.copyWith(color: statusColor),
         ),
+        if (principals.isEmpty)
+          note(
+            'It names no users. A server that trusts its CA in sshd_config '
+            '(TrustedUserCAKeys) refuses such a certificate; only an '
+            'authorized_keys cert-authority line accepts it for anyone.',
+            style: warning,
+          ),
         if (unlisted)
-          Padding(
-            padding: const EdgeInsets.only(top: 2),
-            child: Text(
-              'It does not name the user "$user", so the server will refuse '
-              'it unless it maps principals itself.',
-              style: muted,
-            ),
+          note(
+            'It does not name the user "$user", so the server will refuse '
+            'it unless it maps principals itself.',
+          ),
+        if (forced != null)
+          note(
+            'Forces a command: the server runs "$forced" instead of a shell '
+            'or anything this app asks for, so the terminal, files and '
+            'server stats may not work.',
+            style: warning,
+          ),
+        if (from != null)
+          note(
+            'Only accepted from ${from.join(', ')}: the server refuses it '
+            'from any other address.',
+            style: warning,
+          ),
+        if (unknown.isNotEmpty)
+          note(
+            'It has a critical option OpenSSH does not know '
+            '(${unknown.join(', ')}), so OpenSSH servers refuse it.',
+            style: warning,
           ),
       ],
     );

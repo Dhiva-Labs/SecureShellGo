@@ -6,6 +6,7 @@ import 'package:dartssh2/dartssh2.dart';
 
 import '../models/host.dart';
 import '../models/known_host.dart';
+import 'diagnostics_log.dart';
 import 'host_field_input.dart';
 import 'host_key_policy.dart';
 import 'jump_host_chain.dart';
@@ -642,6 +643,14 @@ class SshService {
     Duration timeout = defaultTimeout,
     bool agentForwarding = false,
   }) async {
+    // Every connection passes here, with a password or key that may have
+    // been typed for it and never saved — so never seen by the credential
+    // store, which is where the diagnostics log learns the rest.
+    DiagnosticsLog.instance
+      ..learnSecret(credentials.password)
+      ..learnSecret(credentials.passphrase)
+      ..learnSecret(credentials.privateKeyPem);
+
     // Resolved before any socket is opened, so a self-reference or a loop
     // costs nothing and cannot recurse.
     final hops = await _resolveHops(host);
@@ -1306,6 +1315,7 @@ class SshService {
         return _Identities(
           [certificateIdentity(certificate, pair), ...pairs],
           keys: pairs,
+          certificate: certificate,
         );
       }
     }
@@ -1352,7 +1362,7 @@ class SshService {
             presentedType: certificate.type,
           ),
           ...offered,
-        ]);
+        ], certificate: certificate);
       }
     }
     return _Identities(
@@ -1411,6 +1421,7 @@ class SshService {
       agent: forwardedAgent,
       x11: x11,
       notices: notices,
+      certificate: identities.certificate,
     );
     return forwarding.isEmpty ? null : forwarding;
   }
@@ -1530,7 +1541,12 @@ class SshService {
 
 /// What [SshService._prepareIdentities] settled on for one host.
 class _Identities {
-  const _Identities(this.offered, {this.keys = const [], this.certificateNote});
+  const _Identities(
+    this.offered, {
+    this.keys = const [],
+    this.certificateNote,
+    this.certificate,
+  });
 
   /// What dartssh2 offers the server, in order; null for none.
   final List<SSHIdentity>? offered;
@@ -1542,6 +1558,10 @@ class _Identities {
   /// Why the host's certificate was left out, for the failure message if
   /// the login then fails without it.
   final String? certificateNote;
+
+  /// The certificate offered first, when there is one. Its extensions say
+  /// what the shell may forward; see [ShellForwarding.certificate].
+  final SshCertificate? certificate;
 }
 
 /// An agent identity whose signing stops the login clock: the agent may be

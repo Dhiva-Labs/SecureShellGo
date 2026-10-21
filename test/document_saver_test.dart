@@ -13,6 +13,7 @@ import 'package:secure_shell_go/services/backup_service.dart';
 import 'package:secure_shell_go/services/bookmark_store.dart';
 import 'package:secure_shell_go/services/credential_store.dart';
 import 'package:secure_shell_go/services/device_storage.dart';
+import 'package:secure_shell_go/services/diagnostics_log.dart';
 import 'package:secure_shell_go/services/host_store.dart';
 import 'package:secure_shell_go/services/known_hosts_service.dart';
 import 'package:secure_shell_go/services/settings_store.dart';
@@ -136,6 +137,32 @@ void main() {
       );
       expect(saved!.displayName, 'mine.ssgbackup');
       expect(await File('${dir.path}/mine.ssgbackup').exists(), isTrue);
+    });
+
+    test('an extension put back never lands on a file already there',
+        () async {
+      // The dialog asked about replacing "mine" — which does not exist —
+      // not "mine.ssgbackup", which does.
+      final existing = File('${dir.path}/mine.ssgbackup');
+      await existing.writeAsBytes([7, 7, 7]);
+      final saved = await storageChoosing('${dir.path}/mine').saveDocument(
+        suggestedName: 'secureshellgo-2026-10-21.ssgbackup',
+        bytes: Uint8List.fromList([9]),
+      );
+      expect(await existing.readAsBytes(), [7, 7, 7]);
+      expect(saved!.displayName, 'mine (1).ssgbackup');
+      expect(await File('${dir.path}/mine (1).ssgbackup').readAsBytes(), [9]);
+    });
+
+    test('a name chosen in full replaces as the dialog agreed', () async {
+      final existing = File('${dir.path}/mine.ssgbackup');
+      await existing.writeAsBytes([7, 7, 7]);
+      final saved = await storageChoosing(existing.path).saveDocument(
+        suggestedName: 'secureshellgo-2026-10-21.ssgbackup',
+        bytes: Uint8List.fromList([9]),
+      );
+      expect(saved!.displayName, 'mine.ssgbackup');
+      expect(await existing.readAsBytes(), [9]);
     });
 
     test('backing out saves nothing', () async {
@@ -335,6 +362,12 @@ void main() {
       final json = jsonDecode(utf8.decode(plain!)) as Map<String, dynamic>;
       expect(json['includesKnownHosts'], isTrue);
       expect((json['knownHosts'] as List).single['hostname'], 'a.example.org');
+      // And the passphrase can never reach the diagnostics log.
+      expect(
+        DiagnosticsLog.instance.scrubber.scrub('[a very good passphrase]'),
+        '[[redacted]]',
+      );
+      DiagnosticsLog.instance.scrubber.forgetAll();
     });
   });
 }

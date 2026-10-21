@@ -6,6 +6,8 @@ import 'package:dartssh2/dartssh2.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:secure_shell_go/services/ssh_certificate.dart';
 
+import 'support/certificate_fixture.dart';
+
 /// Certificates as `ssh-keygen -s` writes them.
 ///
 /// Generated per run by the real tool, as `ssh_service_test.dart` does its
@@ -38,7 +40,9 @@ void main() {
     await key('ecdsa', 'ecdsa');
     // Each certificate signs its own copy of the key, so the -cert.pub
     // files do not overwrite one another.
-    for (final copy in ['user-forever', 'user-expired', 'user-host']) {
+    for (final copy in [
+      'user-forever', 'user-expired', 'user-host', 'user-limited',
+    ]) {
       File(at('$copy.pub')).writeAsStringSync(read('user.pub'));
     }
     await run(['-q', '-s', at('ca'), '-I', 'alice@example', '-n',
@@ -52,6 +56,9 @@ void main() {
       'host.example', at('user-host.pub')]);
     await run(['-q', '-s', at('ca'), '-I', 'rsa-id', '-n', 'dev',
       at('rsa.pub')]);
+    await run(['-q', '-s', at('ca'), '-I', 'limited', '-n', 'dev', '-O',
+      'clear', '-O', 'permit-pty', '-O',
+      'source-address=10.0.0.0/8,192.168.1.5', at('user-limited.pub')]);
     await run(['-q', '-s', at('ca'), '-I', 'ecdsa-id', '-n', 'dev',
       at('ecdsa.pub')]);
   });
@@ -72,7 +79,9 @@ void main() {
       expect(cert.principals, ['dev', 'deploy']);
       expect(cert.validAfter, DateTime.utc(2025));
       expect(cert.validBefore, DateTime.utc(2035));
-      expect(cert.criticalOptions, ['force-command']);
+      expect(cert.criticalOptions, {'force-command': '/bin/true'});
+      expect(cert.forceCommand, '/bin/true');
+      expect(cert.sourceAddresses, isNull);
       expect(cert.extensions, contains('permit-pty'));
       expect(cert.extensions, isNot(contains('permit-port-forwarding')));
       expect(cert.signingKeyType, 'ssh-ed25519');
@@ -120,6 +129,21 @@ void main() {
       expect(cert.validityAt(DateTime(2999)), SshCertificateValidity.valid);
     });
 
+    test('source-address, and what is permitted, as ssh-keygen -O sets them',
+        () {
+      final cert = SshCertificate.parse(read('user-limited-cert.pub'));
+      expect(cert.sourceAddresses, ['10.0.0.0/8', '192.168.1.5']);
+      expect(cert.forceCommand, isNull);
+      expect(cert.extensions, ['permit-pty']);
+      expect(cert.permitsAgentForwarding, isFalse);
+      expect(cert.permitsX11Forwarding, isFalse);
+      expect(cert.unknownCriticalOptions, isEmpty);
+
+      final full = SshCertificate.parse(read('user-cert.pub'));
+      expect(full.permitsAgentForwarding, isTrue);
+      expect(full.permitsX11Forwarding, isTrue);
+    });
+
     test('the line survives a round trip, comment and all', () {
       final text = read('user-cert.pub');
       final cert = SshCertificate.parse(text);
@@ -158,6 +182,30 @@ void main() {
     test('says when it starts', () {
       final problem = cert.validityProblemAt(DateTime.utc(2024));
       expect(problem, contains('not valid until 2025-01-01'));
+    });
+
+    test('a start past year 9999 is not yet, not "always"', () {
+      final late = SshCertificate.parse(certificateLineFor(
+        blobOf('user.pub'),
+        validAfterSeconds: (BigInt.one << 64) - BigInt.one,
+      ));
+      expect(late.validAfter, isNotNull);
+      expect(late.validityAt(DateTime.utc(2030)),
+          SshCertificateValidity.notYetValid);
+      expect(late.validityProblemAt(DateTime.utc(2030)),
+          contains('not valid until 9999'));
+    });
+  });
+
+  group('critical options', () {
+    test('an option OpenSSH does not know is named, its value kept', () {
+      final cert = SshCertificate.parse(certificateLineFor(
+        blobOf('user.pub'),
+        criticalOptions: {'force-command': 'backup --now', 'no-such': 'x'},
+      ));
+      expect(cert.forceCommand, 'backup --now');
+      expect(cert.unknownCriticalOptions, ['no-such']);
+      expect(cert.criticalOptions['no-such'], 'x');
     });
   });
 

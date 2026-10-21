@@ -19,27 +19,45 @@ import 'tunnel_carrier.dart';
 ///    `x11` channel back to this app for each connection.
 /// 3. The first thing an X client sends is its connection setup, which
 ///    carries the cookie it found. [rewriteX11Setup] checks it is the fake
-///    one and swaps in the real cookie for this device's display, read from
-///    the local Xauthority — or none, for an X server that does not ask
-///    (a Windows X server started with access control off).
+///    one and swaps in a cookie the local X server takes (see below).
 /// 4. From there the bytes are only piped, both ways, by the same
 ///    [TunnelConnection] port forwards use.
 ///
-/// The real cookie never reaches the server, so root there cannot use it to
-/// reach this device's display other than through a forwarded connection
-/// while the session is up — which is the risk the per-host switch warns
-/// about. A connection that does not present the fake cookie is closed
-/// before anything is sent to the local X server.
+/// Which cookie the local X server is shown decides what the server's
+/// programs may do on this display:
+///
+///  * **Untrusted, as `ssh -X` does.** Where the X server can say so, each
+///    forwarded connection gets a cookie of its own from
+///    `xauth generate … untrusted` (see [generateUntrustedXauthCookie]). The
+///    X server's SECURITY extension then keeps that client to its own
+///    windows: it cannot read other windows, watch the keyboard, or send
+///    input to them.
+///  * **Trusted, as `ssh -Y` does,** where that cannot be had: on Windows,
+///    whose X servers (VcXsrv, Xming, X410) have no untrusted mode, and
+///    wherever `xauth` is missing or the X server lacks the SECURITY
+///    extension (some Xwayland builds). The display's own cookie, read from
+///    the local Xauthority — or none, for an X server that does not ask —
+///    is presented, and programs on the server can see and control every
+///    window on this display while the session is up. The host form says
+///    so on Windows; elsewhere [prepare] returns a line saying so, shown at
+///    the top of the shell.
+///
+/// Either way the server only ever holds the fake cookie, and a connection
+/// that does not present it is closed before anything is sent to the local
+/// X server.
 class X11Forwarder {
   X11Forwarder({
     required this.display,
     Uint8List? fakeCookie,
     Future<Socket> Function()? connect,
     Future<XauthEntry?> Function()? realCookie,
+    Future<XauthEntry> Function()? untrustedCookie,
     this.setupTimeout = const Duration(seconds: 30),
   })  : fakeCookie = fakeCookie ?? _randomCookie(),
         _connect = connect ?? (() => connectToX11Display(display)),
-        _realCookie = realCookie ?? (() => loadXauthCookie(display));
+        _realCookie = realCookie ?? (() => loadXauthCookie(display)),
+        _untrustedCookie =
+            untrustedCookie ?? (() => generateUntrustedXauthCookie(display));
 
   /// The display windows are drawn on.
   final X11Display display;
@@ -49,16 +67,85 @@ class X11Forwarder {
   final Uint8List fakeCookie;
 
   final Future<Socket> Function() _connect;
+
+  /// The display's own cookie: trusted access.
   final Future<XauthEntry?> Function() _realCookie;
+
+  /// A new untrusted cookie, or [X11UntrustedUnavailable].
+  final Future<XauthEntry> Function() _untrustedCookie;
 
   /// How long an X client on the server gets to send its connection setup.
   final Duration setupTimeout;
 
   final Set<TunnelConnection> _live = {};
 
+  Future<String?>? _prepared;
+  bool? _trusted;
+
+  /// Whether forwarded connections get the display's own cookie (`ssh -Y`)
+  /// rather than an untrusted one (`ssh -X`). Null until [prepare] has run.
+  bool? get trusted => _trusted;
+
   /// Why the last forwarded connection did not reach the X server, for
   /// diagnostics. Null while every one has.
   String? lastProblem;
+
+  final StreamController<String> _problems =
+      StreamController<String>.broadcast();
+  String? _lastReported;
+  DateTime? _lastReportedAt;
+
+  /// Each [lastProblem] as it happens, for the terminal to show — the way
+  /// `ssh` writes "X11 connection rejected because of wrong authentication"
+  /// into it. The same problem again within a few seconds is not repeated:
+  /// one program opening three connections to a display that is not there
+  /// is one line, not three.
+  Stream<String> get problems => _problems.stream;
+
+  void _report(String problem) {
+    lastProblem = problem;
+    final now = DateTime.now();
+    final last = _lastReportedAt;
+    if (problem == _lastReported &&
+        last != null &&
+        now.difference(last) < const Duration(seconds: 10)) {
+      return;
+    }
+    _lastReported = problem;
+    _lastReportedAt = now;
+    if (!_problems.isClosed) _problems.add(problem);
+  }
+
+  /// Decides, once, whether connections are let in trusted or untrusted,
+  /// by trying to make an untrusted cookie. Returns what the person should
+  /// be told about it, or null.
+  ///
+  /// Called as the shell opens, so a display that can only be forwarded
+  /// trusted is said so before any program uses it; [handle] calls it too,
+  /// for a forwarder used without a shell.
+  Future<String?> prepare() => _prepared ??= _decide();
+
+  Future<String?> _decide() async {
+    String? why;
+    try {
+      // Only a probe: each connection gets a cookie of its own, and this
+      // one lapses unused after its timeout.
+      await _untrustedCookie();
+      _trusted = false;
+      return null;
+    } on X11UntrustedUnavailable catch (e) {
+      why = e.reason;
+    } catch (e) {
+      // A scratch folder that could not be made, say. Never the shell's
+      // problem.
+      why = '$e';
+    }
+    _trusted = true;
+    if (why == null) return null;
+    return 'X11: this display cannot give the server limited access '
+        '($why), so programs there get full access instead, as with '
+        'ssh -Y: they can see and control every window on this display.';
+  }
 
   /// The `x11-req` for the shell channel.
   SSHX11Config get config => SSHX11Config(
@@ -75,13 +162,15 @@ class X11Forwarder {
   Future<void> handle(SSHSocket channel) async {
     final input = StreamIterator(channel.stream);
     try {
+      await prepare();
       final setup = await _readSetup(input).timeout(setupTimeout);
       final Socket local;
       try {
         local = await _connect();
       } catch (e) {
-        lastProblem = 'Could not reach the X server at '
-            '${display.describe()}: $e';
+        _report('Could not reach the X server at ${display.describe()} '
+            'for a program on the server ($e). Is an X server running '
+            'here?');
         _destroy(channel);
         await input.cancel();
         return;
@@ -99,16 +188,24 @@ class X11Forwarder {
       await connection.pump(onUp: (_) {}, onDown: (_) {});
       _live.remove(connection);
     } on X11SetupRejected catch (e) {
-      lastProblem = e.message;
+      _report(e.message);
+      _destroy(channel);
+      await input.cancel();
+    } on X11UntrustedUnavailable catch (e) {
+      // Untrusted access worked when the shell opened and not now. Not
+      // quietly upgraded to trusted: the person was not told about that.
+      _report('Could not make a limited-access X11 cookie for a program '
+          'on the server (${e.reason ?? 'xauth failed'}), so it was not '
+          'let in.');
       _destroy(channel);
       await input.cancel();
     } on TimeoutException {
-      lastProblem = 'An X11 client on the server did not start its '
-          'connection in time.';
+      _report('An X11 program on the server did not start its connection '
+          'in time.');
       _destroy(channel);
       await input.cancel();
     } catch (e) {
-      lastProblem = 'An X11 connection failed: $e';
+      _report('An X11 connection failed ($e).');
       _destroy(channel);
       await input.cancel();
     }
@@ -120,18 +217,20 @@ class X11Forwarder {
       connection.destroy();
     }
     _live.clear();
+    unawaited(_problems.close());
   }
 
+  /// Reads the client's setup, checks it presents the fake cookie, and only
+  /// then fetches the cookie for the local X server — so a connection that
+  /// is not ours costs no `xauth` run.
   Future<X11SetupRewrite> _readSetup(StreamIterator<Uint8List> input) async {
     final head = BytesBuilder(copy: false);
-    final real = await _realCookie();
-    while (true) {
-      final rewrite = rewriteX11Setup(
-        head.toBytes(),
-        fakeCookie: fakeCookie,
-        realCookie: real,
-      );
-      if (rewrite != null) return rewrite;
+    while (rewriteX11Setup(
+          head.toBytes(),
+          fakeCookie: fakeCookie,
+          localCookie: null,
+        ) ==
+        null) {
       if (!await input.moveNext()) {
         throw const X11SetupRejected(
           'The X11 client on the server hung up before connecting.',
@@ -139,6 +238,13 @@ class X11Forwarder {
       }
       head.add(input.current);
     }
+    final cookie =
+        _trusted == false ? await _untrustedCookie() : await _realCookie();
+    return rewriteX11Setup(
+      head.toBytes(),
+      fakeCookie: fakeCookie,
+      localCookie: cookie,
+    )!;
   }
 
   static Stream<Uint8List> _remainder(
@@ -201,11 +307,25 @@ class X11SetupRewrite {
   final Uint8List leftover;
 }
 
-/// The authorization protocol the fake and the real cookie both use.
+/// An untrusted cookie could not be made for this display. [reason] says
+/// why, for the person, or is null where there is no untrusted mode to
+/// begin with (Windows) and so nothing to explain beyond what the host form
+/// already says.
+class X11UntrustedUnavailable implements Exception {
+  const X11UntrustedUnavailable(this.reason);
+
+  final String? reason;
+
+  @override
+  String toString() => reason ?? 'No untrusted X11 access on this platform.';
+}
+
+/// The authorization protocol the fake and the local cookie both use.
 const String x11CookieProtocol = 'MIT-MAGIC-COOKIE-1';
 
 /// Rewrites the X11 connection setup at the front of [head]: checks it
-/// presents [fakeCookie] and replaces it with [realCookie], or with no
+/// presents [fakeCookie] and replaces it with [localCookie] — an untrusted
+/// one made for this connection, or the display's own — or with no
 /// authorization at all when there is none.
 ///
 /// Returns null while [head] is still too short to hold the whole setup.
@@ -229,7 +349,7 @@ const String x11CookieProtocol = 'MIT-MAGIC-COOKIE-1';
 X11SetupRewrite? rewriteX11Setup(
   Uint8List head, {
   required Uint8List fakeCookie,
-  required XauthEntry? realCookie,
+  required XauthEntry? localCookie,
 }) {
   if (head.isEmpty) return null;
   final order = head[0];
@@ -265,10 +385,10 @@ X11SetupRewrite? rewriteX11Setup(
     );
   }
 
-  final realName = realCookie == null
+  final realName = localCookie == null
       ? const <int>[]
-      : realCookie.name.codeUnits;
-  final realData = realCookie?.data ?? Uint8List(0);
+      : localCookie.name.codeUnits;
+  final realData = localCookie?.data ?? Uint8List(0);
   final out = BytesBuilder(copy: false)..add(head.sublist(0, 6));
   final lengths = ByteData(6)
     ..setUint16(0, realName.length, endian)
@@ -543,4 +663,122 @@ Future<XauthEntry?> loadXauthCookie(
   } on FileSystemException {
     return null;
   }
+}
+
+/// How long an untrusted cookie lives on with no client using it. Each
+/// forwarded connection gets its own a moment before connecting, and the X
+/// server keeps it while that client is connected, so this only needs to
+/// cover the gap — and it is what OpenSSH's `xauth` default is.
+const Duration untrustedCookieTimeout = Duration(seconds: 60);
+
+/// Where `xauth` may be: on the PATH, and where Linux distributions and
+/// XQuartz put it, for an app started without a login shell's PATH.
+const List<String> xauthExecutables = [
+  'xauth',
+  '/usr/bin/xauth',
+  '/usr/X11R6/bin/xauth',
+  '/opt/X11/bin/xauth',
+];
+
+/// A new untrusted cookie for [display], the way `ssh -X` gets one, read
+/// back from a scratch file:
+///
+/// ```text
+/// xauth -f SCRATCH generate DISPLAY MIT-MAGIC-COOKIE-1 untrusted timeout N
+/// ```
+///
+/// The X server makes the cookie through its SECURITY extension and marks
+/// whoever presents it as untrusted. The scratch file is in a new private
+/// folder, deleted before this returns, so the user's own Xauthority is
+/// never touched.
+///
+/// Throws [X11UntrustedUnavailable] when it cannot be had: always on
+/// Windows, and elsewhere when `xauth` is not installed, the X server does
+/// not answer, or it has no SECURITY extension. [executables] are tried in
+/// order until one runs; tests point it at a stand-in.
+Future<XauthEntry> generateUntrustedXauthCookie(
+  X11Display display, {
+  Duration timeout = untrustedCookieTimeout,
+  List<String> executables = xauthExecutables,
+}) async {
+  if (Platform.isWindows) throw const X11UntrustedUnavailable(null);
+  final dir = await Directory.systemTemp.createTemp('ssgo-xauth-');
+  try {
+    final path = '${dir.path}${Platform.pathSeparator}xauthority';
+    final arguments = [
+      '-f',
+      path,
+      'generate',
+      display.describe(),
+      x11CookieProtocol,
+      'untrusted',
+      'timeout',
+      '${timeout.inSeconds}',
+    ];
+    final (exitCode, stderr) = await _runXauth(executables, arguments);
+    if (exitCode != 0) {
+      throw X11UntrustedUnavailable(_xauthComplaint(stderr) ??
+          'xauth could not make one, exit code $exitCode');
+    }
+    final file = File(path);
+    if (await file.exists()) {
+      for (final entry in parseXauthority(await file.readAsBytes())) {
+        if (entry.name == x11CookieProtocol && entry.data.isNotEmpty) {
+          return entry;
+        }
+      }
+    }
+    throw const X11UntrustedUnavailable('xauth made no cookie');
+  } finally {
+    try {
+      await dir.delete(recursive: true);
+    } catch (_) {
+      // Already gone.
+    }
+  }
+}
+
+/// Runs the first of [executables] that exists with [arguments]: its exit
+/// code and what it wrote to stderr.
+Future<(int, String)> _runXauth(
+  List<String> executables,
+  List<String> arguments,
+) async {
+  for (final executable in executables) {
+    final Process process;
+    try {
+      process = await Process.start(executable, arguments);
+    } on ProcessException {
+      continue;
+    }
+    final stderr = process.stderr
+        .transform(const SystemEncoding().decoder)
+        .join();
+    unawaited(process.stdout.drain<void>());
+    final int? exitCode = await process.exitCode
+        .then<int?>((code) => code)
+        .timeout(const Duration(seconds: 10), onTimeout: () {
+      process.kill();
+      return null;
+    });
+    if (exitCode == null) {
+      throw const X11UntrustedUnavailable('xauth did not finish; the X '
+          'server may not be answering');
+    }
+    return (exitCode, await stderr);
+  }
+  throw const X11UntrustedUnavailable('xauth is not installed');
+}
+
+/// The line of `xauth`'s stderr that says what went wrong, without its
+/// `xauth: (argv):1:` prefix, or null. The notice that the scratch file
+/// does not exist yet is not a complaint.
+String? _xauthComplaint(String stderr) {
+  for (final raw in stderr.split('\n').reversed) {
+    var line = raw.trim();
+    if (line.isEmpty || line.contains('does not exist')) continue;
+    line = line.replaceFirst(RegExp(r'^xauth:\s*(\(argv\):\d+:\s*)?'), '');
+    return 'xauth: ${line.trim()}';
+  }
+  return null;
 }

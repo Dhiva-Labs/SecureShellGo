@@ -2,8 +2,9 @@
 /// this app can usefully import: `Host` blocks, `HostName`, `User`, `Port`,
 /// `IdentityFile`, `CertificateFile`, `ForwardAgent`, `ForwardX11`,
 /// `ProxyJump`, and one level of `Include`. Everything else
-/// (`ServerAliveInterval`, `Compression`, `Match` blocks, ...) is silently
-/// ignored — this is an importer, not a reimplementation of ssh_config(5).
+/// (`ServerAliveInterval`, `Compression`, ...) is silently ignored — this
+/// is an importer, not a reimplementation of ssh_config(5). A `Match` block
+/// ends the `Host` block before it and is skipped whole, with a warning.
 ///
 /// Pure Dart, no `dart:io`: [SshConfigParser.parse] takes the config text as
 /// a plain string and, for `Include`, calls back through [readInclude] for
@@ -146,6 +147,19 @@ class SshConfigParser {
           }
           drafts.add(_Draft(alias: pattern));
         }
+        continue;
+      }
+
+      // A Match block is conditional — on the host, the user, a command
+      // that runs at connect time — which an import cannot evaluate. What
+      // follows it until the next Host belongs to the Match, not to the
+      // Host above it: `ForwardAgent yes` under `Match exec "on-vpn"` must
+      // not turn forwarding on for that host everywhere. So the Host block
+      // ends here, and the Match's directives are dropped.
+      if (lowerKeyword == 'match') {
+        finalizeDrafts();
+        warnings.add('Skipped a Match block ("${rest.trim()}"): its settings '
+            'apply only when its condition holds');
         continue;
       }
 

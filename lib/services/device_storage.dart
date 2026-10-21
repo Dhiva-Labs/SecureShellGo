@@ -734,6 +734,11 @@ class DesktopDeviceStorage implements DeviceStorage, DocumentSaver {
   /// write leaves a file that was already there as it was. A name typed
   /// without the suggested extension gets it back, since GTK's dialog does
   /// not add one and a backup without `.ssgbackup` is easy to lose track of.
+  ///
+  /// The dialog's "replace it?" was about the name as typed, though, not the
+  /// one with the extension added. So when that name is already taken, the
+  /// file goes beside it as `name (1).ssgbackup`, the way a download does,
+  /// rather than replacing a file nobody was asked about.
   @override
   Future<SavedDocument?> saveDocument({
     required String suggestedName,
@@ -745,7 +750,15 @@ class DesktopDeviceStorage implements DeviceStorage, DocumentSaver {
     final dot = suggestedName.lastIndexOf('.');
     if (dot > 0) {
       final extension = suggestedName.substring(dot);
-      if (!_basename(path).contains('.')) path = '$path$extension';
+      final typed = _basename(path);
+      if (!typed.contains('.')) {
+        final folder = path.substring(0, path.length - typed.length);
+        final name = RemotePath.deduplicate(
+          '$typed$extension',
+          (candidate) => File('$folder$candidate').existsSync(),
+        );
+        path = '$folder$name';
+      }
     }
     try {
       await atomicWrite(

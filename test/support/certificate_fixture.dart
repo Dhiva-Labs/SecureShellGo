@@ -16,6 +16,15 @@ String certificateLineFor(
   DateTime? validBefore,
   bool host = false,
   String comment = 'alice@laptop',
+  BigInt? validAfterSeconds,
+  Map<String, String> criticalOptions = const {},
+  List<String> extensions = const [
+    'permit-X11-forwarding',
+    'permit-agent-forwarding',
+    'permit-port-forwarding',
+    'permit-pty',
+    'permit-user-rc',
+  ],
 }) {
   final out = BytesBuilder();
   void string(List<int> bytes) => out
@@ -49,10 +58,26 @@ String certificateLineFor(
       ..add(bytes);
   }
   string(packed.toBytes());
-  uint64(seconds(validAfter, end: false));
+  uint64(validAfterSeconds ?? seconds(validAfter, end: false));
   uint64(seconds(validBefore, end: true));
-  string(const []); // critical options
-  string(const []); // extensions
+  // Each option's value is itself a string, as ssh-keygen writes it.
+  final options = BytesBuilder();
+  void packedString(BytesBuilder into, List<int> bytes) => into
+    ..add((ByteData(4)..setUint32(0, bytes.length)).buffer.asUint8List())
+    ..add(bytes);
+  for (final MapEntry(:key, :value) in criticalOptions.entries) {
+    packedString(options, utf8.encode(key));
+    final inner = BytesBuilder();
+    if (value.isNotEmpty) packedString(inner, utf8.encode(value));
+    packedString(options, inner.toBytes());
+  }
+  string(options.toBytes());
+  final permits = BytesBuilder();
+  for (final name in extensions) {
+    packedString(permits, utf8.encode(name));
+    packedString(permits, const []);
+  }
+  string(permits.toBytes());
   string(const []); // reserved
   final ca = BytesBuilder();
   for (final part in [utf8.encode('ssh-ed25519'), List.filled(32, 3)]) {

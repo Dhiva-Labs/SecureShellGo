@@ -27,6 +27,8 @@ void main() {
       expect(settings.themeBrightness, ThemeBrightness.dark);
       expect(settings.keepScreenAwake, isFalse);
       expect(settings.showHiddenFilesByDefault, isFalse);
+      expect(settings.diagnosticsLog, isFalse,
+          reason: 'the diagnostics log is opt-in');
     });
 
     test('clampFontSize keeps values inside min/max', () {
@@ -182,7 +184,8 @@ void main() {
       expect(restored.bell, TerminalBell.vibrate);
       expect(restored.terminalFont, TerminalFont.system);
       expect(restored.keyBarMode, KeyBarMode.auto);
-      expect(restored.diagnosticsLog, isTrue);
+      expect(restored.diagnosticsLog, isFalse,
+          reason: 'the diagnostics log is opt-in');
       expect(restored.localeOverride, isNull);
       expect(restored.editorFontSize, 16,
           reason: 'the editor followed the terminal size until it had one');
@@ -197,7 +200,7 @@ void main() {
         terminalFont: TerminalFont.jetBrainsMono,
         keyBarMode: KeyBarMode.never,
         editorFontSize: 18,
-        diagnosticsLog: false,
+        diagnosticsLog: true,
         localeOverride: 'pt-BR',
       );
       final restored = AppSettings.fromJson(settings.toJson());
@@ -208,7 +211,7 @@ void main() {
       expect(restored.terminalFont, TerminalFont.jetBrainsMono);
       expect(restored.keyBarMode, KeyBarMode.never);
       expect(restored.editorFontSize, 18);
-      expect(restored.diagnosticsLog, isFalse);
+      expect(restored.diagnosticsLog, isTrue);
       expect(restored.localeOverride, 'pt-BR');
     });
 
@@ -327,6 +330,8 @@ void main() {
       final store = SettingsStore(file: storeFile);
       await store.ensureLoaded();
       expect(store.current.terminalFontSize, AppSettings.defaultFontSize);
+      expect(store.current.diagnosticsLog, isFalse,
+          reason: 'an unreadable file must not turn logging on');
     });
 
     test('concurrent ensureLoaded calls share one load', () async {

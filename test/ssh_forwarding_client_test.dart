@@ -5,9 +5,11 @@ import 'dart:typed_data';
 
 import 'package:dartssh2/dartssh2.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:secure_shell_go/services/ssh_certificate.dart';
 import 'package:secure_shell_go/services/ssh_forwarding_client.dart';
 import 'package:secure_shell_go/services/x11_forwarding.dart';
 
+import 'support/certificate_fixture.dart';
 import 'support/scripted_ssh_peer.dart';
 
 /// Per-host forwarding rides on the shell channel only.
@@ -127,6 +129,33 @@ void main() {
       expect(utf8.decode(first), contains('refused agent forwarding'));
     });
 
+    test('refused for a certificate that does not permit it, says so',
+        () async {
+      final client = connect(
+        forwarding: ShellForwarding(
+          agent: agent,
+          certificate: _certificate(extensions: const ['permit-pty']),
+        ),
+      );
+      peer.refuseAgent = true;
+      final shell = await client.shell();
+      final notice = utf8.decode(await shell.stderr.first);
+      expect(notice, contains('refused agent forwarding'));
+      expect(notice, contains('no permit-agent-forwarding'));
+      expect(notice, isNot(contains('AllowAgentForwarding')));
+    });
+
+    test('a certificate that does permit it is not blamed', () async {
+      final client = connect(
+        forwarding: ShellForwarding(agent: agent, certificate: _certificate()),
+      );
+      peer.refuseAgent = true;
+      final shell = await client.shell();
+      final notice = utf8.decode(await shell.stderr.first);
+      expect(notice, contains('AllowAgentForwarding no'));
+      expect(notice, isNot(contains('certificate')));
+    });
+
     test('refusedAgentRequest matches what dartssh2 throws', () async {
       // Without this, a reworded dartssh2 error would not be recognised as
       // a refusal, and every shell on such a server would fail to open.
@@ -175,6 +204,8 @@ void main() {
           fakeCookie: Uint8List.fromList(List.filled(16, 0x11)),
           connect: connect ?? () => throw StateError('no X server'),
           realCookie: () async => real,
+          untrustedCookie: () async =>
+              throw const X11UntrustedUnavailable(null),
         );
 
     test('the shell asks for x11 with the fake cookie', () async {
@@ -207,6 +238,21 @@ void main() {
       // The connection has the agent from the first channel, and so does
       // this shell: that second refusal is not the server disallowing it.
       expect(notice, isNot(contains('agent')));
+    });
+
+    test('refused for a certificate without permit-X11-forwarding, says so',
+        () async {
+      final client = connect(
+        forwarding: ShellForwarding(
+          x11: forwarder(),
+          certificate: _certificate(extensions: const ['permit-pty']),
+        ),
+      );
+      peer.refuseX11 = true;
+      final shell = await client.shell();
+      final notice = utf8.decode(await shell.stderr.first);
+      expect(notice, contains('refused X11 forwarding'));
+      expect(notice, contains('no permit-X11-forwarding'));
     });
 
     test('a Dropbear-style per-channel grant keeps the agent on the retry',
@@ -295,6 +341,40 @@ void main() {
       expect(dialled, isFalse);
     });
 
+    test('a display that can only be forwarded with full access says so',
+        () async {
+      final client = connect(
+        forwarding: ShellForwarding(
+          x11: X11Forwarder(
+            display: const X11Display(number: 0),
+            fakeCookie: Uint8List.fromList(List.filled(16, 0x11)),
+            connect: () => throw StateError('no X server'),
+            realCookie: () async => null,
+            untrustedCookie: () async => throw const X11UntrustedUnavailable(
+                'xauth: couldn\'t query Security extension'),
+          ),
+        ),
+      );
+      final shell = await client.shell();
+      final notice = utf8.decode(await shell.stderr.first);
+      expect(notice, contains('Security extension'));
+      expect(notice, contains('see and control every window'));
+    });
+
+    test('an X server that does not answer is said in the terminal',
+        () async {
+      final client = connect(forwarding: ShellForwarding(x11: forwarder()));
+      final shell = await client.shell();
+      final lines = <String>[];
+      shell.stderr.listen((chunk) => lines.add(utf8.decode(chunk)));
+
+      final channel = peer.openChannel('x11');
+      peer.sendData(channel, _setup(List.filled(16, 0x11)));
+      await _eventually(() => lines.isNotEmpty);
+      expect(lines.single, contains('Could not reach the X server at :0.1'));
+      expect(lines.single, startsWith('\x1b[33m'));
+    });
+
     test('without x11 forwarding an x11 channel is refused', () async {
       final client = connect(forwarding: ShellForwarding(agent: agent));
       await client.shell();
@@ -321,6 +401,8 @@ void main() {
             fakeCookie: Uint8List.fromList(List.filled(16, 0x22)),
             connect: () => throw StateError('no X server'),
             realCookie: () async => null,
+            untrustedCookie: () async =>
+                throw const X11UntrustedUnavailable(null),
           ),
         ),
       );
@@ -400,4 +482,18 @@ void closeQuietly(Future<void> Function() close) {
   try {
     unawaited(close().catchError((Object _) {}));
   } catch (_) {}
+}
+
+/// A user certificate permitting [extensions] (all of ssh-keygen's
+/// defaults unless told otherwise), for a made-up ed25519 key.
+SshCertificate _certificate({List<String>? extensions}) {
+  final key = BytesBuilder();
+  for (final part in [utf8.encode('ssh-ed25519'), List.filled(32, 9)]) {
+    key
+      ..add((ByteData(4)..setUint32(0, part.length)).buffer.asUint8List())
+      ..add(part);
+  }
+  return SshCertificate.parse(extensions == null
+      ? certificateLineFor(key.toBytes())
+      : certificateLineFor(key.toBytes(), extensions: extensions));
 }

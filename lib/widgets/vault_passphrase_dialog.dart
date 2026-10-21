@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import '../services/diagnostics_log.dart';
+
 /// Asks for the passphrase of an existing credential vault, or null if the
 /// user backed out.
 ///
@@ -38,6 +40,13 @@ class _UnlockVaultDialogState extends State<_UnlockVaultDialog> {
     super.dispose();
   }
 
+  /// Closes with [value], which the diagnostics log learns first: a failed
+  /// unlock can end up in an error message.
+  void _submit(String value) {
+    DiagnosticsLog.instance.learnSecret(value);
+    Navigator.of(context).pop(value);
+  }
+
   @override
   Widget build(BuildContext context) {
     return AlertDialog(
@@ -56,7 +65,7 @@ class _UnlockVaultDialogState extends State<_UnlockVaultDialog> {
             controller: _passphrase,
             obscureText: true,
             autofocus: true,
-            onSubmitted: (value) => Navigator.of(context).pop(value),
+            onSubmitted: _submit,
             decoration: InputDecoration(
               labelText: 'App passphrase',
               errorText: widget.error,
@@ -71,7 +80,7 @@ class _UnlockVaultDialogState extends State<_UnlockVaultDialog> {
           child: const Text('Cancel'),
         ),
         FilledButton(
-          onPressed: () => Navigator.of(context).pop(_passphrase.text),
+          onPressed: () => _submit(_passphrase.text),
           child: const Text('Unlock'),
         ),
       ],

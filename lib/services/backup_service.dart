@@ -214,13 +214,18 @@ class BackupService {
   ///
   /// ## Trusted host keys, in both modes
   ///
-  /// Only ever added, never replaced or removed — even by
-  /// [ImportMode.replace]. A key for a server and key type this device does
-  /// not know yet is added. A key this device already trusts is kept as it
-  /// is, *even when the backup has a different one*: this device checked its
-  /// key itself, and a file must not be able to swap a trusted key for
-  /// another and so silence the changed-key warning for that server. Those
-  /// are counted, so the import screen can say so.
+  /// Only when [trustKnownHosts] is set — the import screen's "Trust these
+  /// keys", which starts off, under the list of servers and fingerprints
+  /// [knownHostsToImport] found — and then only ever added, never replaced
+  /// or removed, even by [ImportMode.replace].
+  ///
+  /// Only servers this device has never trusted a key for are added, with
+  /// every key the backup has for them. A server this device already knows
+  /// keeps exactly the keys it has, *whatever the backup says about it* —
+  /// a different key, or another key type. This device checked those keys
+  /// itself, and a trusted key of a new type is as good as a replaced one
+  /// to someone in the middle: they present that type and get no warning.
+  /// Those servers are counted, so the import screen can say so.
   ///
   /// Each added key goes through [KnownHostsService.trust], which writes the
   /// store sealed with this device's integrity key. Nothing in the backup
@@ -228,6 +233,7 @@ class BackupService {
   Future<ImportResult> apply({
     required BackupPayload payload,
     required ImportMode mode,
+    bool trustKnownHosts = false,
   }) async {
     final existingHosts = await hostStore.all();
     final existingHostIds = {for (final h in existingHosts) h.id};
@@ -267,21 +273,8 @@ class BackupService {
 
     // Decided before any write, like everything above.
     final store = knownHosts;
-    final keysToAdd = <KnownHostKey>[];
-    var keysKept = 0;
-    if (store != null && payload.includesKnownHosts) {
-      final seen = <String>{};
-      for (final key in payload.knownHosts) {
-        // A file listing one server twice adds it once, first entry wins.
-        if (!seen.add(key.id)) continue;
-        final existing = await store.lookup(key.hostname, key.port, key.keyType);
-        if (existing == null) {
-          keysToAdd.add(key);
-        } else if (existing.fingerprint != key.fingerprint) {
-          keysKept++;
-        }
-      }
-    }
+    final hostKeys = await knownHostsToImport(payload);
+    final keysToAdd = trustKnownHosts ? hostKeys.toAdd : const <KnownHostKey>[];
 
     // --- nothing above this line has written anything ---
 
@@ -353,9 +346,40 @@ class BackupService {
       credentialsDropped: droppedCredentials,
       hostsNeedingCredentials: payload.hostsNeedingCredentials,
       knownHostsAdded: keysToAdd.length,
-      knownHostsKept: keysKept,
+      knownHostsKept: hostKeys.serversKept,
+      knownHostsNotTrusted: trustKnownHosts ? 0 : hostKeys.toAdd.length,
       knownHostsNotSaved: keysToAdd.isNotEmpty && store!.keyUnavailable,
     );
+  }
+
+  /// What [apply] would do with the backup's trusted host keys, for the
+  /// import screen to show before anything is written: the keys of servers
+  /// this device has never trusted (each server's, in the file's order, a
+  /// key listed twice once), and how many servers it already knows have
+  /// other keys in the file, which are left out.
+  Future<KnownHostsImport> knownHostsToImport(BackupPayload payload) async {
+    final store = knownHosts;
+    if (store == null || !payload.includesKnownHosts) {
+      return const KnownHostsImport(toAdd: [], serversKept: 0);
+    }
+    final toAdd = <KnownHostKey>[];
+    final seen = <String>{};
+    // Servers this device knows whose keys in the file say something it
+    // does not already trust: those are the ones worth telling about.
+    final kept = <String>{};
+    for (final key in payload.knownHosts) {
+      // A file listing one key twice adds it once, first entry wins.
+      if (!seen.add(key.id)) continue;
+      if (await store.isHostKnown(key.hostname, key.port)) {
+        final mine = await store.lookup(key.hostname, key.port, key.keyType);
+        if (mine?.fingerprint != key.fingerprint) {
+          kept.add(KnownHostKey.hostId(key.hostname, key.port));
+        }
+        continue;
+      }
+      toAdd.add(key);
+    }
+    return KnownHostsImport(toAdd: toAdd, serversKept: kept.length);
   }
 
   /// Every bookmark belonging to one of [hosts].
@@ -387,6 +411,19 @@ class BackupService {
   }
 }
 
+/// See [BackupService.knownHostsToImport].
+class KnownHostsImport {
+  const KnownHostsImport({required this.toAdd, required this.serversKept});
+
+  /// Keys for servers this device has never trusted a key for.
+  final List<KnownHostKey> toAdd;
+
+  /// Servers in the file this device already trusts a key for, and for
+  /// which the file has a key it does not trust: another key, or another
+  /// key type. Their keys in the file are not used.
+  final int serversKept;
+}
+
 /// What an [BackupService.apply] actually did, for the confirmation the
 /// import screen shows afterwards.
 class ImportResult {
@@ -401,6 +438,7 @@ class ImportResult {
     required this.hostsNeedingCredentials,
     this.knownHostsAdded = 0,
     this.knownHostsKept = 0,
+    this.knownHostsNotTrusted = 0,
     this.knownHostsNotSaved = false,
   });
 
@@ -424,9 +462,13 @@ class ImportResult {
   /// Trusted host keys added from the file.
   final int knownHostsAdded;
 
-  /// Servers whose key in the file differs from the one this device already
-  /// trusts, where this device's was kept.
+  /// Servers this device already trusted a key for, whose different keys
+  /// in the file were left out.
   final int knownHostsKept;
+
+  /// Keys for new servers left out because "Trust these keys" was not
+  /// ticked.
+  final int knownHostsNotTrusted;
 
   /// The keys were added for this session only: the system keyring holding
   /// the known-hosts integrity key could not be read, so nothing could be

@@ -14,19 +14,32 @@ import 'settings_store.dart';
 /// Takes passwords, private keys and tokens out of text before it is written
 /// anywhere.
 ///
-/// Two kinds of knowledge, used in this order:
+/// Two kinds of knowledge:
 ///
 ///  1. **What it has been told.** Every value the credential store reads or
 ///     writes is handed to [learn] (see [DiagnosticsLog.watchCredentialStorage]),
-///     so a saved password is removed wherever it turns up, in whatever shape
-///     an error message happens to print it — even one no pattern below would
+///     and so is every secret typed where it is typed — a password used
+///     without saving it, the answers to a server's hidden login prompts,
+///     the vault and backup passphrases ([DiagnosticsLog.learnSecret]) — so
+///     each is removed wherever it turns up, in whatever shape an error
+///     message happens to print it, even one no pattern below would
 ///     recognise. Held in memory only, for the life of the process.
 ///  2. **What secrets look like.** PEM and PuTTY private keys (whole or cut
-///     off), credentials in URLs, `Authorization` headers, the well-known
-///     token formats, `password=`/`"passphrase": "…"`-style pairs, the
+///     off), credentials in URLs (`scheme://user:pw@host`, and `user:pw@host`
+///     without a scheme), `Authorization` headers, the well-known token
+///     formats, `password=`/`"passphrase": "…"`/`pw=`/`SSHPASS=`-style pairs,
+///     password prompts answered inline (`Password for root@h: …`), the
 ///     command-line flags that carry a password (`sshpass -p`, `mysql -p…`,
-///     `ssh-keygen -P/-N`, `curl -u`, `echo … | sudo -S`), and long
-///     random-looking runs of base64 or hex.
+///     `ssh-keygen -P/-N`, `curl -u`, `echo`/`printf … | sudo -S`,
+///     `sudo -S <<< …`), and long random-looking runs of base64 or hex.
+///
+/// The order matters. Learned secrets are matched first, but only as whole
+/// tokens — not inside a longer word — so a password with spaces in it goes
+/// whole before a pattern can take only its first word, while a short saved
+/// password such as `pass` cannot eat the `pass` out of `password=` and
+/// blind the pattern that would have caught the value after it. Then the
+/// patterns. Then learned secrets again, anywhere, for one glued to other
+/// text (`-pSECRET`) that no pattern knows.
 ///
 /// It errs towards removing too much. A log that has lost a port number is
 /// still a useful bug report; one that carries a server password is a leak.
@@ -46,7 +59,8 @@ class SecretScrubber {
   static const int minSecretLineLength = 16;
 
   final Set<String> _known = <String>{};
-  RegExp? _knownPattern;
+  RegExp? _knownAsTokens;
+  RegExp? _knownAnywhere;
   bool _knownDirty = false;
 
   /// How many distinct strings are being matched literally. For tests.
@@ -54,9 +68,9 @@ class SecretScrubber {
 
   /// Remembers [secret], in memory only, so [scrub] removes it wherever it
   /// appears: as written, JSON-escaped, URL-encoded, and each long line of a
-  /// multi-line secret on its own.
-  void learn(String? secret) {
-    if (secret == null) return;
+  /// multi-line secret on its own. True when that taught it something new.
+  bool learn(String? secret) {
+    if (secret == null) return false;
     final variants = <String>{
       secret,
       _jsonEscaped(secret),
@@ -67,16 +81,20 @@ class SecretScrubber {
           if (line.trim().length >= minSecretLineLength) line.trim(),
       ],
     };
+    var learned = false;
     for (final variant in variants) {
       if (variant.length < minKnownSecretLength) continue;
-      if (_known.add(variant)) _knownDirty = true;
+      if (_known.add(variant)) learned = true;
     }
+    if (learned) _knownDirty = true;
+    return learned;
   }
 
   /// Forgets everything [learn] was told.
   void forgetAll() {
     _known.clear();
-    _knownPattern = null;
+    _knownAsTokens = null;
+    _knownAnywhere = null;
     _knownDirty = false;
   }
 
@@ -85,29 +103,37 @@ class SecretScrubber {
     return quoted.substring(1, quoted.length - 1);
   }
 
-  /// [input] with every secret this can find replaced.
+  /// [input] with every secret this can find replaced. See the class doc
+  /// for why in this order.
   String scrub(String input) {
+    _compileKnown();
     var text = input;
-    final known = _knownRegExp();
-    if (known != null) text = text.replaceAll(known, redacted);
+    final asTokens = _knownAsTokens;
+    if (asTokens != null) text = text.replaceAll(asTokens, redacted);
     for (final rule in _rules) {
       text = rule.apply(text);
     }
+    final anywhere = _knownAnywhere;
+    if (anywhere != null) text = text.replaceAll(anywhere, redacted);
     return text;
   }
 
-  RegExp? _knownRegExp() {
-    if (_knownDirty) {
-      _knownDirty = false;
-      // Longest first, so a password that happens to be part of a key does
-      // not leave the rest of the key behind.
-      final sorted = _known.toList()
-        ..sort((a, b) => b.length.compareTo(a.length));
-      _knownPattern = sorted.isEmpty
-          ? null
-          : RegExp(sorted.map(RegExp.escape).join('|'));
+  void _compileKnown() {
+    if (!_knownDirty) return;
+    _knownDirty = false;
+    if (_known.isEmpty) {
+      _knownAsTokens = null;
+      _knownAnywhere = null;
+      return;
     }
-    return _knownPattern;
+    // Longest first, so a password that happens to be part of a key does
+    // not leave the rest of the key behind.
+    final sorted = _known.toList()
+      ..sort((a, b) => b.length.compareTo(a.length));
+    final alternatives = sorted.map(RegExp.escape).join('|');
+    _knownAsTokens =
+        RegExp('(?<![A-Za-z0-9])(?:$alternatives)(?![A-Za-z0-9])');
+    _knownAnywhere = RegExp(alternatives);
   }
 
   // ---- the patterns -------------------------------------------------------
@@ -122,7 +148,7 @@ class SecretScrubber {
       r'(?:[A-Za-z0-9_.-]*?(?:password|passwd|passphrase|secret|token|'
       r'api[_-]?key|access[_-]?key|private[_-]?key(?:[_-]?pem)?|'
       r'auth[_-]?token|credentials?)|'
-      r'(?:[A-Za-z0-9]+[_.-])*(?:pass|pwd|cookie|sig|signature))';
+      r'(?:[A-Za-z0-9]+[_.-])*(?:pass|pwd|pw|cookie|sig|signature))';
 
   static final List<_ScrubRule> _rules = <_ScrubRule>[
     // PEM private keys — OpenSSH, PKCS#1, PKCS#8, encrypted, EC, DSA, SSH2,
@@ -160,13 +186,25 @@ class SecretScrubber {
       RegExp(r'b3BlbnNzaC1rZXktdjE(?:[A-Za-z0-9+/=]|\\[rn]|\r?\n)*'),
       (_) => keyRedacted,
     ),
-    // scheme://user:password@host
+    // scheme://user:password@host — the password taken to the *last* `@`
+    // of the address, since one may hold `@` or `/` (ssh://u:p@ss/w0rd@h).
+    // A URL with an `@` further along its path loses that much more; better
+    // than leaving the end of a password behind.
     _ScrubRule(
       RegExp(
-        r'\b([a-z][a-z0-9+.-]*://)([^\s/:@]*):([^\s/@]+)@',
+        r'''\b([a-z][a-z0-9+.-]*://)([^\s/:@]*):(?!\[redacted\])([^\s"'<>]+)@''',
         caseSensitive: false,
       ),
       (m) => '${m[1]}${m[2]}:$redacted@',
+    ),
+    // user:password@host with no scheme, as scp, rsync and many tools print
+    // it. Not after `//` (that is the rule above) and not a time or a
+    // file:line, which have no `@` after them.
+    _ScrubRule(
+      RegExp(
+        r'''(?<![A-Za-z0-9._%+/:@-])([A-Za-z0-9._-]+):(?!//)(?!\[redacted\])([^\s"'<>]+)@(?=[A-Za-z0-9\[])''',
+      ),
+      (m) => '${m[1]}:$redacted@',
     ),
     // Authorization: Bearer …, and a bare "Bearer …" anywhere.
     _ScrubRule(
@@ -223,9 +261,33 @@ class SecretScrubber {
       RegExp(r'(\bcurl\b(?:\s+\S+)*?\s+(?:-u|--user)\s*)([^\s:]+):(\S+)'),
       (m) => '${m[1]}${m[2]}:$redacted',
     ),
+    // echo or printf piped into sudo: everything printed is the password,
+    // however many words or format strings it takes.
     _ScrubRule(
-      RegExp(r'(\becho\s+(?:-[neE]+\s+)?)' '$_value' r'(\s*\|\s*sudo\b)'),
+      RegExp(r'(\b(?:echo|printf)\s+)([^|\r\n]*?)(\s*\|\s*sudo\b)'),
       (m) => '${m[1]}$redacted${m[3]}',
+    ),
+    // sudo -S <<< password
+    _ScrubRule(
+      RegExp(r'(\bsudo\b[^|;\r\n]*?<<<\s*)' '$_value'),
+      (m) => '${m[1]}$redacted',
+    ),
+    // A password prompt with its answer after it on the line, the way a
+    // terminal transcript or an expect script shows one: "Password for
+    // root@h: …", "[sudo] password for dev: …", "root@h's password: …".
+    _ScrubRule(
+      RegExp(
+        r'''((?:\b(?:password|passphrase|passcode|pin)\s+for\s+[^\r\n:]{1,100}|'s\s+password)\s*:[ \t]*)(?!\[redacted\])(\S[^\r\n]*)''',
+        caseSensitive: false,
+      ),
+      (m) => '${m[1]}$redacted',
+    ),
+    // An environment variable named for a password with no separator in
+    // the name: SSHPASS=…, MYPASS=…, and the `_PWD` ones (MYSQL_PWD) — but
+    // not PWD itself, which is only the working directory.
+    _ScrubRule(
+      RegExp(r'\b([A-Z0-9_]*PASS[A-Z0-9_]*|[A-Z0-9_]+_PWD)=' '$_value'),
+      (m) => '${m[1]}=$redacted',
     ),
     _ScrubRule(
       RegExp(
@@ -264,6 +326,13 @@ class SecretScrubber {
         if (m[5] != null) return "$head'$redacted'";
         return '$head$redacted';
       },
+    ),
+    // A value given to a name that was itself a learned secret — a saved
+    // password of `password` or `secret` turns `password=x` into
+    // `[redacted]=x` before the rules above see it — goes too.
+    _ScrubRule(
+      RegExp(r'(\[redacted\])(\s*(?:=>|=|:)\s*)' '$_value'),
+      (m) => '${m[1]}${m[2]}$redacted',
     ),
     // Long random-looking runs: base64 or base64url with upper case, lower
     // case and digits all present. Fingerprints and public keys are public,
@@ -356,13 +425,17 @@ class _ScrubRule {
 ///    before settings have loaded wait in memory and are dropped if it turns
 ///    out to be off. Turning it off deletes what was there.
 ///  * **No secrets.** Every entry goes through a [SecretScrubber] before it
-///    is written, and the whole log goes through it again when it is read
-///    back, so a password learned after an error was written is still taken
-///    out of the copy.
+///    is written. When the scrubber learns a secret it did not know — a
+///    credential loaded at start-up, a password typed later — the files
+///    already on disk are scrubbed again with it, shortly after; so are they
+///    when the log is first turned on in a run. And the whole log goes
+///    through it once more when it is read back.
 ///  * **Small.** Two files at most, [maxFileBytes] each. When the current one
-///    is full it becomes the previous one, and the oldest goes. One entry is
-///    capped at [maxEntryChars], a stack at [maxStackLines] lines, and an
-///    error that repeats back to back is written once, with a count.
+///    is full it becomes the previous one, and the oldest goes. One entry's
+///    message and context are capped at [maxEntryChars] each as the entry
+///    is made — before it waits in memory for the setting — a stack at
+///    [maxStackLines] lines, and an error that repeats back to back is
+///    written once, with a count.
 ///  * **Never sent anywhere.** There is no network code here. The user copies
 ///    it out by hand from Settings.
 ///
@@ -382,6 +455,7 @@ class DiagnosticsLog {
     DateTime Function()? clock,
     String Function()? describePlatform,
     SecretScrubber? scrubber,
+    this.rescrubDelay = const Duration(seconds: 2),
   })  : _directory = directory ?? AppDataPaths.resolveDirectory,
         _now = clock ?? DateTime.now,
         _describePlatform = describePlatform ?? _platformLines,
@@ -408,6 +482,12 @@ class DiagnosticsLog {
   final String Function() _describePlatform;
   final SecretScrubber scrubber;
   final int maxFileBytes;
+
+  /// How long after a new secret is learned the files on disk are scrubbed
+  /// again. Secrets come in bursts — every saved host's as the app starts —
+  /// and one pass after the burst does for all of them.
+  final Duration rescrubDelay;
+  Timer? _rescrubTimer;
 
   final SerialFileWriter _writer = SerialFileWriter();
 
@@ -442,14 +522,57 @@ class DiagnosticsLog {
       for (final entry in waiting) {
         await _append(entry.text, entry.signature);
       }
+      // Files from an earlier run were scrubbed with what that run knew;
+      // this one may know more already.
+      await rescrubFiles();
       return;
     }
     _pending.clear();
+    _rescrubTimer?.cancel();
     if (was != false) await clear();
   }
 
-  /// Remembers a secret so it never reaches the log. Memory only.
-  void learnSecret(String? secret) => scrubber.learn(secret);
+  /// Remembers a secret so it never reaches the log, and takes it out of
+  /// what is already there. Memory only. Called wherever a secret is typed
+  /// or loaded: the credential store, a password used without saving it,
+  /// the answers to hidden login prompts, the vault and backup passphrases.
+  void learnSecret(String? secret) {
+    if (scrubber.learn(secret)) _learnedSomething();
+  }
+
+  void _learnedSomething() {
+    // While the setting is unknown or off there is nothing on disk to
+    // fix; [setEnabled] scrubs the files when it turns on.
+    if (_enabled != true) return;
+    _rescrubTimer?.cancel();
+    _rescrubTimer = Timer(rescrubDelay, () => unawaited(rescrubFiles()));
+  }
+
+  /// Scrubs the files already written again with everything known now,
+  /// rewriting each only when that changed it. Never throws.
+  Future<void> rescrubFiles() async {
+    _rescrubTimer?.cancel();
+    _rescrubTimer = null;
+    try {
+      await _writer.run(() async {
+        final dir = await _directory();
+        for (final name in [previousFileName, fileName]) {
+          final file = File('${dir.path}/$name');
+          if (!await file.exists()) continue;
+          final before =
+              utf8.decode(await file.readAsBytes(), allowMalformed: true);
+          final after = scrubber.scrub(before);
+          if (after == before) continue;
+          await atomicWrite(
+            file,
+            (temp) => temp.writeAsString(after, flush: true),
+          );
+        }
+      });
+    } catch (_) {
+      // Best effort, like every write here; the copy is scrubbed on read.
+    }
+  }
 
   /// Wraps the credential store's backend so every secret it reads or writes
   /// is learned by [scrubber] on the way past. Nothing is stored and nothing
@@ -466,14 +589,14 @@ class DiagnosticsLog {
       final decoded = jsonDecode(raw);
       if (decoded is Map) {
         for (final value in decoded.values) {
-          if (value is String) scrubber.learn(value);
+          if (value is String) learnSecret(value);
         }
         return;
       }
     } catch (_) {
       // Not JSON; learn it whole.
     }
-    scrubber.learn(raw);
+    learnSecret(raw);
   }
 
   /// Writes one error. Never throws: it runs inside the error handlers.
@@ -485,8 +608,15 @@ class DiagnosticsLog {
   }) async {
     try {
       if (_enabled == false) return;
-      final text = _formatEntry(error, stack, source: source, context: context);
-      final signature = '$source\u0000$error\u0000${_firstLine(stack)}';
+      final description = _clip(_describe(error));
+      final text = _formatEntry(
+        description,
+        stack,
+        source: source,
+        context: context == null ? null : _clip(context),
+      );
+      final signature =
+          '$source\u0000$description\u0000${_firstLine(stack)}';
       if (_enabled == null) {
         if (_pending.length < maxPendingEntries) {
           _pending.add(_PendingEntry(text, signature));
@@ -580,8 +710,29 @@ class DiagnosticsLog {
     return utf8.encode(marker);
   }
 
+  /// [text] cut to [maxEntryChars], back to the last space before the cut
+  /// when there is one nearby, so the end is a whole word rather than half
+  /// of something the scrubber would have recognised whole. Done as the
+  /// entry is made, so an error the size of a file never waits in memory
+  /// whole — twenty of them could, before the setting is known.
+  static String _clip(String text) {
+    if (text.length <= maxEntryChars) return text;
+    var cut = maxEntryChars;
+    final space = text.lastIndexOf(RegExp(r'\s'), cut);
+    if (space > maxEntryChars - 200) cut = space;
+    return '${text.substring(0, cut)}\n(Entry cut short.)';
+  }
+
+  /// How long each entry waiting for the setting is, in characters. For
+  /// tests.
+  @visibleForTesting
+  List<int> get pendingEntryLengths => [
+        for (final entry in _pending)
+          entry.text.length + entry.signature.length,
+      ];
+
   String _formatEntry(
-    Object error,
+    String description,
     StackTrace? stack, {
     required String source,
     String? context,
@@ -591,7 +742,7 @@ class DiagnosticsLog {
     if (context != null && context.trim().isNotEmpty) {
       buffer.writeln(context.trim());
     }
-    buffer.writeln(_describe(error));
+    buffer.writeln(description);
     if (stack != null) {
       final lines = stack
           .toString()
@@ -698,6 +849,7 @@ class DiagnosticsLog {
 
   /// Deletes everything kept.
   Future<void> clear() async {
+    _rescrubTimer?.cancel();
     _lastSignature = null;
     _repeats = 0;
     try {

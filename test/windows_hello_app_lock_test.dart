@@ -122,6 +122,16 @@ void main() {
       );
     });
 
+    test('a reply of the wrong type stays locked too', () async {
+      // invokeMethod<String> casts the reply, and a cast that fails is a
+      // TypeError, not a PlatformException.
+      runner.prompts = [42];
+      expect(
+        await hello.authenticate(reason: 'x'),
+        AppLockOutcome.cancelled,
+      );
+    });
+
     test('no screenshot flag is sent: Windows previews are live', () async {
       await hello.setSecureDisplay(true);
       await hello.setSecureDisplay(false);
@@ -161,6 +171,16 @@ void main() {
       expect(controller.state.failedAttempts, 0);
       expect(await controller.authenticate(), AppLockOutcome.success);
       expect(controller.isLocked, isFalse);
+    });
+
+    test('anything else going wrong keeps the gate shut as well', () async {
+      // The controller treats an authenticator that throws as one that
+      // cannot run, and opens the gate; nothing may reach it that way.
+      await controller.start(on);
+      runner.prompts = [42];
+      expect(await controller.authenticate(), AppLockOutcome.cancelled);
+      expect(controller.isLocked, isTrue);
+      expect(controller.state.unavailable, isFalse);
     });
 
     test('Hello\'s own retry limit counts toward the cooldown', () async {
