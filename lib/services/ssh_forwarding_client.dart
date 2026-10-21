@@ -124,6 +124,37 @@ class ForwardingSSHClient extends SSHClient {
     );
   }
 
+  /// [shell], but running [command] in place of the login shell: the
+  /// session's terminal when the host keeps its shell in tmux or screen
+  /// (see `SessionTransport.startCommandShell`).
+  ///
+  /// An exec channel underneath, yet the terminal all the same, so it gets
+  /// the shell's forwarding rather than [execute]'s none. Without this a
+  /// host with both a persistent session and forwarding quietly lost the
+  /// forwarding.
+  Future<SSHSession> commandShell(
+    String command, {
+    SSHPtyConfig? pty,
+    Map<String, String>? environment,
+  }) {
+    final forwarding = this.forwarding;
+    if (forwarding == null || forwarding.isEmpty) {
+      return execute(command, pty: pty, environment: environment);
+    }
+    return openForwardedShell(
+      forwarding: forwarding,
+      open: ({required bool agent, required SSHX11Config? x11}) {
+        Future<SSHSession> open() => super.execute(
+              command,
+              pty: pty,
+              x11: x11,
+              environment: environment,
+            );
+        return agent ? open() : withoutAgentRequest(open);
+      },
+    );
+  }
+
   @override
   Future<void> close() {
     forwarding?.x11?.closeAll();

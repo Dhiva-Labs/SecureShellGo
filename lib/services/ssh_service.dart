@@ -500,14 +500,17 @@ class SshConnection implements SessionTransport {
     required int rows,
     String terminalType = 'xterm-256color',
   }) {
-    return client.execute(
-      command,
-      pty: SSHPtyConfig(
-        type: terminalType,
-        width: columns > 0 ? columns : 80,
-        height: rows > 0 ? rows : 24,
-      ),
+    final pty = SSHPtyConfig(
+      type: terminalType,
+      width: columns > 0 ? columns : 80,
+      height: rows > 0 ? rows : 24,
     );
+    // The terminal, so it forwards what the host asks for, as [startShell]
+    // does; a plain exec would drop that.
+    final client = this.client;
+    return client is ForwardingSSHClient
+        ? client.commandShell(command, pty: pty)
+        : client.execute(command, pty: pty);
   }
 
   @override

@@ -307,6 +307,54 @@ void main() {
     });
   });
 
+  group('a shell kept in tmux or screen', () {
+    // `SessionTransport.startCommandShell` opens the terminal as an exec
+    // channel running tmux or screen. It is still the terminal, so it has
+    // to forward what the shell would; a plain exec forwards nothing.
+    test('asks for the agent and x11 like the shell, and execs still do not',
+        () async {
+      final client = connect(
+        forwarding: ShellForwarding(
+          agent: agent,
+          x11: X11Forwarder(
+            display: const X11Display(number: 0, screen: 0),
+            fakeCookie: Uint8List.fromList(List.filled(16, 0x22)),
+            connect: () => throw StateError('no X server'),
+            realCookie: () async => null,
+          ),
+        ),
+      );
+
+      await client.commandShell(
+        "tmux new -A -s 'ssg-build-1'",
+        pty: const SSHPtyConfig(),
+      );
+      await client.execute('uptime');
+
+      expect(peer.sessionRequests.first,
+          ['auth-agent-req@openssh.com', 'pty-req', 'x11-req', 'exec']);
+      expect(peer.sessionRequests.last, ['exec']);
+    });
+
+    test('a refusal still opens it, and says so', () async {
+      final client = connect(forwarding: ShellForwarding(agent: agent));
+      peer.refuseAgent = true;
+
+      final shell = await client.commandShell(
+        'screen -dRR ssg-build-1',
+        pty: const SSHPtyConfig(),
+      );
+      final first = await shell.stderr.first;
+      expect(utf8.decode(first), contains('refused agent forwarding'));
+    });
+
+    test('with nothing to forward it is a plain exec with a pty', () async {
+      final client = connect();
+      await client.commandShell('tmux', pty: const SSHPtyConfig());
+      expect(peer.sessionRequests.single, ['pty-req', 'exec']);
+    });
+  });
+
   test('notices decided before the shell open are written first', () async {
     final client = connect(
       forwarding: const ShellForwarding(notices: ['No X display here.']),
