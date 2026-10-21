@@ -10,6 +10,7 @@ import '../services/editor_document.dart';
 import '../services/editor_indent.dart';
 import '../services/editor_save.dart';
 import '../services/editor_search.dart';
+import '../services/input_profile.dart';
 import '../services/layout_breakpoints.dart';
 import '../services/remote_path.dart';
 import '../services/settings_store.dart';
@@ -247,6 +248,13 @@ class _RemoteEditorScreenState extends State<RemoteEditorScreen> {
       // Rebuilds the title's dirty dot and the find bar's counts as the user
       // types; the field repaints itself from the same controller.
       tab.controller.addListener(_onActiveTextChanged);
+      // Where the field will take the keyboard as it appears, start the caret
+      // at the top, as every desktop editor does. Left unset, a field gaining
+      // focus puts it at the end of the file — and on Android (a keyboard
+      // cover, a DeX desk) shows a touch handle there too.
+      if (_hasKeyboard) {
+        tab.controller.selection = const TextSelection.collapsed(offset: 0);
+      }
       setState(() {
         _tabs.add(tab);
         if (activate) _active = _tabs.length - 1;
@@ -1144,21 +1152,12 @@ class _RemoteEditorScreenState extends State<RemoteEditorScreen> {
   /// Whether this platform spells the editing chords with Command.
   bool get _isMac => Theme.of(context).platform == TargetPlatform.macOS;
 
-  /// Where a physical keyboard is the way in, so the field can take focus the
-  /// moment a file opens. Read through the theme, same as every other platform
-  /// check in this app, so a test can pick one by handing it a theme.
-  bool get _isDesktopPlatform {
-    switch (Theme.of(context).platform) {
-      case TargetPlatform.linux:
-      case TargetPlatform.macOS:
-      case TargetPlatform.windows:
-        return true;
-      case TargetPlatform.android:
-      case TargetPlatform.iOS:
-      case TargetPlatform.fuchsia:
-        return false;
-    }
-  }
+  /// Where a hardware keyboard is the way in, so the field can take focus
+  /// the moment a file opens — a desktop, and equally a tablet in a keyboard
+  /// cover or a DeX desk once a key has been typed on it. See
+  /// `input_profile.dart`; with nothing seen yet it is the platform, read
+  /// through the theme so a test can pick one by handing it a theme.
+  bool get _hasKeyboard => InputProfile.of(context).keyboard;
 
   /// `Ctrl+S` / `⌘S`, for the menu hints and the shortcut sheet.
   String _chord(String key, {bool shift = false}) {
@@ -1597,10 +1596,10 @@ class _RemoteEditorScreenState extends State<RemoteEditorScreen> {
             focusNode: t.focusNode,
             undoController: t.undo,
             // The field has to *hold* the keyboard for Ctrl+A, Ctrl+S and
-            // the rest to reach it. Desktop only: doing it on a phone would
-            // open the soft keyboard over the file the moment it appeared,
-            // before the user has decided to change anything.
-            autofocus: _isDesktopPlatform && identical(t, tab),
+            // the rest to reach it. Only with a hardware keyboard: doing it on
+            // a phone would open the soft keyboard over the file the moment
+            // it appeared, before the user has decided to change anything.
+            autofocus: _hasKeyboard && identical(t, tab),
             theme: theme,
             fontSize: _editorFontSize,
             softWrap: _softWrap,
@@ -1633,7 +1632,9 @@ class _RemoteEditorScreenState extends State<RemoteEditorScreen> {
             ],
           ),
         ),
-        if (!_isDesktopPlatform)
+        // Settings' "Extra keys row", same as the terminal's: automatically,
+        // gone while a hardware keyboard types and back with the soft one.
+        if (InputProfile.of(context).showsKeyBar(_settings.keyBarMode))
           EditorKeyBar(
             theme: theme,
             onIndent: () => tab.fieldKey.currentState?.indentSelection(),
@@ -1653,13 +1654,14 @@ class _RemoteEditorScreenState extends State<RemoteEditorScreen> {
     _focusActiveAfterFrame();
   }
 
-  /// Hands the keyboard to the file now in front, on a desktop.
+  /// Hands the keyboard to the file now in front, where a hardware keyboard
+  /// is typing.
   ///
   /// After the frame, not now: until the stack rebuilds, that field is still
   /// a hidden child, which `IndexedStack` wraps in an `ExcludeFocus` — a
   /// request made before then is refused, and the keyboard went nowhere.
   void _focusActiveAfterFrame() {
-    if (!_isDesktopPlatform) return;
+    if (!_hasKeyboard) return;
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted || _tabs.isEmpty) return;
       _tabs[_active.clamp(0, _tabs.length - 1)].focusNode.requestFocus();

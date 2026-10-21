@@ -13,6 +13,7 @@ import '../services/device_storage.dart';
 import '../services/fleet_push_run_registry.dart';
 import '../services/host_grouping.dart';
 import '../services/host_store.dart';
+import '../services/input_profile.dart';
 import '../services/known_hosts_service.dart';
 import '../services/quick_connect_parser.dart';
 import '../services/session_manager.dart';
@@ -522,7 +523,54 @@ class _HostListScreenState extends State<HostListScreen> {
     );
   }
 
+  /// Everything that can be done to one saved host, for the sheet a
+  /// long-press opens and the menu a right-click opens alike.
+  List<_HostAction> _hostActions(Host host) => [
+        _HostAction(
+          icon: Icons.checklist_outlined,
+          title: 'Select',
+          subtitle: 'Pick more hosts for a fleet-wide action',
+          run: () => _enterSelectionMode(host),
+        ),
+        _HostAction(
+          icon: Icons.folder_outlined,
+          title: 'Browse files',
+          subtitle: 'Connects straight into the file browser',
+          run: () => _connect(host, view: SessionView.files),
+        ),
+        _HostAction(
+          icon: Icons.edit_outlined,
+          title: 'Edit',
+          run: () => _editHost(host),
+        ),
+        _HostAction(
+          icon: Icons.drive_file_move_outline,
+          title: 'Move to group…',
+          subtitle: host.group ?? 'Ungrouped',
+          run: () => unawaited(_reassignGroup(host)),
+        ),
+        _HostAction(
+          icon: Icons.copy_all_outlined,
+          title: 'Copy user@host',
+          subtitle: host.target,
+          run: () => unawaited(_copyTarget(host)),
+        ),
+        _HostAction(
+          icon: Icons.key_off_outlined,
+          title: 'Forget host keys',
+          subtitle: 'Undoes trust-on-first-use for this server',
+          run: () => _forgetHostKeys(host),
+        ),
+        _HostAction(
+          icon: Icons.delete_outline,
+          title: 'Delete',
+          destructive: true,
+          run: () => _deleteHost(host),
+        ),
+      ];
+
   void _showHostActions(Host host) {
+    final actions = _hostActions(host);
     showModalBottomSheet<void>(
       context: context,
       // Six actions, most of them two lines tall, come to more than the
@@ -538,78 +586,77 @@ class _HostListScreenState extends State<HostListScreen> {
           child: ListView(
             shrinkWrap: true,
             children: [
-              ListTile(
-                leading: const Icon(Icons.checklist_outlined),
-                title: const Text('Select'),
-                subtitle: const Text('Pick more hosts for a fleet-wide action'),
-                onTap: () {
-                  Navigator.of(context).pop();
-                  _enterSelectionMode(host);
-                },
-              ),
-              ListTile(
-                leading: const Icon(Icons.folder_outlined),
-                title: const Text('Browse files'),
-                subtitle:
-                    const Text('Connects straight into the file browser'),
-                onTap: () {
-                  Navigator.of(context).pop();
-                  _connect(host, view: SessionView.files);
-                },
-              ),
-              ListTile(
-                leading: const Icon(Icons.edit_outlined),
-                title: const Text('Edit'),
-                onTap: () {
-                  Navigator.of(context).pop();
-                  _editHost(host);
-                },
-              ),
-              ListTile(
-                leading: const Icon(Icons.drive_file_move_outline),
-                title: const Text('Move to group…'),
-                subtitle: Text(host.group ?? 'Ungrouped'),
-                onTap: () {
-                  Navigator.of(context).pop();
-                  unawaited(_reassignGroup(host));
-                },
-              ),
-              ListTile(
-                leading: const Icon(Icons.copy_all_outlined),
-                title: const Text('Copy user@host'),
-                subtitle: Text(host.target),
-                onTap: () {
-                  Navigator.of(context).pop();
-                  unawaited(_copyTarget(host));
-                },
-              ),
-              ListTile(
-                leading: const Icon(Icons.key_off_outlined),
-                title: const Text('Forget host keys'),
-                subtitle:
-                    const Text('Undoes trust-on-first-use for this server'),
-                onTap: () {
-                  Navigator.of(context).pop();
-                  _forgetHostKeys(host);
-                },
-              ),
-              ListTile(
-                leading:
-                    Icon(Icons.delete_outline, color: theme.colorScheme.error),
-                title: Text(
-                  'Delete',
-                  style: TextStyle(color: theme.colorScheme.error),
+              for (final action in actions)
+                ListTile(
+                  leading: Icon(
+                    action.icon,
+                    color:
+                        action.destructive ? theme.colorScheme.error : null,
+                  ),
+                  title: Text(
+                    action.title,
+                    style: action.destructive
+                        ? TextStyle(color: theme.colorScheme.error)
+                        : null,
+                  ),
+                  subtitle:
+                      action.subtitle == null ? null : Text(action.subtitle!),
+                  onTap: () {
+                    Navigator.of(context).pop();
+                    action.run();
+                  },
                 ),
-                onTap: () {
-                  Navigator.of(context).pop();
-                  _deleteHost(host);
-                },
-              ),
             ],
           ),
         );
       },
     );
+  }
+
+  /// A right-click on a host: the same actions as the sheet, as a menu where
+  /// the pointer is — a sheet sliding up from the bottom of a desktop window
+  /// is a long way from the row that was clicked. One line each; the sheet's
+  /// explanations are for the first time on a phone, not the hundredth with
+  /// a mouse.
+  Future<void> _showHostMenu(Host host, Offset at) async {
+    final overlay =
+        Overlay.of(context).context.findRenderObject()! as RenderBox;
+    final local = overlay.globalToLocal(at);
+    final theme = Theme.of(context);
+    final actions = _hostActions(host);
+    final chosen = await showMenu<_HostAction>(
+      context: context,
+      position: RelativeRect.fromRect(
+        local & Size.zero,
+        Offset.zero & overlay.size,
+      ),
+      items: [
+        for (final action in actions) ...[
+          if (action.destructive) const PopupMenuDivider(),
+          PopupMenuItem<_HostAction>(
+            value: action,
+            child: Row(
+              children: [
+                Icon(
+                  action.icon,
+                  size: 18,
+                  color: action.destructive ? theme.colorScheme.error : null,
+                ),
+                const SizedBox(width: 12),
+                Text(
+                  action.title,
+                  style: action.destructive
+                      ? TextStyle(color: theme.colorScheme.error)
+                      : null,
+                ),
+              ],
+            ),
+          ),
+        ],
+      ],
+    );
+    if (!mounted) return;
+    chosen?.run();
   }
 
   // ------------------------------------------------------------ selection
@@ -978,10 +1025,12 @@ class _HostListScreenState extends State<HostListScreen> {
     if (mounted) setState(() {});
   }
 
-  /// Desktop platforms — where `~/.ssh/config` and Ctrl+K both make sense.
-  /// Same check `file_browser_pane.dart` uses for its own desktop-only
-  /// affordances.
-  static bool _isDesktop(BuildContext context) {
+  /// Whether there is an `~/.ssh/config` to import: a property of the
+  /// operating system's file system, not of the hands on the device — a DeX
+  /// desk has a mouse and a keyboard and still no `~/.ssh` to read. The one
+  /// platform gate on this screen that stays a platform gate; what the
+  /// keyboard and pointer change is read from `input_profile.dart`.
+  static bool _hasSshConfigFile(BuildContext context) {
     switch (Theme.of(context).platform) {
       case TargetPlatform.linux:
       case TargetPlatform.macOS:
@@ -1038,7 +1087,7 @@ class _HostListScreenState extends State<HostListScreen> {
 
     final active = widget.sessions.active;
     final sessionActive = active != null && !active.isClosed;
-    final desktop = _isDesktop(context);
+    final sshConfig = _hasSshConfigFile(context);
 
     final items = <PaletteItem>[
       for (final host in hosts)
@@ -1062,7 +1111,7 @@ class _HostListScreenState extends State<HostListScreen> {
         title: 'New host',
         onSelect: () => unawaited(_addHost()),
       ),
-      if (desktop)
+      if (sshConfig)
         PaletteItem(
           kind: PaletteItemKind.action,
           title: 'Import from ssh config',
@@ -1099,7 +1148,7 @@ class _HostListScreenState extends State<HostListScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final desktop = _isDesktop(context);
+    final sshConfig = _hasSshConfigFile(context);
     final pinHeader =
         MediaQuery.sizeOf(context).height >= _pinnedHeaderMinHeight;
     final header = KeyedSubtree(
@@ -1165,7 +1214,7 @@ class _HostListScreenState extends State<HostListScreen> {
                         icon: const Icon(Icons.checklist_outlined),
                         onPressed: () => _enterSelectionMode(),
                       ),
-                      if (desktop)
+                      if (sshConfig)
                         PopupMenuButton<_HostListMenuAction>(
                           tooltip: 'More',
                           onSelected: (action) {
@@ -1257,13 +1306,20 @@ class _HostListScreenState extends State<HostListScreen> {
   }
 
   Widget _buildSearchField() {
+    // Ctrl+K works without a keyboard being seen — there is just nothing to
+    // press it on — so the hint names it only where there is.
+    final palette = Theme.of(context).platform == TargetPlatform.macOS
+        ? '⌘K'
+        : 'Ctrl+K';
     return Padding(
       padding: const EdgeInsets.fromLTRB(12, 8, 12, 4),
       child: TextField(
         controller: _searchController,
         decoration: InputDecoration(
           isDense: true,
-          hintText: 'Search hosts',
+          hintText: InputProfile.of(context).keyboard
+              ? 'Search hosts · $palette for everything'
+              : 'Search hosts',
           prefixIcon: const Icon(Icons.search, size: 20),
           suffixIcon: _query.isEmpty
               ? null
@@ -1352,6 +1408,8 @@ class _HostListScreenState extends State<HostListScreen> {
                     onDeleteGroup: _deleteGroup,
                     onConnect: _connect,
                     onHostMenu: _showHostActions,
+                    onHostContextMenu: (host, at) =>
+                        unawaited(_showHostMenu(host, at)),
                     onToggleSelect: _toggleHostSelected,
                     onSelectAllInGroup: _toggleSelectAllInGroup,
                   ),
@@ -1614,3 +1672,23 @@ class _NoSearchResults extends StatelessWidget {
   }
 }
 
+/// One thing that can be done to a saved host, shown as a sheet row or a
+/// menu item.
+class _HostAction {
+  const _HostAction({
+    required this.icon,
+    required this.title,
+    required this.run,
+    this.subtitle,
+    this.destructive = false,
+  });
+
+  final IconData icon;
+  final String title;
+  final String? subtitle;
+  final VoidCallback run;
+
+  /// Drawn in the error colour, after a divider in the menu: the row that
+  /// cannot be taken back.
+  final bool destructive;
+}

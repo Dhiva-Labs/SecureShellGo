@@ -3,6 +3,10 @@
 // fonts, records every layout error (overflows, unbounded sizes), and — when
 // SCREENSHOT_DIR is set — writes a PNG of each case plus results.txt.
 //
+// The screens that change with the hands on the device — sessions, the
+// editor — render twice: once for touch, once for a mouse and keyboard
+// (`input_profile.dart`). Foldables render at a hinge and in tabletop.
+//
 //   SCREENSHOT_DIR=/tmp/shots flutter test test/layout_sweep_test.dart
 //   LAYOUT_SWEEP=1 LAYOUT_STRICT=1 flutter test test/layout_sweep_test.dart
 //
@@ -10,9 +14,13 @@
 // half a minute. It reports rather than fails, unless LAYOUT_STRICT=1, so it
 // can be run to look at the app before every problem it finds is fixed.
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 import 'dart:ui' as ui;
 
+import 'package:dartssh2/dartssh2.dart';
+
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
@@ -20,17 +28,36 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:secure_shell_go/models/app_settings.dart';
 import 'package:secure_shell_go/models/host.dart';
 import 'package:secure_shell_go/models/known_host.dart';
+import 'package:secure_shell_go/models/remote_entry.dart';
+import 'package:secure_shell_go/models/tunnel_profile.dart';
 import 'package:secure_shell_go/screens/host_edit_screen.dart';
 import 'package:secure_shell_go/screens/host_list_screen.dart';
 import 'package:secure_shell_go/screens/known_hosts_screen.dart';
+import 'package:secure_shell_go/screens/remote_editor_screen.dart';
+import 'package:secure_shell_go/screens/server_stats_screen.dart';
+import 'package:secure_shell_go/screens/session_screen.dart';
 import 'package:secure_shell_go/screens/settings_screen.dart';
+import 'package:secure_shell_go/screens/tunnels_screen.dart';
 import 'package:secure_shell_go/services/credential_store.dart';
+import 'package:secure_shell_go/services/device_storage.dart';
 import 'package:secure_shell_go/services/host_store.dart';
+import 'package:secure_shell_go/services/input_profile.dart';
+import 'package:secure_shell_go/services/keep_awake.dart';
 import 'package:secure_shell_go/services/known_hosts_service.dart';
+import 'package:secure_shell_go/services/server_probe.dart';
+import 'package:secure_shell_go/services/session_controller.dart';
+import 'package:secure_shell_go/services/session_foreground.dart';
 import 'package:secure_shell_go/services/session_manager.dart';
 import 'package:secure_shell_go/services/settings_store.dart';
+import 'package:secure_shell_go/services/sftp_service.dart';
 import 'package:secure_shell_go/services/ssh_service.dart';
+import 'package:secure_shell_go/services/terminal_workspace.dart';
+import 'package:secure_shell_go/services/tunnel_runtime.dart';
+import 'package:secure_shell_go/services/tunnel_store.dart';
 import 'package:secure_shell_go/theme.dart';
+
+import 'fake_exec_session.dart';
+import 'support/fake_transport.dart';
 
 class _MemoryBackend implements SecureStorageBackend {
   final Map<String, String> data = {};
@@ -42,7 +69,286 @@ class _MemoryBackend implements SecureStorageBackend {
   Future<void> delete(String key) async => data.remove(key);
 }
 
+// ------------------------------------------------- a session to look at
+
+/// A shell with something in it: a login banner and a directory listing,
+/// so a screenshot shows a terminal rather than a black rectangle.
+class _DemoShell implements SSHSession {
+  _DemoShell() {
+    _stdout.add(Uint8List.fromList(utf8.encode(
+          'Welcome to Ubuntu 24.04.1 LTS (GNU/Linux 6.8.0-45-generic x86_64)\r\n'
+          '\r\n'
+          'Last login: Tue Oct 20 09:12:44 2026 from 10.0.0.12\r\n'
+          'deploy@web-01:~\$ ls -la\r\n'
+          'total 40\r\n'
+          'drwxr-x--- 6 deploy deploy 4096 Oct 20 09:10 .\r\n'
+          'drwxr-xr-x 4 root   root   4096 Sep  2 11:30 ..\r\n'
+          '-rw-r--r-- 1 deploy deploy  807 Sep  2 11:30 .profile\r\n'
+          'drwx------ 2 deploy deploy 4096 Sep  2 11:31 .ssh\r\n'
+          'drwxr-xr-x 8 deploy deploy 4096 Oct 19 17:02 app\r\n'
+          '-rwxr-xr-x 1 deploy deploy 1203 Oct 18 08:44 deploy.sh\r\n'
+          'deploy@web-01:~\$ ',
+        )));
+  }
+
+  // Single-subscription, so the banner waits for the session to listen.
+  final _stdout = StreamController<Uint8List>();
+  final _done = Completer<void>();
+
+  @override
+  Stream<Uint8List> get stdout => _stdout.stream;
+  @override
+  Stream<Uint8List> get stderr => const Stream.empty();
+  @override
+  Future<void> get done => _done.future;
+  @override
+  int? get exitCode => null;
+  @override
+  void write(Uint8List data) {}
+  @override
+  void close() {}
+  @override
+  void resizeTerminal(int width, int height, [int? pw, int? ph]) {}
+  @override
+  dynamic noSuchMethod(Invocation invocation) =>
+      throw UnimplementedError('${invocation.memberName} is not faked');
+}
+
+class _DemoTransport extends FakeTransportBase {
+  _DemoTransport(Host host) : super(host: host);
+
+  @override
+  Future<SSHSession> startShell({
+    required int columns,
+    required int rows,
+    String terminalType = 'xterm-256color',
+  }) async =>
+      _DemoShell();
+}
+
+/// A home directory with the usual clutter, for the file browser, and two
+/// files with text in them, for the editor.
+class _DemoFs implements RemoteFileSystem {
+  static final Map<String, String> texts = {
+    '/home/deploy/deploy.sh': '#!/usr/bin/env bash\n'
+        'set -euo pipefail\n\n'
+        'cd /home/deploy/app\n'
+        'git pull --ff-only\n'
+        'docker compose up -d --build\n',
+    '/home/deploy/app/main.py': 'import os\n\n\n'
+        'def main():\n'
+        '    port = int(os.environ.get("PORT", "8080"))\n'
+        '    for attempt in range(3):\n'
+        '        if serve(port):\n'
+        '            break\n'
+        '    else:\n'
+        '        raise SystemExit("could not bind")\n',
+  };
+
+  @override
+  Future<String> home() async => '/home/deploy';
+  @override
+  Future<String> resolve(String path) async => path;
+  @override
+  Future<List<RemoteEntry>> list(String path) async {
+    final when = DateTime(2026, 10, 19, 17, 2);
+    RemoteEntry dir(String name) => RemoteEntry(
+          name: name,
+          path: '$path/$name',
+          kind: RemoteEntryKind.directory,
+          size: 4096,
+          modified: when,
+        );
+    RemoteEntry file(String name, int size) => RemoteEntry(
+          name: name,
+          path: '$path/$name',
+          kind: RemoteEntryKind.file,
+          size: size,
+          modified: when,
+        );
+    return [
+      dir('.ssh'),
+      dir('app'),
+      dir('backups'),
+      dir('logs'),
+      file('.profile', 807),
+      file('deploy.sh', 1203),
+      file('docker-compose.yml', 2210),
+      file('README.md', 5120),
+      file('nightly-database-export-2026-10-19-full-with-attachments.tar.gz',
+          734003200),
+    ];
+  }
+
+  @override
+  Future<int?> sizeOf(String path) async => utf8.encode(texts[path] ?? '').length;
+  @override
+  Future<bool> exists(String path) async => true;
+  @override
+  Future<bool> isDirectory(String path) async => false;
+  @override
+  Future<int> download(
+    String remotePath, {
+    required Future<void> Function(Uint8List chunk) write,
+    TransferProgress? onProgress,
+    CancelCheck? isCancelled,
+  }) async {
+    final bytes = Uint8List.fromList(utf8.encode(texts[remotePath] ?? ''));
+    await write(bytes);
+    return bytes.length;
+  }
+
+  @override
+  Future<void> close() async {}
+  @override
+  dynamic noSuchMethod(Invocation invocation) =>
+      throw UnimplementedError('${invocation.memberName} is not faked');
+}
+
+class _NoStorage implements DeviceStorage {
+  @override
+  Future<bool> ensurePermission() async => true;
+  @override
+  dynamic noSuchMethod(Invocation invocation) =>
+      throw UnimplementedError('${invocation.memberName} is not faked');
+}
+
+class _NoForeground implements SessionForegroundChannel {
+  @override
+  Future<void> start(String label) async {}
+  @override
+  Future<void> stop() async {}
+}
+
+class _NoKeepAwake implements KeepAwakeController {
+  @override
+  Future<void> setEnabled(bool enabled) async {}
+}
+
+class _InertTimer implements Timer {
+  @override
+  bool get isActive => false;
+  @override
+  int get tick => 0;
+  @override
+  void cancel() {}
+}
+
+const Host _web = Host(
+  id: 'web',
+  label: 'Production web',
+  hostname: 'web-01.example.com',
+  port: 22,
+  username: 'deploy',
+  authMethod: SshAuthMethod.privateKey,
+);
+
+const Host _db = Host(
+  id: 'db',
+  label: 'Production database (primary, eu-west-1)',
+  hostname: 'db-primary.internal.example.com',
+  port: 22,
+  username: 'postgres',
+  authMethod: SshAuthMethod.password,
+);
+
+SessionManager _demoSessions() => SessionManager(
+      foreground: SessionForegroundController(channel: _NoForeground()),
+      createController: (connection, resolve, resolveCreds) =>
+          SessionController(
+        connection: connection,
+        storage: _NoStorage(),
+        openFileSystem: () async => _DemoFs(),
+        resolveRemoteTarget: resolve,
+        resolveDestinationCredentials: resolveCreds,
+        keepaliveScheduler: (_, _) => _InertTimer(),
+      ),
+    );
+
+/// A Linux box's probe transcript, for the stats screen.
+const _statsTranscript = '${ServerProbeCommands.marker}kernel\n'
+    'Linux 6.8.0-45-generic\n'
+    '${ServerProbeCommands.marker}host\nweb-01\n'
+    '${ServerProbeCommands.marker}uptime\n1903388.77 7278894.06\n'
+    '${ServerProbeCommands.marker}load\n0.42 0.31 0.28 1/100 200\n'
+    '${ServerProbeCommands.marker}mem\n'
+    'MemTotal:       16384000 kB\nMemAvailable:    5242880 kB\n'
+    '${ServerProbeCommands.marker}disk\n'
+    'Filesystem 1024-blocks Used Available Capacity Mounted on\n'
+    '/dev/nvme0n1p2 487652512 401234567 61234567 87% /\n'
+    '${ServerProbeCommands.marker}cpu\n8\n';
+
+// ------------------------------------------------------ the hands in use
+
+/// Who is holding the device, as the sweep renders it.
+enum _Hands {
+  touch,
+  mouse;
+
+  InputProfile profile() => switch (this) {
+        _Hands.touch => InputProfile()..notePointer(PointerDeviceKind.touch),
+        _Hands.mouse => InputProfile()
+          ..notePointer(PointerDeviceKind.mouse)
+          ..noteHardwareKey(),
+      };
+}
+
 typedef _Device = ({String name, Size size, double dpr, double text});
+
+/// A foldable, and the hinge or fold across it.
+typedef _Foldable = ({
+  String name,
+  Size size,
+  double dpr,
+  ui.DisplayFeature feature,
+});
+
+const List<_Foldable> _foldables = [
+  // Unfolded inner screen, half open like a book: a vertical fold.
+  (
+    name: 'fold-book',
+    size: Size(884, 1104),
+    dpr: 2.5,
+    feature: ui.DisplayFeature(
+      bounds: Rect.fromLTWH(442, 0, 0, 1104),
+      type: ui.DisplayFeatureType.fold,
+      state: ui.DisplayFeatureState.postureHalfOpened,
+    ),
+  ),
+  // The same, landscape on a table: the fold runs across.
+  (
+    name: 'fold-tabletop',
+    size: Size(1104, 884),
+    dpr: 2.5,
+    feature: ui.DisplayFeature(
+      bounds: Rect.fromLTWH(0, 442, 1104, 0),
+      type: ui.DisplayFeatureType.fold,
+      state: ui.DisplayFeatureState.postureHalfOpened,
+    ),
+  ),
+  // A flip phone stood on its hinge.
+  (
+    name: 'flip-tabletop',
+    size: Size(412, 915),
+    dpr: 2.625,
+    feature: ui.DisplayFeature(
+      bounds: Rect.fromLTWH(0, 457, 412, 0),
+      type: ui.DisplayFeatureType.fold,
+      state: ui.DisplayFeatureState.postureHalfOpened,
+    ),
+  ),
+  // Two screens spanned, with a real hinge between them.
+  (
+    name: 'dual-screen',
+    size: Size(1114, 720),
+    dpr: 2.5,
+    feature: ui.DisplayFeature(
+      bounds: Rect.fromLTWH(540, 0, 34, 720),
+      type: ui.DisplayFeatureType.hinge,
+      state: ui.DisplayFeatureState.postureFlat,
+    ),
+  ),
+];
 
 const List<_Device> _devices = [
   (name: 'phone-small', size: Size(320, 640), dpr: 2, text: 1.0),
@@ -103,6 +409,7 @@ void main() {
   late SshService ssh;
   late SessionManager sessions;
   late CredentialStore credentials;
+  late TunnelStore tunnelStore;
 
   setUpAll(_loadFonts);
 
@@ -133,6 +440,9 @@ void main() {
     ssh = SshService(knownHosts: knownHosts);
     sessions = SessionManager();
     credentials = CredentialStore(backend: _MemoryBackend());
+    // Here, not in the test: a store made on the test's fake clock chains
+    // its writes on it, and `runAsync` would wait on them for ever.
+    tunnelStore = TunnelStore(file: File('${dir.path}/tunnels.json'));
   });
 
   tearDown(() async {
@@ -187,6 +497,9 @@ void main() {
     _Device device,
     Widget Function() build, {
     bool push = false,
+    _Hands? hands,
+    List<ui.DisplayFeature> features = const [],
+    Future<void> Function(WidgetTester tester)? after,
   }) async {
     final key = '$screen @ ${device.name}';
     final errors = _results.putIfAbsent(key, () => []);
@@ -197,10 +510,12 @@ void main() {
     try {
       tester.view.physicalSize = device.size * device.dpr;
       tester.view.devicePixelRatio = device.dpr;
+      tester.view.displayFeatures = features;
       tester.platformDispatcher.textScaleFactorTestValue = device.text;
 
       final boundary = GlobalKey();
       final navigator = GlobalKey<NavigatorState>();
+      final profile = hands?.profile();
       await tester.pumpWidget(RepaintBoundary(
         key: boundary,
         child: MaterialApp(
@@ -209,6 +524,10 @@ void main() {
           themeMode: ThemeMode.dark,
           theme: AppTheme.themeFor(UiStyle.aurora, Brightness.light),
           darkTheme: AppTheme.themeFor(UiStyle.aurora, Brightness.dark),
+          builder: profile == null
+              ? null
+              : (context, child) =>
+                  InputProfileScope(profile: profile, child: child!),
           home: push ? const Scaffold(body: SizedBox.shrink()) : build(),
         ),
       ));
@@ -219,6 +538,11 @@ void main() {
       await tester.pump();
       await settleIo(tester);
       await tester.pump(const Duration(milliseconds: 600));
+      if (after != null) {
+        await after(tester);
+        await settleIo(tester, rounds: 10);
+        await tester.pump(const Duration(milliseconds: 600));
+      }
 
       final out = _shotDir;
       if (out != null) {
@@ -236,10 +560,88 @@ void main() {
       await settleIo(tester, rounds: 5);
     } finally {
       FlutterError.onError = previous;
+      tester.view.resetDisplayFeatures();
       tester.view.reset();
       tester.platformDispatcher.clearTextScaleFactorTestValue();
     }
     if (_strict) expect(errors, isEmpty, reason: key);
+  }
+
+  /// Two sessions open — so the tab strip shows — on the sessions screen,
+  /// the first in front showing [view].
+  Future<void> renderSessions(
+    WidgetTester tester,
+    String screen,
+    _Device device, {
+    required _Hands hands,
+    SessionView view = SessionView.terminal,
+    List<ui.DisplayFeature> features = const [],
+  }) async {
+    final manager = _demoSessions();
+    final workspace = TerminalWorkspace();
+    addTearDown(() async {
+      await workspace.dispose();
+      await manager.dispose();
+    });
+    final web = manager.open(_DemoTransport(_web), initialView: view);
+    manager.open(_DemoTransport(_db));
+    manager.select(web.id);
+    await render(
+      tester,
+      screen,
+      device,
+      hands: hands,
+      features: features,
+      () => SessionsScreen(
+        sessions: manager,
+        settingsStore: settings,
+        workspace: workspace,
+        keepAwake: _NoKeepAwake(),
+      ),
+    );
+  }
+
+  /// Three saved tunnels, one of them on a host since deleted.
+  Future<TunnelRuntime> seedTunnels(WidgetTester tester) async {
+    final store = tunnelStore;
+    final runtime = TunnelRuntime(
+      profiles: store,
+      support: TunnelSupport(
+        lookupHost: hosts.get,
+        loadCredentials: (id) async => null,
+      ),
+    );
+    addTearDown(runtime.dispose);
+    await tester.runAsync(() async {
+      await hosts.add(_web);
+      await hosts.add(_db);
+      await store.add(const TunnelProfile(
+        id: 't1',
+        name: 'Postgres (primary)',
+        hostId: 'db',
+        type: TunnelType.local,
+        localPort: 15432,
+        remoteHost: 'db-primary.internal.example.com',
+        remotePort: 5432,
+      ));
+      await store.add(const TunnelProfile(
+        id: 't2',
+        name: 'Grafana',
+        hostId: 'web',
+        type: TunnelType.local,
+        localPort: 3000,
+        remoteHost: 'localhost',
+        remotePort: 3000,
+      ));
+      await store.add(const TunnelProfile(
+        id: 't3',
+        name: 'SOCKS proxy through the old bastion',
+        hostId: 'gone',
+        type: TunnelType.dynamic,
+        localPort: 1080,
+      ));
+    });
+    return runtime;
   }
 
   for (final device in _devices) {
@@ -362,6 +764,100 @@ void main() {
           () => KnownHostsScreen(knownHosts: knownHosts),
         );
       });
+
+      for (final hands in _Hands.values) {
+        testWidgets('sessions, ${hands.name}', skip: _skip, (tester) async {
+          await renderSessions(tester, 'sessions_${hands.name}', device,
+              hands: hands);
+        });
+
+        testWidgets('editor, ${hands.name}', skip: _skip, (tester) async {
+          await render(
+            tester,
+            'editor_${hands.name}',
+            device,
+            push: true,
+            hands: hands,
+            () => RemoteEditorScreen(
+              filesystem: _DemoFs(),
+              settingsStore: settings,
+              initialPaths: const [
+                '/home/deploy/app/main.py',
+                '/home/deploy/deploy.sh',
+              ],
+              hostLabel: 'web-01',
+            ),
+          );
+        });
+      }
+
+      // The file browser on its own page: on a phone it takes turns with the
+      // terminal, so the sessions renders above only show it from a tablet up.
+      testWidgets('session files', skip: _skip, (tester) async {
+        await renderSessions(tester, 'session_files', device,
+            hands: _Hands.touch, view: SessionView.files);
+      });
+
+      testWidgets('server stats', skip: _skip, (tester) async {
+        final session = SessionController(
+          connection: FakeExecTransport(stdout: _statsTranscript, host: _web),
+          keepaliveScheduler: (_, _) => _InertTimer(),
+        );
+        addTearDown(session.dispose);
+        await render(
+          tester,
+          'server_stats',
+          device,
+          push: true,
+          () => ServerStatsScreen(session: session),
+        );
+      });
+
+      testWidgets('tunnels', skip: _skip, (tester) async {
+        final runtime = await seedTunnels(tester);
+        await render(
+          tester,
+          'tunnels',
+          device,
+          push: true,
+          () => TunnelsScreen(tunnels: runtime, hostStore: hosts),
+        );
+      });
     });
   }
+
+  group('foldables', () {
+    for (final fold in _foldables) {
+      final device = (
+        name: fold.name,
+        size: fold.size,
+        dpr: fold.dpr,
+        text: 1.0,
+      );
+      for (final hands in _Hands.values) {
+        testWidgets('sessions at ${fold.name}, ${hands.name}', skip: _skip,
+            (tester) async {
+          await renderSessions(tester, 'sessions_${hands.name}', device,
+              hands: hands, features: [fold.feature]);
+        });
+      }
+
+      testWidgets('editor at ${fold.name}', skip: _skip, (tester) async {
+        await render(
+          tester,
+          'editor_touch',
+          device,
+          push: true,
+          hands: _Hands.touch,
+          features: [fold.feature],
+          () => RemoteEditorScreen(
+            filesystem: _DemoFs(),
+            settingsStore: settings,
+            initialPaths: const ['/home/deploy/app/main.py'],
+            hostLabel: 'web-01',
+          ),
+        );
+      });
+    }
+  });
 }

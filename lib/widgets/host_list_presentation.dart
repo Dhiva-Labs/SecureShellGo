@@ -18,6 +18,7 @@ class HostListActions {
     required this.onDeleteGroup,
     required this.onConnect,
     required this.onHostMenu,
+    this.onHostContextMenu,
     this.onToggleSelect,
     this.onSelectAllInGroup,
   });
@@ -27,6 +28,11 @@ class HostListActions {
   final void Function(String group) onDeleteGroup;
   final void Function(Host host) onConnect;
   final void Function(Host host) onHostMenu;
+
+  /// A right-click on a host, at [at] in global coordinates: a menu at the
+  /// pointer rather than the sheet a long-press opens. Null falls back to
+  /// [onHostMenu].
+  final void Function(Host host, Offset at)? onHostContextMenu;
 
   /// Flips one host's checked state while selection mode is on. Null (the
   /// default) is what every existing caller gets, and is indistinguishable
@@ -238,6 +244,7 @@ Widget _listSection({
               ? () => actions.onToggleSelect?.call(host)
               : () => actions.onConnect(host),
           onMore: () => actions.onHostMenu(host),
+          onMoreAt: _contextMenu(actions, host),
         );
       },
     ),
@@ -300,6 +307,7 @@ Widget _gridSection({
                   ? () => actions.onToggleSelect?.call(host)
                   : () => actions.onConnect(host),
               onMore: () => actions.onHostMenu(host),
+              onMoreAt: _contextMenu(actions, host),
             );
           },
           childCount: section.hosts.length,
@@ -372,6 +380,7 @@ Widget _awsSection({
               ? () => actions.onToggleSelect?.call(host)
               : () => actions.onConnect(host),
           onMore: () => actions.onHostMenu(host),
+          onMoreAt: _contextMenu(actions, host),
         );
       },
     ),
@@ -387,6 +396,7 @@ class _AwsHostRow extends StatelessWidget {
     required this.connecting,
     required this.onTap,
     required this.onMore,
+    this.onMoreAt,
     this.selectionMode = false,
     this.selected = false,
   });
@@ -395,6 +405,10 @@ class _AwsHostRow extends StatelessWidget {
   final bool connecting;
   final VoidCallback onTap;
   final VoidCallback onMore;
+
+  /// Right-click, with where it landed. See
+  /// [HostListActions.onHostContextMenu].
+  final void Function(Offset at)? onMoreAt;
   final bool selectionMode;
   final bool selected;
 
@@ -412,7 +426,9 @@ class _AwsHostRow extends StatelessWidget {
       color: Colors.transparent,
       child: GestureDetector(
         behavior: HitTestBehavior.opaque,
-        onSecondaryTap: connecting || selectionMode ? null : onMore,
+        onSecondaryTapUp: connecting || selectionMode
+            ? null
+            : (details) => _secondary(onMore, onMoreAt, details),
         child: InkWell(
           onTap: connecting ? null : onTap,
           onLongPress: connecting || selectionMode ? null : onMore,
@@ -557,6 +573,7 @@ Widget _gcpSection({
                   ? () => actions.onToggleSelect?.call(host)
                   : () => actions.onConnect(host),
               onMore: () => actions.onHostMenu(host),
+              onMoreAt: _contextMenu(actions, host),
             );
           },
           childCount: section.hosts.length,
@@ -574,6 +591,7 @@ class _GcpHostCard extends StatelessWidget {
     required this.connecting,
     required this.onTap,
     required this.onMore,
+    this.onMoreAt,
     this.selectionMode = false,
     this.selected = false,
   });
@@ -582,6 +600,10 @@ class _GcpHostCard extends StatelessWidget {
   final bool connecting;
   final VoidCallback onTap;
   final VoidCallback onMore;
+
+  /// Right-click, with where it landed. See
+  /// [HostListActions.onHostContextMenu].
+  final void Function(Offset at)? onMoreAt;
   final bool selectionMode;
   final bool selected;
 
@@ -590,7 +612,9 @@ class _GcpHostCard extends StatelessWidget {
     final theme = Theme.of(context);
     return GestureDetector(
       behavior: HitTestBehavior.opaque,
-      onSecondaryTap: connecting || selectionMode ? null : onMore,
+      onSecondaryTapUp: connecting || selectionMode
+          ? null
+          : (details) => _secondary(onMore, onMoreAt, details),
       child: Card(
         margin: EdgeInsets.zero,
         clipBehavior: Clip.antiAlias,
@@ -875,6 +899,7 @@ class _ListHostRow extends StatelessWidget {
     required this.dense,
     required this.onTap,
     required this.onMore,
+    this.onMoreAt,
     this.selectionMode = false,
     this.selected = false,
   });
@@ -884,19 +909,25 @@ class _ListHostRow extends StatelessWidget {
   final bool dense;
   final VoidCallback onTap;
   final VoidCallback onMore;
+
+  /// Right-click, with where it landed. See
+  /// [HostListActions.onHostContextMenu].
+  final void Function(Offset at)? onMoreAt;
   final bool selectionMode;
   final bool selected;
 
   @override
   Widget build(BuildContext context) {
-    // ListTile has no onSecondaryTap of its own, so wrap it: on desktop
-    // right-click opens the same action sheet long-press opens on touch
-    // devices. Behind the tile so the ink and hover effects still come from
-    // the tile itself, not a bare GestureDetector — same pattern as
-    // file_browser_pane.dart's _EntryTile.
+    // ListTile has no onSecondaryTap of its own, so wrap it: right-click
+    // opens the host's actions as a menu at the pointer, where long-press
+    // opens them as a sheet. Behind the tile so the ink and hover effects
+    // still come from the tile itself, not a bare GestureDetector — same
+    // pattern as file_browser_pane.dart's _EntryTile.
     return GestureDetector(
       behavior: HitTestBehavior.opaque,
-      onSecondaryTap: connecting || selectionMode ? null : onMore,
+      onSecondaryTapUp: connecting || selectionMode
+          ? null
+          : (details) => _secondary(onMore, onMoreAt, details),
       child: ListTile(
         contentPadding: EdgeInsets.symmetric(
           horizontal: 16,
@@ -958,6 +989,7 @@ class _AuroraHostCard extends StatelessWidget {
     required this.connecting,
     required this.onTap,
     required this.onMore,
+    this.onMoreAt,
     this.selectionMode = false,
     this.selected = false,
   });
@@ -966,6 +998,10 @@ class _AuroraHostCard extends StatelessWidget {
   final bool connecting;
   final VoidCallback onTap;
   final VoidCallback onMore;
+
+  /// Right-click, with where it landed. See
+  /// [HostListActions.onHostContextMenu].
+  final void Function(Offset at)? onMoreAt;
   final bool selectionMode;
   final bool selected;
 
@@ -974,7 +1010,9 @@ class _AuroraHostCard extends StatelessWidget {
     final theme = Theme.of(context);
     return GestureDetector(
       behavior: HitTestBehavior.opaque,
-      onSecondaryTap: connecting || selectionMode ? null : onMore,
+      onSecondaryTapUp: connecting || selectionMode
+          ? null
+          : (details) => _secondary(onMore, onMoreAt, details),
       child: Card(
         margin: EdgeInsets.zero,
         clipBehavior: Clip.antiAlias,
@@ -1114,4 +1152,22 @@ String _formatLastConnected(DateTime time) {
     return '${local.day} ${months[local.month - 1]} at $hh:$mm';
   }
   return '${local.day} ${months[local.month - 1]} ${local.year}';
+}
+
+/// The right-click handler for one host, when the screen has a menu for it.
+void Function(Offset at)? _contextMenu(HostListActions actions, Host host) {
+  final menu = actions.onHostContextMenu;
+  return menu == null ? null : (at) => menu(host, at);
+}
+
+void _secondary(
+  VoidCallback onMore,
+  void Function(Offset at)? onMoreAt,
+  TapUpDetails details,
+) {
+  if (onMoreAt != null) {
+    onMoreAt(details.globalPosition);
+  } else {
+    onMore();
+  }
 }

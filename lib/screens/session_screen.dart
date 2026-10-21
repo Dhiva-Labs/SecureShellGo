@@ -3,7 +3,9 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import '../services/broadcast_input.dart';
+import '../services/display_hinge.dart';
 import '../services/fleet_push_run_registry.dart';
+import '../services/input_profile.dart';
 import '../services/keep_awake.dart';
 import '../services/layout_breakpoints.dart';
 import '../services/session_controller.dart';
@@ -15,7 +17,9 @@ import '../services/transfer_hub.dart';
 import '../services/transfer_queue.dart';
 import '../services/tunnel_runtime.dart';
 import '../theme.dart';
+import '../widgets/hinge_split.dart';
 import '../widgets/session_banners.dart';
+import '../widgets/session_shortcuts.dart';
 import '../widgets/snippet_picker.dart';
 import '../widgets/transfer_hub_panel.dart';
 import '../widgets/transfer_panel.dart';
@@ -48,11 +52,11 @@ import 'workspace_view.dart';
 /// `Terminal`, and is exactly where it was when its tab comes back to the
 /// front, because its `TerminalPane` was never disposed.
 ///
-/// Phase 13 adds a second body for desktop only: the split workspace, where up
-/// to four panes each show a session and the rest wait in the tab strip. The
+/// Phase 13 adds a second body for a mouse: the split workspace, where up to
+/// four panes each show a session and the rest wait in the tab strip. The
 /// bargain above is unchanged there — a session with no pane of its own is
-/// still built, still laid out at full size, and merely not painted. Phones
-/// and tablets never build a workspace at all; see [_isDesktop].
+/// still built, still laid out at full size, and merely not painted. Touch
+/// alone never builds a workspace at all; see [_workspaceOn].
 class SessionsScreen extends StatefulWidget {
   const SessionsScreen({
     super.key,
@@ -115,6 +119,21 @@ class SessionsScreen extends StatefulWidget {
 /// What the app bar's split button can do to the focused pane.
 enum _WorkspaceAction { splitRight, splitDown, closePane }
 
+/// How one session's terminal and file browser share its page.
+enum _Panes {
+  /// One at a time, behind the app bar's toggle: phones, split panes, and a
+  /// terminal the user has asked to have the whole width.
+  single,
+
+  /// Terminal left, files right — either side of the hinge, when one runs
+  /// down the middle of the screen.
+  sideBySide,
+
+  /// Terminal above a half-open fold, files below it: a foldable stood on a
+  /// table like a laptop.
+  stacked,
+}
+
 /// The monitoring views reachable from a session's overflow menu.
 ///
 /// They live behind one menu rather than as three more icons because none of
@@ -157,6 +176,10 @@ class _SessionsScreenState extends State<SessionsScreen> {
   // app-bar icon below — see transfer_hub.dart. Built once per screen, not
   // per session, since it is the *set* of sessions this follows.
   late final TransferHub _hub = TransferHub.forSessionManager(widget.sessions);
+
+  /// The terminal has the whole width, where it would otherwise share it with
+  /// the file browser. Route-scoped: the next visit starts side by side.
+  bool _terminalFullWidth = false;
 
   @override
   void initState() {
@@ -216,29 +239,24 @@ class _SessionsScreenState extends State<SessionsScreen> {
     super.dispose();
   }
 
-  /// Desktop platforms — Linux, macOS, Windows — where a window is big enough
-  /// and a mouse precise enough for a split workspace to be worth having.
-  /// Same shape as `FileBrowserPane`'s check, and for the same reason: it
-  /// reads the platform through the theme so a test can swap it with
-  /// [debugDefaultTargetPlatformOverride].
-  static bool _isDesktop(BuildContext context) {
-    switch (Theme.of(context).platform) {
-      case TargetPlatform.linux:
-      case TargetPlatform.macOS:
-      case TargetPlatform.windows:
-        return true;
-      case TargetPlatform.android:
-      case TargetPlatform.iOS:
-      case TargetPlatform.fuchsia:
-        return false;
-    }
-  }
+  /// Whether the split workspace is on offer: wherever a mouse or trackpad is
+  /// in hand — a desktop, a DeX window, a tablet in a trackpad cover — since
+  /// dragging a divider and working four panes want a precise pointer, not
+  /// whichever operating system is underneath. See `input_profile.dart`.
+  ///
+  /// A split, once made, stays on offer whatever was touched since: taking
+  /// the panes away because a finger brushed a touch laptop's screen would
+  /// lose the layout the user built.
+  bool _workspaceOn(BuildContext context) =>
+      InputProfile.of(context).mouse || _workspace.isSplit;
 
-  /// Tells the workspace which sessions exist. Mobile never calls this — and
-  /// never reads the workspace either, so the tabbed layout is untouched by
-  /// everything below.
+  /// Tells the workspace which sessions exist. Touch alone never calls this —
+  /// and never reads the workspace either, so the tabbed layout is untouched
+  /// by everything below. Runs again from [didChangeDependencies] when a
+  /// mouse first turns up, which is how a DeX user's sessions find their way
+  /// into a workspace.
   void _syncWorkspace() {
-    if (!_isDesktop(context)) return;
+    if (!_workspaceOn(context)) return;
     final manager = widget.sessions;
     final ids = manager.sessions.map((s) => s.id).toList(growable: false);
     _pageKeys.removeWhere((id, _) => !ids.contains(id));
@@ -254,7 +272,7 @@ class _SessionsScreenState extends State<SessionsScreen> {
   /// off — [BroadcastInput.handleInput] returns before doing anything — so
   /// this costs one null check per keystroke in the ordinary case.
   ///
-  /// Desktop only, like everything else past [_syncWorkspace]'s guard: the
+  /// Workspace only, like everything else past [_syncWorkspace]'s guard: the
   /// tabbed phone layout has one session on screen at a time, so there is
   /// nothing to broadcast *to*.
   void _attachInputTaps(SessionManager manager) {
@@ -275,12 +293,40 @@ class _SessionsScreenState extends State<SessionsScreen> {
     setState(() {});
   }
 
-  /// A tab was tapped. On desktop that means "show this one in the pane I am
-  /// looking at" — otherwise a tab for a session that is not in any pane would
-  /// change the app bar and nothing else.
+  /// A tab was tapped. In the workspace that means "show this one in the pane
+  /// I am looking at" — otherwise a tab for a session that is not in any pane
+  /// would change the app bar and nothing else.
   void _selectSession(String id) {
-    if (_isDesktop(context)) _workspace.showSession(id);
+    if (_workspaceOn(context)) _workspace.showSession(id);
     widget.sessions.select(id);
+  }
+
+  /// Ctrl+Tab and Ctrl+Shift+Tab: the next or previous tab, wrapping round.
+  void _cycleSession({required bool backwards}) {
+    final entries = widget.sessions.sessions;
+    if (entries.length < 2) return;
+    final at = entries.indexWhere((s) => s.id == widget.sessions.activeId);
+    final next = (at + (backwards ? -1 : 1)) % entries.length;
+    _selectSession(entries[next].id);
+  }
+
+  /// The terminal takes the whole width, or gives the files their side back.
+  /// Going full width shows the terminal, whichever pane was last toggled
+  /// to on a narrower screen — that is what the button says it does.
+  void _toggleTerminalFullWidth() {
+    final active = widget.sessions.active;
+    setState(() => _terminalFullWidth = !_terminalFullWidth);
+    if (_terminalFullWidth && active != null) {
+      widget.sessions.showView(active.id, SessionView.terminal);
+    }
+  }
+
+  void _toggleFiles() {
+    final active = widget.sessions.active;
+    if (active == null) return;
+    _show(active.view == SessionView.terminal
+        ? SessionView.files
+        : SessionView.terminal);
   }
 
   void _handleWorkspaceAction(_WorkspaceAction action) {
@@ -450,7 +496,7 @@ class _SessionsScreenState extends State<SessionsScreen> {
     ManagedSession entry, {
     required SessionManager manager,
     required bool active,
-    required bool wide,
+    required _Panes panes,
   }) {
     return _SessionPage(
       key: _pageKeys.putIfAbsent(entry.id, GlobalKey.new),
@@ -458,7 +504,7 @@ class _SessionsScreenState extends State<SessionsScreen> {
       manager: manager,
       settingsStore: widget.settingsStore,
       active: active,
-      wide: wide,
+      panes: panes,
     );
   }
 
@@ -466,7 +512,7 @@ class _SessionsScreenState extends State<SessionsScreen> {
   Widget _tabbedBody(
     SessionManager manager,
     List<ManagedSession> entries,
-    bool wide,
+    _Panes panes,
   ) {
     return IndexedStack(
       index: entries.indexWhere((s) => s.id == manager.activeId),
@@ -483,27 +529,28 @@ class _SessionsScreenState extends State<SessionsScreen> {
               entry,
               manager: manager,
               active: entry.id == manager.activeId,
-              wide: wide,
+              panes: panes,
             ),
           ),
       ],
     );
   }
 
-  /// Desktop: the pane tree, over every session that has no pane of its own.
+  /// With a mouse: the pane tree, over every session that has no pane of its
+  /// own.
+  ///
+  /// [panes] is already [_Panes.single] when the workspace is split: a split
+  /// pane is half a window or less, and handing it the side-by-side layout
+  /// would put a 40-column terminal next to a file browser too narrow to read
+  /// a filename in — so each pane shows one view at a time and the app bar's
+  /// toggle switches the focused one between them.
   Widget _workspaceBody(
     SessionManager manager,
     List<ManagedSession> entries,
-    bool wide,
+    _Panes panes,
   ) {
     final visible = _workspace.visibleSessionIds.toSet();
     final focusedSessionId = _workspace.focusedSessionId;
-    // A split pane is half a window or less. Handing it the side-by-side
-    // layout would put a 40-column terminal next to a file browser too narrow
-    // to read a filename in, so a split workspace gives each pane the
-    // one-view-at-a-time layout and the app bar's toggle switches the focused
-    // one between them.
-    final paneWide = wide && !_workspace.isSplit;
 
     return Stack(
       fit: StackFit.expand,
@@ -526,7 +573,7 @@ class _SessionsScreenState extends State<SessionsScreen> {
                   entry,
                   manager: manager,
                   active: false,
-                  wide: paneWide,
+                  panes: panes,
                 ),
               ),
             ),
@@ -542,7 +589,7 @@ class _SessionsScreenState extends State<SessionsScreen> {
             // one pane, so at most one page is `active` — which is what puts
             // the caret in that terminal and keeps it out of the others.
             active: entry.id == focusedSessionId,
-            wide: paneWide,
+            panes: panes,
           ),
         ),
       ],
@@ -565,14 +612,27 @@ class _SessionsScreenState extends State<SessionsScreen> {
     // from `MediaQuery` rather than the platform/device — a Chromebook, a
     // DeX window and an unfolded foldable are all just "wide" by width, and a
     // physical tablet in split-screen is not.
-    final wide = WindowSizeClass.forWidth(
-      MediaQuery.sizeOf(context).width,
-    ).isAtLeastMedium;
+    final size = MediaQuery.sizeOf(context);
+    final wide = WindowSizeClass.forWidth(size.width).isAtLeastMedium;
+    final input = InputProfile.of(context);
 
-    // Desktop gets the split workspace; everything else gets the tabbed
-    // layout it always had, untouched.
-    final desktop = _isDesktop(context);
-    final split = desktop && _workspace.isSplit;
+    // A mouse gets the split workspace; touch gets the tabbed layout it
+    // always had, untouched.
+    final workspaceOn = _workspaceOn(context);
+    final split = workspaceOn && _workspace.isSplit;
+
+    // Terminal and files share the page when the window is wide *and* tall
+    // enough for both to be usable, or when a hinge has already split the
+    // screen in two — then each gets a side, or the half above and below a
+    // fold in tabletop posture.
+    final hinge = HingeCut.axisOf(MediaQuery.displayFeaturesOf(context), size);
+    final roomForBoth = hinge != null ||
+        WindowSizeClass.fitsSideBySide(size.width, size.height);
+    final panes = split || _terminalFullWidth || !roomForBoth
+        ? _Panes.single
+        : hinge == HingeAxis.stacked
+            ? _Panes.stacked
+            : _Panes.sideBySide;
 
     // Only offer the drop target when there is anywhere to drop *from*: with
     // one session open there is no other tab to drag to. The strip does not
@@ -583,7 +643,7 @@ class _SessionsScreenState extends State<SessionsScreen> {
     final closed = active.isClosed;
     final theme = Theme.of(context);
 
-    return Scaffold(
+    final scaffold = Scaffold(
       appBar: AppBar(
         titleSpacing: 0,
         leading: IconButton(
@@ -614,11 +674,17 @@ class _SessionsScreenState extends State<SessionsScreen> {
                       : theme.colorScheme.primary,
                 ),
                 const SizedBox(width: 6),
-                Text(
-                  closed ? 'disconnected' : active.host.target,
-                  style: TextStyle(
-                    fontSize: 11.5,
-                    color: Theme.of(context).colorScheme.onSurfaceVariant,
+                // Flexible: on a phone the actions leave the title a hundred
+                // pixels or so, and a long user@host overflowed them.
+                Flexible(
+                  child: Text(
+                    closed ? 'disconnected' : active.host.target,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontSize: 11.5,
+                      color: Theme.of(context).colorScheme.onSurfaceVariant,
+                    ),
                   ),
                 ),
               ],
@@ -650,7 +716,7 @@ class _SessionsScreenState extends State<SessionsScreen> {
               onOpen: active.controller.openDownload,
             ),
           ),
-          if (desktop)
+          if (workspaceOn)
             PopupMenuButton<_WorkspaceAction>(
               tooltip: 'Split the focused pane',
               icon: const Icon(Icons.splitscreen_outlined),
@@ -705,24 +771,43 @@ class _SessionsScreenState extends State<SessionsScreen> {
               );
             },
           ),
-          // Both panes are already on screen side by side in the wide layout,
-          // so a toggle between them means nothing there — except in a split
-          // workspace, where each pane is narrow and shows one at a time.
-          if (!wide || split)
+          // Both panes are already on screen when they share the page, so a
+          // toggle between them means nothing there — only where they take
+          // turns: a phone, a split workspace pane, a full-width terminal.
+          if (panes == _Panes.single)
             IconButton(
-              tooltip: active.view == SessionView.terminal
-                  ? 'Browse files'
-                  : 'Back to terminal',
+              tooltip: SessionShortcuts.tooltip(
+                active.view == SessionView.terminal
+                    ? 'Browse files'
+                    : 'Back to terminal',
+                SessionShortcuts.toggleFiles,
+                keyboard: input.keyboard,
+              ),
               icon: Icon(
                 active.view == SessionView.terminal
                     ? Icons.folder_outlined
                     : Icons.terminal,
               ),
-              onPressed: () => _show(
-                active.view == SessionView.terminal
-                    ? SessionView.files
-                    : SessionView.terminal,
+              onPressed: _toggleFiles,
+            ),
+          // Where they could share it, the terminal can have it all instead:
+          // a tablet's 40% for files is a lot to give up to a log being
+          // tailed.
+          if (!split && roomForBoth)
+            IconButton(
+              tooltip: SessionShortcuts.tooltip(
+                _terminalFullWidth
+                    ? 'Show files beside the terminal'
+                    : 'Terminal full width',
+                SessionShortcuts.toggleFullWidth,
+                keyboard: input.keyboard,
               ),
+              icon: Icon(
+                _terminalFullWidth
+                    ? Icons.vertical_split_outlined
+                    : Icons.open_in_full,
+              ),
+              onPressed: _toggleTerminalFullWidth,
             ),
           IconButton(
             tooltip: 'Snippets',
@@ -756,7 +841,11 @@ class _SessionsScreenState extends State<SessionsScreen> {
           // possible, so it stays in the bar rather than living only in the
           // tab strip that has not appeared yet.
           IconButton(
-            tooltip: 'New session',
+            tooltip: SessionShortcuts.tooltip(
+              'New session',
+              SessionShortcuts.newSession,
+              keyboard: input.keyboard,
+            ),
             icon: const Icon(Icons.add),
             onPressed: _addSession,
           ),
@@ -778,18 +867,47 @@ class _SessionsScreenState extends State<SessionsScreen> {
                 sessions: entries,
                 activeId: manager.activeId,
                 compact: !wide,
+                touch: input.touch,
                 onSelect: _selectSession,
                 onClose: (entry) => unawaited(_closeSession(entry)),
                 onAdd: _addSession,
                 onDrop: canReceiveDrops ? _handleTabDrop : null,
               ),
             Expanded(
-              child: desktop
-                  ? _workspaceBody(manager, entries, wide)
-                  : _tabbedBody(manager, entries, wide),
+              child: workspaceOn
+                  ? _workspaceBody(manager, entries, panes)
+                  : _tabbedBody(manager, entries, panes),
             ),
           ],
         ),
+      ),
+    );
+
+    // Every chord has a binding here for whatever has the focus, and the
+    // terminal hands its own to the same actions before the shell can see
+    // them — see `session_shortcuts.dart`.
+    return Shortcuts(
+      shortcuts: SessionShortcuts.bindings,
+      child: Actions(
+        actions: <Type, Action<Intent>>{
+          NewSessionIntent: _SessionAction<NewSessionIntent>(
+            onInvoke: (_) => _addSession(),
+          ),
+          CycleSessionIntent: _SessionAction<CycleSessionIntent>(
+            enabled: entries.length > 1,
+            onInvoke: (intent) => _cycleSession(backwards: intent.backwards),
+          ),
+          ToggleSessionFilesIntent: _SessionAction<ToggleSessionFilesIntent>(
+            enabled: panes == _Panes.single,
+            onInvoke: (_) => _toggleFiles(),
+          ),
+          ToggleTerminalFullWidthIntent:
+              _SessionAction<ToggleTerminalFullWidthIntent>(
+            enabled: !split && roomForBoth,
+            onInvoke: (_) => _toggleTerminalFullWidth(),
+          ),
+        },
+        child: scaffold,
       ),
     );
   }
@@ -808,14 +926,14 @@ class _SessionPage extends StatefulWidget {
     required this.manager,
     required this.settingsStore,
     required this.active,
-    required this.wide,
+    required this.panes,
   });
 
   final ManagedSession entry;
   final SessionManager manager;
   final SettingsStore settingsStore;
   final bool active;
-  final bool wide;
+  final _Panes panes;
 
   @override
   State<_SessionPage> createState() => _SessionPageState();
@@ -842,6 +960,9 @@ class _SessionPageState extends State<_SessionPage> {
   StreamSubscription<void>? _sessionChanges;
   StreamSubscription<List<TransferTask>>? _transferChanges;
 
+  /// The view this page last showed, to notice the terminal coming back.
+  late SessionView _shownView = widget.entry.view;
+
   SessionController get _session => widget.entry.controller;
 
   @override
@@ -865,6 +986,21 @@ class _SessionPageState extends State<_SessionPage> {
           _terminalFocus.requestFocus();
         }
       });
+    }
+    // Back from the files with Ctrl+Shift+E: the toggle dropped the focus to
+    // put the soft keyboard away, which a hardware keyboard has no use for —
+    // the next key belongs in the terminal it just switched back to.
+    final view = widget.entry.view;
+    if (view != _shownView) {
+      _shownView = view;
+      if (widget.active &&
+          view == SessionView.terminal &&
+          !widget.entry.isClosed &&
+          InputProfile.of(context).keyboard) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted && widget.active) _terminalFocus.requestFocus();
+        });
+      }
     }
   }
 
@@ -974,10 +1110,10 @@ class _SessionPageState extends State<_SessionPage> {
   Widget build(BuildContext context) {
     final entry = widget.entry;
 
-    // Once the layout has gone wide, the file browser pane is live and its
+    // Once both panes have been on screen, the file browser is live and its
     // SFTP channel open; folding back to compact should not throw that away
     // and re-show the "not built yet" placeholder in the IndexedStack branch.
-    if (widget.wide) widget.manager.markFilesBuilt(entry.id);
+    if (widget.panes != _Panes.single) widget.manager.markFilesBuilt(entry.id);
 
     return Column(
       children: [
@@ -986,31 +1122,35 @@ class _SessionPageState extends State<_SessionPage> {
           onCloseTab: () => unawaited(widget.manager.close(entry.id)),
         ),
         Expanded(
-          child: widget.wide
-              // Tablets, DeX and unfolded foldables: both panes live at once,
-              // sharing the one `SessionController` — the file browser opening
-              // its SFTP channel here is deliberate, not lazy, since there is
-              // no "ask for it" tap in this layout for it to wait on.
-              ? Row(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    Expanded(flex: 3, child: _terminalPane()),
-                    const VerticalDivider(width: 1),
-                    Expanded(flex: 2, child: _fileBrowserPane()),
-                  ],
-                )
-              // Phones: one pane at a time behind the app-bar toggle.
-              : IndexedStack(
-                  index: entry.view == SessionView.terminal ? 0 : 1,
-                  sizing: StackFit.expand,
-                  children: [
-                    _terminalPane(),
-                    if (entry.filesBuilt)
-                      _fileBrowserPane()
-                    else
-                      const SizedBox.shrink(),
-                  ],
-                ),
+          child: switch (widget.panes) {
+            // Phones: one pane at a time behind the app-bar toggle.
+            _Panes.single => IndexedStack(
+                index: entry.view == SessionView.terminal ? 0 : 1,
+                sizing: StackFit.expand,
+                children: [
+                  _terminalPane(),
+                  if (entry.filesBuilt)
+                    _fileBrowserPane()
+                  else
+                    const SizedBox.shrink(),
+                ],
+              ),
+            // Tablets, DeX and foldables: both panes live at once, sharing the
+            // one `SessionController` — the file browser opening its SFTP
+            // channel here is deliberate, not lazy, since there is no "ask for
+            // it" tap in this layout for it to wait on. Split at the hinge
+            // when there is one.
+            _Panes.sideBySide => HingeSplit(
+                axis: HingeAxis.sideBySide,
+                first: _terminalPane(),
+                second: _fileBrowserPane(),
+              ),
+            _Panes.stacked => HingeSplit(
+                axis: HingeAxis.stacked,
+                first: _terminalPane(),
+                second: _fileBrowserPane(),
+              ),
+          },
         ),
       ],
     );
@@ -1032,6 +1172,7 @@ class SessionTabStrip extends StatelessWidget {
     required this.onSelect,
     required this.onClose,
     required this.onAdd,
+    this.touch = false,
     this.onDrop,
   });
 
@@ -1041,6 +1182,10 @@ class SessionTabStrip extends StatelessWidget {
   /// Phones get narrower tabs; a tablet or a desktop window has room to show
   /// the whole host label.
   final bool compact;
+
+  /// Touch has been seen: every tab, and its close button, is a 48dp target.
+  /// A mouse gets the slimmer strip it always had.
+  final bool touch;
 
   final void Function(String id) onSelect;
   final void Function(ManagedSession entry) onClose;
@@ -1062,7 +1207,7 @@ class SessionTabStrip extends StatelessWidget {
     return Material(
       color: theme.colorScheme.surfaceContainerHigh,
       child: SizedBox(
-        height: compact ? 42 : 46,
+        height: touch ? 52 : (compact ? 42 : 46),
         child: Row(
           children: [
             Expanded(
@@ -1075,7 +1220,8 @@ class SessionTabStrip extends StatelessWidget {
                   return _SessionTab(
                     entry: entry,
                     selected: entry.id == activeId,
-                    maxWidth: compact ? 148 : 220,
+                    touch: touch,
+                    maxWidth: (compact ? 148 : 220) + (touch ? 16 : 0),
                     onTap: () => onSelect(entry.id),
                     onClose: () => onClose(entry),
                     onDrop: onDrop == null
@@ -1105,11 +1251,13 @@ class _SessionTab extends StatelessWidget {
     required this.maxWidth,
     required this.onTap,
     required this.onClose,
+    this.touch = false,
     this.onDrop,
   });
 
   final ManagedSession entry;
   final bool selected;
+  final bool touch;
   final double maxWidth;
   final VoidCallback onTap;
   final VoidCallback onClose;
@@ -1134,7 +1282,7 @@ class _SessionTab extends StatelessWidget {
       // simpler `borderRadius` it always used.
       final radius = BorderRadius.circular(8);
       return Padding(
-        padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 2),
+        padding: EdgeInsets.symmetric(vertical: touch ? 2 : 4, horizontal: 2),
         child: Material(
           color: selected
               ? theme.colorScheme.primary.withValues(alpha: 0.16)
@@ -1184,11 +1332,15 @@ class _SessionTab extends StatelessWidget {
                           ? 'Close ${entry.host.displayName}'
                           : 'Disconnect ${entry.host.displayName}',
                       icon: const Icon(Icons.close, size: 15),
-                      visualDensity: VisualDensity.compact,
+                      // Compact density takes 8dp back off the constraints
+                      // below, which touch cannot spare.
+                      visualDensity: touch
+                          ? VisualDensity.standard
+                          : VisualDensity.compact,
                       padding: const EdgeInsets.symmetric(horizontal: 6),
-                      constraints: const BoxConstraints(
-                        minWidth: 32,
-                        minHeight: 32,
+                      constraints: BoxConstraints(
+                        minWidth: touch ? 48 : 32,
+                        minHeight: touch ? 48 : 32,
                       ),
                       onPressed: onClose,
                     ),
@@ -1337,6 +1489,17 @@ class _BroadcastAction extends StatelessWidget {
       ),
     );
   }
+}
+
+/// An action that is only sometimes there to take: a disabled one leaves its
+/// key to the terminal, see [SessionShortcuts.dispatch].
+class _SessionAction<T extends Intent> extends CallbackAction<T> {
+  _SessionAction({required super.onInvoke, this.enabled = true});
+
+  final bool enabled;
+
+  @override
+  bool isEnabled(T intent) => enabled;
 }
 
 /// App-bar transfer button, with a count badge while anything is moving.
