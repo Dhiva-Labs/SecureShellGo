@@ -283,6 +283,7 @@ class _SecureShellGoAppState extends State<SecureShellGoApp> {
     bookmarkStore: BookmarkStore.instance,
     settingsStore: _settingsStore,
     credentialStore: _credentialStore,
+    knownHosts: _knownHosts,
   );
 
   late final TerminalWorkspace _workspace = TerminalWorkspace(

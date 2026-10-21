@@ -94,7 +94,11 @@ class StorageBridge(private val activity: Activity) : MethodChannel.MethodCallHa
      */
     private val pendingShare = ArrayList<Uri>()
 
+    /** "Save to…" anywhere, through the system document UI. See its file. */
+    private val saver = DocumentSaver(activity)
+
     fun dispose() {
+        saver.dispose()
         io.execute {
             for (sink in sinks.values) {
                 runCatching { sink.out.close() }
@@ -144,6 +148,7 @@ class StorageBridge(private val activity: Activity) : MethodChannel.MethodCallHa
                 PickMode.STAGE_MULTIPLE,
                 DEFAULT_CONTENT_PICK_MAX_BYTES,
             )
+            "saveDocument" -> saver.save(call, result)
             "pickFileContent" -> {
                 val maxBytes = call.argument<Number>("maxBytes")?.toLong()
                     ?: DEFAULT_CONTENT_PICK_MAX_BYTES
@@ -532,6 +537,7 @@ class StorageBridge(private val activity: Activity) : MethodChannel.MethodCallHa
     }
 
     fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?): Boolean {
+        if (saver.onActivityResult(requestCode, resultCode, data)) return true
         if (requestCode != REQUEST_PICK_FILE) return false
         val pending = pendingPick ?: return true
         val mode = pendingPickMode

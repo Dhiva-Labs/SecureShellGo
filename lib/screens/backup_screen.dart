@@ -43,10 +43,20 @@ class _BackupScreenState extends State<BackupScreen> {
   bool _busy = false;
   String? _status;
 
-  Future<void> _export() async {
+  /// The storage's "save as", when it has one. See [DocumentSaver].
+  DocumentSaver? get _saver {
+    final storage = _storage;
+    return storage is DocumentSaver ? storage as DocumentSaver : null;
+  }
+
+  /// [chooseLocation] picks between the system's "save as" UI — any folder,
+  /// or a cloud provider — and Downloads.
+  Future<void> _export({required bool chooseLocation}) async {
     final choice = await showDialog<_ExportChoice>(
       context: context,
-      builder: (_) => const _ExportDialog(),
+      builder: (_) => _ExportDialog(
+        canIncludeKnownHosts: widget.service.knownHosts != null,
+      ),
     );
     if (choice == null || !mounted) return;
 
@@ -58,8 +68,24 @@ class _BackupScreenState extends State<BackupScreen> {
       final bytes = await widget.service.export(
         passphrase: choice.passphrase,
         includeCredentials: choice.includeCredentials,
+        includeKnownHosts: choice.includeKnownHosts,
       );
       final name = _fileName();
+      final saver = _saver;
+      if (chooseLocation && saver != null) {
+        final saved = await saver.saveDocument(
+          suggestedName: name,
+          bytes: bytes,
+          mimeType: 'application/octet-stream',
+        );
+        if (!mounted) return;
+        setState(
+          () => _status = saved == null
+              ? 'Not saved.'
+              : 'Saved ${saved.displayName}.',
+        );
+        return;
+      }
       final writer = await _storage.beginDownload(
         name,
         mimeType: 'application/octet-stream',
@@ -186,6 +212,25 @@ class _BackupScreenState extends State<BackupScreen> {
         'password or key on first connect.',
       );
     }
+    if (result.knownHostsAdded > 0) {
+      buffer.write(
+        ' Added ${result.knownHostsAdded} trusted host '
+        'key${result.knownHostsAdded == 1 ? '' : 's'}.',
+      );
+    }
+    if (result.knownHostsKept > 0) {
+      buffer.write(
+        ' Kept this device\'s key for ${result.knownHostsKept} '
+        'server${result.knownHostsKept == 1 ? '' : 's'} whose key in the '
+        'backup is different.',
+      );
+    }
+    if (result.knownHostsNotSaved) {
+      buffer.write(
+        ' The system keyring is locked, so the added keys last until the '
+        'app closes.',
+      );
+    }
     return buffer.toString();
   }
 
@@ -218,18 +263,50 @@ class _BackupScreenState extends State<BackupScreen> {
                   // Called out here rather than buried in a release note: a
                   // user restoring on a new device will see host-key warnings
                   // and should know now that it is by design.
-                  text: 'Known hosts are not included. Host-key trust is a '
-                      'decision you make per device, so a restored install '
-                      'verifies each server again on first connect.',
+                  text: 'Trusted host keys are left out unless you include '
+                      'them. Without them, a restored install verifies each '
+                      'server again on first connect.',
                 ),
               ),
+              if (_saver != null) ...[
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 16),
+                  child: FilledButton.icon(
+                    onPressed: _busy
+                        ? null
+                        : () => unawaited(_export(chooseLocation: true)),
+                    icon: const Icon(Icons.save_as_outlined),
+                    label: const Text('Save to…'),
+                  ),
+                ),
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 6, 16, 10),
+                  child: Text(
+                    'Any folder, or a cloud drive such as Google Drive, '
+                    'OneDrive or Dropbox.',
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      color: theme.colorScheme.onSurfaceVariant,
+                    ),
+                  ),
+                ),
+              ],
               Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 16),
-                child: FilledButton.icon(
-                  onPressed: _busy ? null : () => unawaited(_export()),
-                  icon: const Icon(Icons.upload_file_outlined),
-                  label: const Text('Export to a file'),
-                ),
+                child: _saver != null
+                    ? OutlinedButton.icon(
+                        onPressed: _busy
+                            ? null
+                            : () => unawaited(_export(chooseLocation: false)),
+                        icon: const Icon(Icons.download_for_offline_outlined),
+                        label: const Text('Save to Downloads'),
+                      )
+                    : FilledButton.icon(
+                        onPressed: _busy
+                            ? null
+                            : () => unawaited(_export(chooseLocation: false)),
+                        icon: const Icon(Icons.upload_file_outlined),
+                        label: const Text('Export to a file'),
+                      ),
               ),
               const Divider(height: 40),
               const _SectionHeader('Import'),
@@ -274,14 +351,18 @@ class _ExportChoice {
   const _ExportChoice({
     required this.passphrase,
     required this.includeCredentials,
+    required this.includeKnownHosts,
   });
 
   final String passphrase;
   final bool includeCredentials;
+  final bool includeKnownHosts;
 }
 
 class _ExportDialog extends StatefulWidget {
-  const _ExportDialog();
+  const _ExportDialog({required this.canIncludeKnownHosts});
+
+  final bool canIncludeKnownHosts;
 
   @override
   State<_ExportDialog> createState() => _ExportDialogState();
@@ -291,6 +372,7 @@ class _ExportDialogState extends State<_ExportDialog> {
   final _passphrase = TextEditingController();
   final _confirm = TextEditingController();
   bool _includeCredentials = false;
+  bool _includeKnownHosts = false;
   bool _obscure = true;
 
   @override
@@ -409,6 +491,21 @@ class _ExportDialogState extends State<_ExportDialog> {
                   style: theme.textTheme.bodySmall?.copyWith(height: 1.3),
                 ),
               ),
+            if (widget.canIncludeKnownHosts)
+              CheckboxListTile(
+                value: _includeKnownHosts,
+                onChanged: (v) =>
+                    setState(() => _includeKnownHosts = v ?? false),
+                contentPadding: EdgeInsets.zero,
+                controlAffinity: ListTileControlAffinity.leading,
+                title: const Text('Include trusted host keys'),
+                subtitle: const Text(
+                  'Off by default. Lets a restored device recognise your '
+                  'servers without asking again. Keys a device already '
+                  'trusts are never replaced by the ones in a backup.',
+                  style: TextStyle(height: 1.3),
+                ),
+              ),
           ],
         ),
       ),
@@ -423,6 +520,7 @@ class _ExportDialogState extends State<_ExportDialog> {
                     _ExportChoice(
                       passphrase: _passphrase.text,
                       includeCredentials: _includeCredentials,
+                      includeKnownHosts: _includeKnownHosts,
                     ),
                   )
               : null,
@@ -507,6 +605,8 @@ class _ImportPreviewDialog extends StatelessWidget {
             _CountRow('Snippets', contents.snippets),
             _CountRow('Tunnels', contents.tunnels),
             _CountRow('Bookmarks', contents.bookmarks),
+            if (contents.includesKnownHosts)
+              _CountRow('Trusted host keys', contents.knownHosts),
             const Divider(height: 20),
             Text(
               contents.includesCredentials
@@ -522,7 +622,11 @@ class _ImportPreviewDialog extends StatelessWidget {
             const SizedBox(height: 10),
             Text(
               'Settings in the file will replace your current settings in '
-              'both modes. Known hosts are never touched.',
+              'both modes. '
+              '${contents.includesKnownHosts ? 'Trusted host keys are added '
+                  'to this device\'s in both modes; a key this device '
+                  'already trusts for a server is kept.' : 'Trusted host '
+                  'keys on this device are not touched.'}',
               style: theme.textTheme.bodySmall?.copyWith(height: 1.3),
             ),
             if (contents.isEmpty) ...[
