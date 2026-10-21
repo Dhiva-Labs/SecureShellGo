@@ -263,7 +263,24 @@ void main() {
         if (failure == null) break;
         await settleIo(tester, rounds: 25);
       }
-      if (failure != null) Error.throwWithStackTrace(failure!, failureStack!);
+      if (failure != null) {
+        // Say what the screen said: a save that threw shows its cause in the
+        // error banner, and that is the one clue a failure under load leaves.
+        final banners = [
+          for (final e in find.byType(ErrorBanner).evaluate())
+            '${(e.widget as ErrorBanner).message} '
+                '${(e.widget as ErrorBanner).details ?? ''}',
+        ];
+        final notices = [
+          for (final e in find.textContaining('Host saved, but').evaluate())
+            (e.widget as Text).data ?? '',
+        ];
+        Error.throwWithStackTrace(
+          TestFailure('$failure\nOn screen — banners: $banners; '
+              'notices: $notices'),
+          failureStack!,
+        );
+      }
     }
     await tester.pump();
   }
