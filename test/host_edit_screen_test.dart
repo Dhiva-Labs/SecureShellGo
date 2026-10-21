@@ -1,20 +1,26 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:secure_shell_go/models/host.dart';
 import 'package:secure_shell_go/screens/host_edit_screen.dart';
 import 'package:secure_shell_go/services/composite_secure_storage.dart';
 import 'package:secure_shell_go/services/credential_store.dart';
+import 'package:secure_shell_go/services/device_storage.dart';
 import 'package:secure_shell_go/services/device_vault_key.dart';
 import 'package:secure_shell_go/services/host_store.dart';
 import 'package:secure_shell_go/services/known_hosts_service.dart';
 import 'package:secure_shell_go/services/secret_vault.dart';
 import 'package:secure_shell_go/services/session_manager.dart';
 import 'package:secure_shell_go/services/settings_store.dart';
+import 'package:secure_shell_go/services/ssh_keygen.dart';
 import 'package:secure_shell_go/services/ssh_service.dart';
 import 'package:secure_shell_go/widgets/error_banner.dart';
+
+import 'support/certificate_fixture.dart';
 
 /// A keyring that this install has had working before and that is locked
 /// right now — the one remaining state in which a credential cannot be
@@ -161,6 +167,7 @@ void main() {
     WidgetTester tester,
     CredentialStore credentials, {
     Host? host,
+    DeviceStorage? deviceStorage,
   }) async {
     // Tall enough that the whole form, buttons included, is built — a
     // `ListView` does not create what is off screen, and a finder cannot tap
@@ -186,6 +193,7 @@ void main() {
             settingsStore: settings,
             sessions: sessions,
             host: host,
+            deviceStorage: deviceStorage,
           ),
         ),
       ),
@@ -562,7 +570,10 @@ void main() {
       }
     });
 
-    testWidgets('its choices are saved with the host', (tester) async {
+    // A desktop: on Android the X11 row is off and disabled.
+    testWidgets('its choices are saved with the host',
+        variant: TargetPlatformVariant.only(TargetPlatform.linux),
+        (tester) async {
       await pumpForm(tester, noKeyringStore());
       await fillIn(tester);
       await tester.tap(find.text('Advanced'));
@@ -638,4 +649,249 @@ void main() {
       });
     });
   });
+
+  group('the certificate', () {
+    late String publicBlobBase64;
+
+    /// A key host, with a freshly generated key in the form.
+    Future<Uint8List> fillKeyHost(WidgetTester tester) async {
+      final generated = SshKeygen.generateEd25519(comment: 'me@laptop');
+      await tester.enterText(
+          find.widgetWithText(TextFormField, 'Host'), 'example.com');
+      await tester.enterText(
+          find.widgetWithText(TextFormField, 'Username'), 'dev');
+      await tester.tap(find.text('Private key'));
+      await tester.pumpAndSettle();
+      await tester.enterText(
+        find.widgetWithText(TextFormField, 'Private key (PEM)'),
+        generated.privateKeyPem,
+      );
+      await tester.pumpAndSettle();
+      publicBlobBase64 = generated.publicKeyLine.split(' ')[1];
+      return base64.decode(publicBlobBase64);
+    }
+
+    Uint8List otherKey() => base64.decode(SshKeygen.generateEd25519(
+          comment: 'other',
+        ).publicKeyLine.split(' ')[1]);
+
+    Future<void> paste(WidgetTester tester, String text) async {
+      await tester.tap(find.text('Paste certificate'));
+      await tester.pumpAndSettle();
+      await tester.enterText(
+        find.descendant(
+          of: find.byType(AlertDialog),
+          matching: find.byType(TextField),
+        ),
+        text,
+      );
+      await tester.tap(find.text('Use'));
+      await tester.pumpAndSettle();
+    }
+
+    testWidgets('a key host offers to load or paste one', (tester) async {
+      await pumpForm(tester, noKeyringStore());
+      await fillKeyHost(tester);
+      expect(find.text('Load certificate'), findsOneWidget);
+      expect(find.text('Paste certificate'), findsOneWidget);
+    });
+
+    testWidgets('pasted for this key: its details are shown and it saves',
+        (tester) async {
+      await pumpForm(tester, noKeyringStore());
+      final key = await fillKeyHost(tester);
+      final line = certificateLineFor(
+        key,
+        principals: ['dev', 'deploy'],
+        validAfter: DateTime.now().subtract(const Duration(days: 1)),
+        validBefore: DateTime.now().add(const Duration(days: 30, hours: 1)),
+      );
+      await paste(tester, line);
+
+      expect(find.text('Certificate · ED25519'), findsOneWidget);
+      expect(find.textContaining('alice@example'), findsOneWidget);
+      expect(find.textContaining('dev, deploy'), findsOneWidget);
+      expect(find.text('Valid, expires in 30 days.'), findsOneWidget);
+      expect(find.text('Remove'), findsOneWidget);
+
+      await tapAndRun(tester, 'Save host', checks: () async {
+        expect((await hosts.all()).single.certificate, line);
+      });
+    });
+
+    testWidgets('one issued for another key stops the save, and says why',
+        (tester) async {
+      await pumpForm(tester, noKeyringStore());
+      await fillKeyHost(tester);
+      await paste(tester, certificateLineFor(otherKey()));
+
+      expect(find.textContaining('issued for a different key'), findsOneWidget);
+      await tapAndRun(tester, 'Save host', checks: () async {
+        expect(await hosts.all(), isEmpty);
+      });
+    });
+
+    testWidgets('an expired one is flagged but still saves', (tester) async {
+      await pumpForm(tester, noKeyringStore());
+      final key = await fillKeyHost(tester);
+      await paste(
+        tester,
+        certificateLineFor(
+          key,
+          validAfter: DateTime.utc(2020),
+          validBefore: DateTime.utc(2020, 1, 2),
+        ),
+      );
+      expect(find.textContaining('Expired on 2020-01-02'), findsOneWidget);
+      await tapAndRun(tester, 'Save host', checks: () async {
+        expect((await hosts.all()).single.certificate, isNotNull);
+      });
+    });
+
+    testWidgets('it warns when it does not name the user', (tester) async {
+      await pumpForm(tester, noKeyringStore());
+      final key = await fillKeyHost(tester);
+      await paste(tester, certificateLineFor(key, principals: ['root']));
+      expect(find.textContaining('does not name the user "dev"'), findsOneWidget);
+    });
+
+    testWidgets('Remove takes it off the host', (tester) async {
+      await pumpForm(tester, noKeyringStore());
+      final key = await fillKeyHost(tester);
+      await paste(tester, certificateLineFor(key));
+      await tester.tap(find.text('Remove'));
+      await tester.pumpAndSettle();
+      expect(find.text('Paste certificate'), findsOneWidget);
+      await tapAndRun(tester, 'Save host', checks: () async {
+        expect((await hosts.all()).single.certificate, isNull);
+      });
+    });
+
+    testWidgets('the paste dialog explains what was pasted instead',
+        (tester) async {
+      await pumpForm(tester, noKeyringStore());
+      await fillKeyHost(tester);
+      await paste(tester, 'ssh-ed25519 $publicBlobBase64 me@laptop');
+      expect(find.textContaining('public key, not a certificate'),
+          findsOneWidget);
+      expect(find.byType(AlertDialog), findsOneWidget,
+          reason: 'it stays open for another try');
+    });
+
+    testWidgets('loaded from a file through the picker', (tester) async {
+      final picker = _PickingStorage();
+      await pumpForm(tester, noKeyringStore(), deviceStorage: picker);
+      final key = await fillKeyHost(tester);
+      picker.next = PickedTextFile(
+        name: 'id_ed25519-cert.pub',
+        content: '${certificateLineFor(key, keyId: 'from-file')}\n',
+      );
+      await tester.tap(find.text('Load certificate'));
+      await tester.pumpAndSettle();
+      expect(find.textContaining('from-file'), findsOneWidget);
+      expect(picker.maxBytes, lessThanOrEqualTo(16 * 1024));
+    });
+
+    testWidgets('a picked file that is not one is explained', (tester) async {
+      final picker = _PickingStorage();
+      await pumpForm(tester, noKeyringStore(), deviceStorage: picker);
+      await fillKeyHost(tester);
+      picker.next = PickedTextFile(
+        name: 'host-cert.pub',
+        content: certificateLineFor(otherKey(), host: true),
+      );
+      await tester.tap(find.text('Load certificate'));
+      await tester.pumpAndSettle();
+      expect(find.text('Could not import host-cert.pub'), findsOneWidget);
+      expect(find.textContaining('host certificate'), findsOneWidget);
+    });
+  });
+
+  group('the OS agent', () {
+    testWidgets('is offered on a desktop, with the certificate row',
+        variant: TargetPlatformVariant.only(TargetPlatform.linux),
+        (tester) async {
+      await pumpForm(tester, noKeyringStore());
+      await tester.tap(find.text('OS SSH agent'));
+      await tester.pumpAndSettle();
+      expect(find.textContaining('Pageant'), findsOneWidget);
+      expect(find.text('Paste certificate'), findsOneWidget);
+    });
+
+    testWidgets('is not offered on Android, which has none', (tester) async {
+      await pumpForm(tester, noKeyringStore());
+      expect(find.text('OS SSH agent'), findsNothing);
+    });
+
+    testWidgets('the three choices fit a narrow desktop window',
+        variant: TargetPlatformVariant.only(TargetPlatform.linux),
+        (tester) async {
+      await pumpForm(tester, noKeyringStore());
+      addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
+      for (final scale in [1.0, 1.5]) {
+        tester.view.physicalSize = const Size(320, 3000);
+        tester.platformDispatcher.textScaleFactorTestValue = scale;
+        final errors = <FlutterErrorDetails>[];
+        final previous = FlutterError.onError;
+        FlutterError.onError = errors.add;
+        await tester.pumpAndSettle();
+        FlutterError.onError = previous;
+        // Only the sign-in choice is this test's business; other rows of
+        // the form are swept by layout_sweep_test.dart.
+        expect(
+          errors.where((e) => e.toString().contains('SegmentedButton')),
+          isEmpty,
+          reason: 'text scale $scale',
+        );
+      }
+      await tester.tap(find.text('Agent'));
+      await tester.pumpAndSettle();
+      expect(find.textContaining('Pageant'), findsOneWidget);
+    });
+  });
+
+  group('forwarding rows', () {
+    testWidgets('on Android, X11 is off and disabled, with the reason',
+        (tester) async {
+      await pumpForm(tester, noKeyringStore());
+      await tester.tap(find.text('Advanced'));
+      await tester.pumpAndSettle();
+      final tile = tester.widget<SwitchListTile>(
+        find.widgetWithText(SwitchListTile, 'Forward X11'),
+      );
+      expect(tile.onChanged, isNull);
+      expect(tile.value, isFalse);
+      expect(find.textContaining('no X server'), findsOneWidget);
+      expect(find.textContaining('this host\'s own key'), findsOneWidget,
+          reason: 'with no OS agent, that is what forwarding offers');
+    });
+
+    testWidgets('on Windows, the X11 row names an X server to run',
+        variant: TargetPlatformVariant.only(TargetPlatform.windows),
+        (tester) async {
+      await pumpForm(tester, noKeyringStore());
+      await tester.tap(find.text('Advanced'));
+      await tester.pumpAndSettle();
+      expect(find.textContaining('VcXsrv'), findsOneWidget);
+      expect(find.textContaining('computer\'s SSH agent'), findsOneWidget);
+    });
+  });
+}
+
+/// A file picker that hands back whatever the test put in [next].
+class _PickingStorage implements DeviceStorage {
+  PickedTextFile? next;
+  int? maxBytes;
+
+  @override
+  Future<PickedTextFile?> pickTextFile({
+    int maxBytes = kDefaultPickedTextFileMaxBytes,
+  }) async {
+    this.maxBytes = maxBytes;
+    return next;
+  }
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) =>
+      super.noSuchMethod(invocation);
 }

@@ -13,6 +13,9 @@ import 'known_hosts_service.dart';
 import 'login_prompt.dart';
 import 'ssh_agent_backend.dart';
 import 'ssh_agent_client.dart';
+import 'ssh_certificate.dart';
+import 'ssh_forwarding_client.dart';
+import 'x11_forwarding.dart';
 
 export 'host_key_policy.dart'
     show HostKeyPolicy, HostKeyPrompt, HostKeyPromptKind, HostKeyVerifier;
@@ -329,9 +332,14 @@ abstract class SessionTransport {
   /// it. OpenSSH grants that request once per connection, so a client born
   /// with a handler runs exactly one exec and then fails every later one.
   ///
-  /// The direct server-to-server copy is the one feature that does need
-  /// forwarding, and it dials a connection of its own for its single exec
-  /// rather than borrowing this one. See `direct_remote_copy.dart` and
+  /// A host with [Host.agentForwarding] on does forward the agent, on its
+  /// shell channel only: its connection is a [ForwardingSSHClient], which
+  /// keeps the request off every exec channel, so this stays repeatable
+  /// there too.
+  ///
+  /// The direct server-to-server copy needs forwarding on an exec, and it
+  /// dials a connection of its own for that single exec rather than
+  /// borrowing this one. See `direct_remote_copy.dart` and
   /// [SessionTransport.agentSlot].
   Future<SSHSession> execute(String command) =>
       throw UnimplementedError('This transport does not support exec.');
@@ -485,10 +493,32 @@ class SshConnection implements SessionTransport {
 
 /// Establishes SSH connections with OpenSSH-style host key verification.
 class SshService {
-  SshService({required this.knownHosts, this.jumpHosts})
-      : policy = HostKeyPolicy(knownHosts);
+  SshService({
+    required this.knownHosts,
+    this.jumpHosts,
+    SshAgentClient? agent,
+    X11Forwarder? Function()? x11,
+  })  : policy = HostKeyPolicy(knownHosts),
+        agent = agent ?? SshAgentClient(),
+        _x11 = x11 ?? _localX11;
 
   final KnownHostsService knownHosts;
+
+  /// The operating system's SSH agent: what [SshAuthMethod.agent] hosts sign
+  /// in with, and what [Host.agentForwarding] forwards. Replaceable so tests
+  /// can stand in a scripted agent.
+  final SshAgentClient agent;
+
+  /// Forwards [Host.x11Forwarding] windows to this device's X server, or
+  /// null when it has no display. Called per connection, so a `DISPLAY`
+  /// that changes is followed; replaceable so tests can stand in a fake X
+  /// server and cookie.
+  final X11Forwarder? Function() _x11;
+
+  static X11Forwarder? _localX11() {
+    final display = X11Display.fromEnvironment();
+    return display == null ? null : X11Forwarder(display: display);
+  }
 
   /// How a `jumpHostId` is turned into a host record and its credentials.
   /// Null in tests and anywhere jump hosts are not wired; a host that names
@@ -543,6 +573,12 @@ class SshService {
   /// carries a handler can only ever run *one* exec, so this is never right
   /// for a session the user is going to keep working in; see
   /// [SessionTransport.execute].
+  ///
+  /// It is unrelated to [Host.agentForwarding] and [Host.x11Forwarding],
+  /// which this applies by itself to every connection to such a host — on
+  /// the shell channel only, which keeps execs repeatable (see
+  /// [ForwardingSSHClient]). A connection dialled with [agentForwarding]
+  /// never opens a shell, and takes neither.
   ///
   /// [answerPrompts] is how a keyboard-interactive question — a one-time
   /// code, a Duo menu, a password the server will only take this way —
@@ -847,7 +883,7 @@ class SshService {
   Future<SshConnection> _login({
     required Host host,
     required SshCredentials credentials,
-    required List<SSHKeyPair>? identities,
+    required _Identities identities,
     required SSHSocket socket,
     required Future<SSHSocket> Function() redial,
     required HostKeyVerifier verifyHostKey,
@@ -902,7 +938,7 @@ class SshService {
   Future<SshConnection> _authenticate({
     required Host host,
     required SshCredentials credentials,
-    required List<SSHKeyPair>? identities,
+    required _Identities identities,
     required SSHSocket socket,
     required HostKeyVerifier verifyHostKey,
     required LoginPromptHandler? answerPrompts,
@@ -933,6 +969,13 @@ class SshService {
     // refused rather than answered with something we did not mean to hand
     // out.
     final agentSlot = agentForwarding ? MutableSSHAgentHandler() : null;
+
+    // The host's own forwarding, for its shell: never on a jump hop, which
+    // only carries the connection onward, and never on the transfer's
+    // connection above, which runs one exec and no shell.
+    final forwarding = agentForwarding || jumpHostFor != null
+        ? null
+        : _shellForwarding(host, identities);
 
     // Completes when the login is over either way, so a prompt still on
     // screen when the server hangs up can close itself.
@@ -966,11 +1009,19 @@ class SshService {
     // login then fails.
     final banners = <String>[];
 
-    client = SSHClient(
+    client = ForwardingSSHClient(
       watched,
       username: host.username,
-      identities: identities,
+      identities: [
+        for (final identity in identities.offered ?? const <SSHIdentity>[])
+          // An agent signature can wait on a confirmation or a security
+          // key's touch; that time is the person's, like a prompt's.
+          identity is SshAgentKeyIdentity
+              ? _DeadlineHeldIdentity(identity, deadline, timeout)
+              : identity,
+      ],
       agentHandler: agentSlot,
+      forwarding: forwarding,
       algorithms: sshAlgorithmsFor(host),
       // Not offered again once the server has refused it — see [_login].
       onPasswordRequest: usesPassword && !savedPasswordRejected
@@ -1053,6 +1104,7 @@ class SshService {
         responder: responder,
         timedOut: deadline.expired,
         serverText: [...banners, ...responder.notices],
+        certificateNote: identities.certificateNote,
       );
     } finally {
       deadline.finish();
@@ -1083,6 +1135,7 @@ class SshService {
     required KeyboardInteractiveResponder responder,
     required bool timedOut,
     required List<String> serverText,
+    String? certificateNote,
   }) {
     final details = serverText.isEmpty
         ? error.toString()
@@ -1092,6 +1145,16 @@ class SshService {
       return SshConnectionException(
         'The server stopped responding during login.',
         details: details,
+      );
+    }
+    // The agent declined to sign — a confirmation turned down, a security
+    // key not touched — or stopped answering. A decision about the
+    // credentials, so not something a reconnect should try again.
+    final agentError = _agentErrorIn(error);
+    if (agentError != null) {
+      return SshAuthenticationException(
+        agentError.message,
+        details: agentError.details ?? details,
       );
     }
     if (error is! SSHAuthFailError) {
@@ -1126,50 +1189,36 @@ class SshService {
         details: details,
       );
     }
+    final note = certificateNote == null
+        ? ''
+        : ' The saved certificate was not offered. $certificateNote';
     return SshAuthenticationException(
-      _describeSshError(error, host),
+      '${_describeSshError(error, host)}$note',
       details: details,
     );
+  }
+
+  /// The [SshAgentException] behind a failed login, if that is what it was:
+  /// dartssh2 reports a signer that threw as the transport closing with an
+  /// internal error, so it arrives wrapped.
+  static SshAgentException? _agentErrorIn(Object error) {
+    Object? current = error;
+    for (var depth = 0; current != null && depth < 4; depth++) {
+      if (current is SshAgentException) return current;
+      current = switch (current) {
+        SSHAuthAbortError(:final reason) => reason,
+        SSHInternalError(:final error) => error,
+        _ => null,
+      };
+    }
+    return null;
   }
 
   static String _shorten(String text, int max) =>
       text.length <= max ? text : '${text.substring(0, max - 1)}…';
 
-  /// Fails an agent-auth host with the most specific reason available.
-  ///
-  /// Always throws. The agent is probed first so the common, fixable cases —
-  /// no agent running, agent running but empty — are what the user is told
-  /// about, rather than the deeper limitation below them.
-  Future<Never> _failAgentAuth(Host host) async {
-    if (!SshAgentClient.isSupportedPlatform) {
-      throw SshConnectionException(
-        'No SSH agent found. "${host.displayName}" is set to use the OS SSH '
-        'agent, which this device does not have. Edit the host and choose a '
-        'password or a private key instead.',
-      );
-    }
-
-    try {
-      await SshAgentClient().listIdentities();
-    } on SshAgentException catch (e) {
-      throw SshConnectionException(e.message, details: e.details);
-    }
-
-    // The agent is reachable and holding keys, and we still cannot use it:
-    // dartssh2's `SSHKeyPair.sign` is synchronous, so an identity backed by
-    // a socket round-trip cannot satisfy it, and the types its interface
-    // returns are not exported to implement in the first place. Signing is
-    // ready (see `ssh_agent_client.dart`, which is complete and tested) —
-    // the missing piece is entirely on the dartssh2 side.
-    throw SshConnectionException(
-      'The SSH agent is available, but this build cannot yet authenticate '
-      'with it. Use a password or a private key for '
-      '"${host.displayName}".',
-    );
-  }
-
   /// [_prepareIdentities], destroying [socket] if it throws.
-  Future<List<SSHKeyPair>?> _prepareIdentitiesOrClose(
+  Future<_Identities> _prepareIdentitiesOrClose(
     Host host,
     SshCredentials credentials,
     SSHSocket socket,
@@ -1185,25 +1234,146 @@ class SshService {
   /// Turns [credentials] into the identities [host] will authenticate with,
   /// failing on anything unusable.
   ///
-  /// Deliberately does no I/O of its own beyond probing the agent, so every
-  /// caller can run it *before* opening a socket — that ordering is what
-  /// keeps "you did not type a password" from arriving as a connection error
-  /// several seconds and several handshakes later.
-  Future<List<SSHKeyPair>?> _prepareIdentities(
+  /// Deliberately does no I/O of its own beyond asking the agent what it
+  /// holds, so every caller can run it *before* opening a socket — that
+  /// ordering is what keeps "you did not type a password" or "the agent has
+  /// no keys" from arriving as a connection error several seconds and
+  /// several handshakes later.
+  Future<_Identities> _prepareIdentities(
     Host host,
     SshCredentials credentials,
   ) async {
     switch (host.authMethod) {
       case SshAuthMethod.agent:
-        await _failAgentAuth(host);
+        return _agentIdentities(host);
       case SshAuthMethod.password:
         if (credentials.password == null || credentials.password!.isEmpty) {
           throw const SshConnectionException('Enter a password to connect.');
         }
-        return null;
+        return const _Identities(null);
       case SshAuthMethod.privateKey:
-        return _parseIdentities(credentials);
+        return _keyIdentities(host, _parseIdentities(credentials));
     }
+  }
+
+  /// The key saved in the app, behind its certificate when the host has
+  /// one that goes with it — offered first, as `ssh` offers a
+  /// `CertificateFile` before the bare key.
+  _Identities _keyIdentities(Host host, List<SSHKeyPair> pairs) {
+    final (certificate, note) = _certificateOf(host);
+    if (certificate == null) return _Identities(pairs, keys: pairs, certificateNote: note);
+    for (final pair in pairs) {
+      if (certificate.certifies(pair.toPublicKey().encode())) {
+        return _Identities(
+          [certificateIdentity(certificate, pair), ...pairs],
+          keys: pairs,
+        );
+      }
+    }
+    return _Identities(
+      pairs,
+      keys: pairs,
+      certificateNote:
+          certificate.mismatchWith(pairs.first.toPublicKey().encode()),
+    );
+  }
+
+  /// Every key the OS agent holds, in the agent's order, with the host's
+  /// certificate in front when the agent holds the key it certifies.
+  Future<_Identities> _agentIdentities(Host host) async {
+    if (!SshAgentClient.isSupportedPlatform) {
+      throw SshConnectionException(
+        'No SSH agent found. "${host.displayName}" is set to use the OS SSH '
+        'agent, which this device does not have. Edit the host and choose a '
+        'password or a private key instead.',
+      );
+    }
+
+    final List<SshAgentIdentity> keys;
+    try {
+      keys = await agent.listIdentities();
+    } on SshAgentException catch (e) {
+      throw SshConnectionException(e.message, details: e.details);
+    }
+
+    final offered = <SSHIdentity>[
+      for (final key in keys) SshAgentKeyIdentity(agent, key),
+    ];
+    final (certificate, note) = _certificateOf(host);
+    if (certificate == null) {
+      return _Identities(offered, certificateNote: note);
+    }
+    for (final key in keys) {
+      if (certificate.certifies(key.keyBlob)) {
+        return _Identities([
+          SshAgentKeyIdentity(
+            agent,
+            key,
+            presentedBlob: certificate.blob,
+            presentedType: certificate.type,
+          ),
+          ...offered,
+        ]);
+      }
+    }
+    return _Identities(
+      offered,
+      certificateNote: 'The SSH agent does not hold the '
+          '${certificate.keyTypeLabel} key it was issued for '
+          '(${certificate.publicKeyFingerprint}). Add that key with ssh-add.',
+    );
+  }
+
+  /// The host's certificate when it can be presented now, or null and why
+  /// not. Expired or not-yet-valid certificates are left out rather than
+  /// failing the connect: the bare key may still be authorized, and if it
+  /// is not, the reason is added to the login failure.
+  (SshCertificate?, String?) _certificateOf(Host host) {
+    final text = host.certificate;
+    if (text == null || text.trim().isEmpty) return (null, null);
+    final SshCertificate certificate;
+    try {
+      certificate = SshCertificate.parse(text);
+    } on SshCertificateException catch (e) {
+      return (null, e.message);
+    }
+    final problem = certificate.validityProblemAt(DateTime.now());
+    if (problem != null) return (null, problem);
+    return (certificate, null);
+  }
+
+  /// What [host]'s shell forwards, or null when it forwards nothing.
+  ShellForwarding? _shellForwarding(Host host, _Identities identities) {
+    SSHAgentHandler? forwardedAgent;
+    if (host.agentForwarding) {
+      forwardedAgent = ForwardedAgent(
+        osAgent: SshAgentClient.isSupportedPlatform ? agent : null,
+        keys: identities.keys,
+        // Shown by `ssh-add -l` on the server, so it says where it came from.
+        comment: 'ssgo:${host.displayName}',
+      );
+    }
+
+    X11Forwarder? x11;
+    final notices = <String>[];
+    // Android has no X server to draw on. The host form says so on the
+    // switch, so a host carried over from a desktop is quietly left alone
+    // here rather than warned about on every connect.
+    if (host.x11Forwarding && X11Forwarder.isSupportedPlatform) {
+      x11 = _x11();
+      if (x11 == null) {
+        notices.add('X11 forwarding is on for this host, but there is no X '
+            'display on this device (DISPLAY is not set), so graphical '
+            'programs cannot open windows here.');
+      }
+    }
+
+    final forwarding = ShellForwarding(
+      agent: forwardedAgent,
+      x11: x11,
+      notices: notices,
+    );
+    return forwarding.isEmpty ? null : forwarding;
   }
 
   List<SSHKeyPair> _parseIdentities(SshCredentials credentials) {
@@ -1316,6 +1486,55 @@ class SshService {
       return describeSocketError(error, host);
     }
     return 'Could not establish an SSH session with ${host.hostname}.';
+  }
+}
+
+/// What [SshService._prepareIdentities] settled on for one host.
+class _Identities {
+  const _Identities(this.offered, {this.keys = const [], this.certificateNote});
+
+  /// What dartssh2 offers the server, in order; null for none.
+  final List<SSHIdentity>? offered;
+
+  /// The keys saved in the app for this host, which [Host.agentForwarding]
+  /// forwards along with the OS agent's. Empty for agent and password hosts.
+  final List<SSHKeyPair> keys;
+
+  /// Why the host's certificate was left out, for the failure message if
+  /// the login then fails without it.
+  final String? certificateNote;
+}
+
+/// An agent identity whose signing stops the login clock: the agent may be
+/// waiting on a person — a confirmation dialog, a security key to touch —
+/// and that wait must not count as the server going quiet.
+class _DeadlineHeldIdentity implements SSHIdentity {
+  _DeadlineHeldIdentity(this._inner, this._deadline, this._timeout);
+
+  final SSHIdentity _inner;
+  final _LoginDeadline _deadline;
+  final Duration _timeout;
+
+  @override
+  String get type => _inner.type;
+
+  @override
+  String? get comment => _inner.comment;
+
+  @override
+  bool get shouldProbe => _inner.shouldProbe;
+
+  @override
+  SSHHostKey toPublicKey() => _inner.toPublicKey();
+
+  @override
+  Future<SSHSignature> sign(Uint8List data) async {
+    _deadline.hold();
+    try {
+      return await _inner.sign(data);
+    } finally {
+      _deadline.arm(_timeout);
+    }
   }
 }
 
