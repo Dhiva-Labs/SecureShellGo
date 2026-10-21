@@ -221,7 +221,7 @@ void main() {
     controller.persistentSlot = 3;
     await controller.ensureShell();
     expect(moshCommands, [
-      persistentShellCommand(PersistentSession.tmux, 'ssg-test-box-3'),
+      persistentShellCommand(PersistentSession.tmux, 'ssg-test-box-3_'),
     ]);
   });
 
