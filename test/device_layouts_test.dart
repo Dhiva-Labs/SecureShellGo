@@ -967,7 +967,9 @@ void main() {
           size: const Size(393, 852),
         );
         expect(find.byTooltip('Snippets'), findsOneWidget);
-        expect(find.byTooltip('More'), findsNothing);
+        // The session's ⋮ menu is there at every width; here the buttons
+        // stay beside it rather than moving into it.
+        expect(find.byTooltip('Disconnect'), findsOneWidget);
       });
 
       testWidgets('touch makes a split pane\'s header a 48dp target',

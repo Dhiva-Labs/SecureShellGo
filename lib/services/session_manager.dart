@@ -96,7 +96,10 @@ class SessionManager {
     ReconnectSupport? reconnect,
     ServerJobStore? serverJobs,
     NetworkWatch? network,
+    int Function()? scrollbackLines,
   })  : _foreground = foreground ?? SessionForegroundController.instance,
+        // ignore: prefer_initializing_formals
+        _scrollbackLines = scrollbackLines,
         // ignore: prefer_initializing_formals
         _network = network,
         // ignore: prefer_initializing_formals
@@ -143,8 +146,14 @@ class SessionManager {
       connectWithAgentForwarding: _connectWithAgentForwarding,
       reconnect: _reconnect,
       serverJobs: _serverJobs,
+      scrollbackLines: _scrollbackLines?.call() ?? 10000,
     );
   }
+
+  /// Settings > Terminal > Scrollback, read as each session opens: the
+  /// history a session keeps is fixed when its terminal is made. Null keeps
+  /// the default.
+  final int Function()? _scrollbackLines;
 
   final SessionForegroundController _foreground;
   final SessionControllerFactory? _createController;

@@ -12,6 +12,7 @@ import '../services/settings_store.dart';
 import '../services/snippet_store.dart';
 import '../services/tunnel_runtime.dart';
 import '../theme.dart';
+import '../widgets/terminal_fonts.dart';
 import 'backup_screen.dart';
 import 'known_hosts_screen.dart';
 import 'settings/diagnostics_section.dart';
@@ -484,9 +485,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 }
 
-/// A tiny live sample of the chosen font size and colour scheme, so the
-/// slider and radio list have something to preview against instead of the
-/// user having to imagine it.
+/// A tiny live sample of the chosen font, size, colour scheme and cursor, so
+/// the slider and radio list have something to preview against instead of
+/// the user having to imagine it.
 class _TerminalPreview extends StatelessWidget {
   const _TerminalPreview({required this.settings});
 
@@ -495,6 +496,7 @@ class _TerminalPreview extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final palette = AppTheme.terminalThemeFor(settings.colorScheme);
+    final size = settings.terminalFontSize;
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
       child: Container(
@@ -520,12 +522,64 @@ class _TerminalPreview extends StatelessWidget {
                 text: r'$ ls -la',
                 style: TextStyle(color: palette.foreground),
               ),
+              WidgetSpan(
+                alignment: PlaceholderAlignment.middle,
+                child: _PreviewCursor(
+                  shape: settings.cursorStyle,
+                  color: palette.cursor,
+                  // A monospace cell is a little over half as wide as it is
+                  // high; near enough for a sample.
+                  width: size * 0.6,
+                  height: size * 1.25,
+                ),
+              ),
             ],
           ),
           style: TextStyle(
-            fontFamily: AppTheme.monoFontFamily,
-            fontFamilyFallback: AppTheme.monoFontFamilyFallback,
-            fontSize: settings.terminalFontSize,
+            fontFamily: TerminalFonts.familyFor(settings.terminalFont),
+            fontFamilyFallback: TerminalFonts.fallbackFor(settings.terminalFont),
+            fontSize: size,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// The cursor at the end of the preview's prompt, in the chosen shape. Not
+/// blinking: a preview that moved would pull the eye from the rest of the
+/// page.
+class _PreviewCursor extends StatelessWidget {
+  const _PreviewCursor({
+    required this.shape,
+    required this.color,
+    required this.width,
+    required this.height,
+  });
+
+  final TerminalCursorStyle shape;
+  final Color color;
+  final double width;
+  final double height;
+
+  @override
+  Widget build(BuildContext context) {
+    final line = (height / 10).clamp(1.0, 3.0);
+    return Padding(
+      padding: EdgeInsets.only(left: width * 0.3),
+      child: SizedBox(
+        width: width,
+        height: height,
+        child: Align(
+          alignment: switch (shape) {
+            TerminalCursorStyle.block => Alignment.center,
+            TerminalCursorStyle.underline => Alignment.bottomCenter,
+            TerminalCursorStyle.bar => Alignment.centerLeft,
+          },
+          child: SizedBox(
+            width: shape == TerminalCursorStyle.bar ? line : width,
+            height: shape == TerminalCursorStyle.underline ? line : height,
+            child: ColoredBox(color: color),
           ),
         ),
       ),

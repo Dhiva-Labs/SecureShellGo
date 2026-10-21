@@ -56,6 +56,9 @@ dependencies:
   # (GTK, IFileDialog, NSOpenPanel) would cost far more native code than this
   # one Flutter-team-maintained dependency.
   file_selector: ^1.1.0
+  # Opens a web address tapped in the terminal in the browser. Only
+  # http/https ever reach it; see services/terminal_links.dart.
+  url_launcher: ^6.3.3
   # UTF-16 strings for the one Win32 call the app makes itself, ShellExecuteW
   # (windows_shell_open.dart). Already in the tree through path_provider and
   # file_selector; declared because the app now uses it directly.
@@ -82,6 +85,18 @@ flutter:
   # included with your application, so that you can use the icons in
   # the material Icons class.
   uses-material-design: true
+
+  # The terminal's bundled typeface (Settings > Terminal > Font), under the
+  # SIL Open Font License 1.1; the licence ships beside it and is shown on
+  # the licences page — see widgets/terminal_fonts.dart.
+  assets:
+    - assets/fonts/JetBrainsMono-OFL.txt
+  fonts:
+    - family: JetBrains Mono
+      fonts:
+        - asset: assets/fonts/JetBrainsMono-Regular.ttf
+        - asset: assets/fonts/JetBrainsMono-Bold.ttf
+          weight: 700
 
   # To add assets to your application, add an assets section, like this:
   # assets:

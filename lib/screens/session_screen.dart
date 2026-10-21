@@ -19,6 +19,7 @@ import '../services/tunnel_runtime.dart';
 import '../theme.dart';
 import '../widgets/hinge_split.dart';
 import '../widgets/session_banners.dart';
+import '../widgets/session_log_actions.dart';
 import '../widgets/session_shortcuts.dart';
 import '../widgets/snippet_picker.dart';
 import '../widgets/transfer_hub_panel.dart';
@@ -141,14 +142,26 @@ enum _Panes {
 /// carrying everything that is.
 enum _MonitorAction { stats, services, tail }
 
-/// The app bar's overflow menu, on a phone too narrow for its icons: every
-/// action but the files toggle, so the host's name keeps room to be read.
-enum _OverflowAction { snippets, stats, services, tail, newSession, close }
+/// The session's menu, the app bar's ⋮: the terminal's find and session log,
+/// then the monitoring views — and, on a phone too narrow for its icons,
+/// every other action but the files toggle, so the host's name keeps room to
+/// be read.
+enum _SessionMenu {
+  find,
+  recordLog,
+  stopLog,
+  snippets,
+  stats,
+  services,
+  tail,
+  newSession,
+  close,
+}
 
-/// Below this width the snippets, monitoring, new-session and disconnect
-/// buttons go into [_OverflowAction]'s menu. A 320dp phone has room for the
-/// back arrow, the files toggle and about three more icons; with all five the
-/// host's name was down to its first letter and an ellipsis.
+/// Below this width the snippets, new-session and disconnect buttons go into
+/// [_SessionMenu]. A 320dp phone has room for the back arrow, the files
+/// toggle and about three more icons; with all five the host's name was down
+/// to its first letter and an ellipsis.
 const double _overflowActionsBelow = 360;
 
 class _SessionsScreenState extends State<SessionsScreen> {
@@ -364,24 +377,6 @@ class _SessionsScreenState extends State<SessionsScreen> {
         : SessionView.terminal);
   }
 
-  void _handleOverflowAction(_OverflowAction action, ManagedSession active) {
-    switch (action) {
-      case _OverflowAction.snippets:
-        _openSnippetPicker();
-      case _OverflowAction.stats:
-        unawaited(_handleMonitorAction(_MonitorAction.stats, active.controller));
-      case _OverflowAction.services:
-        unawaited(
-            _handleMonitorAction(_MonitorAction.services, active.controller));
-      case _OverflowAction.tail:
-        unawaited(_handleMonitorAction(_MonitorAction.tail, active.controller));
-      case _OverflowAction.newSession:
-        _addSession();
-      case _OverflowAction.close:
-        unawaited(_closeActive());
-    }
-  }
-
   void _handleWorkspaceAction(_WorkspaceAction action) {
     switch (action) {
       case _WorkspaceAction.splitRight:
@@ -413,6 +408,37 @@ class _SessionsScreenState extends State<SessionsScreen> {
           session: session,
           settingsStore: widget.settingsStore,
         );
+    }
+  }
+
+  Future<void> _handleSessionMenu(
+    _SessionMenu choice,
+    SessionController session,
+  ) async {
+    switch (choice) {
+      case _SessionMenu.find:
+        // On a phone the file browser may be in front; find is for the
+        // terminal, so that comes forward first.
+        _show(SessionView.terminal);
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) TerminalPane.showFind(session);
+        });
+      case _SessionMenu.recordLog:
+        await SessionLogActions.start(context, session);
+      case _SessionMenu.stopLog:
+        await SessionLogActions.stop(context, session);
+      case _SessionMenu.snippets:
+        _openSnippetPicker();
+      case _SessionMenu.stats:
+        await _handleMonitorAction(_MonitorAction.stats, session);
+      case _SessionMenu.services:
+        await _handleMonitorAction(_MonitorAction.services, session);
+      case _SessionMenu.tail:
+        await _handleMonitorAction(_MonitorAction.tail, session);
+      case _SessionMenu.newSession:
+        _addSession();
+      case _SessionMenu.close:
+        await _closeActive();
     }
   }
 
@@ -504,18 +530,20 @@ class _SessionsScreenState extends State<SessionsScreen> {
   Future<void> _closeSession(ManagedSession entry) async {
     if (!entry.isClosed) {
       final transfers = entry.controller.transfers.activeCount;
+      final question = transfers > 0
+          ? 'Close the session on ${entry.host.displayName}? '
+              '$transfers transfer${transfers == 1 ? '' : 's'} '
+              '${transfers == 1 ? 'is' : 'are'} still running and will '
+              'be cancelled.'
+          : 'Close the session on ${entry.host.displayName}?';
+      final logNote = SessionLogActions.isRecording(entry.controller)
+          ? ' Its session log will be saved first.'
+          : '';
       final confirmed = await showDialog<bool>(
         context: context,
         builder: (context) => AlertDialog(
           title: const Text('Disconnect?'),
-          content: Text(
-            transfers > 0
-                ? 'Close the session on ${entry.host.displayName}? '
-                    '$transfers transfer${transfers == 1 ? '' : 's'} '
-                    '${transfers == 1 ? 'is' : 'are'} still running and will '
-                    'be cancelled.'
-                : 'Close the session on ${entry.host.displayName}?',
-          ),
+          content: Text('$question$logNote'),
           actions: [
             TextButton(
               onPressed: () => Navigator.of(context).pop(false),
@@ -529,6 +557,10 @@ class _SessionsScreenState extends State<SessionsScreen> {
         ),
       );
       if (confirmed != true) return;
+    }
+    // A log being recorded is saved before its session goes.
+    if (SessionLogActions.isRecording(entry.controller) && mounted) {
+      await SessionLogActions.stopBeforeClose(context, entry.controller);
     }
 
     // The last tab closing takes the screen with it — there is nothing left
@@ -867,77 +899,96 @@ class _SessionsScreenState extends State<SessionsScreen> {
               ),
               onPressed: _toggleTerminalFullWidth,
             ),
-          if (narrow)
-            PopupMenuButton<_OverflowAction>(
-              tooltip: 'More',
-              icon: const Icon(Icons.more_vert),
-              onSelected: (action) => _handleOverflowAction(action, active),
-              itemBuilder: (context) => [
-                const PopupMenuItem<_OverflowAction>(
-                  value: _OverflowAction.snippets,
-                  child: Text('Snippets'),
-                ),
-                const PopupMenuDivider(),
-                PopupMenuItem<_OverflowAction>(
-                  value: _OverflowAction.stats,
-                  enabled: !closed,
-                  child: const Text('Server stats'),
-                ),
-                PopupMenuItem<_OverflowAction>(
-                  value: _OverflowAction.services,
-                  enabled: !closed,
-                  child: const Text('Services & processes'),
-                ),
-                PopupMenuItem<_OverflowAction>(
-                  value: _OverflowAction.tail,
-                  enabled: !closed,
-                  child: const Text('Tail a file…'),
-                ),
-                const PopupMenuDivider(),
-                const PopupMenuItem<_OverflowAction>(
-                  value: _OverflowAction.newSession,
-                  child: Text('New session'),
-                ),
-                PopupMenuItem<_OverflowAction>(
-                  value: _OverflowAction.close,
-                  child: Text(
-                    closed ? 'Close tab' : 'Disconnect',
-                    style: closed
-                        ? null
-                        : TextStyle(color: theme.colorScheme.error),
-                  ),
-                ),
-              ],
-            )
-          else ...[
+          if (!narrow)
             IconButton(
               tooltip: 'Snippets',
               icon: const Icon(Icons.bolt_outlined),
               onPressed: _openSnippetPicker,
             ),
-            // Monitoring. Disabled on a closed session: all three run
-            // commands over the transport, and there is not one.
-            PopupMenuButton<_MonitorAction>(
-              tooltip: 'Monitor this server',
-              icon: const Icon(Icons.monitor_heart_outlined),
-              enabled: !closed,
-              onSelected: (action) =>
-                  unawaited(_handleMonitorAction(action, active.controller)),
-              itemBuilder: (context) => const [
-                PopupMenuItem<_MonitorAction>(
-                  value: _MonitorAction.stats,
-                  child: Text('Server stats'),
+          // The session's menu: find and the session log first — they work
+          // on the terminal's own buffer, so a closed session's scrollback
+          // can still be searched and its log saved — then monitoring,
+          // disabled on a closed session: all three run commands over the
+          // transport, and there is not one. On a narrow phone the buttons
+          // around it move in here too.
+          PopupMenuButton<_SessionMenu>(
+            tooltip: 'More',
+            icon: const Icon(Icons.more_vert),
+            onSelected: (choice) =>
+                unawaited(_handleSessionMenu(choice, active.controller)),
+            itemBuilder: (context) {
+              final recording =
+                  SessionLogActions.isRecording(active.controller);
+              return [
+                PopupMenuItem<_SessionMenu>(
+                  value: _SessionMenu.find,
+                  child: Row(
+                    children: [
+                      const Expanded(child: Text('Find in terminal')),
+                      if (input.keyboard) ...[
+                        const SizedBox(width: 24),
+                        Text(
+                          'Ctrl+Shift+F',
+                          style: theme.textTheme.bodySmall?.copyWith(
+                            color: theme.colorScheme.onSurfaceVariant,
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
                 ),
-                PopupMenuItem<_MonitorAction>(
-                  value: _MonitorAction.services,
-                  child: Text('Services & processes'),
+                if (recording)
+                  const PopupMenuItem<_SessionMenu>(
+                    value: _SessionMenu.stopLog,
+                    child: Text('Stop recording and save'),
+                  )
+                else
+                  PopupMenuItem<_SessionMenu>(
+                    value: _SessionMenu.recordLog,
+                    enabled: !closed,
+                    child: const Text('Record session log…'),
+                  ),
+                if (narrow)
+                  const PopupMenuItem<_SessionMenu>(
+                    value: _SessionMenu.snippets,
+                    child: Text('Snippets'),
+                  ),
+                const PopupMenuDivider(),
+                PopupMenuItem<_SessionMenu>(
+                  value: _SessionMenu.stats,
+                  enabled: !closed,
+                  child: const Text('Server stats'),
                 ),
-                PopupMenuItem<_MonitorAction>(
-                  value: _MonitorAction.tail,
-                  child: Text('Tail a file…'),
+                PopupMenuItem<_SessionMenu>(
+                  value: _SessionMenu.services,
+                  enabled: !closed,
+                  child: const Text('Services & processes'),
                 ),
-              ],
-            ),
+                PopupMenuItem<_SessionMenu>(
+                  value: _SessionMenu.tail,
+                  enabled: !closed,
+                  child: const Text('Tail a file…'),
+                ),
+                if (narrow) ...[
+                  const PopupMenuDivider(),
+                  const PopupMenuItem<_SessionMenu>(
+                    value: _SessionMenu.newSession,
+                    child: Text('New session'),
+                  ),
+                  PopupMenuItem<_SessionMenu>(
+                    value: _SessionMenu.close,
+                    child: Text(
+                      closed ? 'Close tab' : 'Disconnect',
+                      style: closed
+                          ? null
+                          : TextStyle(color: theme.colorScheme.error),
+                    ),
+                  ),
+                ],
+              ];
+            },
+          ),
+          if (!narrow) ...[
             // With one session open this is the only sign that a second one
             // is possible, so it stays in the bar rather than living only in
             // the tab strip that has not appeared yet.
@@ -1217,6 +1268,13 @@ class _SessionPageState extends State<_SessionPage> {
     }
   }
 
+  /// The banner's "Close tab", on a session that has already ended: its log,
+  /// if one is still being kept, is saved first.
+  Future<void> _closeTab() async {
+    await SessionLogActions.stopBeforeClose(context, _session);
+    await widget.manager.close(widget.entry.id);
+  }
+
   Widget _terminalPane() {
     return TerminalPane(
       key: _terminalPaneKey,
@@ -1252,7 +1310,7 @@ class _SessionPageState extends State<_SessionPage> {
       children: [
         SessionBanners(
           session: entry,
-          onCloseTab: () => unawaited(widget.manager.close(entry.id)),
+          onCloseTab: () => unawaited(_closeTab()),
         ),
         Expanded(
           child: switch (widget.panes) {
