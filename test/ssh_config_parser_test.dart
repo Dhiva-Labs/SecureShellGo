@@ -134,6 +134,37 @@ Host myserver
     expect(result.entries.single.hostname, 'example.com');
   });
 
+  test('a Match block ends the Host above it, and its directives go nowhere',
+      () {
+    final result = SshConfigParser.parse('''
+Host build
+  HostName build.example.com
+  User dev
+
+Match host build exec "test -n \$VPN"
+  ForwardAgent yes
+  ForwardX11 yes
+  User root
+  Port 2200
+  IdentityFile ~/.ssh/vpn_key
+
+Host other
+  ForwardAgent yes
+''');
+    final build = result.entries.firstWhere((e) => e.alias == 'build');
+    expect(build.forwardAgent, isFalse,
+        reason: 'ForwardAgent under Match is conditional, not the host\'s');
+    expect(build.forwardX11, isFalse);
+    expect(build.user, 'dev');
+    expect(build.port, 22);
+    expect(build.identityFile, isNull);
+    // The next Host starts a block of its own as usual.
+    expect(result.entries.firstWhere((e) => e.alias == 'other').forwardAgent,
+        isTrue);
+    expect(result.entries, hasLength(2));
+    expect(result.warnings.single, contains('Match'));
+  });
+
   test('a directive before any Host block is ignored', () {
     final result = SshConfigParser.parse('''
 HostName orphan.example.com
