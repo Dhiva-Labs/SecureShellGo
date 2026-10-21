@@ -107,7 +107,9 @@ echo $timeoutMarker''';
   ///
   /// The script reaches the server as its own argument, quoted once, never
   /// spliced into the launcher's text, and runs as `sh run <job folder>`:
-  /// its `$1` is where it may keep scratch files.
+  /// its `$1` is where it may keep scratch files. The job folder is made
+  /// under `umask 077`, but the script runs under the account's own umask,
+  /// so what it extracts or copies gets the modes it would from a shell.
   ///
   /// Prints `SSG-JOB-DONE <code>`, `---` and the log's tail when the script
   /// finished within about a second and a half, or `SSG-JOB-STARTED` when it
@@ -120,13 +122,14 @@ echo $timeoutMarker''';
     final launcher = '''
 d="$d"
 j="\$HOME/.cache/secureshellgo/jobs"
+u=\$(umask)
 umask 077
 mkdir -p "\$d" || exit 70
 printf '%s\\n' "\$1" > "\$d/run" || exit 70
 : > "\$d/op"
 find "\$j" -mindepth 1 -maxdepth 1 -type d -mtime +2 -exec sh -c 'for o do [ -f "\$o/op" ] && [ -f "\$o/exit" ] && rm -rf "\$o"; done' ssg-sweep {} + 2>/dev/null
 if command -v setsid >/dev/null 2>&1; then detach=setsid; else detach=nohup; fi
-\$detach sh -c 'd="\$1"; sh "\$d/run" "\$d" > "\$d/log" 2>&1; echo \$? > "\$d/exit.tmp"; mv "\$d/exit.tmp" "\$d/exit"' ssg-job "\$d" < /dev/null > /dev/null 2>&1 &
+\$detach sh -c 'd="\$1"; umask "\$2"; sh "\$d/run" "\$d" > "\$d/log" 2>&1; echo \$? > "\$d/exit.tmp"; mv "\$d/exit.tmp" "\$d/exit"' ssg-job "\$d" "\$u" < /dev/null > /dev/null 2>&1 &
 echo \$! > "\$d/pid"
 n=0
 while [ \$n -lt 8 ]; do

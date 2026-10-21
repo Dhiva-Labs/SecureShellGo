@@ -283,7 +283,8 @@ mv -f './.out.tar.gz.ssg-part-1' './out.tar.gz\'''');
         tools: _gnu,
       );
       expect(script, contains("a='/srv/x.tar.xz'"));
-      expect(script, contains('if tar -tJf "\$a" > "\$d/list"; then'));
+      expect(script,
+          contains('if { tar -tJf "\$a"; } > "\$d/list" 2> "\$d/lerr"; then'));
       expect(script, contains('if { tar -xJf "\$a" -k -C "\$t"; } 2> "\$d/err"'));
     });
 
@@ -584,17 +585,13 @@ mv -f './.out.tar.gz.ssg-part-1' './out.tar.gz\'''');
             mode: ExtractMode.newFolder,
             tools: kit,
           ));
-          // GNU tar lists the member as it is, and the check refuses it.
-          // BusyBox's own tar strips the `inner/../` as it lists and as it
-          // extracts, so the check sees nothing to refuse — and nothing
-          // lands outside the folder either way.
-          if (kit.flavourOf('tar') == ToolFlavour.gnu) {
-            expect(result.exitCode, RemoteOpExit.unsafeArchive,
-                reason: '${result.stderr}');
-            expect(Directory('${box.root}/evil_out').existsSync(), isFalse);
-          } else {
-            expect(result.exitCode, anyOf(0, RemoteOpExit.unsafeArchive));
-          }
+          // GNU tar lists the member as it is; BusyBox's lists it with the
+          // `inner/../` stripped and says so on stderr. Either way, and
+          // through a pipe from gzip as much as through tar's own -z, it
+          // is refused before anything is written.
+          expect(result.exitCode, RemoteOpExit.unsafeArchive,
+              reason: '${result.stderr}');
+          expect(Directory('${box.root}/evil_out').existsSync(), isFalse);
           expect(File('${box.root}/escaped').existsSync(), isFalse);
         });
 
@@ -810,6 +807,16 @@ mv -f './.out.tar.gz.ssg-part-1' './out.tar.gz\'''');
       await Future<void>.delayed(const Duration(milliseconds: 300));
       expect(Process.runSync('kill', ['-0', pid]).exitCode, isNot(0),
           reason: 'the job is still alive');
+    });
+
+    test('the script runs under the account\'s umask, not 077', () async {
+      final result = await sh('umask 022; ${ServerSideJob.launchScriptCommand(
+        jobId: ServerSideJob.newId(),
+        script: 'umask',
+      )}');
+      final status = ServerSideJob.parseLaunch(result.stdout as String)!;
+      expect(status.state, ServerJobState.finished);
+      expect(status.log, '0022');
     });
 
     test('old finished operations are swept, copies are not', () async {

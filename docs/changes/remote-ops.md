@@ -11,3 +11,5 @@
 
 ### Fixed
 - Filling in a snippet's blanks no longer trips an error as the dialog closes.
+- Extract now refuses archives with entries outside the folder on every server, including ones where the archive is unpacked through a separate gzip or xz, and BusyBox servers. An archive whose listing comes back empty is refused, not unpacked.
+- Files made by Compress and Extract get the account's usual permissions again, instead of being readable by their owner only.

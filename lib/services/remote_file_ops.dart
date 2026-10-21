@@ -347,7 +347,12 @@ mv -f @PART@ @OUT@''', {
   /// Lists the archive first and refuses it (exit 18) when any entry is
   /// absolute or climbs out with `..` — whatever a particular `tar` or
   /// `unzip` would have done about it. The check is on the listing's lines,
-  /// so a name with a newline in it can only make it stricter.
+  /// so a name with a newline in it can only make it stricter. The whole
+  /// listing — a pipeline, for the piped forms — goes to the file, and an
+  /// empty one is refused rather than read as "nothing unsafe". GNU and
+  /// BusyBox `tar` both say "removing leading …" when they would rewrite a
+  /// name, and BusyBox lists the rewritten name, so that warning refuses it
+  /// too.
   ///
   /// [ExtractMode.newFolder] makes [destination] and refuses (exit 17) if
   /// something is already there; the merge modes go into the folder as it
@@ -417,8 +422,9 @@ d="$1"
 a=@ARCHIVE@
 t=@DEST@
 [ -f "$a" ] || { echo "The archive is not there any more." >&2; exit 71; }
-if @LIST@ > "$d/list"; then :; else echo "The archive could not be read." >&2; exit 72; fi
-if grep -E -q @UNSAFE@ "$d/list"; then echo "The archive has entries that would land outside the folder." >&2; exit 18; fi
+if { @LIST@; } > "$d/list" 2> "$d/lerr"; then :; else cat "$d/lerr" >&2; echo "The archive could not be read." >&2; exit 72; fi
+if [ -s "$d/list" ]; then :; else cat "$d/lerr" >&2; echo "The archive is empty or could not be read." >&2; exit 72; fi
+if grep -E -q @UNSAFE@ "$d/list" || grep -i -q "removing leading" "$d/lerr"; then echo "The archive has entries that would land outside the folder." >&2; exit 18; fi
 @PREPARE@
 @UNPACK@''';
 
