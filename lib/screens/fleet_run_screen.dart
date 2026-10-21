@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../l10n/l10n.dart';
 import '../models/host.dart';
 import '../models/snippet.dart';
 import '../services/credential_store.dart';
@@ -185,7 +186,7 @@ class _FleetRunScreenState extends State<FleetRunScreen> {
         context,
         snippetName: chosen.name,
         names: parsed.placeholderNames,
-        confirmLabel: 'Use',
+        confirmLabel: context.l10n.fleetRunUseSnippet,
       );
       if (values == null || !mounted) return;
       command = parsed.render(values);
@@ -197,9 +198,7 @@ class _FleetRunScreenState extends State<FleetRunScreen> {
     final yes = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        title: Text(
-          'Run again on ${runs.length} host${runs.length == 1 ? '' : 's'}?',
-        ),
+        title: Text(context.l10n.fleetRunRerunTitle(runs.length)),
         content: SingleChildScrollView(
           child: Column(
             mainAxisSize: MainAxisSize.min,
@@ -214,11 +213,11 @@ class _FleetRunScreenState extends State<FleetRunScreen> {
         actions: [
           TextButton(
             onPressed: () => Navigator.of(context).pop(false),
-            child: const Text('Cancel'),
+            child: Text(context.l10n.fleetRunCancel),
           ),
           FilledButton(
             onPressed: () => Navigator.of(context).pop(true),
-            child: const Text('Run again'),
+            child: Text(context.l10n.fleetRunRunAgain),
           ),
         ],
       ),
@@ -232,24 +231,20 @@ class _FleetRunScreenState extends State<FleetRunScreen> {
     final choice = await showDialog<String>(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('Still running'),
-        content: const Text(
-          'Leave the command running on the servers where it has started, '
-          'or stop it there? Hosts still waiting their turn will not start '
-          'once you leave.',
-        ),
+        title: Text(context.l10n.fleetRunStillRunningTitle),
+        content: Text(context.l10n.fleetRunStillRunningBody),
         actions: [
           TextButton(
             onPressed: () => Navigator.of(context).pop(),
-            child: const Text('Keep watching'),
+            child: Text(context.l10n.fleetRunKeepWatching),
           ),
           TextButton(
             onPressed: () => Navigator.of(context).pop('stop'),
-            child: const Text('Stop and leave'),
+            child: Text(context.l10n.fleetRunStopAndLeave),
           ),
           FilledButton(
             onPressed: () => Navigator.of(context).pop('leave'),
-            child: const Text('Leave it running'),
+            child: Text(context.l10n.fleetRunLeaveRunning),
           ),
         ],
       ),
@@ -292,12 +287,12 @@ class _FleetRunScreenState extends State<FleetRunScreen> {
     final theme = Theme.of(context);
     final sections = HostGrouping.buildSections(widget.hosts);
     return Scaffold(
-      appBar: AppBar(title: const Text('Run command')),
+      appBar: AppBar(title: Text(context.l10n.fleetRunTitle)),
       body: _readable(SafeArea(
         child: ListView(
           padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
           children: [
-            Text('Command', style: theme.textTheme.titleSmall),
+            Text(context.l10n.fleetRunCommandLabel, style: theme.textTheme.titleSmall),
             const SizedBox(height: 8),
             TextField(
               key: const ValueKey('fleetCommand'),
@@ -309,11 +304,10 @@ class _FleetRunScreenState extends State<FleetRunScreen> {
                 fontFamilyFallback: AppTheme.monoFontFamilyFallback,
                 fontSize: 14,
               ),
-              decoration: const InputDecoration(
-                border: OutlineInputBorder(),
+              decoration: InputDecoration(
+                border: const OutlineInputBorder(),
                 hintText: 'uptime',
-                helperText: 'Runs in each account\'s own shell, with no '
-                    'input and no terminal.',
+                helperText: context.l10n.fleetRunCommandHelper,
                 helperMaxLines: 3,
               ),
               onChanged: (_) => setState(() {}),
@@ -325,7 +319,7 @@ class _FleetRunScreenState extends State<FleetRunScreen> {
                 child: OutlinedButton.icon(
                   onPressed: () => unawaited(_pickSnippet()),
                   icon: const Icon(Icons.bolt_outlined, size: 18),
-                  label: const Text('From a snippet…'),
+                  label: Text(context.l10n.fleetRunFromSnippet),
                 ),
               ),
             ],
@@ -334,7 +328,7 @@ class _FleetRunScreenState extends State<FleetRunScreen> {
               children: [
                 Expanded(
                   child: Text(
-                    'Hosts · ${_selected.length} chosen',
+                    context.l10n.fleetRunHostsChosen(_selected.length),
                     style: theme.textTheme.titleSmall,
                   ),
                 ),
@@ -344,7 +338,9 @@ class _FleetRunScreenState extends State<FleetRunScreen> {
                       : () => setState(() =>
                           _selected.addAll(widget.hosts.map((h) => h.id))),
                   child: Text(
-                    _selected.length == widget.hosts.length ? 'None' : 'All',
+                    _selected.length == widget.hosts.length
+                        ? context.l10n.fleetRunSelectNone
+                        : context.l10n.fleetRunSelectAll,
                   ),
                 ),
               ],
@@ -385,7 +381,7 @@ class _FleetRunScreenState extends State<FleetRunScreen> {
               onPressed: _canContinue
                   ? () => setState(() => _step = _Step.confirm)
                   : null,
-              child: const Text('Next'),
+              child: Text(context.l10n.fleetRunNext),
             ),
           ],
         ),
@@ -399,9 +395,9 @@ class _FleetRunScreenState extends State<FleetRunScreen> {
     final open = hosts.where((h) => _openTransport(h.id) != null).length;
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Confirm'),
+        title: Text(context.l10n.fleetRunConfirmTitle),
         leading: IconButton(
-          tooltip: 'Back',
+          tooltip: context.l10n.fleetRunBack,
           icon: const Icon(Icons.arrow_back),
           onPressed: () => setState(() => _step = _Step.setup),
         ),
@@ -411,13 +407,13 @@ class _FleetRunScreenState extends State<FleetRunScreen> {
           padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
           children: [
             Text(
-              'Run this on ${hosts.length} host${hosts.length == 1 ? '' : 's'}?',
+              context.l10n.fleetRunConfirmQuestion(hosts.length),
               style: theme.textTheme.titleMedium,
             ),
             const SizedBox(height: 12),
             _CommandBox(command: _command.text.trim()),
             const SizedBox(height: 20),
-            Text('Hosts', style: theme.textTheme.titleSmall),
+            Text(context.l10n.fleetRunHostsHeading, style: theme.textTheme.titleSmall),
             const SizedBox(height: 4),
             for (final host in hosts)
               Padding(
@@ -434,10 +430,9 @@ class _FleetRunScreenState extends State<FleetRunScreen> {
               ),
             const SizedBox(height: 16),
             Text(
-              '${open == 0 ? 'Each host gets a connection of its own' : '$open already open; the rest get a connection of their own'}, '
-              'three at a time. A host that would need a password typed, a '
-              'one-time code or a new host key checked is skipped, and says '
-              'why.',
+              open == 0
+                  ? context.l10n.fleetRunConnectionsNew
+                  : context.l10n.fleetRunConnectionsSomeOpen(open),
               style: theme.textTheme.bodySmall
                   ?.copyWith(color: theme.colorScheme.onSurfaceVariant),
             ),
@@ -446,14 +441,14 @@ class _FleetRunScreenState extends State<FleetRunScreen> {
               children: [
                 OutlinedButton(
                   onPressed: () => setState(() => _step = _Step.setup),
-                  child: const Text('Back'),
+                  child: Text(context.l10n.fleetRunBack),
                 ),
                 const SizedBox(width: 12),
                 Expanded(
                   child: FilledButton.icon(
                     onPressed: _start,
                     icon: const Icon(Icons.play_arrow),
-                    label: Text('Run on ${hosts.length}'),
+                    label: Text(context.l10n.fleetRunRunOn(hosts.length)),
                   ),
                 ),
               ],
@@ -500,7 +495,8 @@ class _GroupRow extends StatelessWidget {
               : null,
       onChanged: (_) => onToggle(),
       title: Text(
-        '${section.group ?? 'Ungrouped'} · ${section.hosts.length}',
+        '${section.group ?? context.l10n.fleetRunUngrouped} · '
+        '${section.hosts.length}',
         style: Theme.of(context)
             .textTheme
             .labelLarge
@@ -546,9 +542,9 @@ class _SnippetSheet extends StatelessWidget {
   Widget build(BuildContext context) {
     return SafeArea(
       child: snippets.isEmpty
-          ? const Padding(
-              padding: EdgeInsets.all(24),
-              child: Text('No snippets saved yet. Add them in Settings.'),
+          ? Padding(
+              padding: const EdgeInsets.all(24),
+              child: Text(context.l10n.fleetRunNoSnippets),
             )
           : ListView(
               shrinkWrap: true,
@@ -605,18 +601,17 @@ class _FleetResultsState extends State<_FleetResults> {
     super.dispose();
   }
 
-  Future<void> _copy(String text, String what) async {
+  Future<void> _copy(String text, String done) async {
     await Clipboard.setData(ClipboardData(text: text));
     if (!mounted) return;
-    ScaffoldMessenger.of(context)
-        .showSnackBar(SnackBar(content: Text('Copied $what')));
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(done)));
   }
 
   String _allOutput() {
     final buffer = StringBuffer();
     for (final run in widget.service.hosts) {
       buffer
-        ..writeln('== ${run.label} (${_badge(run)}) ==')
+        ..writeln('== ${run.label} (${_badge(context.l10n, run)}) ==')
         ..write(run.output);
       if (run.message != null) buffer.writeln(run.message);
       if (!run.output.endsWith('\n') && run.output.isNotEmpty) buffer.writeln();
@@ -634,12 +629,16 @@ class _FleetResultsState extends State<_FleetResults> {
     final done = hosts.where((r) => r.status.isFinished).length;
     return Scaffold(
       appBar: AppBar(
-        title: Text(running ? 'Running… $done of ${hosts.length}' : 'Finished'),
+        title: Text(running
+            ? context.l10n.fleetRunProgress(done, hosts.length)
+            : context.l10n.fleetRunFinished),
         actions: [
           IconButton(
-            tooltip: 'Copy all output',
+            tooltip: context.l10n.fleetRunCopyAll,
             icon: const Icon(Icons.copy_all_outlined),
-            onPressed: () => unawaited(_copy(_allOutput(), 'all output')),
+            onPressed: () => unawaited(
+              _copy(_allOutput(), context.l10n.fleetRunCopiedAll),
+            ),
           ),
         ],
       ),
@@ -668,7 +667,7 @@ class _FleetResultsState extends State<_FleetResults> {
                         OutlinedButton.icon(
                           onPressed: service.cancel,
                           icon: const Icon(Icons.stop, size: 18),
-                          label: const Text('Stop all'),
+                          label: Text(context.l10n.fleetRunStopAll),
                           style: OutlinedButton.styleFrom(
                             minimumSize: const Size(0, 40),
                           ),
@@ -677,7 +676,7 @@ class _FleetResultsState extends State<_FleetResults> {
                         OutlinedButton.icon(
                           onPressed: () => unawaited(widget.onRerun(failed)),
                           icon: const Icon(Icons.replay, size: 18),
-                          label: Text('Re-run ${failed.length} failed'),
+                          label: Text(context.l10n.fleetRunRerunFailed(failed.length)),
                           style: OutlinedButton.styleFrom(
                             minimumSize: const Size(0, 40),
                           ),
@@ -703,7 +702,7 @@ class _FleetResultsState extends State<_FleetResults> {
                     }),
                     onStop: () => service.cancelHost(run.hostId),
                     onCopy: () => unawaited(
-                      _copy(run.output, 'the output of ${run.label}'),
+                      _copy(run.output, context.l10n.fleetRunCopiedHost(run.label)),
                     ),
                   );
                 },
@@ -716,16 +715,20 @@ class _FleetResultsState extends State<_FleetResults> {
   }
 }
 
-String _badge(FleetExecHostRun run) => switch (run.status) {
-      FleetExecStatus.queued => 'waiting',
-      FleetExecStatus.connecting => 'connecting',
-      FleetExecStatus.running => 'running',
+/// A host's status in a word. "exit N" and signal names stay as the shell
+/// says them.
+String _badge(AppLocalizations l10n, FleetExecHostRun run) =>
+    switch (run.status) {
+      FleetExecStatus.queued => l10n.fleetRunStatusWaiting,
+      FleetExecStatus.connecting => l10n.fleetRunStatusConnecting,
+      FleetExecStatus.running => l10n.fleetRunStatusRunning,
       FleetExecStatus.succeeded => 'exit 0',
-      FleetExecStatus.failed =>
-        run.exitCode != null ? 'exit ${run.exitCode}' : (run.exitSignal ?? 'failed'),
-      FleetExecStatus.error => 'error',
-      FleetExecStatus.skipped => 'skipped',
-      FleetExecStatus.cancelled => 'stopped',
+      FleetExecStatus.failed => run.exitCode != null
+          ? 'exit ${run.exitCode}'
+          : (run.exitSignal ?? l10n.fleetRunStatusFailed),
+      FleetExecStatus.error => l10n.fleetRunStatusError,
+      FleetExecStatus.skipped => l10n.fleetRunStatusSkipped,
+      FleetExecStatus.cancelled => l10n.fleetRunStatusStopped,
     };
 
 String _formatDuration(Duration d) {
@@ -803,7 +806,7 @@ class _HostRunTile extends StatelessWidget {
             children: [
               if (busy)
                 IconButton(
-                  tooltip: 'Stop on ${run.label}',
+                  tooltip: context.l10n.fleetRunStopOn(run.label),
                   icon: const Icon(Icons.stop_circle_outlined),
                   onPressed: onStop,
                 ),
@@ -814,7 +817,7 @@ class _HostRunTile extends StatelessWidget {
                   borderRadius: BorderRadius.circular(10),
                 ),
                 child: Text(
-                  _badge(run),
+                  _badge(context.l10n, run),
                   style: theme.textTheme.labelSmall?.copyWith(
                     color: onBadge,
                     fontWeight: FontWeight.w700,
@@ -869,8 +872,8 @@ class _OutputView extends StatelessWidget {
                         style: mono,
                         children: [
                           if (run.truncated)
-                            const TextSpan(
-                              text: '… earlier output not kept …\n',
+                            TextSpan(
+                              text: '${context.l10n.fleetRunEarlierOutputDropped}\n',
                               style: TextStyle(color: Color(0xFF8B949E)),
                             ),
                           for (final chunk in run.chunks)
@@ -884,7 +887,9 @@ class _OutputView extends StatelessWidget {
                       ),
                     )
                   : Text(
-                      run.status.isFinished ? 'No output.' : 'Waiting for output…',
+                      run.status.isFinished
+                          ? context.l10n.fleetRunNoOutput
+                          : context.l10n.fleetRunWaitingForOutput,
                       style: mono.copyWith(color: const Color(0xFF8B949E)),
                     ),
             ),
@@ -894,7 +899,7 @@ class _OutputView extends StatelessWidget {
             child: TextButton.icon(
               onPressed: run.hasOutput ? onCopy : null,
               icon: const Icon(Icons.copy, size: 16),
-              label: const Text('Copy'),
+              label: Text(context.l10n.fleetRunCopy),
               style: TextButton.styleFrom(
                 foregroundColor: theme.colorScheme.primary,
               ),

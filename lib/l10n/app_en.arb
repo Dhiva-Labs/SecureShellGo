@@ -6527,5 +6527,233 @@
   "filesSearchButton": "Search",
   "@filesSearchButton": {
     "description": "Search on server screen: button that starts the search."
+  },
+  "fleetRunTitle": "Run command",
+  "@fleetRunTitle": {
+    "description": "Title of the screen that runs one command on many servers."
+  },
+  "fleetRunCommandLabel": "Command",
+  "@fleetRunCommandLabel": {
+    "description": "Heading above the command field."
+  },
+  "fleetRunCommandHelper": "Runs in each account's own shell, with no input and no terminal.",
+  "@fleetRunCommandHelper": {
+    "description": "Helper text under the command field."
+  },
+  "fleetRunFromSnippet": "From a snippet…",
+  "@fleetRunFromSnippet": {
+    "description": "Button that fills the command from a saved snippet."
+  },
+  "fleetRunHostsChosen": "Hosts · {count} chosen",
+  "@fleetRunHostsChosen": {
+    "description": "Heading of the host list with how many are selected.",
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "fleetRunSelectNone": "None",
+  "@fleetRunSelectNone": {
+    "description": "Button that clears the host selection."
+  },
+  "fleetRunSelectAll": "All",
+  "@fleetRunSelectAll": {
+    "description": "Button that selects every host."
+  },
+  "fleetRunNext": "Next",
+  "@fleetRunNext": {
+    "description": "Button: go on to the confirmation step."
+  },
+  "fleetRunConfirmTitle": "Confirm",
+  "@fleetRunConfirmTitle": {
+    "description": "Title of the confirmation step before the command runs."
+  },
+  "fleetRunBack": "Back",
+  "@fleetRunBack": {
+    "description": "Button and tooltip: back to choosing hosts and the command."
+  },
+  "fleetRunConfirmQuestion": "{count, plural, =1{Run this on 1 host?} other{Run this on {count} hosts?}}",
+  "@fleetRunConfirmQuestion": {
+    "description": "Confirmation question with the number of hosts.",
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "fleetRunHostsHeading": "Hosts",
+  "@fleetRunHostsHeading": {
+    "description": "Heading above the list of hosts that will run the command."
+  },
+  "fleetRunConnectionsNew": "Each host gets a connection of its own, three at a time. A host that would need a password typed, a one-time code or a new host key checked is skipped, and says why.",
+  "@fleetRunConnectionsNew": {
+    "description": "Explains how hosts are connected when none has a session open."
+  },
+  "fleetRunConnectionsSomeOpen": "{open} already open; the rest get a connection of their own, three at a time. A host that would need a password typed, a one-time code or a new host key checked is skipped, and says why.",
+  "@fleetRunConnectionsSomeOpen": {
+    "description": "Explains how hosts are connected when some already have a session open.",
+    "placeholders": {
+      "open": {
+        "type": "int"
+      }
+    }
+  },
+  "fleetRunRunOn": "Run on {count}",
+  "@fleetRunRunOn": {
+    "description": "Button that starts the run, with the number of hosts.",
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "fleetRunUngrouped": "Ungrouped",
+  "@fleetRunUngrouped": {
+    "description": "Section name for hosts with no group."
+  },
+  "fleetRunNoSnippets": "No snippets saved yet. Add them in Settings.",
+  "@fleetRunNoSnippets": {
+    "description": "Shown in the snippet picker when there are none."
+  },
+  "fleetRunCopiedAll": "Copied all output",
+  "@fleetRunCopiedAll": {
+    "description": "Snackbar after copying every host's output."
+  },
+  "fleetRunCopiedHost": "Copied the output of {host}",
+  "@fleetRunCopiedHost": {
+    "description": "Snackbar after copying one host's output.",
+    "placeholders": {
+      "host": {
+        "type": "String"
+      }
+    }
+  },
+  "fleetRunProgress": "Running… {done} of {total}",
+  "@fleetRunProgress": {
+    "description": "Title while running: hosts finished out of total.",
+    "placeholders": {
+      "done": {
+        "type": "int"
+      },
+      "total": {
+        "type": "int"
+      }
+    }
+  },
+  "fleetRunFinished": "Finished",
+  "@fleetRunFinished": {
+    "description": "Title once every host has finished."
+  },
+  "fleetRunCopyAll": "Copy all output",
+  "@fleetRunCopyAll": {
+    "description": "Tooltip: copy every host's output."
+  },
+  "fleetRunStopAll": "Stop all",
+  "@fleetRunStopAll": {
+    "description": "Button: stop the command on every host."
+  },
+  "fleetRunRerunFailed": "Re-run {count} failed",
+  "@fleetRunRerunFailed": {
+    "description": "Button: run again on the hosts that failed.",
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "fleetRunStopOn": "Stop on {host}",
+  "@fleetRunStopOn": {
+    "description": "Tooltip: stop the command on one host.",
+    "placeholders": {
+      "host": {
+        "type": "String"
+      }
+    }
+  },
+  "fleetRunEarlierOutputDropped": "… earlier output not kept …",
+  "@fleetRunEarlierOutputDropped": {
+    "description": "Shown where older output of a long run was discarded."
+  },
+  "fleetRunNoOutput": "No output.",
+  "@fleetRunNoOutput": {
+    "description": "A finished host that printed nothing."
+  },
+  "fleetRunWaitingForOutput": "Waiting for output…",
+  "@fleetRunWaitingForOutput": {
+    "description": "A running host that has printed nothing yet."
+  },
+  "fleetRunCopy": "Copy",
+  "@fleetRunCopy": {
+    "description": "Button: copy this host's output."
+  },
+  "fleetRunUseSnippet": "Use",
+  "@fleetRunUseSnippet": {
+    "description": "Confirm button of the snippet placeholder dialog here."
+  },
+  "fleetRunRerunTitle": "{count, plural, =1{Run again on 1 host?} other{Run again on {count} hosts?}}",
+  "@fleetRunRerunTitle": {
+    "description": "Title of the dialog confirming a re-run.",
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "fleetRunCancel": "Cancel",
+  "@fleetRunCancel": {
+    "description": "Button: dismiss the dialog."
+  },
+  "fleetRunRunAgain": "Run again",
+  "@fleetRunRunAgain": {
+    "description": "Button: confirm the re-run."
+  },
+  "fleetRunStillRunningTitle": "Still running",
+  "@fleetRunStillRunningTitle": {
+    "description": "Title when leaving a run that is still going."
+  },
+  "fleetRunStillRunningBody": "Leave the command running on the servers where it has started, or stop it there? Hosts still waiting their turn will not start once you leave.",
+  "@fleetRunStillRunningBody": {
+    "description": "Body of the leave-while-running dialog."
+  },
+  "fleetRunKeepWatching": "Keep watching",
+  "@fleetRunKeepWatching": {
+    "description": "Button: stay on the run screen."
+  },
+  "fleetRunStopAndLeave": "Stop and leave",
+  "@fleetRunStopAndLeave": {
+    "description": "Button: stop the command everywhere and leave."
+  },
+  "fleetRunLeaveRunning": "Leave it running",
+  "@fleetRunLeaveRunning": {
+    "description": "Button: leave, letting started hosts finish."
+  },
+  "fleetRunStatusWaiting": "waiting",
+  "@fleetRunStatusWaiting": {
+    "description": "Host status: waiting its turn."
+  },
+  "fleetRunStatusConnecting": "connecting",
+  "@fleetRunStatusConnecting": {
+    "description": "Host status: connecting."
+  },
+  "fleetRunStatusRunning": "running",
+  "@fleetRunStatusRunning": {
+    "description": "Host status: running."
+  },
+  "fleetRunStatusFailed": "failed",
+  "@fleetRunStatusFailed": {
+    "description": "Host status: failed with no exit code."
+  },
+  "fleetRunStatusError": "error",
+  "@fleetRunStatusError": {
+    "description": "Host status: could not run."
+  },
+  "fleetRunStatusSkipped": "skipped",
+  "@fleetRunStatusSkipped": {
+    "description": "Host status: skipped (needs a person)."
+  },
+  "fleetRunStatusStopped": "stopped",
+  "@fleetRunStatusStopped": {
+    "description": "Host status: stopped by the user."
   }
 }
