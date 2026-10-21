@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
+import '../l10n/l10n.dart';
 import '../services/broadcast_input.dart';
 import '../services/display_hinge.dart';
 import '../services/fleet_push_run_registry.dart';
@@ -499,10 +500,8 @@ class _SessionsScreenState extends State<SessionsScreen> {
     if (source == null) {
       // The source session was closed between the drag starting and the drop
       // landing. Surface a message rather than dropping silently.
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-        content: Text(
-          'That session has been closed. Reopen it to send its files.',
-        ),
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text(context.l10n.sessionTabDropClosed),
       ));
       return;
     }
@@ -529,29 +528,29 @@ class _SessionsScreenState extends State<SessionsScreen> {
   /// own, and every other tab carries on regardless of the answer.
   Future<void> _closeSession(ManagedSession entry) async {
     if (!entry.isClosed) {
+      final l10n = context.l10n;
       final transfers = entry.controller.transfers.activeCount;
       final question = transfers > 0
-          ? 'Close the session on ${entry.host.displayName}? '
-              '$transfers transfer${transfers == 1 ? '' : 's'} '
-              '${transfers == 1 ? 'is' : 'are'} still running and will '
-              'be cancelled.'
-          : 'Close the session on ${entry.host.displayName}?';
-      final logNote = SessionLogActions.isRecording(entry.controller)
-          ? ' Its session log will be saved first.'
-          : '';
+          ? l10n.sessionCloseQuestionTransfers(
+              transfers, entry.host.displayName)
+          : l10n.sessionCloseQuestion(entry.host.displayName);
       final confirmed = await showDialog<bool>(
         context: context,
         builder: (context) => AlertDialog(
-          title: const Text('Disconnect?'),
-          content: Text('$question$logNote'),
+          title: Text(l10n.sessionCloseTitle),
+          content: Text(
+            SessionLogActions.isRecording(entry.controller)
+                ? l10n.sessionCloseWithLog(question)
+                : question,
+          ),
           actions: [
             TextButton(
               onPressed: () => Navigator.of(context).pop(false),
-              child: const Text('Stay'),
+              child: Text(l10n.sessionCloseStay),
             ),
             FilledButton(
               onPressed: () => Navigator.of(context).pop(true),
-              child: const Text('Disconnect'),
+              child: Text(l10n.sessionDisconnect),
             ),
           ],
         ),
@@ -731,6 +730,7 @@ class _SessionsScreenState extends State<SessionsScreen> {
 
     final closed = active.isClosed;
     final theme = Theme.of(context);
+    final l10n = context.l10n;
     final narrow = size.width < _overflowActionsBelow;
 
     final scaffold = Scaffold(
@@ -738,8 +738,8 @@ class _SessionsScreenState extends State<SessionsScreen> {
         titleSpacing: 0,
         leading: IconButton(
           tooltip: entries.length == 1
-              ? 'Host list — this session stays connected'
-              : 'Host list — these sessions stay connected',
+              ? l10n.sessionBackOne
+              : l10n.sessionBackMany,
           icon: const Icon(Icons.arrow_back),
           onPressed: () => Navigator.of(context).pop(),
         ),
@@ -768,7 +768,7 @@ class _SessionsScreenState extends State<SessionsScreen> {
                 // pixels or so, and a long user@host overflowed them.
                 Flexible(
                   child: Text(
-                    closed ? 'disconnected' : active.host.target,
+                    closed ? l10n.sessionDisconnectedStatus : active.host.target,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: TextStyle(
@@ -808,19 +808,19 @@ class _SessionsScreenState extends State<SessionsScreen> {
           ),
           if (workspaceOn)
             PopupMenuButton<_WorkspaceAction>(
-              tooltip: 'Split the focused pane',
+              tooltip: l10n.sessionSplitTooltip,
               icon: const Icon(Icons.splitscreen_outlined),
               onSelected: _handleWorkspaceAction,
               itemBuilder: (context) => [
                 PopupMenuItem<_WorkspaceAction>(
                   value: _WorkspaceAction.splitRight,
                   enabled: _workspace.canSplit,
-                  child: const Text('Split right'),
+                  child: Text(l10n.workspaceSplitRight),
                 ),
                 PopupMenuItem<_WorkspaceAction>(
                   value: _WorkspaceAction.splitDown,
                   enabled: _workspace.canSplit,
-                  child: const Text('Split down'),
+                  child: Text(l10n.workspaceSplitDown),
                 ),
                 const PopupMenuDivider(),
                 PopupMenuItem<_WorkspaceAction>(
@@ -828,7 +828,7 @@ class _SessionsScreenState extends State<SessionsScreen> {
                   // Closing the only pane would leave nothing to focus and
                   // nowhere to put the next session.
                   enabled: split,
-                  child: const Text('Close pane'),
+                  child: Text(l10n.workspaceClosePane),
                 ),
               ],
             ),
@@ -868,8 +868,8 @@ class _SessionsScreenState extends State<SessionsScreen> {
             IconButton(
               tooltip: SessionShortcuts.tooltip(
                 active.view == SessionView.terminal
-                    ? 'Browse files'
-                    : 'Back to terminal',
+                    ? l10n.sessionBrowseFiles
+                    : l10n.sessionBackToTerminal,
                 SessionShortcuts.toggleFiles,
                 keyboard: input.keyboard,
               ),
@@ -887,8 +887,8 @@ class _SessionsScreenState extends State<SessionsScreen> {
             IconButton(
               tooltip: SessionShortcuts.tooltip(
                 _terminalFullWidth
-                    ? 'Show files beside the terminal'
-                    : 'Terminal full width',
+                    ? l10n.sessionShowFilesBeside
+                    : l10n.sessionTerminalFullWidth,
                 SessionShortcuts.toggleFullWidth,
                 keyboard: input.keyboard,
               ),
@@ -901,7 +901,7 @@ class _SessionsScreenState extends State<SessionsScreen> {
             ),
           if (!narrow)
             IconButton(
-              tooltip: 'Snippets',
+              tooltip: l10n.sessionSnippets,
               icon: const Icon(Icons.bolt_outlined),
               onPressed: _openSnippetPicker,
             ),
@@ -912,7 +912,7 @@ class _SessionsScreenState extends State<SessionsScreen> {
           // transport, and there is not one. On a narrow phone the buttons
           // around it move in here too.
           PopupMenuButton<_SessionMenu>(
-            tooltip: 'More',
+            tooltip: MaterialLocalizations.of(context).moreButtonTooltip,
             icon: const Icon(Icons.more_vert),
             onSelected: (choice) =>
                 unawaited(_handleSessionMenu(choice, active.controller)),
@@ -924,7 +924,7 @@ class _SessionsScreenState extends State<SessionsScreen> {
                   value: _SessionMenu.find,
                   child: Row(
                     children: [
-                      const Expanded(child: Text('Find in terminal')),
+                      Expanded(child: Text(l10n.sessionFindInTerminal)),
                       if (input.keyboard) ...[
                         const SizedBox(width: 24),
                         Text(
@@ -938,47 +938,47 @@ class _SessionsScreenState extends State<SessionsScreen> {
                   ),
                 ),
                 if (recording)
-                  const PopupMenuItem<_SessionMenu>(
+                  PopupMenuItem<_SessionMenu>(
                     value: _SessionMenu.stopLog,
-                    child: Text('Stop recording and save'),
+                    child: Text(l10n.sessionLogStopAndSave),
                   )
                 else
                   PopupMenuItem<_SessionMenu>(
                     value: _SessionMenu.recordLog,
                     enabled: !closed,
-                    child: const Text('Record session log…'),
+                    child: Text(l10n.sessionLogRecordMenu),
                   ),
                 if (narrow)
-                  const PopupMenuItem<_SessionMenu>(
+                  PopupMenuItem<_SessionMenu>(
                     value: _SessionMenu.snippets,
-                    child: Text('Snippets'),
+                    child: Text(l10n.sessionSnippets),
                   ),
                 const PopupMenuDivider(),
                 PopupMenuItem<_SessionMenu>(
                   value: _SessionMenu.stats,
                   enabled: !closed,
-                  child: const Text('Server stats'),
+                  child: Text(l10n.sessionServerStats),
                 ),
                 PopupMenuItem<_SessionMenu>(
                   value: _SessionMenu.services,
                   enabled: !closed,
-                  child: const Text('Services & processes'),
+                  child: Text(l10n.sessionServicesProcesses),
                 ),
                 PopupMenuItem<_SessionMenu>(
                   value: _SessionMenu.tail,
                   enabled: !closed,
-                  child: const Text('Tail a file…'),
+                  child: Text(l10n.sessionTailFile),
                 ),
                 if (narrow) ...[
                   const PopupMenuDivider(),
-                  const PopupMenuItem<_SessionMenu>(
+                  PopupMenuItem<_SessionMenu>(
                     value: _SessionMenu.newSession,
-                    child: Text('New session'),
+                    child: Text(l10n.sessionNew),
                   ),
                   PopupMenuItem<_SessionMenu>(
                     value: _SessionMenu.close,
                     child: Text(
-                      closed ? 'Close tab' : 'Disconnect',
+                      closed ? l10n.sessionCloseTab : l10n.sessionDisconnect,
                       style: closed
                           ? null
                           : TextStyle(color: theme.colorScheme.error),
@@ -994,7 +994,7 @@ class _SessionsScreenState extends State<SessionsScreen> {
             // the tab strip that has not appeared yet.
             IconButton(
               tooltip: SessionShortcuts.tooltip(
-                'New session',
+                l10n.sessionNew,
                 SessionShortcuts.newSession,
                 keyboard: input.keyboard,
               ),
@@ -1002,7 +1002,7 @@ class _SessionsScreenState extends State<SessionsScreen> {
               onPressed: _addSession,
             ),
             IconButton(
-              tooltip: closed ? 'Close tab' : 'Disconnect',
+              tooltip: closed ? l10n.sessionCloseTab : l10n.sessionDisconnect,
               icon: Icon(closed ? Icons.close : Icons.power_settings_new),
               color: closed ? null : theme.colorScheme.error,
               onPressed: () => unawaited(_closeActive()),
@@ -1214,7 +1214,11 @@ class _SessionPageState extends State<_SessionPage> {
     final theme = Theme.of(context);
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        content: Text(widget.active ? reason : '${widget.entry.host.displayName}: $reason'),
+        content: Text(
+          widget.active
+              ? reason
+              : context.l10n.sessionOnHost(widget.entry.host.displayName, reason),
+        ),
         backgroundColor: theme.colorScheme.error,
       ),
     );
@@ -1239,6 +1243,7 @@ class _SessionPageState extends State<_SessionPage> {
 
     ScaffoldMessenger.of(context).showSnackBar(
       buildDownloadSavedSnackBar(
+        context.l10n,
         batch: batch,
         // A download that finished on a session the user is not looking at
         // still gets announced — with the host named, since "Saved notes.txt"
@@ -1258,13 +1263,10 @@ class _SessionPageState extends State<_SessionPage> {
 
   Future<void> _openDownload(TransferTask task) async {
     final messenger = ScaffoldMessenger.of(context);
+    final noApp = context.l10n.transferPanelNoAppForFile;
     final opened = await _session.openDownload(task);
     if (!opened) {
-      messenger.showSnackBar(
-        const SnackBar(
-          content: Text('No app on this device can open that file.'),
-        ),
-      );
+      messenger.showSnackBar(SnackBar(content: Text(noApp)));
     }
   }
 
@@ -1424,7 +1426,7 @@ class SessionTabStrip extends StatelessWidget {
             ),
             const VerticalDivider(width: 1, indent: 8, endIndent: 8),
             IconButton(
-              tooltip: 'New session',
+              tooltip: context.l10n.sessionNew,
               icon: const Icon(Icons.add, size: 20),
               onPressed: onAdd,
             ),
@@ -1520,8 +1522,9 @@ class _SessionTab extends StatelessWidget {
                     ),
                     IconButton(
                       tooltip: closed
-                          ? 'Close ${entry.host.displayName}'
-                          : 'Disconnect ${entry.host.displayName}',
+                          ? context.l10n.sessionTabClose(entry.host.displayName)
+                          : context.l10n
+                              .sessionTabDisconnect(entry.host.displayName),
                       icon: const Icon(Icons.close, size: 15),
                       // Compact density takes 8dp back off the constraints
                       // below, which touch cannot spare.
@@ -1585,7 +1588,8 @@ class _SessionTab extends StatelessWidget {
 /// to the file — the same action lives permanently on the row in the
 /// transfers sheet behind the app bar's button.
 @visibleForTesting
-SnackBar buildDownloadSavedSnackBar({
+SnackBar buildDownloadSavedSnackBar(
+  AppLocalizations l10n, {
   required List<TransferTask> batch,
   required void Function(TransferTask task) onOpen,
   required VoidCallback onShowAll,
@@ -1593,22 +1597,24 @@ SnackBar buildDownloadSavedSnackBar({
 }) {
   final single = batch.length == 1 ? batch.single : null;
   final uri = single?.destinationUri;
-  // Named only when the download finished on a session other than the one on
-  // screen, so the ordinary single-session case reads exactly as it always did.
-  final prefix = from == null ? '' : '$from: ';
+  final saved = single != null
+      ? l10n.transferPanelSavedFile(single.destination ?? single.name)
+      : l10n.transferPanelSavedToDownloads(batch.length);
 
   return SnackBar(
     persist: false,
-    content: Text(
-      single != null
-          ? '${prefix}Saved ${single.destination ?? single.name}'
-          : '$prefix${batch.length} files saved to Downloads',
-    ),
+    // Named only when the download finished on a session other than the one
+    // on screen, so the ordinary single-session case reads exactly as it
+    // always did.
+    content: Text(from == null ? saved : l10n.sessionOnHost(from, saved)),
     action: single != null && uri != null && uri.isNotEmpty
-        ? SnackBarAction(label: 'Open', onPressed: () => onOpen(single))
+        ? SnackBarAction(
+            label: l10n.transferPanelOpen,
+            onPressed: () => onOpen(single),
+          )
         // A batch has no single file to open, so the useful action is the
         // list of what landed — every row there has its own "Open".
-        : SnackBarAction(label: 'Show', onPressed: onShowAll),
+        : SnackBarAction(label: l10n.sessionDownloadShow, onPressed: onShowAll),
   );
 }
 
@@ -1640,7 +1646,7 @@ class _BroadcastAction extends StatelessWidget {
   Widget build(BuildContext context) {
     if (!enabled) {
       return IconButton(
-        tooltip: 'Broadcast input to every visible pane',
+        tooltip: context.l10n.sessionBroadcastStart,
         icon: const Icon(Icons.podcasts_outlined),
         onPressed: onToggle,
       );
@@ -1649,7 +1655,7 @@ class _BroadcastAction extends StatelessWidget {
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 4),
       child: Tooltip(
-        message: 'Broadcasting — tap to stop',
+        message: context.l10n.sessionBroadcastStop,
         child: Material(
           color: AppTheme.danger,
           borderRadius: BorderRadius.circular(6),
@@ -1664,8 +1670,7 @@ class _BroadcastAction extends StatelessWidget {
                   const Icon(Icons.podcasts, size: 16, color: Colors.white),
                   const SizedBox(width: 6),
                   Text(
-                    'Broadcasting to $paneCount '
-                    '${paneCount == 1 ? 'pane' : 'panes'}',
+                    context.l10n.sessionBroadcastingTo(paneCount),
                     style: const TextStyle(
                       fontSize: 12.5,
                       fontWeight: FontWeight.w600,
@@ -1711,7 +1716,7 @@ class _TransferAction extends StatelessWidget {
         final failed = tasks.any((t) => t.status == TransferStatus.failed);
 
         return IconButton(
-          tooltip: 'Transfers',
+          tooltip: context.l10n.transferPanelTitle,
           onPressed: onTap,
           icon: Badge(
             isLabelVisible: active > 0 || failed,

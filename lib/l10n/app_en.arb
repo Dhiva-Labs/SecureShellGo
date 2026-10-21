@@ -15,5 +15,727 @@
   "languageHelp": "Translations are new in 1.5. Spot a mistake? Report it on GitHub.",
   "@languageHelp": {
     "description": "Settings: helper text under the Language field."
+  },
+  "sessionTabDropClosed": "That session has been closed. Reopen it to send its files.",
+  "@sessionTabDropClosed": {
+    "description": "Session screen: snackbar when files dragged from one session tab are dropped on another after the source session was closed."
+  },
+  "sessionCloseTitle": "Disconnect?",
+  "@sessionCloseTitle": {
+    "description": "Session screen: title of the dialog that confirms ending a session."
+  },
+  "sessionCloseQuestion": "Close the session on {host}?",
+  "@sessionCloseQuestion": {
+    "description": "Session screen: body of the disconnect dialog when nothing is transferring. {host} is the saved host's name.",
+    "placeholders": {
+      "host": {
+        "type": "String",
+        "example": "Production web"
+      }
+    }
+  },
+  "sessionCloseQuestionTransfers": "{count, plural, =1{Close the session on {host}? {count} transfer is still running and will be cancelled.} other{Close the session on {host}? {count} transfers are still running and will be cancelled.}}",
+  "@sessionCloseQuestionTransfers": {
+    "description": "Session screen: body of the disconnect dialog while file transfers of that session are still running; they are cancelled if the user disconnects.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "2"
+      },
+      "host": {
+        "type": "String",
+        "example": "Production web"
+      }
+    }
+  },
+  "sessionCloseWithLog": "{question} Its session log will be saved first.",
+  "@sessionCloseWithLog": {
+    "description": "Session screen: disconnect dialog body when a session log is being recorded. {question} is sessionCloseQuestion or sessionCloseQuestionTransfers; join the two sentences as your language does (no space in Chinese and Japanese).",
+    "placeholders": {
+      "question": {
+        "type": "String",
+        "example": "Close the session on Production web?"
+      }
+    }
+  },
+  "sessionCloseStay": "Stay",
+  "@sessionCloseStay": {
+    "description": "Session screen: disconnect dialog button that keeps the session open."
+  },
+  "sessionDisconnect": "Disconnect",
+  "@sessionDisconnect": {
+    "description": "Session screen: button, menu item and tooltip that ends the session (closes the SSH connection)."
+  },
+  "sessionBackOne": "Host list — this session stays connected",
+  "@sessionBackOne": {
+    "description": "Session screen: tooltip of the back arrow with one session open. Going back to the host list does not disconnect."
+  },
+  "sessionBackMany": "Host list — these sessions stay connected",
+  "@sessionBackMany": {
+    "description": "Session screen: tooltip of the back arrow with several sessions open. Going back to the host list does not disconnect them."
+  },
+  "sessionDisconnectedStatus": "disconnected",
+  "@sessionDisconnectedStatus": {
+    "description": "Session screen: small lower-case status under the host name in the app bar once the connection has ended (otherwise user@host is shown there)."
+  },
+  "sessionSplitTooltip": "Split the focused pane",
+  "@sessionSplitTooltip": {
+    "description": "Session screen (desktop split workspace): tooltip of the split menu button."
+  },
+  "sessionBrowseFiles": "Browse files",
+  "@sessionBrowseFiles": {
+    "description": "Session screen: tooltip of the button that switches from the terminal to the SFTP file browser. A keyboard shortcut may be appended in parentheses."
+  },
+  "sessionBackToTerminal": "Back to terminal",
+  "@sessionBackToTerminal": {
+    "description": "Session screen: tooltip of the button that switches from the file browser back to the terminal."
+  },
+  "sessionShowFilesBeside": "Show files beside the terminal",
+  "@sessionShowFilesBeside": {
+    "description": "Session screen (tablet/desktop): tooltip that brings the file browser back next to a full-width terminal."
+  },
+  "sessionTerminalFullWidth": "Terminal full width",
+  "@sessionTerminalFullWidth": {
+    "description": "Session screen (tablet/desktop): tooltip that hides the file browser so the terminal takes the whole width."
+  },
+  "sessionSnippets": "Snippets",
+  "@sessionSnippets": {
+    "description": "Session screen: tooltip and menu item that open the saved-commands (snippets) picker."
+  },
+  "sessionFindInTerminal": "Find in terminal",
+  "@sessionFindInTerminal": {
+    "description": "Session screen: overflow-menu item that opens the find bar over the terminal."
+  },
+  "sessionServerStats": "Server stats",
+  "@sessionServerStats": {
+    "description": "Session screen: overflow-menu item that opens the server monitoring screen (CPU, memory, disks)."
+  },
+  "sessionServicesProcesses": "Services & processes",
+  "@sessionServicesProcesses": {
+    "description": "Session screen: overflow-menu item that opens the list of systemd services and running processes."
+  },
+  "sessionTailFile": "Tail a file…",
+  "@sessionTailFile": {
+    "description": "Session screen: overflow-menu item that follows a remote log file live (like tail -f). The ellipsis means a dialog follows."
+  },
+  "sessionNew": "New session",
+  "@sessionNew": {
+    "description": "Session screen and split panes: button, tooltip and menu item that opens another session (picks a host)."
+  },
+  "sessionCloseTab": "Close tab",
+  "@sessionCloseTab": {
+    "description": "Session screen: menu item and tooltip that removes the tab of a session whose connection has already ended."
+  },
+  "sessionTabClose": "Close {host}",
+  "@sessionTabClose": {
+    "description": "Session tab strip: tooltip of a tab's close button when its session has already ended.",
+    "placeholders": {
+      "host": {
+        "type": "String",
+        "example": "Production web"
+      }
+    }
+  },
+  "sessionTabDisconnect": "Disconnect {host}",
+  "@sessionTabDisconnect": {
+    "description": "Session tab strip: tooltip of a tab's close button while its session is connected.",
+    "placeholders": {
+      "host": {
+        "type": "String",
+        "example": "Production web"
+      }
+    }
+  },
+  "sessionOnHost": "{host}: {message}",
+  "@sessionOnHost": {
+    "description": "Session screen: a message about a session other than the one on screen, prefixed with its host name. {message} may be English text from the connection.",
+    "placeholders": {
+      "host": {
+        "type": "String",
+        "example": "Production web"
+      },
+      "message": {
+        "type": "String",
+        "example": "Saved notes.txt"
+      }
+    }
+  },
+  "sessionDownloadShow": "Show",
+  "@sessionDownloadShow": {
+    "description": "Session screen: snackbar action after several downloads finished; opens the transfer list."
+  },
+  "sessionBroadcastStart": "Broadcast input to every visible pane",
+  "@sessionBroadcastStart": {
+    "description": "Split workspace: tooltip of the button that sends every keystroke to all visible terminal panes at once."
+  },
+  "sessionBroadcastStop": "Broadcasting — tap to stop",
+  "@sessionBroadcastStop": {
+    "description": "Split workspace: tooltip of the red chip shown while keystrokes go to every visible pane."
+  },
+  "sessionBroadcastingTo": "{count, plural, =1{Broadcasting to {count} pane} other{Broadcasting to {count} panes}}",
+  "@sessionBroadcastingTo": {
+    "description": "Split workspace: red warning chip in the app bar while typed input goes to several terminal panes. Keep it short.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "3"
+      }
+    }
+  },
+  "terminalCopied": "Copied",
+  "@terminalCopied": {
+    "description": "Terminal: brief snackbar after the selected text was copied."
+  },
+  "terminalClipboardEmpty": "Clipboard is empty",
+  "@terminalClipboardEmpty": {
+    "description": "Terminal: snackbar when Paste is pressed with nothing on the clipboard."
+  },
+  "terminalPasteLinesTitle": "{count, plural, =1{Paste {count} line?} other{Paste {count} lines?}}",
+  "@terminalPasteLinesTitle": {
+    "description": "Terminal: title of the sheet that confirms pasting several lines into the shell.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "3"
+      }
+    }
+  },
+  "terminalPasteLinesBody": "Each line is sent to the shell as if typed and Enter pressed, so this can run more than one command.",
+  "@terminalPasteLinesBody": {
+    "description": "Terminal: warning under terminalPasteLinesTitle. Enter is the key name."
+  },
+  "terminalPaste": "Paste",
+  "@terminalPaste": {
+    "description": "Terminal: Paste button (selection toolbar, context menu, extra-keys bar, multi-line paste confirmation)."
+  },
+  "terminalCopy": "Copy",
+  "@terminalCopy": {
+    "description": "Terminal: Copy button for the selected text (selection toolbar and context menu)."
+  },
+  "terminalSelectAll": "Select all",
+  "@terminalSelectAll": {
+    "description": "Terminal: selects the whole scrollback (selection toolbar and context menu)."
+  },
+  "terminalSelected": "Selected",
+  "@terminalSelected": {
+    "description": "Terminal: label at the start of the toolbar shown while text is selected."
+  },
+  "terminalFindMenu": "Find…",
+  "@terminalFindMenu": {
+    "description": "Terminal: right-click menu item that opens the find bar."
+  },
+  "terminalOpenLink": "Open link",
+  "@terminalOpenLink": {
+    "description": "Terminal: menu item that opens a web address printed in the terminal in the browser."
+  },
+  "terminalCopyLink": "Copy link",
+  "@terminalCopyLink": {
+    "description": "Terminal: menu item that copies a web address printed in the terminal."
+  },
+  "terminalLinkCopied": "Link copied",
+  "@terminalLinkCopied": {
+    "description": "Terminal: brief snackbar after a link was copied."
+  },
+  "terminalNoAppForLink": "No app on this device can open that link.",
+  "@terminalNoAppForLink": {
+    "description": "Terminal: snackbar when no browser could open a link."
+  },
+  "terminalOpeningShell": "Opening shell…",
+  "@terminalOpeningShell": {
+    "description": "Terminal: shown while the remote shell is starting."
+  },
+  "terminalFindHint": "Find",
+  "@terminalFindHint": {
+    "description": "Terminal find bar: placeholder text of the search field."
+  },
+  "terminalFindMatchCase": "Match case",
+  "@terminalFindMatchCase": {
+    "description": "Terminal find bar: tooltip of the \"Aa\" toggle for case-sensitive search."
+  },
+  "terminalFindRegex": "Regular expression",
+  "@terminalFindRegex": {
+    "description": "Terminal find bar: tooltip of the \".*\" toggle that treats the query as a regular expression."
+  },
+  "terminalFindPrevious": "Previous match (Shift+Enter)",
+  "@terminalFindPrevious": {
+    "description": "Terminal find bar: tooltip of the up arrow. Keep the shortcut in parentheses as is."
+  },
+  "terminalFindNext": "Next match (Enter)",
+  "@terminalFindNext": {
+    "description": "Terminal find bar: tooltip of the down arrow. Keep the shortcut in parentheses as is."
+  },
+  "terminalFindClose": "Close (Esc)",
+  "@terminalFindClose": {
+    "description": "Terminal find bar: tooltip of the close button. Keep the shortcut in parentheses as is."
+  },
+  "terminalFindInvalidPattern": "Invalid pattern",
+  "@terminalFindInvalidPattern": {
+    "description": "Terminal find bar: shown instead of the match count when the regular expression does not parse. Short."
+  },
+  "terminalFindTooSlow": "Pattern too slow",
+  "@terminalFindTooSlow": {
+    "description": "Terminal find bar: shown instead of the match count when the regular expression took too long and the search was stopped. Short."
+  },
+  "terminalFindSearching": "Searching…",
+  "@terminalFindSearching": {
+    "description": "Terminal find bar: shown instead of the match count while a search runs. Short."
+  },
+  "terminalFindNoResults": "No results",
+  "@terminalFindNoResults": {
+    "description": "Terminal find bar: shown instead of the match count when nothing matches. Short."
+  },
+  "terminalFindPosition": "{current} of {total}",
+  "@terminalFindPosition": {
+    "description": "Terminal find bar: which match is selected, e.g. \"3 of 12\". {total} may end in \"+\" when the count was capped (\"1000+\"). Very short.",
+    "placeholders": {
+      "current": {
+        "type": "int",
+        "example": "3"
+      },
+      "total": {
+        "type": "String",
+        "example": "12"
+      }
+    }
+  },
+  "workspaceSplitRight": "Split right",
+  "@workspaceSplitRight": {
+    "description": "Split workspace: menu item that splits the pane, the new pane on the right."
+  },
+  "workspaceSplitDown": "Split down",
+  "@workspaceSplitDown": {
+    "description": "Split workspace: menu item that splits the pane, the new pane below."
+  },
+  "workspaceClosePane": "Close pane",
+  "@workspaceClosePane": {
+    "description": "Split workspace: menu item that removes the pane (its session stays open as a tab)."
+  },
+  "workspaceReceivingBroadcast": "Receiving broadcast input",
+  "@workspaceReceivingBroadcast": {
+    "description": "Split workspace: tooltip of the icon on a pane header while broadcast input reaches that pane."
+  },
+  "workspacePaneSession": "Session in this pane",
+  "@workspacePaneSession": {
+    "description": "Split workspace: tooltip of the pane header's menu that picks which session the pane shows."
+  },
+  "workspaceLeaveEmpty": "Leave this pane empty",
+  "@workspaceLeaveEmpty": {
+    "description": "Split workspace: menu item that shows no session in the pane."
+  },
+  "workspaceNoSession": "No session",
+  "@workspaceNoSession": {
+    "description": "Split workspace: pane header title when the pane shows no session. Short."
+  },
+  "workspacePaneMenu": "Pane",
+  "@workspacePaneMenu": {
+    "description": "Split workspace: tooltip of a pane's ⋮ menu (split, close)."
+  },
+  "workspaceEmptyPane": "No session in this pane",
+  "@workspaceEmptyPane": {
+    "description": "Split workspace: body of an empty pane, above buttons that put a session in it."
+  },
+  "paletteHint": "Connect to a host, run a snippet, or jump to…",
+  "@paletteHint": {
+    "description": "Command palette (Ctrl+K): placeholder of the search field. A snippet is a saved shell command; \"jump to…\" means go to a screen."
+  },
+  "paletteNoMatches": "No matches",
+  "@paletteNoMatches": {
+    "description": "Command palette: shown when nothing matches what was typed."
+  },
+  "sessionLogRecordMenu": "Record session log…",
+  "@sessionLogRecordMenu": {
+    "description": "Session screen: menu item that starts writing everything the terminal prints to a log file. The ellipsis means a dialog follows."
+  },
+  "sessionLogStopAndSave": "Stop recording and save",
+  "@sessionLogStopAndSave": {
+    "description": "Session screen and the REC badge: menu item that stops the session log and saves the file."
+  },
+  "sessionLogRecordingTooltip": "Recording a session log",
+  "@sessionLogRecordingTooltip": {
+    "description": "Terminal: tooltip of the small REC badge shown while the session is being recorded to a log file."
+  },
+  "sessionLogRecBadge": "REC",
+  "@sessionLogRecBadge": {
+    "description": "Terminal: tiny badge in the corner while a session log is recorded, like a camera's REC light. Keep \"REC\" unless your language uses another very short recording mark."
+  },
+  "sessionLogDialogTitle": "Record session log",
+  "@sessionLogDialogTitle": {
+    "description": "Session log: title of the dialog that starts recording."
+  },
+  "sessionLogDialogBodyFileFirst": "Everything this session prints from now on is written to a log file. Choose where it goes next.",
+  "@sessionLogDialogBodyFileFirst": {
+    "description": "Session log dialog (desktop): body; a save dialog follows the button."
+  },
+  "sessionLogDialogBodyFileLater": "Everything this session prints from now on is written to a log file. When you stop, you choose where to save it.",
+  "@sessionLogDialogBodyFileLater": {
+    "description": "Session log dialog (Android): body; the user picks where to save when recording stops."
+  },
+  "sessionLogPlainText": "Plain text",
+  "@sessionLogPlainText": {
+    "description": "Session log dialog: switch title; on, colours and terminal control codes are left out of the log."
+  },
+  "sessionLogPlainTextHelp": "Leave out colours and terminal control codes. Off keeps the output exactly as received, for replaying with cat.",
+  "@sessionLogPlainTextHelp": {
+    "description": "Session log dialog: help under the Plain text switch. \"cat\" is the Unix command; keep it as is."
+  },
+  "sessionLogChooseFile": "Choose file…",
+  "@sessionLogChooseFile": {
+    "description": "Session log dialog (desktop): button that opens the save dialog and then starts recording."
+  },
+  "sessionLogStart": "Start",
+  "@sessionLogStart": {
+    "description": "Session log dialog (Android): button that starts recording."
+  },
+  "sessionLogSaveDialogConfirm": "Record",
+  "@sessionLogSaveDialogConfirm": {
+    "description": "Session log: confirm button of the desktop save dialog that picks the log file (recording starts after it)."
+  },
+  "sessionLogFileType": "Logs",
+  "@sessionLogFileType": {
+    "description": "Session log: file-type name in the desktop save dialog (.log, .txt)."
+  },
+  "sessionLogStartFailed": "Could not start the session log: {error}",
+  "@sessionLogStartFailed": {
+    "description": "Session log: snackbar when the log file could not be opened. {error} is technical English text.",
+    "placeholders": {
+      "error": {
+        "type": "String",
+        "example": "Permission denied"
+      }
+    }
+  },
+  "sessionLogRecordingTo": "Recording this session to {file}",
+  "@sessionLogRecordingTo": {
+    "description": "Session log: snackbar once recording started on a desktop. {file} is a file name.",
+    "placeholders": {
+      "file": {
+        "type": "String",
+        "example": "web-2026-10-21.log"
+      }
+    }
+  },
+  "sessionLogRecordingInMemory": "Recording this session. Stop to choose where to save it.",
+  "@sessionLogRecordingInMemory": {
+    "description": "Session log: snackbar once recording started on Android."
+  },
+  "sessionLogWriteFailed": "The session log stopped: it could not be written ({error}).",
+  "@sessionLogWriteFailed": {
+    "description": "Session log: snackbar when recording stopped because the file could not be written. {error} is technical English text.",
+    "placeholders": {
+      "error": {
+        "type": "String",
+        "example": "No space left on device"
+      }
+    }
+  },
+  "sessionLogFull": "The session log is full, so recording stopped.",
+  "@sessionLogFull": {
+    "description": "Session log: snackbar when an in-memory log (Android, 32 MB) reached its limit."
+  },
+  "sessionLogFullSaveFailed": "The session log is full, so recording stopped. Could not save it: {error}",
+  "@sessionLogFullSaveFailed": {
+    "description": "Session log: the log reached its limit and then could not be saved. {error} is technical English text.",
+    "placeholders": {
+      "error": {
+        "type": "String",
+        "example": "Permission denied"
+      }
+    }
+  },
+  "sessionLogFullSaved": "The session log is full, so recording stopped. Session log saved: {file}",
+  "@sessionLogFullSaved": {
+    "description": "Session log: the log reached its limit and was saved. {file} is a file name.",
+    "placeholders": {
+      "file": {
+        "type": "String",
+        "example": "web-2026-10-21.log"
+      }
+    }
+  },
+  "sessionLogFullNotSaved": "The session log is full, so recording stopped. The session log was not saved.",
+  "@sessionLogFullNotSaved": {
+    "description": "Session log: the log reached its limit and the user cancelled the save picker. A Save… action follows."
+  },
+  "sessionLogSaveAction": "Save…",
+  "@sessionLogSaveAction": {
+    "description": "Session log: snackbar action that opens the picker to save a finished log."
+  },
+  "sessionLogFinishFailed": "Could not finish the session log: {error}",
+  "@sessionLogFinishFailed": {
+    "description": "Session log: snackbar when the log file could not be closed properly. {error} is technical English text.",
+    "placeholders": {
+      "error": {
+        "type": "String",
+        "example": "Input/output error"
+      }
+    }
+  },
+  "sessionLogSaveFailed": "Could not save the session log: {error}",
+  "@sessionLogSaveFailed": {
+    "description": "Session log: snackbar when saving the finished log failed. {error} is technical English text.",
+    "placeholders": {
+      "error": {
+        "type": "String",
+        "example": "Permission denied"
+      }
+    }
+  },
+  "sessionLogNotSaved": "The session log was not saved.",
+  "@sessionLogNotSaved": {
+    "description": "Session log: snackbar after the user cancelled the save picker. A Save… action follows."
+  },
+  "sessionLogSaved": "Session log saved: {file}",
+  "@sessionLogSaved": {
+    "description": "Session log: snackbar after the log was saved. {file} is a file name.",
+    "placeholders": {
+      "file": {
+        "type": "String",
+        "example": "web-2026-10-21.log"
+      }
+    }
+  },
+  "transferPanelTitle": "Transfers",
+  "@transferPanelTitle": {
+    "description": "Session screen: tooltip of the transfers button and title of this session's transfer list (uploads, downloads, server-to-server copies)."
+  },
+  "transferHubTitle": "All transfers",
+  "@transferHubTitle": {
+    "description": "Session screen: tooltip and sheet title of the transfer list across every open session."
+  },
+  "transferPanelCancelAll": "Cancel all",
+  "@transferPanelCancelAll": {
+    "description": "Transfer list: button that cancels every running and queued transfer."
+  },
+  "transferPanelClear": "Clear",
+  "@transferPanelClear": {
+    "description": "Transfer list: button that removes finished rows from the list."
+  },
+  "transferPanelEmpty": "Nothing transferred yet.",
+  "@transferPanelEmpty": {
+    "description": "Transfer list: shown when the list is empty."
+  },
+  "transferPanelRetry": "Retry",
+  "@transferPanelRetry": {
+    "description": "Transfer list: button on a failed transfer that tries it again."
+  },
+  "transferPanelOpen": "Open",
+  "@transferPanelOpen": {
+    "description": "Transfer list and download snackbar: opens a downloaded file in another app."
+  },
+  "transferPanelNoAppForFile": "No app on this device can open that file.",
+  "@transferPanelNoAppForFile": {
+    "description": "Transfer list and session screen: snackbar when no app can open a downloaded file."
+  },
+  "transferHubPushing": "{count, plural, =1{Pushing to {count} host…} other{Pushing to {count} hosts…}}",
+  "@transferHubPushing": {
+    "description": "All transfers: banner while a file is being pushed to several saved hosts at once.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "4"
+      }
+    }
+  },
+  "transferPanelWaiting": "Waiting…",
+  "@transferPanelWaiting": {
+    "description": "Transfer row: a queued transfer."
+  },
+  "transferPanelWaitingFor": "Waiting… → {destination}",
+  "@transferPanelWaitingFor": {
+    "description": "Transfer row: a queued server-to-server copy; {destination} is the other server's name or anotherServer.",
+    "placeholders": {
+      "destination": {
+        "type": "String",
+        "example": "Backup box"
+      }
+    }
+  },
+  "transferPanelAnotherServer": "another server",
+  "@transferPanelAnotherServer": {
+    "description": "Transfer row: lower-case stand-in for the destination of a server-to-server copy when its name is unknown."
+  },
+  "transferPanelSaved": "saved",
+  "@transferPanelSaved": {
+    "description": "Transfer row: lower-case, after the size of a finished transfer when its destination is unknown (\"1.2 MB · saved\")."
+  },
+  "transferPanelMovedTo": "moved to {destination}",
+  "@transferPanelMovedTo": {
+    "description": "Transfer row: lower-case, after the size of a finished server-to-server move (\"1.2 MB · moved to /srv/data\").",
+    "placeholders": {
+      "destination": {
+        "type": "String",
+        "example": "/srv/data"
+      }
+    }
+  },
+  "transferPanelCancelled": "Cancelled",
+  "@transferPanelCancelled": {
+    "description": "Transfer row: status of a cancelled transfer."
+  },
+  "transferPanelFailed": "Failed",
+  "@transferPanelFailed": {
+    "description": "Transfer row: status of a failed transfer with no error text."
+  },
+  "transferPanelProgress": "{done} of {total}",
+  "@transferPanelProgress": {
+    "description": "Transfer row: bytes so far of the total, e.g. \"1.2 MB of 4.0 MB\"; a percentage follows after a dot.",
+    "placeholders": {
+      "done": {
+        "type": "String",
+        "example": "1.2 MB"
+      },
+      "total": {
+        "type": "String",
+        "example": "4.0 MB"
+      }
+    }
+  },
+  "transferPanelInterrupted": "Interrupted",
+  "@transferPanelInterrupted": {
+    "description": "Transfer row: a transfer stopped by a dropped connection, before any data moved."
+  },
+  "transferPanelInterruptedAt": "Interrupted at {percent}%",
+  "@transferPanelInterruptedAt": {
+    "description": "Transfer row: a transfer stopped by a dropped connection, and how far it had got.",
+    "placeholders": {
+      "percent": {
+        "type": "int",
+        "example": "42"
+      }
+    }
+  },
+  "transferPanelResumesLater": "continues when the connection is back",
+  "@transferPanelResumesLater": {
+    "description": "Transfer row: lower-case, after \"Interrupted ·\": the transfer resumes by itself on reconnect."
+  },
+  "transferPanelMoreQueued": "{count, plural, other{{count} more queued}}",
+  "@transferPanelMoreQueued": {
+    "description": "Transfer bar: after the running file's name and a dot, how many more transfers wait.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "2"
+      }
+    }
+  },
+  "transferPanelOneFailed": "{file} failed",
+  "@transferPanelOneFailed": {
+    "description": "Transfer bar: one transfer failed; {file} is its file name.",
+    "placeholders": {
+      "file": {
+        "type": "String",
+        "example": "notes.txt"
+      }
+    }
+  },
+  "transferPanelManyFailed": "{count, plural, =1{{count} transfer failed} other{{count} transfers failed}}",
+  "@transferPanelManyFailed": {
+    "description": "Transfer bar: several transfers failed.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "3"
+      }
+    }
+  },
+  "transferPanelUploaded": "Uploaded {file}",
+  "@transferPanelUploaded": {
+    "description": "Transfer bar: one upload finished; {file} is a file name or remote path.",
+    "placeholders": {
+      "file": {
+        "type": "String",
+        "example": "notes.txt"
+      }
+    }
+  },
+  "transferPanelSavedFile": "Saved {file}",
+  "@transferPanelSavedFile": {
+    "description": "Transfer bar and download snackbar: one download finished; {file} is a file name.",
+    "placeholders": {
+      "file": {
+        "type": "String",
+        "example": "notes.txt"
+      }
+    }
+  },
+  "transferPanelMovedToDestination": "Moved to {destination}",
+  "@transferPanelMovedToDestination": {
+    "description": "Transfer bar: one server-to-server move finished.",
+    "placeholders": {
+      "destination": {
+        "type": "String",
+        "example": "/srv/data/notes.txt"
+      }
+    }
+  },
+  "transferPanelCopiedTo": "Copied to {destination}",
+  "@transferPanelCopiedTo": {
+    "description": "Transfer bar: one server-to-server copy finished.",
+    "placeholders": {
+      "destination": {
+        "type": "String",
+        "example": "/srv/data/notes.txt"
+      }
+    }
+  },
+  "transferPanelSavedToDownloads": "{count, plural, =1{{count} file saved to Downloads} other{{count} files saved to Downloads}}",
+  "@transferPanelSavedToDownloads": {
+    "description": "Transfer bar and download snackbar: several downloads finished. Downloads is the device's Downloads folder; use its usual name.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "3"
+      }
+    }
+  },
+  "transferPanelFilesUploaded": "{count, plural, =1{{count} file uploaded} other{{count} files uploaded}}",
+  "@transferPanelFilesUploaded": {
+    "description": "Transfer bar: several uploads finished.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "3"
+      }
+    }
+  },
+  "transferPanelFilesSent": "{count, plural, =1{{count} file sent to another server} other{{count} files sent to another server}}",
+  "@transferPanelFilesSent": {
+    "description": "Transfer bar: several server-to-server copies finished.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "3"
+      }
+    }
+  },
+  "transferPanelDownloadedCount": "{count, plural, other{{count} downloaded}}",
+  "@transferPanelDownloadedCount": {
+    "description": "Transfer bar: part of a mixed summary joined with dots (\"2 downloaded · 1 uploaded\"). Lower-case, very short.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "2"
+      }
+    }
+  },
+  "transferPanelUploadedCount": "{count, plural, other{{count} uploaded}}",
+  "@transferPanelUploadedCount": {
+    "description": "Transfer bar: part of a mixed summary joined with dots. Lower-case, very short.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "1"
+      }
+    }
+  },
+  "transferPanelSentCount": "{count, plural, other{{count} sent across}}",
+  "@transferPanelSentCount": {
+    "description": "Transfer bar: part of a mixed summary; files copied to another server. Lower-case, very short.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "1"
+      }
+    }
   }
 }

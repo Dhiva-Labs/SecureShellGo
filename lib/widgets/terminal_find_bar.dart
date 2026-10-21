@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:xterm/xterm.dart';
 
+import '../l10n/l10n.dart';
 import '../services/terminal_search.dart';
 
 /// Searching one terminal: the query, the matches, which one is current, and
@@ -342,17 +343,20 @@ class TerminalFindController extends ChangeNotifier {
     highlight.p2.dispose();
   }
 
-  /// "3 of 12", "No results", "1000+".
-  String get summary {
-    if (_error != null) return 'Invalid pattern';
-    if (_tooSlow) return 'Pattern too slow';
+  /// "3 of 12", "No results", "1000+" — in English, as tests read it.
+  String get summary => describe(lookupAppLocalizations(const Locale('en')));
+
+  /// [summary] in the language of [l10n], for the bar itself.
+  String describe(AppLocalizations l10n) {
+    if (_error != null) return l10n.terminalFindInvalidPattern;
+    if (_tooSlow) return l10n.terminalFindTooSlow;
     if (_query.isEmpty) return '';
     // A new pattern, not a refresh of the one shown.
-    if (_search != null && !_searchKeepsPlace) return 'Searching…';
-    if (_matches.isEmpty) return 'No results';
+    if (_search != null && !_searchKeepsPlace) return l10n.terminalFindSearching;
+    if (_matches.isEmpty) return l10n.terminalFindNoResults;
     final total = '${_matches.length}${_truncated ? '+' : ''}';
     final index = _current;
-    return index == null ? total : '${index + 1} of $total';
+    return index == null ? total : l10n.terminalFindPosition(index + 1, total);
   }
 
   @override
@@ -472,6 +476,7 @@ class _TerminalFindBarState extends State<TerminalFindBar> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final l10n = context.l10n;
     final find = widget.find;
     final query = find.query;
     final buttonSize = widget.touch ? 48.0 : 36.0;
@@ -550,7 +555,7 @@ class _TerminalFindBarState extends State<TerminalFindBar> {
       style: const TextStyle(fontSize: 14),
       decoration: InputDecoration(
         isDense: true,
-        hintText: 'Find',
+        hintText: l10n.terminalFindHint,
         filled: false,
         border: InputBorder.none,
         enabledBorder: InputBorder.none,
@@ -565,7 +570,7 @@ class _TerminalFindBarState extends State<TerminalFindBar> {
     final count = Padding(
       padding: const EdgeInsets.symmetric(horizontal: 6),
       child: Text(
-        find.summary,
+        find.describe(l10n),
         maxLines: 1,
         style: theme.textTheme.bodySmall?.copyWith(
           color: error
@@ -578,13 +583,13 @@ class _TerminalFindBarState extends State<TerminalFindBar> {
     final toggles = [
       toggle(
         label: 'Aa',
-        tooltip: 'Match case',
+        tooltip: l10n.terminalFindMatchCase,
         selected: query.caseSensitive,
         onPressed: () => _setQuery(caseSensitive: !query.caseSensitive),
       ),
       toggle(
         label: '.*',
-        tooltip: 'Regular expression',
+        tooltip: l10n.terminalFindRegex,
         selected: query.regex,
         onPressed: () => _setQuery(regex: !query.regex),
       ),
@@ -593,18 +598,18 @@ class _TerminalFindBarState extends State<TerminalFindBar> {
     final arrows = [
       iconButton(
         icon: Icons.keyboard_arrow_up,
-        tooltip: 'Previous match (Shift+Enter)',
+        tooltip: l10n.terminalFindPrevious,
         onPressed: hasMatches ? find.previous : null,
       ),
       iconButton(
         icon: Icons.keyboard_arrow_down,
-        tooltip: 'Next match (Enter)',
+        tooltip: l10n.terminalFindNext,
         onPressed: hasMatches ? find.next : null,
       ),
     ];
     final close = iconButton(
       icon: Icons.close,
-      tooltip: 'Close (Esc)',
+      tooltip: l10n.terminalFindClose,
       onPressed: widget.onClose,
     );
 

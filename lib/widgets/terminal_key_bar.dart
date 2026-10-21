@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:xterm/xterm.dart';
 
+import '../l10n/l10n.dart';
 import '../theme.dart';
 
 /// Sends a key through the terminal's input handler.
@@ -90,7 +91,7 @@ class TerminalKeyBar extends StatelessWidget {
       // An icon, not ⎘: common monospace fonts lack the glyph, and it drew
       // as an empty box.
       _KeyButton(
-        label: 'Paste',
+        label: context.l10n.terminalPaste,
         icon: Icons.content_paste,
         onPressed: onPaste,
       ),
