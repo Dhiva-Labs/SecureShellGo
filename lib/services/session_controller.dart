@@ -690,7 +690,7 @@ class SessionController {
     if (_mosh != null && retryable && !_disposed) {
       if (_sshLostUnderMosh == generation) return;
       _sshLostUnderMosh = generation;
-      _keepalive.stop();
+      _keepalive?.stop();
       if (_reconnector == null) {
         transfers.cancelAll();
       } else {
