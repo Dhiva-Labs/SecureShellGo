@@ -15,6 +15,7 @@ import '../services/transfer_hub.dart';
 import '../services/transfer_queue.dart';
 import '../services/tunnel_runtime.dart';
 import '../theme.dart';
+import '../widgets/session_banners.dart';
 import '../widgets/snippet_picker.dart';
 import '../widgets/transfer_hub_panel.dart';
 import '../widgets/transfer_panel.dart';
@@ -980,20 +981,10 @@ class _SessionPageState extends State<_SessionPage> {
 
     return Column(
       children: [
-        // Reconnecting takes precedence over the disconnected banner: both
-        // describe the same dead transport, but only one of them is still a
-        // live story. Neither blocks anything — the scrollback stays on
-        // screen and stays scrollable underneath.
-        if (_session.isReconnecting)
-          _ReconnectingBanner(
-            message: _session.reconnectMessage,
-            onStop: () => setState(_session.stopReconnecting),
-          )
-        else if (entry.isClosed)
-          _DisconnectedBanner(
-            message: entry.controller.closeReason,
-            onClose: () => unawaited(widget.manager.close(entry.id)),
-          ),
+        SessionBanners(
+          session: entry,
+          onCloseTab: () => unawaited(widget.manager.close(entry.id)),
+        ),
         Expanded(
           child: widget.wide
               // Tablets, DeX and unfolded foldables: both panes live at once,
@@ -1377,92 +1368,6 @@ class _TransferAction extends StatelessWidget {
           ),
         );
       },
-    );
-  }
-}
-
-/// "Reconnecting…", above the terminal whose transport has just died.
-///
-/// Deliberately not a dialog, not a modal barrier and not a full-screen
-/// placeholder: the session may well be back in two seconds, and having thrown
-/// a modal over the user's scrollback for a Wi-Fi handover would be a worse
-/// experience than the drop it is reporting. The old buffer stays on screen
-/// and stays readable throughout.
-class _ReconnectingBanner extends StatelessWidget {
-  const _ReconnectingBanner({this.message, required this.onStop});
-
-  final String? message;
-  final VoidCallback onStop;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    return Material(
-      color: theme.colorScheme.primary.withValues(alpha: 0.13),
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
-        child: Row(
-          children: [
-            const SizedBox(
-              width: 16,
-              height: 16,
-              child: CircularProgressIndicator(strokeWidth: 2),
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Text(
-                message ?? 'Reconnecting…',
-                style: const TextStyle(fontSize: 13, height: 1.3),
-              ),
-            ),
-            const SizedBox(width: 8),
-            TextButton(
-              // Reconnecting is a guess about what the user wants; this is how
-              // they say otherwise, without having to close the tab to do it.
-              onPressed: onStop,
-              child: const Text('Stop'),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _DisconnectedBanner extends StatelessWidget {
-  const _DisconnectedBanner({this.message, required this.onClose});
-
-  final String? message;
-  final VoidCallback onClose;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    return Material(
-      color: theme.colorScheme.error.withValues(alpha: 0.15),
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
-        child: Row(
-          children: [
-            Icon(Icons.link_off, color: theme.colorScheme.error, size: 20),
-            const SizedBox(width: 10),
-            Expanded(
-              child: Text(
-                message ?? 'Connection closed.',
-                style: const TextStyle(fontSize: 13, height: 1.3),
-              ),
-            ),
-            const SizedBox(width: 8),
-            TextButton(
-              // A dead session's tab is the one thing left to do something
-              // about, and closing it is the only useful thing — the others
-              // are unaffected either way.
-              onPressed: onClose,
-              child: const Text('Close'),
-            ),
-          ],
-        ),
-      ),
     );
   }
 }
