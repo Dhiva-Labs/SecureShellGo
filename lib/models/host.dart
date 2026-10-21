@@ -84,6 +84,7 @@ class Host {
     this.colorLabel,
     this.startupCommand,
     this.jumpHostId,
+    this.legacyAlgorithms = false,
   });
 
   final String id;
@@ -125,6 +126,18 @@ class Host {
   /// rejected with a specific message, in `jump_host_chain.dart`.
   final String? jumpHostId;
 
+  /// Whether to also offer the old algorithms this host may need: SHA-1 key
+  /// exchange and `ssh-rsa` host-key signatures, and CBC ciphers.
+  ///
+  /// Off by default and per host, never global. The SSH library stopped
+  /// proposing these in 4.0, as OpenSSH did, because SHA-1 signatures are
+  /// open to collisions and CBC to plaintext recovery (CVE-2008-5161). An old
+  /// router or NAS that speaks nothing newer then fails to connect, and the
+  /// error says to turn this on for that one host, so the weakening is a
+  /// decision about a server the user knows rather than something every
+  /// connection quietly falls back to.
+  final bool legacyAlgorithms;
+
   /// `user@host` or `user@host:port` when the port is non-standard.
   String get target =>
       port == 22 ? '$username@$hostname' : '$username@$hostname:$port';
@@ -144,6 +157,7 @@ class Host {
     HostColorLabel? colorLabel,
     String? startupCommand,
     String? jumpHostId,
+    bool? legacyAlgorithms,
   }) {
     return Host(
       id: id ?? this.id,
@@ -157,6 +171,7 @@ class Host {
       colorLabel: colorLabel ?? this.colorLabel,
       startupCommand: startupCommand ?? this.startupCommand,
       jumpHostId: jumpHostId ?? this.jumpHostId,
+      legacyAlgorithms: legacyAlgorithms ?? this.legacyAlgorithms,
     );
   }
 
@@ -178,6 +193,7 @@ class Host {
         colorLabel: colorLabel,
         startupCommand: startupCommand,
         jumpHostId: jumpHostId,
+        legacyAlgorithms: legacyAlgorithms,
       );
 
   /// Reassigns this host's group, [group] null meaning Ungrouped.
@@ -198,6 +214,7 @@ class Host {
         colorLabel: colorLabel,
         startupCommand: startupCommand,
         jumpHostId: jumpHostId,
+        legacyAlgorithms: legacyAlgorithms,
       );
 
   Map<String, dynamic> toJson() => {
@@ -213,6 +230,7 @@ class Host {
         if (colorLabel != null) 'colorLabel': colorLabel!.name,
         if (startupCommand != null) 'startupCommand': startupCommand,
         if (jumpHostId != null) 'jumpHostId': jumpHostId,
+        if (legacyAlgorithms) 'legacyAlgorithms': true,
       };
 
   factory Host.fromJson(Map<String, dynamic> json) {
@@ -245,6 +263,8 @@ class Host {
         final String id when id.trim().isNotEmpty => id,
         _ => null,
       },
+      // Absent on every host saved before this existed: the modern defaults.
+      legacyAlgorithms: json['legacyAlgorithms'] == true,
     );
   }
 }

@@ -105,6 +105,9 @@ class _HostEditScreenState extends State<HostEditScreen> {
   bool _loadingCredentials = false;
   bool _generatingKey = false;
   bool _installingKey = false;
+
+  /// See [Host.legacyAlgorithms]. Off for every new host.
+  bool _legacyAlgorithms = false;
   String? _error;
   String? _errorDetails;
 
@@ -156,6 +159,7 @@ class _HostEditScreenState extends State<HostEditScreen> {
       _selectedColorLabel = host.colorLabel;
       _startupCommandController.text = host.startupCommand ?? '';
       _jumpHostId = host.jumpHostId;
+      _legacyAlgorithms = host.legacyAlgorithms;
       _loadExistingCredentials(host.id);
     }
     unawaited(_loadGroupNames());
@@ -252,6 +256,7 @@ class _HostEditScreenState extends State<HostEditScreen> {
       colorLabel: _selectedColorLabel,
       startupCommand: startupCommand.isEmpty ? null : startupCommand,
       jumpHostId: _jumpHostId,
+      legacyAlgorithms: _legacyAlgorithms,
     );
   }
 
@@ -973,6 +978,19 @@ class _HostEditScreenState extends State<HostEditScreen> {
             fontFamily: AppTheme.monoFontFamily,
             fontFamilyFallback: AppTheme.monoFontFamilyFallback,
             fontSize: 13,
+          ),
+        ),
+        const SizedBox(height: 8),
+        SwitchListTile(
+          contentPadding: EdgeInsets.zero,
+          value: _legacyAlgorithms,
+          onChanged: (value) => setState(() => _legacyAlgorithms = value),
+          secondary: const Icon(Icons.history_toggle_off),
+          title: const Text('Allow legacy algorithms'),
+          subtitle: const Text(
+            'Only for an old router or NAS that cannot connect otherwise. '
+            'Adds SHA-1 key exchange and host-key signatures and CBC '
+            'ciphers, which are weaker, for this host only.',
           ),
         ),
         const SizedBox(height: 12),

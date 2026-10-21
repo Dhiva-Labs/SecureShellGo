@@ -768,7 +768,7 @@ class SessionController {
     try {
       await client.absolute('.').timeout(sftpReadyTimeout);
     } catch (_) {
-      client.close();
+      closeQuietly(client.close);
       rethrow;
     }
     return SftpService(client);

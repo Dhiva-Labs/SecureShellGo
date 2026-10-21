@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:dartssh2/dartssh2.dart';
 
@@ -39,6 +40,124 @@ export 'ssh_agent_client.dart'
         SshAgentIdentity;
 
 /// A connection failure with a message that is safe to show to a human.
+/// An [SSHSocket] that remembers when bytes last arrived from the server.
+/// Everything else passes straight through.
+class InboundWatchSocket implements SSHSocket {
+  InboundWatchSocket(this._inner, {DateTime Function()? clock})
+      : _now = clock ?? DateTime.now;
+
+  final SSHSocket _inner;
+  final DateTime Function() _now;
+
+  DateTime? lastInboundAt;
+
+  late final Stream<Uint8List> _stream = _inner.stream.map((data) {
+    lastInboundAt = _now();
+    return data;
+  });
+
+  @override
+  Stream<Uint8List> get stream => _stream;
+
+  @override
+  StreamSink<List<int>> get sink => _inner.sink;
+
+  @override
+  Future<void> get done => _inner.done;
+
+  @override
+  Future<void> close() => _inner.close();
+
+  @override
+  void destroy() => _inner.destroy();
+
+  @override
+  Future<void> flush() => _inner.flush();
+}
+
+/// The algorithms to offer [host]: the SSH library's own defaults — modern
+/// OpenSSH's — with the legacy ones appended *after* them when the host has
+/// [Host.legacyAlgorithms] set, so a server that speaks anything newer still
+/// negotiates that and only one that speaks nothing else falls through to
+/// the old.
+SSHAlgorithms sshAlgorithmsFor(Host host) {
+  const defaults = SSHAlgorithms();
+  if (!host.legacyAlgorithms) return defaults;
+  return SSHAlgorithms(
+    kex: [
+      ...defaults.kex,
+      SSHKexType.dh14Sha1,
+      SSHKexType.dhGexSha1,
+      SSHKexType.dh1Sha1,
+    ],
+    hostkey: [...defaults.hostkey, SSHHostkeyType.rsaSha1],
+    cipher: [
+      ...defaults.cipher,
+      SSHCipherType.aes256cbc,
+      SSHCipherType.aes192cbc,
+      SSHCipherType.aes128cbc,
+    ],
+    mac: [...defaults.mac, SSHMacType.hmacMd5],
+  );
+}
+
+/// Whether [error] is the two sides failing to agree on an algorithm — our
+/// side noticing it (dartssh2 raises a `StateError` naming the kind) or the
+/// server's (`SSH_MSG_DISCONNECT` with reason 3, KEY_EXCHANGE_FAILED, which
+/// is where OpenSSH says "no matching key exchange method found").
+///
+/// Either arrives wrapped: the client reports a transport that closed during
+/// the handshake as [SSHAuthAbortError] with the cause as its `reason`, and
+/// a non-SSH error inside the transport as [SSHInternalError]. Both are
+/// unwrapped here.
+bool isAlgorithmNegotiationFailure(Object error) {
+  Object? current = error;
+  for (var depth = 0; current != null && depth < 4; depth++) {
+    if (current is StateError && current.message.startsWith('No matching')) {
+      return true;
+    }
+    if (current is SSHDisconnectError) {
+      return current.reasonCode == 3 ||
+          current.message.toLowerCase().contains('no matching');
+    }
+    current = switch (current) {
+      SSHAuthAbortError(:final reason) => reason,
+      SSHInternalError(:final error) => error,
+      _ => null,
+    };
+  }
+  return false;
+}
+
+/// What to tell the user when [isAlgorithmNegotiationFailure] — pointing at
+/// the per-host switch, or past it when it is already on.
+String describeNegotiationFailure(Host host) {
+  if (host.legacyAlgorithms) {
+    return '"${host.displayName}" and this app have no encryption method in '
+        'common, even with legacy algorithms allowed. The server may need a '
+        'newer SSH version.';
+  }
+  return '"${host.displayName}" only offers old encryption methods (SHA-1 or '
+      'CBC) that are no longer used by default. If you trust this server — '
+      'an older router or NAS, say — edit the host and turn on "Allow legacy '
+      'algorithms".';
+}
+
+/// Starts [close] without waiting for it, and without letting a failure to
+/// close something that is already gone surface as an uncaught async error.
+///
+/// dartssh2 3.0 made `SSHClient.close()` and `SftpClient.close()` return a
+/// future that ends in closing the socket, which can fail on a socket the
+/// network already tore down. Every caller here closes on the way out of a
+/// failure or a hang-up and has nothing useful to do with that error.
+void closeQuietly(Future<void> Function() close) {
+  try {
+    unawaited(close().catchError((Object _) {}));
+  } catch (_) {
+    // Threw before returning a future: already gone.
+  }
+}
+
 class SshConnectionException implements Exception {
   const SshConnectionException(this.message, {this.details});
 
@@ -167,11 +286,7 @@ class SshJumpLink {
   final SSHSocket socket;
 
   void close() {
-    try {
-      client.close();
-    } catch (_) {
-      // Already gone.
-    }
+    closeQuietly(client.close);
     try {
       socket.destroy();
     } catch (_) {
@@ -281,6 +396,16 @@ class SshConnection implements SessionTransport {
 
   final SSHSocket socket;
 
+  /// When bytes last arrived from the server, or null before any have.
+  ///
+  /// Anything counts — shell output, an SFTP reply, a keepalive answer — so a
+  /// dead-link check can tell a quiet connection that is still alive from
+  /// one the network has silently dropped.
+  DateTime? get lastInboundAt => switch (socket) {
+        InboundWatchSocket(:final lastInboundAt) => lastInboundAt,
+        _ => null,
+      };
+
   /// The agent slot handed to [SSHClient.agentHandler] at construction, or
   /// null on every connection not dialled with `agentForwarding: true` —
   /// which is all of them bar the one a direct transfer opens for its single
@@ -343,11 +468,7 @@ class SshConnection implements SessionTransport {
 
   @override
   void close() {
-    try {
-      client.close();
-    } catch (_) {
-      // Already gone.
-    }
+    closeQuietly(client.close);
     try {
       socket.destroy();
     } catch (_) {
@@ -796,6 +917,7 @@ class SshService {
     // genuine handshake failure once the client surfaces the error.
     var userRejectedKey = false;
     VerifiedHostKey? verifiedKey;
+    final watched = InboundWatchSocket(socket);
 
     // Null unless the caller asked for forwarding, and the difference is not
     // cosmetic: dartssh2 decides per *client* whether to put an
@@ -817,7 +939,7 @@ class SshService {
     final loginOver = Completer<void>();
 
     late final SSHClient client;
-    final deadline = _LoginDeadline(() => client.close());
+    final deadline = _LoginDeadline(() => closeQuietly(client.close));
 
     final usesPassword = host.authMethod == SshAuthMethod.password;
     final responder = KeyboardInteractiveResponder(
@@ -845,10 +967,11 @@ class SshService {
     final banners = <String>[];
 
     client = SSHClient(
-      socket,
+      watched,
       username: host.username,
       identities: identities,
       agentHandler: agentSlot,
+      algorithms: sshAlgorithmsFor(host),
       // Not offered again once the server has refused it — see [_login].
       onPasswordRequest: usesPassword && !savedPasswordRejected
           ? () => credentials.password
@@ -912,7 +1035,7 @@ class SshService {
     try {
       await client.authenticated;
     } catch (e) {
-      client.close();
+      closeQuietly(client.close);
       socket.destroy();
       if (userRejectedKey) {
         throw const HostKeyRejectedException(
@@ -939,7 +1062,7 @@ class SshService {
     return SshConnection(
       client: client,
       host: host,
-      socket: socket,
+      socket: watched,
       agentSlot: agentSlot,
       jumpLinks: jumpLinks,
       hostKey: verifiedKey,
@@ -1149,6 +1272,22 @@ class SshService {
   }
 
   String _describeSshError(Object error, Host host) {
+    if (isAlgorithmNegotiationFailure(error)) {
+      return describeNegotiationFailure(host);
+    }
+    final disconnect = switch (error) {
+      SSHDisconnectError() => error,
+      SSHAuthAbortError(reason: final SSHDisconnectError reason) => reason,
+      _ => null,
+    };
+    if (disconnect != null) {
+      // 3.3 started passing on what the server said when it hung up, which
+      // is where OpenSSH explains itself. Better than "unexpected".
+      final said = cleanServerText(disconnect.message);
+      return said.isEmpty
+          ? 'The server closed the connection.'
+          : 'The server closed the connection: $said';
+    }
     if (error is SSHAuthFailError) {
       return host.authMethod == SshAuthMethod.password
           ? 'Authentication failed for "${host.username}". '
