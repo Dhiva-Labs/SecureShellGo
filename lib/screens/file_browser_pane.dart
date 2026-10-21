@@ -11,9 +11,12 @@ import '../services/device_storage.dart';
 import '../services/download_plan.dart';
 import '../services/editor_document.dart';
 import '../services/input_profile.dart';
+import '../services/remote_exec.dart';
 import '../services/remote_entry_actions.dart';
+import '../services/remote_file_ops.dart';
 import '../services/remote_path.dart';
 import '../services/remote_transfer_plan.dart';
+import '../services/server_side_job.dart';
 import '../services/session_controller.dart';
 import '../services/session_manager.dart';
 import '../services/settings_store.dart';
@@ -22,10 +25,12 @@ import '../services/transfer_queue.dart';
 import '../services/upload_plan.dart';
 import '../theme.dart';
 import '../widgets/bookmark_sheet.dart';
+import '../widgets/remote_file_ops_dialogs.dart';
 import '../widgets/transfer_panel.dart';
 import 'log_viewer_screen.dart';
 import 'remote_directory_picker.dart';
 import 'remote_editor_screen.dart';
+import 'remote_search_screen.dart';
 
 /// What to do when a download would land on an existing file name.
 enum _CollisionChoice { keepBoth, overwrite, cancel }
@@ -151,6 +156,16 @@ class _FileBrowserPaneState extends State<FileBrowserPane>
   /// deleted, and the line must stay up until both are done.
   int _operationsInFlight = 0;
 
+  /// What the server can do for the actions that run there — compress,
+  /// extract, search, duplicate, change owner. Nothing until the probe in
+  /// [initState] has answered.
+  RemoteToolkit _toolkit = RemoteToolkit.none;
+  Future<RemoteToolkit>? _toolkitProbe;
+
+  /// Those actions while they run on the server, for the strip under the
+  /// toolbar.
+  final List<ServerOpEntry> _serverOps = [];
+
   /// Set when a transfer changed the directory on screen, cleared by the
   /// refresh it triggers once the queue is quiet.
   bool _uploadLanded = false;
@@ -200,6 +215,7 @@ class _FileBrowserPaneState extends State<FileBrowserPane>
     _arrivals = widget.session.arrivals.listen(_handleArrival);
     unawaited(_openHome());
     unawaited(_reloadBookmarks());
+    unawaited(_tools());
   }
 
   @override
@@ -1431,6 +1447,319 @@ class _FileBrowserPaneState extends State<FileBrowserPane>
     if (mounted) _snack('${entry.name} is now ${_octalMode(chosen)}');
   }
 
+  // ------------------------------------------------- server-side operations
+
+  /// Asks the server, once, what it can do; see [RemoteToolkit]. Until it
+  /// answers the actions that need it are simply not offered.
+  Future<RemoteToolkit> _tools() => _toolkitProbe ??=
+          RemoteToolkit.probe(widget.session.connection).then((kit) {
+        if (mounted) setState(() => _toolkit = kit);
+        return kit;
+      });
+
+  /// Runs [script] as a job on the server, with a line under the toolbar
+  /// that can stop it, and says how it went.
+  Future<ServerOpOutcome> _runServerOp(
+    String label,
+    String script, {
+    String? afterCancel,
+  }) async {
+    final op = ServerOperation(
+      transport: () => widget.session.connection,
+      script: script,
+      afterCancel: afterCancel,
+    );
+    final entry = ServerOpEntry(label: label, onStop: op.cancel);
+    setState(() => _serverOps.add(entry));
+    try {
+      return await op.run();
+    } finally {
+      if (mounted) setState(() => _serverOps.remove(entry));
+    }
+  }
+
+  /// Refreshes if the folder on screen is the one that changed, then says
+  /// how [outcome] went.
+  Future<void> _reportServerOp(
+    ServerOpOutcome outcome,
+    String what, {
+    required String directory,
+    String? success,
+    SnackBarAction? action,
+  }) async {
+    if (!mounted) return;
+    if (outcome.state != ServerOpState.failed && _path == directory) {
+      await _refresh();
+    }
+    if (!mounted) return;
+    if (outcome.succeeded && success != null) {
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text(success), action: action));
+      return;
+    }
+    _snack(
+      describeServerOp(outcome, what),
+      isError: outcome.state == ServerOpState.failed ||
+          outcome.state == ServerOpState.lost,
+    );
+  }
+
+  /// Packs [entries] (all in the folder on screen) into one archive beside
+  /// them.
+  Future<void> _compress(List<RemoteEntry> entries) async {
+    if (entries.isEmpty) return;
+    final kit = await _tools();
+    final formats = kit.compressFormats;
+    if (!mounted || formats.isEmpty) return;
+    final directory = RemotePath.parent(entries.first.path);
+    final RemoteFileSystem sftp;
+    try {
+      sftp = await _client();
+    } on SftpFailure catch (e) {
+      if (mounted) _snack(e.message, isError: true);
+      return;
+    }
+    if (!mounted) return;
+    final folderName = RemotePath.basename(directory);
+    final stem = entries.length == 1
+        ? (entries.single.isNavigable
+            ? entries.single.name
+            : ArchiveKind.stem(entries.single.name))
+        : (folderName == RemotePath.root ? 'archive' : folderName);
+    final choice = await showDialog<CompressChoice>(
+      context: context,
+      builder: (context) => CompressDialog(
+        itemNames: [for (final e in entries) e.name],
+        suggestedStem: stem,
+        formats: formats,
+        check: (name) async => await remoteNameTaken(sftp, directory, name)
+            ? '"$name" already exists here.'
+            : null,
+      ),
+    );
+    if (!mounted || choice == null) return;
+
+    final part = '.${choice.name}.ssg-part-${ServerSideJob.newId().substring(0, 8)}';
+    final what = entries.length == 1
+        ? 'Compressing ${entries.single.name}'
+        : 'Compressing ${entries.length} items';
+    _clearSelection();
+    final outcome = await _runServerOp(
+      what,
+      RemoteFileCommands.compress(
+        directory: directory,
+        names: [for (final e in entries) e.name],
+        archiveName: choice.name,
+        partName: part,
+        format: choice.format,
+        tools: kit,
+      ),
+      afterCancel:
+          RemoteFileCommands.removeFile(RemotePath.join(directory, part)),
+    );
+    await _reportServerOp(
+      outcome,
+      what,
+      directory: directory,
+      success: 'Made ${choice.name}${_hiddenNote(choice.name)}',
+    );
+  }
+
+  /// Unpacks [entry] into a folder beside it — a new one, unless the user
+  /// chooses to go into one that is already there.
+  Future<void> _extract(RemoteEntry entry) async {
+    final kind = ArchiveKind.of(entry.name);
+    if (kind == null) return;
+    final kit = await _tools();
+    if (!mounted || !kit.canExtract(kind)) return;
+    final directory = RemotePath.parent(entry.path);
+    final RemoteFileSystem sftp;
+    try {
+      sftp = await _client();
+    } on SftpFailure catch (e) {
+      if (mounted) _snack(e.message, isError: true);
+      return;
+    }
+    if (!mounted) return;
+    final choice = await showDialog<ExtractChoice>(
+      context: context,
+      builder: (context) => ExtractDialog(
+        archiveName: entry.name,
+        suggestedFolder: ArchiveKind.stem(entry.name),
+        folderExists: (name) async {
+          if (!await remoteNameTaken(sftp, directory, name)) return false;
+          final entries = await sftp.list(directory);
+          final there = entries.where((e) => e.name == name).firstOrNull;
+          if (there == null || there.kind == RemoteEntryKind.directory) {
+            return true;
+          }
+          return '"$name" is here and is not a folder. Choose another name.';
+        },
+      ),
+    );
+    if (!mounted || choice == null) return;
+
+    final target = RemotePath.join(directory, choice.folder);
+    final what = 'Extracting ${entry.name}';
+    final outcome = await _runServerOp(
+      what,
+      RemoteFileCommands.extract(
+        archivePath: entry.path,
+        kind: kind,
+        destination: target,
+        mode: choice.mode,
+        tools: kit,
+      ),
+    );
+    await _reportServerOp(
+      outcome,
+      what,
+      directory: directory,
+      success: 'Extracted into ${choice.folder}',
+      action: SnackBarAction(
+        label: 'Open',
+        onPressed: () => unawaited(_navigate(target)),
+      ),
+    );
+  }
+
+  /// Copies each of [entries] beside itself, as "name copy".
+  Future<void> _duplicate(List<RemoteEntry> entries) async {
+    if (entries.isEmpty) return;
+    final kit = await _tools();
+    if (!mounted || !kit.canDuplicate) return;
+    final RemoteFileSystem sftp;
+    try {
+      sftp = await _client();
+    } on SftpFailure catch (e) {
+      if (mounted) _snack(e.message, isError: true);
+      return;
+    }
+    _clearSelection();
+    for (final entry in entries) {
+      if (!mounted) return;
+      final directory = RemotePath.parent(entry.path);
+      final Set<String> taken;
+      try {
+        taken = {for (final e in await sftp.list(directory)) e.name};
+      } on SftpFailure catch (e) {
+        if (mounted) _snack(e.message, isError: true);
+        return;
+      }
+      final name = RemoteFileCommands.copyName(
+        entry.name,
+        taken.contains,
+        isDirectory: entry.kind == RemoteEntryKind.directory,
+      );
+      final what = 'Duplicating ${entry.name}';
+      final outcome = await _runServerOp(
+        what,
+        RemoteFileCommands.duplicate(
+          source: entry.path,
+          destination: RemotePath.join(directory, name),
+          tools: kit,
+        ),
+      );
+      await _reportServerOp(
+        outcome,
+        what,
+        directory: directory,
+        success: 'Made $name',
+      );
+      if (!outcome.succeeded) return;
+    }
+  }
+
+  /// `chown` on [entries], through a form that shows whose they are now.
+  Future<void> _changeOwner(List<RemoteEntry> entries) async {
+    if (entries.isEmpty) return;
+    final kit = await _tools();
+    if (!mounted || !kit.canChangeOwner) return;
+    ({String owner, String group})? current;
+    if (entries.length == 1) {
+      try {
+        final result = await RemoteExec.run(
+          widget.session.connection,
+          RemoteFileCommands.ownerOf(entries.single.path),
+        );
+        if (result.succeeded) {
+          current = RemoteFileCommands.parseOwner(result.stdout);
+        }
+      } catch (_) {
+        // The form works without it.
+      }
+    }
+    if (!mounted) return;
+    final choice = await showDialog<OwnerChoice>(
+      context: context,
+      builder: (context) => ChangeOwnerDialog(
+        itemNames: [for (final e in entries) e.name],
+        anyFolder: entries.any((e) => e.kind == RemoteEntryKind.directory),
+        currentOwner: current?.owner,
+        currentGroup: current?.group,
+      ),
+    );
+    if (!mounted || choice == null) return;
+    final directory = RemotePath.parent(entries.first.path);
+    final spec = RemoteFileCommands.ownerSpec(choice.owner, choice.group)!;
+    final what = entries.length == 1
+        ? 'Changing the owner of ${entries.single.name}'
+        : 'Changing the owner of ${entries.length} items';
+    _clearSelection();
+    final outcome = await _runServerOp(
+      what,
+      RemoteFileCommands.changeOwner(
+        paths: [for (final e in entries) e.path],
+        owner: choice.owner,
+        group: choice.group,
+        recursive: choice.recursive,
+      ),
+    );
+    await _reportServerOp(
+      outcome,
+      what,
+      directory: directory,
+      success: entries.length == 1
+          ? '${entries.single.name} now belongs to $spec'
+          : '${entries.length} items now belong to $spec',
+    );
+  }
+
+  /// Searches the server from the folder on screen, and opens what was
+  /// picked: a folder by going into it, a file by going to its folder and
+  /// offering its actions.
+  Future<void> _openSearch() async {
+    final kit = await _tools();
+    if (!mounted || !kit.canSearch) return;
+    final hit = await Navigator.of(context).push<RemoteSearchHit>(
+      MaterialPageRoute(
+        builder: (_) => RemoteSearchScreen(
+          transport: () => widget.session.connection,
+          directory: _path,
+          toolkit: kit,
+        ),
+      ),
+    );
+    if (!mounted || hit == null) return;
+    if (hit.isDirectory) {
+      await _navigate(hit.path);
+      return;
+    }
+    await _navigate(hit.folder);
+    if (!mounted) return;
+    final entry = _entries.where((e) => e.path == hit.path).firstOrNull;
+    if (entry == null) {
+      _snack('${hit.name} is not in ${hit.folder} any more.', isError: true);
+      return;
+    }
+    if (entry.isHidden && !_showHidden) setState(() => _showHidden = true);
+    await _showEntryActions(entry);
+  }
+
+  List<RemoteEntry> get _selectedEntries => _visible
+      .where((e) => _selected.contains(e.path))
+      .toList(growable: false);
+
   void _snack(String message, {bool isError = false}) {
     final theme = Theme.of(context);
     ScaffoldMessenger.of(context).showSnackBar(
@@ -1458,6 +1787,14 @@ class _FileBrowserPaneState extends State<FileBrowserPane>
         _destinations.isNotEmpty;
     final isFolder = entry.kind == RemoteEntryKind.directory;
     final canChmod = _canChangePermissions(entry);
+    // The server-side rows, only for what this server's tools can do.
+    final kit = _toolkit;
+    final archive = entry.isDownloadable ? ArchiveKind.of(entry.name) : null;
+    final canExtract = archive != null && kit.canExtract(archive);
+    final real = entry.kind != RemoteEntryKind.other;
+    final canCompress = real && kit.compressFormats.isNotEmpty;
+    final canDuplicate = real && kit.canDuplicate;
+    final canChown = real && kit.canChangeOwner;
     final keyboard = InputProfile.of(context).keyboard;
     final theme = Theme.of(context);
 
@@ -1590,6 +1927,52 @@ class _FileBrowserPaneState extends State<FileBrowserPane>
                   unawaited(_editPermissions(entry));
                 },
               ),
+            if (canExtract)
+              ListTile(
+                leading: const Icon(Icons.unarchive_outlined),
+                title: const Text('Extract…'),
+                subtitle: const Text('Into a folder beside it, on the server'),
+                onTap: () {
+                  Navigator.of(context).pop();
+                  unawaited(_extract(entry));
+                },
+              ),
+            if (canCompress)
+              ListTile(
+                leading: const Icon(Icons.archive_outlined),
+                title: const Text('Compress…'),
+                subtitle: Text(
+                  'To ${kit.compressFormats.map((f) => f.label).join(' or ')}'
+                  ', on the server',
+                ),
+                onTap: () {
+                  Navigator.of(context).pop();
+                  unawaited(_compress([entry]));
+                },
+              ),
+            if (canDuplicate)
+              ListTile(
+                leading: const Icon(Icons.control_point_duplicate),
+                title: const Text('Duplicate'),
+                subtitle: Text('As "${RemoteFileCommands.copyName(
+                  entry.name,
+                  (name) => _entries.any((e) => e.name == name),
+                  isDirectory: isFolder,
+                )}"'),
+                onTap: () {
+                  Navigator.of(context).pop();
+                  unawaited(_duplicate([entry]));
+                },
+              ),
+            if (canChown)
+              ListTile(
+                leading: const Icon(Icons.manage_accounts_outlined),
+                title: const Text('Change owner…'),
+                onTap: () {
+                  Navigator.of(context).pop();
+                  unawaited(_changeOwner([entry]));
+                },
+              ),
             if (entry.isDownloadable)
               ListTile(
                 leading: const Icon(Icons.checklist),
@@ -1690,6 +2073,17 @@ class _FileBrowserPaneState extends State<FileBrowserPane>
               onSendToServer: _destinations.isEmpty
                   ? null
                   : (move) => unawaited(_sendSelected(move: move)),
+              more: [
+                if (_toolkit.compressFormats.isNotEmpty)
+                  _BarAction('Compress…',
+                      () => unawaited(_compress(_selectedEntries))),
+                if (_toolkit.canDuplicate)
+                  _BarAction('Duplicate',
+                      () => unawaited(_duplicate(_selectedEntries))),
+                if (_toolkit.canChangeOwner)
+                  _BarAction('Change owner…',
+                      () => unawaited(_changeOwner(_selectedEntries))),
+              ],
             )
           else
             _BrowserActions(
@@ -1701,11 +2095,15 @@ class _FileBrowserPaneState extends State<FileBrowserPane>
               onUploadFolder: _folderPickerAvailable
                   ? () => unawaited(_pickAndUploadFolder())
                   : null,
+              onSearch: _toolkit.canSearch
+                  ? () => unawaited(_openSearch())
+                  : null,
             ),
           if (_operationsInFlight > 0)
             const LinearProgressIndicator(minHeight: 2)
           else
             const Divider(height: 1),
+          if (_serverOps.isNotEmpty) ServerOpsStrip(ops: List.of(_serverOps)),
           Expanded(child: _buildBody()),
         ],
       ),
@@ -2987,6 +3385,7 @@ class _BrowserActions extends StatelessWidget {
     required this.onNewFolder,
     required this.onUpload,
     this.onUploadFolder,
+    this.onSearch,
   });
 
   final bool showHidden;
@@ -3002,6 +3401,9 @@ class _BrowserActions extends StatelessWidget {
   /// files case.
   final VoidCallback? onUploadFolder;
 
+  /// Search on the server from here; null where the server has no `find`.
+  final VoidCallback? onSearch;
+
   @override
   Widget build(BuildContext context) {
     return SizedBox(
@@ -3009,18 +3411,33 @@ class _BrowserActions extends StatelessWidget {
       child: Row(
         children: [
           const SizedBox(width: 4),
-          TextButton.icon(
-            onPressed: onToggleHidden,
-            icon: Icon(
-              showHidden ? Icons.visibility : Icons.visibility_off_outlined,
-              size: 18,
-            ),
-            label: Text(
-              showHidden ? 'Hidden shown' : 'Hidden files',
-              style: const TextStyle(fontSize: 12.5),
+          // Takes the room the icons leave and gives way first, so they
+          // always fit: at 320 dp with large text the label would otherwise
+          // push the row past the edge.
+          Expanded(
+            child: Align(
+              alignment: AlignmentDirectional.centerStart,
+              child: TextButton.icon(
+                onPressed: onToggleHidden,
+                icon: Icon(
+                  showHidden ? Icons.visibility : Icons.visibility_off_outlined,
+                  size: 18,
+                ),
+                label: Text(
+                  showHidden ? 'Hidden shown' : 'Hidden files',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(fontSize: 12.5),
+                ),
+              ),
             ),
           ),
-          const Spacer(),
+          if (onSearch != null)
+            IconButton(
+              tooltip: 'Search on the server',
+              icon: const Icon(Icons.manage_search, size: 20),
+              onPressed: onSearch,
+            ),
           IconButton(
             tooltip: 'New folder',
             icon: const Icon(Icons.create_new_folder_outlined, size: 20),
@@ -3056,6 +3473,7 @@ class _SelectionBar extends StatelessWidget {
     required this.onDownload,
     required this.onDelete,
     this.onSendToServer,
+    this.more = const [],
   });
 
   final int count;
@@ -3070,6 +3488,10 @@ class _SelectionBar extends StatelessWidget {
   /// with no other server is not a state worth explaining in a tooltip on a
   /// bar this narrow.
   final void Function(bool move)? onSendToServer;
+
+  /// The server-side actions this server can do on a selection, behind one
+  /// menu so the bar still fits a phone held upright.
+  final List<_BarAction> more;
 
   @override
   Widget build(BuildContext context) {
@@ -3120,6 +3542,16 @@ class _SelectionBar extends StatelessWidget {
                       ),
                     ],
                   ),
+                if (more.isNotEmpty)
+                  PopupMenuButton<int>(
+                    tooltip: 'More actions',
+                    icon: const Icon(Icons.more_vert, size: 20),
+                    onSelected: (index) => more[index].onSelected(),
+                    itemBuilder: (context) => [
+                      for (var i = 0; i < more.length; i++)
+                        PopupMenuItem<int>(value: i, child: Text(more[i].label)),
+                    ],
+                  ),
                 IconButton(
                   tooltip: 'Delete selected (Del)',
                   icon: const Icon(Icons.delete_outline, size: 20),
@@ -3149,6 +3581,14 @@ class _SelectionBar extends StatelessWidget {
       ),
     );
   }
+}
+
+/// One entry in the selection bar's "More actions" menu.
+class _BarAction {
+  const _BarAction(this.label, this.onSelected);
+
+  final String label;
+  final VoidCallback onSelected;
 }
 
 /// The small chip that floats under the cursor while dragging a file (or

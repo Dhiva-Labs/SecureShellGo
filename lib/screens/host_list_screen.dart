@@ -31,6 +31,7 @@ import '../widgets/host_list_presentation.dart';
 import '../widgets/quick_connect_bar.dart';
 import '../widgets/snippet_picker.dart' show runSnippetOnSession;
 import 'fleet_push_screen.dart';
+import 'fleet_run_screen.dart';
 import 'host_edit_screen.dart';
 import 'quick_connect_screen.dart';
 import 'session_screen.dart';
@@ -156,9 +157,9 @@ class _HostListScreenState extends State<HostListScreen> {
   static const double _fabClearance = 88;
 
   /// Whether the list is showing checkboxes instead of connect-on-tap, for a
-  /// fleet-wide "Push file…". Entered from the toolbar toggle or a host's own
-  /// "Select" menu entry; left via the contextual app bar's close button or
-  /// Escape.
+  /// fleet-wide "Run command…" or "Push file…". Entered from the toolbar
+  /// toggle or a host's own "Select" menu entry; left via the contextual app
+  /// bar's close button or Escape.
   bool _selectionMode = false;
   final Set<String> _selectedHostIds = {};
 
@@ -729,6 +730,27 @@ class _HostListScreenState extends State<HostListScreen> {
     if (mounted) _exitSelectionMode();
   }
 
+  /// "Run command…" — from the selection bar with the checked hosts, or
+  /// from a group's own menu with that group's. The screen lets the choice
+  /// be changed before anything runs.
+  Future<void> _openFleetRun(Set<String> hostIds) async {
+    final hosts = await _future;
+    if (!mounted) return;
+    await Navigator.of(context).push<void>(
+      MaterialPageRoute<void>(
+        builder: (_) => FleetRunScreen(
+          hosts: hosts,
+          initialHostIds: hostIds,
+          sessions: widget.sessions,
+          credentialStore: widget.credentialStore,
+          sshService: widget.sshService,
+          snippetStore: _snippetStore,
+        ),
+      ),
+    );
+    if (mounted) _exitSelectionMode();
+  }
+
   /// The group-picker used by the host's own "Move to group…" action. A
   /// [SimpleDialog] rather than a dropdown: this is a one-off pick, not a
   /// form field with a save button, so there is nothing to submit — picking
@@ -1285,7 +1307,7 @@ class _HostListScreenState extends State<HostListScreen> {
 
   /// The contextual app bar shown while [_selectionMode] is on: a close
   /// button in place of the title's usual leading space, a live count, and
-  /// the one action this mode exists for.
+  /// the fleet actions: run a command, push a file.
   AppBar _buildSelectionAppBar() {
     final count = _selectedHostIds.length;
     return AppBar(
@@ -1296,6 +1318,13 @@ class _HostListScreenState extends State<HostListScreen> {
       ),
       title: Text(count == 0 ? 'Select hosts' : '$count selected'),
       actions: [
+        IconButton(
+          tooltip: 'Run command…',
+          icon: const Icon(Icons.terminal),
+          onPressed: count == 0
+              ? null
+              : () => unawaited(_openFleetRun({..._selectedHostIds})),
+        ),
         IconButton(
           tooltip: 'Push file…',
           icon: const Icon(Icons.upload_file_outlined),
@@ -1412,6 +1441,9 @@ class _HostListScreenState extends State<HostListScreen> {
                         unawaited(_showHostMenu(host, at)),
                     onToggleSelect: _toggleHostSelected,
                     onSelectAllInGroup: _toggleSelectAllInGroup,
+                    onRunCommandInGroup: (section) => unawaited(
+                      _openFleetRun({for (final h in section.hosts) h.id}),
+                    ),
                   ),
                   textScale: textScale,
                 ),

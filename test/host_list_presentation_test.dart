@@ -31,6 +31,7 @@ class _Harness extends StatefulWidget {
     this.onHostMenu,
     this.onRename,
     this.onDelete,
+    this.onRunCommand,
     this.selectionMode = false,
     this.initialSelected = const <String>{},
     this.onSelectionChanged,
@@ -47,6 +48,7 @@ class _Harness extends StatefulWidget {
   final ValueChanged<Host>? onHostMenu;
   final ValueChanged<String>? onRename;
   final ValueChanged<String>? onDelete;
+  final ValueChanged<List<String>>? onRunCommand;
 
   /// Whether the harness starts in selection mode — the tests below never
   /// need a toggle-in-from-normal-mode affordance, since that lives on
@@ -110,6 +112,10 @@ class _HarnessState extends State<_Harness> {
                 if (!_selected.remove(h.id)) _selected.add(h.id);
                 widget.onSelectionChanged?.call({..._selected});
               }),
+              onRunCommandInGroup: widget.onRunCommand == null
+                  ? null
+                  : (section) => widget.onRunCommand!(
+                      [for (final h in section.hosts) h.id]),
               onSelectAllInGroup: (section) => setState(() {
                 final allSelected =
                     section.hosts.every((h) => _selected.contains(h.id));
@@ -455,6 +461,33 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(renamed, 'Work');
+    });
+
+    testWidgets('runs a command on a named group\'s hosts', (tester) async {
+      List<String>? ran;
+      await tester.pumpWidget(
+        _Harness(
+          hosts: [
+            host('a', label: 'Alpha box', group: 'Work'),
+            host('b', label: 'Beta box', group: 'Work'),
+            host('c', label: 'Loose box'),
+          ],
+          style: UiStyle.aurora,
+          width: 400,
+          onRunCommand: (ids) => ran = ids,
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      // Ungrouped still has no menu: only named groups get one.
+      expect(find.byTooltip('Group actions'), findsOneWidget);
+      await tester.tap(find.byTooltip('Group actions'));
+      await tester.pumpAndSettle();
+      expect(find.text('Rename group'), findsOneWidget);
+      await tester.tap(find.text('Run command on group…'));
+      await tester.pumpAndSettle();
+
+      expect(ran, ['a', 'b']);
     });
 
     testWidgets('deletes a named group, on the azure variant', (

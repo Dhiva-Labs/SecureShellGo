@@ -504,6 +504,9 @@ chown -h@R@ -- @SPEC@ @PATHS@''', {
     return null;
   }
 
+  /// Removes the one file at [path] — a stopped compress's part file.
+  static String removeFile(String path) => 'rm -f ${_arg(path)}';
+
   /// `ls -ld` of [path]: whose it is now, for the change-owner dialog.
   static String ownerOf(String path) => 'ls -ld ${_arg(path)}';
 

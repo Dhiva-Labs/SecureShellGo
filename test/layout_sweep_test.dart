@@ -30,20 +30,26 @@ import 'package:secure_shell_go/models/host.dart';
 import 'package:secure_shell_go/models/known_host.dart';
 import 'package:secure_shell_go/models/remote_entry.dart';
 import 'package:secure_shell_go/models/tunnel_profile.dart';
+import 'package:secure_shell_go/screens/file_browser_pane.dart';
+import 'package:secure_shell_go/screens/fleet_run_screen.dart';
 import 'package:secure_shell_go/screens/host_edit_screen.dart';
 import 'package:secure_shell_go/screens/host_list_screen.dart';
 import 'package:secure_shell_go/screens/known_hosts_screen.dart';
 import 'package:secure_shell_go/screens/remote_editor_screen.dart';
+import 'package:secure_shell_go/screens/remote_search_screen.dart';
 import 'package:secure_shell_go/screens/server_stats_screen.dart';
 import 'package:secure_shell_go/screens/session_screen.dart';
 import 'package:secure_shell_go/screens/settings_screen.dart';
 import 'package:secure_shell_go/screens/tunnels_screen.dart';
+import 'package:secure_shell_go/services/bookmark_store.dart';
 import 'package:secure_shell_go/services/credential_store.dart';
 import 'package:secure_shell_go/services/device_storage.dart';
+import 'package:secure_shell_go/services/fleet_exec_service.dart';
 import 'package:secure_shell_go/services/host_store.dart';
 import 'package:secure_shell_go/services/input_profile.dart';
 import 'package:secure_shell_go/services/keep_awake.dart';
 import 'package:secure_shell_go/services/known_hosts_service.dart';
+import 'package:secure_shell_go/services/remote_file_ops.dart';
 import 'package:secure_shell_go/services/server_probe.dart';
 import 'package:secure_shell_go/services/session_controller.dart';
 import 'package:secure_shell_go/services/session_foreground.dart';
@@ -349,6 +355,46 @@ const List<_Foldable> _foldables = [
     ),
   ),
 ];
+
+
+// ------------------------------------------------- lane D fixtures
+
+const _gnuProbe = 'tool tar gnu\ntool gzip gnu\ntool xz other\ntool zip infozip\n'
+    'tool unzip infozip\ntool find gnu\ntool grep gnu\ntool cp gnu\n'
+    'tool chown gnu\ntar-gzip\ntar-xz\nend\n';
+
+const _searchRecords = 'd 4096 /home/deploy/logs\u0000'
+    'f 1048576 /home/deploy/logs/app.log\u0000'
+    'f 52428800 /home/deploy/logs/app.log.1\u0000'
+    'f 2210 /home/deploy/app/config/logging.yml\u0000'
+    'l 12 /home/deploy/current-log\u0000'
+    'f 734003200 /home/deploy/backups/nightly-database-export-2026-10-19-full-with-attachments.log\u0000';
+
+/// Six hosts, six outcomes: a run that worked, one that failed with
+/// stderr, one that could not connect, and sign-ins that need a person.
+Future<SessionTransport> _demoFleetDialer(Host host, SshCredentials _) async {
+  switch (host.id) {
+    case 'h4':
+      throw const FleetSignInNeedsPerson(
+        'It asks "Verification code" at login, which needs you.',
+      );
+    case 'h3':
+      throw const SshConnectionException('Connection refused by host.');
+  }
+  final (out, err, code) = switch (host.id) {
+    'h2' => ('', "df: /: No such file or directory\nuptime: can't read utmp\n", 1),
+    _ => (
+        ' 17:02:11 up 41 days,  3:12,  2 users,  load average: 0.08, 0.12, 0.09\n'
+            '/dev/sda1        79G   31G   45G  41% /\n',
+        '',
+        0,
+      ),
+  };
+  return FakeExecTransport(
+    host: host,
+    respond: (_) => FakeExecSession(stdout: out, stderrText: err, exitCode: code),
+  );
+}
 
 const List<_Device> _devices = [
   (name: 'phone-small', size: Size(320, 640), dpr: 2, text: 1.0),
@@ -823,6 +869,138 @@ void main() {
           () => TunnelsScreen(tunnels: runtime, hostStore: hosts),
         );
       });
+
+      // Lane D: a command on many servers, and the browser's server-side
+      // file actions.
+      for (final step in const ['setup', 'confirm', 'results']) {
+        testWidgets('fleet run, $step', skip: _skip, (tester) async {
+          final saved = await tester.runAsync(() async {
+            await seedHosts();
+            // h5 has nothing saved, so it is skipped before any dial.
+            for (final id in ['h0', 'h2', 'h4']) {
+              await credentials.save(
+                  id, const SshCredentials(privateKeyPem: 'demo key'));
+            }
+            for (final id in ['h1', 'h3']) {
+              await credentials.save(id, const SshCredentials(password: 'pw'));
+            }
+            return hosts.all();
+          });
+          await render(
+            tester,
+            'fleet_run_$step',
+            device,
+            push: true,
+            () => FleetRunScreen(
+              hosts: saved!,
+              initialHostIds: {for (final h in saved) h.id},
+              sessions: sessions,
+              credentialStore: credentials,
+              sshService: ssh,
+              dialer: _demoFleetDialer,
+              initialCommand: 'uptime && df -h / | tail -n 1',
+            ),
+            after: step == 'setup'
+                ? null
+                : (tester) async {
+                    final next = find.widgetWithText(FilledButton, 'Next');
+                    await tester.scrollUntilVisible(next, 300,
+                        scrollable: find.byType(Scrollable).first);
+                    await tester.tap(next);
+                    await tester.pumpAndSettle();
+                    if (step == 'confirm') return;
+                    await tester.tap(find.textContaining('Run on '));
+                    await settleIo(tester);
+                    await tester.tap(find.text('Staging'));
+                    await tester.pumpAndSettle();
+                  },
+          );
+        });
+      }
+
+      testWidgets('search on server', skip: _skip, (tester) async {
+        await render(
+          tester,
+          'remote_search',
+          device,
+          push: true,
+          () => RemoteSearchScreen(
+            transport: () => FakeExecTransport(stdout: _searchRecords, host: _web),
+            directory: '/home/deploy',
+            toolkit: RemoteToolkit.parse(_gnuProbe),
+          ),
+          after: (tester) async {
+            await tester.enterText(
+                find.byKey(const ValueKey('searchName')), 'log');
+            await tester.pump();
+            await tester.tap(find.widgetWithText(FilledButton, 'Search'));
+            await settleIo(tester);
+          },
+        );
+      });
+
+      for (final (name, row, tap) in const [
+        ('file_actions', 'deploy.sh', null),
+        ('compress_dialog', 'app', 'Compress…'),
+        ('extract_dialog',
+            'nightly-database-export-2026-10-19-full-with-attachments.tar.gz',
+            'Extract…'),
+        ('owner_dialog', 'app', 'Change owner…'),
+      ]) {
+        testWidgets(name.replaceAll('_', ' '), skip: _skip, (tester) async {
+          final session = SessionController(
+            connection: FakeExecTransport(
+              host: _web,
+              respond: (command) => FakeExecSession(
+                stdout: command.contains('for t in tar gzip')
+                    ? _gnuProbe
+                    : 'drwxr-xr-x 9 deploy www-data 4096 Oct 19 17:02 x\n',
+              ),
+            ),
+            storage: _NoStorage(),
+            openFileSystem: () async => _DemoFs(),
+            keepaliveScheduler: (_, _) => _InertTimer(),
+          );
+          addTearDown(session.dispose);
+          await render(
+            tester,
+            name,
+            device,
+            () => FileBrowserPane(
+              session: session,
+              settingsStore: settings,
+              bookmarkStore: BookmarkStore(file: File('${dir.path}/bm.json')),
+            ),
+            after: (tester) async {
+              // The archive is the last row, below the fold on a phone.
+              final listing = find
+                  .ancestor(
+                    of: find.text('deploy.sh'),
+                    matching: find.byType(Scrollable),
+                  )
+                  .first;
+              await tester.scrollUntilVisible(find.text(row), 200,
+                  scrollable: listing);
+              await tester.pumpAndSettle();
+              await tester.longPress(find.text(row));
+              await tester.pumpAndSettle();
+              if (tap == null) return;
+              final tile = find.widgetWithText(ListTile, tap);
+              await tester.scrollUntilVisible(tile, 200,
+                  scrollable: find.descendant(
+                    of: find.byType(BottomSheet),
+                    matching: find.byType(Scrollable),
+                  ));
+              await tester.tap(tile);
+              await settleIo(tester);
+              if (name == 'extract_dialog') {
+                await tester.tap(find.widgetWithText(FilledButton, 'Extract'));
+                await settleIo(tester);
+              }
+            },
+          );
+        });
+      }
     });
   }
 
