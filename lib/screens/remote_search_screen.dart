@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
+import '../l10n/l10n.dart';
 import '../services/remote_file_ops.dart';
 import '../services/remote_path.dart';
 import '../services/ssh_service.dart';
@@ -85,7 +86,7 @@ class _RemoteSearchScreenState extends State<RemoteSearchScreen> {
       if (!mounted) return;
       setState(() => _error = e is SshConnectionException
           ? e.message
-          : 'The search could not start: $e');
+          : context.l10n.filesSearchCouldNotStart('$e'));
       return;
     }
     if (!mounted) {
@@ -105,21 +106,22 @@ class _RemoteSearchScreenState extends State<RemoteSearchScreen> {
   String _status() {
     final error = _error;
     if (error != null) return error;
+    final l10n = context.l10n;
     final end = _end;
     final count = _hits.length;
-    final found = '$count found';
-    if (_running) return 'Searching… $found';
+    if (_running) return l10n.filesSearchSearching(count);
     if (end == null) return '';
     final parts = <String>[
       if (end.limited)
-        'Stopped at ${widget.limit} — narrow the search for the rest'
+        l10n.filesSearchLimited(widget.limit)
       else if (end.stopped)
-        'Stopped · $found'
+        l10n.filesSearchStopped(count)
+      else if (count == 0)
+        l10n.filesSearchNothingFound
       else
-        count == 0 ? 'Nothing found' : found,
+        l10n.filesSearchFound(count),
       if (end.unreadableFolders > 0)
-        '${end.unreadableFolders} folder${end.unreadableFolders == 1 ? '' : 's'} '
-            'could not be read',
+        l10n.filesSearchUnreadable(end.unreadableFolders),
     ];
     return parts.join(' · ');
   }
@@ -130,7 +132,7 @@ class _RemoteSearchScreenState extends State<RemoteSearchScreen> {
     final contents = widget.toolkit.canSearchContents;
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Search on server'),
+        title: Text(context.l10n.filesSearchTitle),
         bottom: PreferredSize(
           preferredSize: const Size.fromHeight(24),
           child: Padding(
@@ -138,7 +140,7 @@ class _RemoteSearchScreenState extends State<RemoteSearchScreen> {
             child: Align(
               alignment: AlignmentDirectional.centerStart,
               child: Text(
-                'In ${widget.directory}',
+                context.l10n.filesSearchIn(widget.directory),
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
                 style: theme.textTheme.bodySmall?.copyWith(
@@ -164,11 +166,11 @@ class _RemoteSearchScreenState extends State<RemoteSearchScreen> {
                     autocorrect: false,
                     enableSuggestions: false,
                     textInputAction: TextInputAction.search,
-                    decoration: const InputDecoration(
+                    decoration: InputDecoration(
                       isDense: true,
-                      prefixIcon: Icon(Icons.search, size: 20),
-                      labelText: 'Name',
-                      hintText: 'part of a name, or a pattern like *.log',
+                      prefixIcon: const Icon(Icons.search, size: 20),
+                      labelText: context.l10n.filesSearchNameLabel,
+                      hintText: context.l10n.filesSearchNameHint,
                     ),
                     onChanged: (_) => setState(() {}),
                     onSubmitted: (_) => unawaited(_start()),
@@ -181,10 +183,11 @@ class _RemoteSearchScreenState extends State<RemoteSearchScreen> {
                       autocorrect: false,
                       enableSuggestions: false,
                       textInputAction: TextInputAction.search,
-                      decoration: const InputDecoration(
+                      decoration: InputDecoration(
                         isDense: true,
-                        prefixIcon: Icon(Icons.text_snippet_outlined, size: 20),
-                        labelText: 'Containing text (optional)',
+                        prefixIcon:
+                            const Icon(Icons.text_snippet_outlined, size: 20),
+                        labelText: context.l10n.filesSearchContainsLabel,
                       ),
                       onChanged: (_) => setState(() {}),
                       onSubmitted: (_) => unawaited(_start()),
@@ -201,7 +204,7 @@ class _RemoteSearchScreenState extends State<RemoteSearchScreen> {
                           dense: true,
                           contentPadding: EdgeInsets.zero,
                           controlAffinity: ListTileControlAffinity.leading,
-                          title: const Text('Match case'),
+                          title: Text(context.l10n.filesSearchMatchCase),
                         ),
                       ),
                       // A width of their own: the app's buttons stretch to
@@ -211,7 +214,7 @@ class _RemoteSearchScreenState extends State<RemoteSearchScreen> {
                         OutlinedButton.icon(
                           onPressed: () => unawaited(_search?.stop()),
                           icon: const Icon(Icons.stop, size: 18),
-                          label: const Text('Stop'),
+                          label: Text(context.l10n.filesSearchStop),
                           style: OutlinedButton.styleFrom(
                             minimumSize: const Size(0, 44),
                           ),
@@ -221,7 +224,7 @@ class _RemoteSearchScreenState extends State<RemoteSearchScreen> {
                           onPressed:
                               _canSearch ? () => unawaited(_start()) : null,
                           icon: const Icon(Icons.search, size: 18),
-                          label: const Text('Search'),
+                          label: Text(context.l10n.filesSearchButton),
                           style: FilledButton.styleFrom(
                             minimumSize: const Size(0, 44),
                           ),

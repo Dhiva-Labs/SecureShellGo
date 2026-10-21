@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:xterm/xterm.dart';
 
+import '../l10n/l10n.dart';
+
 /// The keys a phone keyboard buries that code needs every other line: Tab
 /// and outdent, the arrows, brackets and the punctuation programmers type
 /// constantly — the editor's answer to the terminal's extra-keys bar.
@@ -37,6 +39,7 @@ class EditorKeyBar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final colors = Theme.of(context).colorScheme;
+    final l10n = context.l10n;
     Widget key(
       String label, {
       required VoidCallback onTap,
@@ -81,24 +84,30 @@ class EditorKeyBar extends StatelessWidget {
             scrollDirection: Axis.horizontal,
             padding: const EdgeInsets.symmetric(horizontal: 4),
             children: [
-              key('Tab', onTap: onIndent, tooltip: 'Indent'),
+              key('Tab', onTap: onIndent, tooltip: l10n.editorKeyIndent),
               // An icon, not ⇤: phone fonts often lack the glyph.
               key('', icon: Icons.format_indent_decrease,
-                  onTap: onOutdent, tooltip: 'Outdent'),
+                  onTap: onOutdent, tooltip: l10n.editorKeyOutdent),
               key('', icon: Icons.keyboard_arrow_left,
-                  onTap: () => onArrow(AxisDirection.left), tooltip: 'Left'),
+                  onTap: () => onArrow(AxisDirection.left),
+                  tooltip: l10n.editorKeyLeft),
               key('', icon: Icons.keyboard_arrow_up,
-                  onTap: () => onArrow(AxisDirection.up), tooltip: 'Up'),
+                  onTap: () => onArrow(AxisDirection.up),
+                  tooltip: l10n.editorKeyUp),
               key('', icon: Icons.keyboard_arrow_down,
-                  onTap: () => onArrow(AxisDirection.down), tooltip: 'Down'),
+                  onTap: () => onArrow(AxisDirection.down),
+                  tooltip: l10n.editorKeyDown),
               key('', icon: Icons.keyboard_arrow_right,
-                  onTap: () => onArrow(AxisDirection.right), tooltip: 'Right'),
+                  onTap: () => onArrow(AxisDirection.right),
+                  tooltip: l10n.editorKeyRight),
               const VerticalDivider(width: 12, indent: 10, endIndent: 10),
               for (final symbol in symbols)
                 key(symbol, onTap: () => onType(symbol)),
               const VerticalDivider(width: 12, indent: 10, endIndent: 10),
-              key('', icon: Icons.undo, onTap: onUndo, tooltip: 'Undo'),
-              key('', icon: Icons.redo, onTap: onRedo, tooltip: 'Redo'),
+              key('', icon: Icons.undo,
+                  onTap: onUndo, tooltip: l10n.editorActionUndo),
+              key('', icon: Icons.redo,
+                  onTap: onRedo, tooltip: l10n.editorActionRedo),
             ],
           ),
         ),

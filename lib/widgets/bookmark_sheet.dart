@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
+import '../l10n/l10n.dart';
 import '../models/path_bookmark.dart';
 import '../services/bookmark_store.dart';
 
@@ -82,20 +83,22 @@ class _BookmarksSheetBodyState extends State<_BookmarksSheetBody> {
     final name = await showDialog<String>(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('Bookmark name'),
+        title: Text(context.l10n.bookmarksRenameTitle),
         content: TextField(
           controller: controller,
           autofocus: true,
-          decoration: const InputDecoration(hintText: 'Leave blank for the path'),
+          decoration: InputDecoration(
+            hintText: context.l10n.bookmarksRenameHint,
+          ),
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.of(context).pop(),
-            child: const Text('Cancel'),
+            child: Text(MaterialLocalizations.of(context).cancelButtonLabel),
           ),
           FilledButton(
             onPressed: () => Navigator.of(context).pop(controller.text),
-            child: const Text('Save'),
+            child: Text(MaterialLocalizations.of(context).saveButtonLabel),
           ),
         ],
       ),
@@ -110,24 +113,28 @@ class _BookmarksSheetBodyState extends State<_BookmarksSheetBody> {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = context.l10n;
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
-        const Padding(
-          padding: EdgeInsets.fromLTRB(20, 4, 20, 4),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(20, 4, 20, 4),
           child: Row(
             children: [
               Text(
-                'Bookmarks',
-                style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+                l10n.bookmarksTitle,
+                style: const TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.w600,
+                ),
               ),
             ],
           ),
         ),
         if (_bookmarks.isEmpty)
-          const Padding(
-            padding: EdgeInsets.symmetric(vertical: 32),
-            child: Text('No bookmarks on this host yet.'),
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: 32),
+            child: Text(l10n.bookmarksEmpty),
           )
         else
           Flexible(
@@ -155,10 +162,10 @@ class _BookmarksSheetBodyState extends State<_BookmarksSheetBody> {
                           overflow: TextOverflow.ellipsis,
                         )
                       : (here
-                          ? const Text('This folder')
+                          ? Text(l10n.bookmarksThisFolder)
                           : null),
                   trailing: PopupMenuButton<String>(
-                    tooltip: 'Bookmark actions',
+                    tooltip: l10n.bookmarksActionsTooltip,
                     onSelected: (action) {
                       switch (action) {
                         case 'rename':
@@ -167,9 +174,15 @@ class _BookmarksSheetBodyState extends State<_BookmarksSheetBody> {
                           unawaited(_remove(bookmark));
                       }
                     },
-                    itemBuilder: (context) => const [
-                      PopupMenuItem(value: 'rename', child: Text('Rename')),
-                      PopupMenuItem(value: 'remove', child: Text('Remove')),
+                    itemBuilder: (context) => [
+                      PopupMenuItem(
+                        value: 'rename',
+                        child: Text(context.l10n.bookmarksRename),
+                      ),
+                      PopupMenuItem(
+                        value: 'remove',
+                        child: Text(context.l10n.bookmarksRemove),
+                      ),
                     ],
                   ),
                   enabled: !here,

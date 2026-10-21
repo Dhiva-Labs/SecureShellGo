@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
+import '../l10n/l10n.dart';
 import '../services/process_table.dart';
 import '../services/remote_exec.dart';
 import '../services/session_controller.dart';
@@ -34,13 +35,14 @@ class _ServicesScreenState extends State<ServicesScreen>
 
   @override
   Widget build(BuildContext context) {
+    final l10n = context.l10n;
     return Scaffold(
       appBar: AppBar(
         title: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           mainAxisSize: MainAxisSize.min,
           children: [
-            const Text('Services', style: TextStyle(fontSize: 16)),
+            Text(l10n.servicesTitle, style: const TextStyle(fontSize: 16)),
             Text(
               widget.session.host.displayName,
               style: TextStyle(
@@ -52,9 +54,9 @@ class _ServicesScreenState extends State<ServicesScreen>
         ),
         bottom: TabBar(
           controller: _tabs,
-          tabs: const [
-            Tab(text: 'Services'),
-            Tab(text: 'Processes'),
+          tabs: [
+            Tab(text: l10n.servicesTabServices),
+            Tab(text: l10n.servicesTabProcesses),
           ],
         ),
       ),
@@ -131,7 +133,7 @@ class _ServicesTabState extends State<_ServicesTab>
       if (!mounted) return;
       setState(() {
         _loading = false;
-        _error = 'Could not list services: $e';
+        _error = context.l10n.servicesListFailed('$e');
       });
     }
   }
@@ -143,29 +145,29 @@ class _ServicesTabState extends State<_ServicesTab>
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        title: Text('${action.verb} ${unit.shortName}?'),
+        title: Text(_confirmTitle(context.l10n, action, unit.shortName)),
         content: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
-              'This runs '
-              'systemctl ${action.command} ${unit.name} '
-              'on ${widget.session.host.displayName}.',
+              context.l10n.servicesConfirmBody(
+                // The command itself, never translated.
+                'systemctl ${action.command} ${unit.name}',
+                widget.session.host.displayName,
+              ),
             ),
             const SizedBox(height: 12),
-            const InlineHint(
+            InlineHint(
               icon: Icons.info_outline,
-              text: 'It may need sudo. If the server refuses it, run it from '
-                  'the terminal instead — this app never escalates on your '
-                  'behalf.',
+              text: context.l10n.servicesSudoHint,
             ),
           ],
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.of(context).pop(false),
-            child: const Text('Cancel'),
+            child: Text(MaterialLocalizations.of(context).cancelButtonLabel),
           ),
           FilledButton(
             style: action == ServiceAction.stop
@@ -174,7 +176,7 @@ class _ServicesTabState extends State<_ServicesTab>
                   )
                 : null,
             onPressed: () => Navigator.of(context).pop(true),
-            child: Text(action.verb),
+            child: Text(_actionLabel(context.l10n, action)),
           ),
         ],
       ),
@@ -185,14 +187,14 @@ class _ServicesTabState extends State<_ServicesTab>
     try {
       await _service.run(widget.session.connection, action, unit.name);
       if (!mounted) return;
-      _snack('${unit.shortName}: ${action.command} sent.');
+      _snack(context.l10n.servicesActionSent(unit.shortName, action.command));
     } on MonitorFailure catch (e) {
       if (!mounted) return;
       _snack(e.message, isError: true);
     } catch (e) {
       if (!mounted) return;
       _snack(
-        'Could not ${action.command} ${unit.shortName}: $e',
+        _actionFailed(context.l10n, action, unit.shortName, '$e'),
         isError: true,
       );
     } finally {
@@ -213,9 +215,35 @@ class _ServicesTabState extends State<_ServicesTab>
     );
   }
 
+  static String _confirmTitle(
+    AppLocalizations l10n,
+    ServiceAction action,
+    String unit,
+  ) {
+    return switch (action) {
+      ServiceAction.start => l10n.servicesConfirmStartTitle(unit),
+      ServiceAction.stop => l10n.servicesConfirmStopTitle(unit),
+      ServiceAction.restart => l10n.servicesConfirmRestartTitle(unit),
+    };
+  }
+
+  static String _actionFailed(
+    AppLocalizations l10n,
+    ServiceAction action,
+    String unit,
+    String error,
+  ) {
+    return switch (action) {
+      ServiceAction.start => l10n.servicesStartFailed(unit, error),
+      ServiceAction.stop => l10n.servicesStopFailed(unit, error),
+      ServiceAction.restart => l10n.servicesRestartFailed(unit, error),
+    };
+  }
+
   @override
   Widget build(BuildContext context) {
     super.build(context);
+    final l10n = context.l10n;
 
     if (_loading && _units.isEmpty) {
       return const Center(child: CircularProgressIndicator());
@@ -225,9 +253,8 @@ class _ServicesTabState extends State<_ServicesTab>
         icon: Icons.settings_ethernet,
         // Stated plainly, as a property of the server rather than a fault.
         // No init.d fallback is attempted — see SystemdService.list.
-        message: SystemdUnavailable.message,
-        detail: 'Service management needs systemd. Everything else in this '
-            'session still works.',
+        message: l10n.servicesNoSystemd,
+        detail: l10n.servicesNoSystemdDetail,
       );
     }
     final error = _error;
@@ -252,8 +279,8 @@ class _ServicesTabState extends State<_ServicesTab>
       children: [
         if (_busy) const LinearProgressIndicator(minHeight: 2),
         _SearchBar(
-          hint: 'Filter services…',
-          count: '${visible.length} of ${_units.length}',
+          hint: l10n.servicesFilterHint,
+          count: l10n.servicesFilterCount(visible.length, _units.length),
           onChanged: (value) => setState(() => _search = value.trim()),
         ),
         Expanded(
@@ -261,9 +288,9 @@ class _ServicesTabState extends State<_ServicesTab>
             onRefresh: _load,
             child: visible.isEmpty
                 ? ListView(
-                    children: const [
-                      SizedBox(height: 80),
-                      Center(child: Text('No services match that filter.')),
+                    children: [
+                      const SizedBox(height: 80),
+                      Center(child: Text(l10n.servicesNoMatch)),
                     ],
                   )
                 : ListView.separated(
@@ -296,6 +323,7 @@ class _ServiceRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final l10n = context.l10n;
     final colour = unit.isFailed
         ? theme.colorScheme.error
         : unit.isRunning
@@ -321,22 +349,19 @@ class _ServiceRow extends StatelessWidget {
       ),
       trailing: PopupMenuButton<ServiceAction>(
         enabled: enabled,
-        tooltip: 'Actions for ${unit.shortName}',
+        tooltip: l10n.servicesActionsTooltip(unit.shortName),
         icon: const Icon(Icons.more_vert, size: 20),
         onSelected: (action) => unawaited(onAction(action, unit)),
         itemBuilder: (context) => [
-          const PopupMenuItem<ServiceAction>(
-            value: ServiceAction.start,
-            child: Text('Start'),
-          ),
-          const PopupMenuItem<ServiceAction>(
-            value: ServiceAction.restart,
-            child: Text('Restart'),
-          ),
-          const PopupMenuItem<ServiceAction>(
-            value: ServiceAction.stop,
-            child: Text('Stop'),
-          ),
+          for (final action in const [
+            ServiceAction.start,
+            ServiceAction.restart,
+            ServiceAction.stop,
+          ])
+            PopupMenuItem<ServiceAction>(
+              value: action,
+              child: Text(_actionLabel(context.l10n, action)),
+            ),
         ],
       ),
     );
@@ -397,7 +422,7 @@ class _ProcessesTabState extends State<_ProcessesTab>
       if (!mounted) return;
       setState(() {
         _loading = false;
-        _error = 'Could not list processes: $e';
+        _error = context.l10n.servicesProcessListFailed('$e');
       });
     }
   }
@@ -410,20 +435,21 @@ class _ProcessesTabState extends State<_ProcessesTab>
     final force = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        title: Text('Stop ${process.command}?'),
+        title: Text(context.l10n.servicesKillTitle(process.command)),
         content: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
-              'PID ${process.pid}, owned by ${process.user}, on '
-              '${widget.session.host.displayName}.',
+              context.l10n.servicesKillBody(
+                '${process.pid}',
+                process.user,
+                widget.session.host.displayName,
+              ),
             ),
             const SizedBox(height: 12),
             Text(
-              'Terminate sends TERM and lets the process shut down cleanly. '
-              'Force kill sends KILL, which it cannot catch — unsaved work '
-              'in it is lost.',
+              context.l10n.servicesKillExplain,
               style: TextStyle(
                 fontSize: 12.5,
                 color: Theme.of(context).colorScheme.onSurfaceVariant,
@@ -431,8 +457,7 @@ class _ProcessesTabState extends State<_ProcessesTab>
             ),
             const SizedBox(height: 8),
             Text(
-              'It may need sudo. If the server refuses, run it from the '
-              'terminal instead.',
+              context.l10n.servicesKillSudoHint,
               style: TextStyle(
                 fontSize: 12.5,
                 color: Theme.of(context).colorScheme.onSurfaceVariant,
@@ -443,18 +468,18 @@ class _ProcessesTabState extends State<_ProcessesTab>
         actions: [
           TextButton(
             onPressed: () => Navigator.of(context).pop(),
-            child: const Text('Cancel'),
+            child: Text(MaterialLocalizations.of(context).cancelButtonLabel),
           ),
           TextButton(
             style: TextButton.styleFrom(
               foregroundColor: theme.colorScheme.error,
             ),
             onPressed: () => Navigator.of(context).pop(true),
-            child: const Text('Force kill (KILL)'),
+            child: Text(context.l10n.servicesForceKill),
           ),
           FilledButton(
             onPressed: () => Navigator.of(context).pop(false),
-            child: const Text('Terminate'),
+            child: Text(context.l10n.servicesTerminate),
           ),
         ],
       ),
@@ -465,13 +490,22 @@ class _ProcessesTabState extends State<_ProcessesTab>
     try {
       await _service.kill(widget.session.connection, process.pid, force: force);
       if (!mounted) return;
-      _snack('Sent ${force ? 'KILL' : 'TERM'} to ${process.pid}.');
+      _snack(
+        context.l10n.servicesSignalSent(
+          // Signal names, never translated.
+          force ? 'KILL' : 'TERM',
+          '${process.pid}',
+        ),
+      );
     } on MonitorFailure catch (e) {
       if (!mounted) return;
       _snack(e.message, isError: true);
     } catch (e) {
       if (!mounted) return;
-      _snack('Could not signal ${process.pid}: $e', isError: true);
+      _snack(
+        context.l10n.servicesSignalFailed('${process.pid}', '$e'),
+        isError: true,
+      );
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -505,6 +539,7 @@ class _ProcessesTabState extends State<_ProcessesTab>
   @override
   Widget build(BuildContext context) {
     super.build(context);
+    final l10n = context.l10n;
 
     if (_loading && _processes.isEmpty) {
       return const Center(child: CircularProgressIndicator());
@@ -533,8 +568,8 @@ class _ProcessesTabState extends State<_ProcessesTab>
       children: [
         if (_busy) const LinearProgressIndicator(minHeight: 2),
         _SearchBar(
-          hint: 'Filter by name, user or pid…',
-          count: '${visible.length} of ${_processes.length}',
+          hint: l10n.servicesProcessFilterHint,
+          count: l10n.servicesFilterCount(visible.length, _processes.length),
           onChanged: (value) => setState(() => _search = value.trim()),
         ),
         _ProcessHeader(sort: _sort, descending: _descending, onSort: _sortBy),
@@ -544,9 +579,9 @@ class _ProcessesTabState extends State<_ProcessesTab>
             onRefresh: _load,
             child: visible.isEmpty
                 ? ListView(
-                    children: const [
-                      SizedBox(height: 80),
-                      Center(child: Text('No processes match that filter.')),
+                    children: [
+                      const SizedBox(height: 80),
+                      Center(child: Text(l10n.servicesNoProcessMatch)),
                     ],
                   )
                 : ListView.separated(
@@ -579,6 +614,7 @@ class _ProcessHeader extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final l10n = context.l10n;
     Widget cell(
       String label,
       ProcessSort column, {
@@ -625,11 +661,12 @@ class _ProcessHeader extends StatelessWidget {
       padding: const EdgeInsets.symmetric(horizontal: 12),
       child: Row(
         children: [
+          // PID and CPU are the same abbreviations in every language.
           cell('PID', ProcessSort.pid, width: 64),
-          cell('COMMAND', ProcessSort.command, flex: 3),
-          cell('USER', ProcessSort.user, flex: 2),
+          cell(l10n.servicesColumnCommand, ProcessSort.command, flex: 3),
+          cell(l10n.servicesColumnUser, ProcessSort.user, flex: 2),
           cell('CPU', ProcessSort.cpu, width: 52),
-          cell('MEM', ProcessSort.memory, width: 52),
+          cell(l10n.servicesColumnMemory, ProcessSort.memory, width: 52),
           const SizedBox(width: 40),
         ],
       ),
@@ -705,11 +742,11 @@ class _ProcessRow extends StatelessWidget {
                 // PID 1 is never offered a kill: signalling init takes the
                 // whole machine or container down with it.
                 ? Tooltip(
-                    message: 'init cannot be stopped from here',
+                    message: context.l10n.servicesInitTooltip,
                     child: Icon(Icons.lock_outline, size: 16, color: dim),
                   )
                 : IconButton(
-                    tooltip: 'Stop this process…',
+                    tooltip: context.l10n.servicesKillTooltip,
                     icon: const Icon(Icons.cancel_outlined, size: 18),
                     onPressed:
                         enabled ? () => unawaited(onKill(process)) : null,
@@ -803,7 +840,7 @@ class _EmptyState extends StatelessWidget {
               OutlinedButton.icon(
                 onPressed: onRetry,
                 icon: const Icon(Icons.refresh, size: 18),
-                label: const Text('Try again'),
+                label: Text(context.l10n.servicesTryAgain),
               ),
             ],
           ],
@@ -811,6 +848,15 @@ class _EmptyState extends StatelessWidget {
       ),
     );
   }
+}
+
+/// The menu item and confirm-button label for [action].
+String _actionLabel(AppLocalizations l10n, ServiceAction action) {
+  return switch (action) {
+    ServiceAction.start => l10n.servicesActionStart,
+    ServiceAction.stop => l10n.servicesActionStop,
+    ServiceAction.restart => l10n.servicesActionRestart,
+  };
 }
 
 /// Pushes the services/processes screen for [session].

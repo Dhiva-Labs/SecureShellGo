@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
+import '../l10n/l10n.dart';
 import '../models/host.dart';
 import '../services/credential_store.dart';
 import '../services/device_storage.dart';
@@ -93,8 +94,8 @@ class _ShareTargetScreenState extends State<ShareTargetScreen> {
         _connectingHostId = null;
       });
       await _showError(
-        'No saved credentials for ${host.displayName}.',
-        details: 'Edit the host to enter its password or key again.',
+        context.l10n.shareNoCredentials(host.displayName),
+        details: context.l10n.shareNoCredentialsDetails,
         onEdit: () => _editHost(host),
       );
       return;
@@ -151,7 +152,7 @@ class _ShareTargetScreenState extends State<ShareTargetScreen> {
         _connectingHostId = null;
       });
       await _showError(
-        'Something went wrong while connecting.',
+        context.l10n.shareConnectFailed,
         details: e.toString(),
       );
     }
@@ -187,7 +188,7 @@ class _ShareTargetScreenState extends State<ShareTargetScreen> {
       context: context,
       builder: (context) => AlertDialog(
         icon: Icon(Icons.error_outline, color: theme.colorScheme.error),
-        title: const Text('Could not connect'),
+        title: Text(context.l10n.shareErrorTitle),
         content: SingleChildScrollView(
           child: Column(
             mainAxisSize: MainAxisSize.min,
@@ -214,11 +215,11 @@ class _ShareTargetScreenState extends State<ShareTargetScreen> {
                 Navigator.of(context).pop();
                 onEdit();
               },
-              child: const Text('Edit host'),
+              child: Text(context.l10n.shareEditHost),
             ),
           FilledButton(
             onPressed: () => Navigator.of(context).pop(),
-            child: const Text('OK'),
+            child: Text(MaterialLocalizations.of(context).okButtonLabel),
           ),
         ],
       ),
@@ -229,7 +230,7 @@ class _ShareTargetScreenState extends State<ShareTargetScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Upload to…'),
+        title: Text(context.l10n.shareTitle),
       ),
       body: SafeArea(
         child: Column(
@@ -282,7 +283,9 @@ class _ShareTargetScreenState extends State<ShareTargetScreen> {
                 style: const TextStyle(fontWeight: FontWeight.w600),
               ),
               subtitle: Text(
-                live ? '${host.target}  ·  already connected' : host.target,
+                live
+                    ? context.l10n.shareHostAlreadyConnected(host.target)
+                    : host.target,
                 style: TextStyle(
                   fontSize: 12.5,
                   color: live
@@ -316,6 +319,7 @@ class _SharedFilesSummary extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final l10n = context.l10n;
     final names = files.take(3).map((f) => f.name).join(', ');
     final more = files.length - 3;
 
@@ -334,22 +338,22 @@ class _SharedFilesSummary extends StatelessWidget {
               mainAxisSize: MainAxisSize.min,
               children: [
                 Text(
-                  files.length == 1
-                      ? '1 file  ·  ${RemotePath.formatBytes(totalBytes)}'
-                      : '${files.length} files  ·  '
-                          '${RemotePath.formatBytes(totalBytes)}',
+                  l10n.shareFilesSummary(
+                    files.length,
+                    RemotePath.formatBytes(totalBytes),
+                  ),
                   style: const TextStyle(fontWeight: FontWeight.w600),
                 ),
                 const SizedBox(height: 3),
                 Text(
-                  more > 0 ? '$names and $more more' : names,
+                  more > 0 ? l10n.shareFileNamesMore(names, more) : names,
                   maxLines: 2,
                   overflow: TextOverflow.ellipsis,
                   style: theme.textTheme.bodySmall,
                 ),
                 const SizedBox(height: 6),
                 Text(
-                  'Pick a server, then choose the folder to put them in.',
+                  l10n.shareHint,
                   style: theme.textTheme.bodySmall?.copyWith(
                     color: theme.colorScheme.onSurfaceVariant,
                   ),
@@ -369,6 +373,7 @@ class _NoHosts extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final l10n = context.l10n;
     return Center(
       child: Padding(
         padding: const EdgeInsets.all(32),
@@ -381,11 +386,10 @@ class _NoHosts extends StatelessWidget {
               color: theme.colorScheme.onSurfaceVariant.withValues(alpha: 0.6),
             ),
             const SizedBox(height: 18),
-            Text('No saved hosts yet', style: theme.textTheme.titleMedium),
+            Text(l10n.shareNoHostsTitle, style: theme.textTheme.titleMedium),
             const SizedBox(height: 8),
             Text(
-              'Add a server in SecureShell Go first — then sharing a file to '
-              'it takes two taps.',
+              l10n.shareNoHostsBody,
               textAlign: TextAlign.center,
               style: theme.textTheme.bodyMedium?.copyWith(
                 color: theme.colorScheme.onSurfaceVariant,
@@ -394,7 +398,7 @@ class _NoHosts extends StatelessWidget {
             const SizedBox(height: 20),
             FilledButton(
               onPressed: () => Navigator.of(context).pop(),
-              child: const Text('Back'),
+              child: Text(MaterialLocalizations.of(context).backButtonTooltip),
             ),
           ],
         ),
