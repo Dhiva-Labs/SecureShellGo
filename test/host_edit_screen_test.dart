@@ -244,15 +244,26 @@ void main() {
       // more turns of both loops before it counts, for up to ten seconds.
       // A check that something was *not* written still passes on its first
       // try, exactly as it did with the fixed wait.
-      for (var attempt = 0;; attempt++) {
-        try {
-          await tester.runAsync(checks);
-          break;
-        } catch (_) {
-          if (attempt >= 20) rethrow;
-          await settleIo(tester, rounds: 25);
-        }
+      //
+      // The failure is caught inside `runAsync` and rethrown out here:
+      // `runAsync` reports anything its callback throws as a test failure
+      // on the spot, so a retry around it would never get to retry.
+      Object? failure;
+      StackTrace? failureStack;
+      for (var attempt = 0; attempt <= 20; attempt++) {
+        failure = null;
+        await tester.runAsync(() async {
+          try {
+            await checks();
+          } catch (e, stack) {
+            failure = e;
+            failureStack = stack;
+          }
+        });
+        if (failure == null) break;
+        await settleIo(tester, rounds: 25);
       }
+      if (failure != null) Error.throwWithStackTrace(failure!, failureStack!);
     }
     await tester.pump();
   }
