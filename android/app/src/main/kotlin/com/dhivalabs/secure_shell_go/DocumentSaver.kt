@@ -88,18 +88,36 @@ class DocumentSaver(private val activity: Activity) {
     /** Returns true when this saver owned the result. */
     fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?): Boolean {
         if (requestCode != REQUEST_SAVE_DOCUMENT) return false
-        val result = pending ?: return true
+        val uri = if (resultCode == Activity.RESULT_OK) data?.data else null
+        val result = pending
+        if (result == null) {
+            // The activity was recreated while the picker was open (a
+            // rotation, or the process stopped and brought back): the call
+            // that asked and its bytes went with the old one, whose dispose()
+            // already told Dart "not saved". The provider made the document
+            // anyway when the user confirmed, so it is removed rather than
+            // left behind as an empty file that looks like a backup.
+            if (uri != null) {
+                runCatching { io.execute { deleteIfEmpty(uri) } }
+            }
+            return true
+        }
         val bytes = pendingBytes
         pending = null
         pendingBytes = null
 
-        val uri = if (resultCode == Activity.RESULT_OK) data?.data else null
         if (uri == null || bytes == null) {
             // Backed out of the picker.
             result.success(null)
             return true
         }
         io.execute {
+            // Usually a document the provider has just created — an existing
+            // name gets a new one, "backup (1)" — but a provider may instead
+            // hand back an existing document the user chose to replace. Only
+            // one that was empty before this wrote to it is this attempt's to
+            // remove if the write fails.
+            val fresh = isEmptyDocument(uri)
             try {
                 write(uri, bytes)
                 val name = displayName(uri) ?: uri.lastPathSegment ?: "backup"
@@ -107,11 +125,9 @@ class DocumentSaver(private val activity: Activity) {
                     result.success(mapOf("displayName" to name, "uri" to uri.toString()))
                 }
             } catch (e: Throwable) {
-                // The provider created this document when the user confirmed
-                // (an existing name gets a new one, "backup (1)", rather than
-                // being reused), so removing it takes away only the empty or
-                // partial file this attempt made — never one that was there.
-                runCatching { DocumentsContract.deleteDocument(activity.contentResolver, uri) }
+                if (fresh) {
+                    runCatching { DocumentsContract.deleteDocument(activity.contentResolver, uri) }
+                }
                 main.post { result.error("save_failed", e.message ?: e.toString(), null) }
             }
         }
@@ -119,9 +135,33 @@ class DocumentSaver(private val activity: Activity) {
     }
 
     /**
-     * "wt" truncates as well as writes. Not every provider takes it, so "w"
-     * is the fallback; the document is a fresh one either way, so there is
-     * nothing older inside it to leave behind.
+     * True only when the provider reports the document as zero bytes. A size
+     * it does not report is not taken for empty: deleting is the one thing
+     * here that cannot be undone.
+     */
+    private fun isEmptyDocument(uri: Uri): Boolean = runCatching {
+        activity.contentResolver.query(
+            uri,
+            arrayOf(OpenableColumns.SIZE),
+            null,
+            null,
+            null,
+        )?.use { cursor ->
+            cursor.moveToFirst() && !cursor.isNull(0) && cursor.getLong(0) == 0L
+        } ?: false
+    }.getOrDefault(false)
+
+    private fun deleteIfEmpty(uri: Uri) {
+        if (isEmptyDocument(uri)) {
+            runCatching { DocumentsContract.deleteDocument(activity.contentResolver, uri) }
+        }
+    }
+
+    /**
+     * "wt" truncates as well as writes, which matters when the provider
+     * handed back an existing document: its old contents must not outlast
+     * the new ones. Not every provider takes it, so "w" is the fallback; a
+     * fresh document has nothing older inside it to leave behind.
      */
     private fun write(uri: Uri, bytes: ByteArray) {
         val resolver = activity.contentResolver
