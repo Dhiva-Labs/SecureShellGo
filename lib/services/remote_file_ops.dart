@@ -509,6 +509,13 @@ exit $s''';
 
   /// Copies [source] to [destination] with everything kept — modes, times,
   /// links as links. Refuses (exit 17) if [destination] appeared meanwhile.
+  ///
+  /// Something turning up at [destination] between the check and the copy
+  /// would have `cp` copy into it rather than to it. A folder is copied
+  /// into one `mkdir` has just made — which fails if the name was taken in
+  /// the meantime — as `source/.`, its contents and its own modes and
+  /// times. Anything else goes with `-T`, where this `cp` has it, so a
+  /// folder appearing at the name is refused rather than filled.
   static String duplicate({
     required String source,
     required String destination,
@@ -517,8 +524,17 @@ exit $s''';
     return _fill(r'''
 d="$1"
 if [ -e @DEST@ ] || [ -L @DEST@ ]; then echo "The copy's name is taken." >&2; exit 17; fi
-cp @FLAGS@ @SRC@ @DEST@''', {
+if [ -d @SRC@ ] && [ ! -L @SRC@ ]; then
+  if mkdir @DEST@; then :; elif [ -e @DEST@ ] || [ -L @DEST@ ]; then echo "The copy's name is taken." >&2; exit 17; else exit 73; fi
+  cp @FLAGS@ @CONTENTS@ @DEST@
+else
+  T=
+  if cp -T /dev/null "$d/t" 2>/dev/null; then T=-T; fi
+  rm -f "$d/t"
+  cp @FLAGS@ $T @SRC@ @DEST@
+fi''', {
       'SRC': _arg(source),
+      'CONTENTS': _arg('$source/.'),
       'DEST': _arg(destination),
       'FLAGS': tools.cpArchive ? '-a' : '-pPR',
     });

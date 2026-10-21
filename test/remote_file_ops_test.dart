@@ -352,22 +352,21 @@ mv -f './.out.tar.gz.ssg-part-1' './out.tar.gz\'''');
     });
 
     test('duplicate', () {
-      expect(
-        RemoteFileCommands.duplicate(
-          source: "/srv/it's",
-          destination: "/srv/it's copy",
-          tools: _gnu,
-        ),
-        endsWith("cp -a '/srv/it'\\''s' '/srv/it'\\''s copy'"),
+      final gnu = RemoteFileCommands.duplicate(
+        source: "/srv/it's",
+        destination: "/srv/it's copy",
+        tools: _gnu,
       );
-      expect(
-        RemoteFileCommands.duplicate(
-          source: '/a',
-          destination: '/b',
-          tools: const RemoteToolkit(tools: {'cp': ToolFlavour.bsd}),
-        ),
-        endsWith("cp -pPR '/a' '/b'"),
+      expect(gnu, contains("mkdir '/srv/it'\\''s copy'"));
+      expect(gnu, contains("cp -a '/srv/it'\\''s/.' '/srv/it'\\''s copy'"));
+      expect(gnu, contains("cp -a \$T '/srv/it'\\''s' '/srv/it'\\''s copy'"));
+      final bsd = RemoteFileCommands.duplicate(
+        source: '/a',
+        destination: '/b',
+        tools: const RemoteToolkit(tools: {'cp': ToolFlavour.bsd}),
       );
+      expect(bsd, contains("cp -pPR '/a/.' '/b'"));
+      expect(bsd, contains("cp -pPR \$T '/a' '/b'"));
     });
 
     test('change owner', () {
@@ -818,6 +817,16 @@ mv -f './.out.tar.gz.ssg-part-1' './out.tar.gz\'''');
 
         test('duplicate keeps everything and will not overwrite', () async {
           await box.seed();
+          final plain = File('${box.src}/plain')..writeAsStringSync('plain');
+          await Process.run('chmod', ['640', plain.path]);
+          final copied = await box.run(RemoteFileCommands.duplicate(
+            source: plain.path,
+            destination: '${plain.path} copy',
+            tools: kit,
+          ));
+          expect(copied.exitCode, 0, reason: '${copied.stderr}');
+          expect(File('${plain.path} copy').readAsStringSync(), 'plain');
+          expect(File('${plain.path} copy').statSync().modeString(), 'rw-r-----');
           for (final name in ['-rf', "it's", 'new\nline']) {
             final result = await box.run(RemoteFileCommands.duplicate(
               source: '${box.src}/$name',
@@ -837,6 +846,50 @@ mv -f './.out.tar.gz.ssg-part-1' './out.tar.gz\'''');
               reason: 'cp must not have copied into the existing copy');
           box.expectNothingRan();
         });
+
+        test('duplicate copies to the name, not into what appeared there',
+            () async {
+          await box.seed();
+          File('${box.src}/plain').writeAsStringSync('plain');
+          // A cp that finds a folder at its destination, as if one had
+          // been made there just after the script looked.
+          final shim = Directory('${box.root}/cpshim')..createSync();
+          File('${shim.path}/cp').writeAsStringSync(
+            '#!/bin/sh\n'
+            'for a; do last=\$a; done\n'
+            'case "\$last" in */t) ;; *) mkdir -p "\$last" ;; esac\n'
+            'PATH=\${PATH#*:} exec cp "\$@"\n',
+          );
+          await Process.run('chmod', ['+x', '${shim.path}/cp']);
+
+          final folder = await box.run(
+            RemoteFileCommands.duplicate(
+              source: '${box.src}/-rf',
+              destination: '${box.src}/-rf copy',
+              tools: kit,
+            ),
+            pathPrefix: shim.path,
+          );
+          expect(folder.exitCode, 0, reason: '${folder.stderr}');
+          expect(File('${box.src}/-rf copy/inside').readAsStringSync(), '-rf');
+          expect(Directory('${box.src}/-rf copy/-rf').existsSync(), isFalse,
+              reason: 'copied into the folder, not to it');
+
+          final file = await box.run(
+            RemoteFileCommands.duplicate(
+              source: '${box.src}/plain',
+              destination: '${box.src}/plain copy',
+              tools: kit,
+            ),
+            pathPrefix: shim.path,
+          );
+          expect(file.exitCode, isNot(0));
+          expect(File('${box.src}/plain copy/plain').existsSync(), isFalse,
+              reason: 'copied into the folder that appeared');
+        },
+            skip: busybox
+                ? "BusyBox's shell runs its own cp, whatever PATH says"
+                : false);
 
         test('change owner to who it already is, recursively', () async {
           await box.seed();
@@ -1190,14 +1243,16 @@ class _Box {
   }
 
   /// Runs an operation script as the job launcher would: `sh run <job>`.
-  Future<ProcessResult> run(String script) async {
+  Future<ProcessResult> run(String script, {String? pathPrefix}) async {
     final job = Directory('$root/job${_jobs++}')..createSync();
     final file = File('${job.path}/run')..writeAsStringSync('$script\n');
     final canary = Directory('$root/canary')..createSync(recursive: true);
     return busyboxBin == null
-        ? Process.run('sh', [file.path, job.path], workingDirectory: canary.path)
+        ? Process.run('sh', [file.path, job.path],
+            workingDirectory: canary.path,
+            environment: pathPrefix == null ? null : _env(pathPrefix))
         : Process.run('busybox', ['sh', file.path, job.path],
-            environment: _env(null), workingDirectory: canary.path);
+            environment: _env(pathPrefix), workingDirectory: canary.path);
   }
 
   /// Runs an exec command as the login shell would: `sh -c <command>`.
