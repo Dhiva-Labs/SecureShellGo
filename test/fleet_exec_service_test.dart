@@ -315,6 +315,26 @@ void main() {
       expect(service.isRunning, isFalse);
     });
 
+    test('the queued can be let go while the running carry on', () async {
+      final hosts = [for (var i = 0; i < 5; i++) _host('h$i')];
+      final fleet = _Fleet(hosts, hold: true);
+      final service = fleet.service('sleep 100');
+      service.start();
+      await pumpEventQueue();
+      service.cancelQueued();
+      for (final session in fleet.held.values) {
+        session.exit();
+      }
+      await service.done.timeout(const Duration(seconds: 2));
+      expect(fleet.dialled, ['h0', 'h1', 'h2']);
+      expect(service.countOf(FleetExecStatus.succeeded), 3);
+      expect(service.runFor('h3')!.status, FleetExecStatus.cancelled);
+      expect(service.runFor('h4')!.status, FleetExecStatus.cancelled);
+      for (final session in fleet.held.values) {
+        expect(session.killed, isFalse);
+      }
+    });
+
     test('one host can be stopped alone', () async {
       final fleet = _Fleet([_host('a'), _host('b')], hold: true);
       final service = fleet.service('sleep 100');
@@ -424,6 +444,46 @@ void main() {
       await Future<void>.delayed(const Duration(milliseconds: 200));
       expect(Process.runSync('kill', ['-0', child]).exitCode, isNot(0),
           reason: 'the background sleep survived');
+    }, skip: Process.runSync('sh', ['-c', 'command -v setsid']).exitCode != 0);
+
+    test('a TERM to the whole exec group, as sshd sends, reaches the command',
+        () async {
+      final dir = await Directory.systemTemp.createTemp('ssg_fleet');
+      addTearDown(() => dir.delete(recursive: true));
+      final pidFile = '${dir.path}/child';
+      final groupFile = '${dir.path}/group';
+      // sshd makes each session's shell a session leader, runs the command
+      // under it, and answers a signal request with killpg() on that group:
+      // the wrapper and its watchdog die at once, before any closed stdin
+      // could reach the watchdog.
+      final process = await Process.start('setsid', [
+        '-w',
+        'sh',
+        '-c',
+        'echo \$\$ > $groupFile; '
+            '${FleetExecService.wrap('sleep 60 & echo \$! > $pidFile; wait')}',
+      ], environment: {'SHELL': '/bin/sh'});
+      unawaited(process.stdout.drain<void>());
+      unawaited(process.stderr.drain<void>());
+      for (var i = 0; i < 100 && !File(pidFile).existsSync(); i++) {
+        await Future<void>.delayed(const Duration(milliseconds: 20));
+      }
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+      final child = File(pidFile).readAsStringSync().trim();
+      addTearDown(() => Process.runSync('kill', [child]));
+      final group = File(groupFile).readAsStringSync().trim();
+      expect(
+        Process.runSync('sh', ['-c', 'kill -s TERM -- -$group']).exitCode,
+        0,
+      );
+      await process.exitCode.timeout(const Duration(seconds: 5));
+      var alive = true;
+      for (var i = 0; i < 50 && alive; i++) {
+        await Future<void>.delayed(const Duration(milliseconds: 20));
+        alive = Process.runSync('kill', ['-0', child]).exitCode == 0;
+      }
+      expect(alive, isFalse, reason: 'the command outlived its wrapper');
+      await process.stdin.close();
     }, skip: Process.runSync('sh', ['-c', 'command -v setsid']).exitCode != 0);
 
     test('stopping never signals the group the wrapper itself runs in',

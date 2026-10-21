@@ -315,6 +315,23 @@ class FleetExecService {
     }
   }
 
+  /// Stops the hosts that have not started yet, and only those: what is
+  /// already running carries on to its end. What leaving the run's screen
+  /// does when asked to leave it running — nobody is left to watch new
+  /// hosts start, or to stop them.
+  void cancelQueued() {
+    if (_pending.isEmpty) return;
+    for (final id in _pending) {
+      _cancelled.add(id);
+      _runs[id]!
+        ..status = FleetExecStatus.cancelled
+        ..message = 'Not started: the run was left before it got here.';
+    }
+    _pending.clear();
+    _publish();
+    _checkIdle();
+  }
+
   /// Stops one host, queued or running.
   void cancelHost(String hostId) {
     final run = _runs[hostId];
@@ -519,6 +536,11 @@ class FleetExecService {
   /// Closes the command's stdin — which the wrapper turns into a kill of
   /// its whole process group — asks the server to TERM it as well, and
   /// closes the channel if neither has ended it within [stopGrace].
+  ///
+  /// OpenSSH delivers that TERM to the whole group it runs the exec in,
+  /// wrapper and watchdog included, often before the closed stdin has
+  /// reached the watchdog. The wrapper traps it and passes it on, so the
+  /// command's own group gets it either way.
   Future<void> _stop(String hostId, SSHSession session) async {
     final stopped = _stopped.putIfAbsent(hostId, Completer<void>.new);
     try {
@@ -588,9 +610,19 @@ class FleetExecService {
   /// A command that finishes on its own takes the waiting `cat` down with
   /// it instead, so a daemon it started with `&` is left running.
   ///
+  /// The wrapper also passes on a TERM or HUP sent to itself. A server
+  /// that signals the exec's process group — OpenSSH answers a signal
+  /// request that way — kills the wrapper and the watchdog with it, and
+  /// the command, in a group of its own, would otherwise never hear of it.
+  ///
   /// The command reaches the server as the wrapper's `$1`, quoted once.
   static String wrap(String command) {
     const wrapper = r'''exec 3<&0
+t=
+w=
+ssg_pass() { if [ -n "$t" ]; then kill -s "$1" -- "$t" 2>/dev/null; fi; if [ -n "$w" ]; then kill "$w" 2>/dev/null; fi; exit "$2"; }
+trap 'ssg_pass TERM 143' TERM
+trap 'ssg_pass HUP 129' HUP
 if command -v setsid >/dev/null 2>&1; then
   setsid "${SHELL:-/bin/sh}" -c "$1" 3<&- &
   p=$!
