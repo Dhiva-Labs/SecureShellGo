@@ -87,8 +87,11 @@ class TerminalKeyBar extends StatelessWidget {
         active: ctrlActive,
         onPressed: onToggleCtrl,
       ),
+      // An icon, not ⎘: common monospace fonts lack the glyph, and it drew
+      // as an empty box.
       _KeyButton(
-        label: '⎘ Paste',
+        label: 'Paste',
+        icon: Icons.content_paste,
         onPressed: onPaste,
       ),
       for (final char in literalChars)
@@ -135,11 +138,15 @@ class _KeyButton extends StatefulWidget {
   const _KeyButton({
     required this.label,
     required this.onPressed,
+    this.icon,
     this.active = false,
     this.repeatable = false,
   });
 
   final String label;
+
+  /// Drawn before [label], at its size.
+  final IconData? icon;
   final VoidCallback onPressed;
   final bool active;
   final bool repeatable;
@@ -195,16 +202,26 @@ class _KeyButtonState extends State<_KeyButton> {
           ),
         ),
         alignment: Alignment.center,
-        child: Text(
-          widget.label,
-          style: TextStyle(
-            fontFamily: AppTheme.monoFontFamily,
-            fontFamilyFallback: AppTheme.monoFontFamilyFallback,
-            fontSize: 13,
-            height: 1,
-            color: widget.active ? theme.colorScheme.primary : null,
-            fontWeight: widget.active ? FontWeight.w600 : FontWeight.normal,
-          ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (widget.icon != null) ...[
+              Icon(widget.icon, size: 15),
+              const SizedBox(width: 6),
+            ],
+            Text(
+              widget.label,
+              style: TextStyle(
+                fontFamily: AppTheme.monoFontFamily,
+                fontFamilyFallback: AppTheme.monoFontFamilyFallback,
+                fontSize: 13,
+                height: 1,
+                color: widget.active ? theme.colorScheme.primary : null,
+                fontWeight:
+                    widget.active ? FontWeight.w600 : FontWeight.normal,
+              ),
+            ),
+          ],
         ),
       ),
     );

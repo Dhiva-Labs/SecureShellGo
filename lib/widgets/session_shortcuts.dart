@@ -36,7 +36,9 @@ class ToggleTerminalFullWidthIntent extends Intent {
 ///
 /// No Alt+digit or Ctrl+Alt+digit for "go to tab n": readline reads Alt+digit
 /// as an argument, and on Windows Ctrl+Alt is AltGr — which is how a German
-/// keyboard types `{` and `[`.
+/// keyboard types `{` and `[`. No Ctrl+PgUp/Ctrl+PgDn either, though GNOME
+/// Terminal uses them for tabs: vim and emacs bind them too, and a shortcut
+/// here is taken from the shell before it can see it.
 abstract final class SessionShortcuts {
   static const newSession =
       SingleActivator(LogicalKeyboardKey.keyT, control: true, shift: true);
@@ -44,10 +46,6 @@ abstract final class SessionShortcuts {
       SingleActivator(LogicalKeyboardKey.tab, control: true);
   static const previousSession =
       SingleActivator(LogicalKeyboardKey.tab, control: true, shift: true);
-  static const nextSessionAlt =
-      SingleActivator(LogicalKeyboardKey.pageDown, control: true);
-  static const previousSessionAlt =
-      SingleActivator(LogicalKeyboardKey.pageUp, control: true);
   static const toggleFiles =
       SingleActivator(LogicalKeyboardKey.keyE, control: true, shift: true);
   static const toggleFullWidth =
@@ -57,8 +55,6 @@ abstract final class SessionShortcuts {
     newSession: NewSessionIntent(),
     nextSession: CycleSessionIntent(),
     previousSession: CycleSessionIntent(backwards: true),
-    nextSessionAlt: CycleSessionIntent(),
-    previousSessionAlt: CycleSessionIntent(backwards: true),
     toggleFiles: ToggleSessionFilesIntent(),
     toggleFullWidth: ToggleTerminalFullWidthIntent(),
   };
@@ -88,8 +84,6 @@ abstract final class SessionShortcuts {
     final key = switch (activator.trigger) {
       LogicalKeyboardKey.enter => 'Enter',
       LogicalKeyboardKey.tab => 'Tab',
-      LogicalKeyboardKey.pageUp => 'PgUp',
-      LogicalKeyboardKey.pageDown => 'PgDn',
       final other => other.keyLabel.toUpperCase(),
     };
     return [

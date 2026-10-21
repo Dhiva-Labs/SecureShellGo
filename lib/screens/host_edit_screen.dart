@@ -651,6 +651,9 @@ class _HostEditScreenState extends State<HostEditScreen> {
       // only reads its value once, at construction (`initialValue`).
       key: ValueKey('$_groupFieldEpoch:${_selectedGroup ?? ''}'),
       initialValue: _selectedGroup,
+      // As the jump host field below: as wide as the form, not as its
+      // longest group name.
+      isExpanded: true,
       decoration: const InputDecoration(
         labelText: 'Group (optional)',
         prefixIcon: Icon(Icons.folder_outlined),
@@ -658,7 +661,14 @@ class _HostEditScreenState extends State<HostEditScreen> {
       items: [
         const DropdownMenuItem<String?>(value: null, child: Text('No group')),
         for (final name in names)
-          DropdownMenuItem<String?>(value: name, child: Text(name)),
+          DropdownMenuItem<String?>(
+            value: name,
+            child: Text(
+              name,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
         const DropdownMenuItem<String?>(
           value: _newGroupSentinel,
           child: Text('New group…'),
@@ -683,6 +693,10 @@ class _HostEditScreenState extends State<HostEditScreen> {
     return DropdownButtonFormField<String?>(
       key: ValueKey(selected),
       initialValue: selected,
+      // The field's width, not the widest host's name: unexpanded, a
+      // dropdown is as wide as its longest item, and a long name pushed a
+      // 320dp window's field off its right edge.
+      isExpanded: true,
       decoration: const InputDecoration(
         labelText: 'Connect via jump host',
         prefixIcon: Icon(Icons.alt_route),
@@ -695,7 +709,11 @@ class _HostEditScreenState extends State<HostEditScreen> {
         for (final host in _jumpCandidates)
           DropdownMenuItem<String?>(
             value: host.id,
-            child: Text(host.displayName),
+            child: Text(
+              host.displayName,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
           ),
         if (dangling)
           DropdownMenuItem<String?>(

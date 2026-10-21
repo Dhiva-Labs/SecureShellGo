@@ -22,11 +22,11 @@ enum PointerClass { touch, mouse }
 /// is still the best guess, and [resolve] falls back to it: a desktop means
 /// mouse and keyboard, anything else means touch.
 ///
-/// Everything here is sticky for the life of the process except
-/// [lastPointer]. A layout that flipped every time a finger brushed a touch
-/// laptop's screen would be worse than one that guessed wrong; the one
-/// decision that does follow the latest pointer (long-press to drag, versus
-/// long-press to open a menu) is about a single gesture, not a layout.
+/// What has been seen stays seen for the life of the process, with two
+/// exceptions: [lastPointer], and the keyboard, which lapses when the
+/// on-screen keyboard opens again (see [noteSoftKeyboard]). A layout that
+/// flipped every time a finger brushed a touch laptop's screen would be worse
+/// than one that guessed wrong.
 class InputProfile extends ChangeNotifier {
   InputProfile();
 
@@ -36,6 +36,7 @@ class InputProfile extends ChangeNotifier {
   bool _touchSeen = false;
   bool _mouseSeen = false;
   bool _keyboardSeen = false;
+  bool _softKeyboardOpen = false;
   PointerClass? _lastPointer;
   bool _attached = false;
 
@@ -87,7 +88,9 @@ class InputProfile extends ChangeNotifier {
   }
 
   bool _handleKey(KeyEvent event) {
-    if (isHardwareKeyEvidence(event)) noteHardwareKey();
+    // With the on-screen keyboard up, it is the likeliest source of any key
+    // there is — see [noteSoftKeyboard].
+    if (!_softKeyboardOpen && isHardwareKeyEvidence(event)) noteHardwareKey();
     // Only watching: the event carries on to whoever handles it.
     return false;
   }
@@ -121,12 +124,33 @@ class InputProfile extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Records the on-screen keyboard opening or closing. [InputProfileScope]
+  /// calls this from the view's insets.
+  ///
+  /// The keys [isHardwareKeyEvidence] trusts are the ones a phone's keyboard
+  /// does not send — but the soft keyboards made for terminals do. Hacker's
+  /// Keyboard and Unexpected Keyboard send Esc, Tab, Ctrl, the arrows and
+  /// the function keys as key events, exactly as a hardware keyboard would,
+  /// and nothing in a [KeyEvent] tells the two apart. So while one is on
+  /// screen no key counts, and opening one lets the keyboard seen before
+  /// lapse: whoever is typing has gone back to the glass. The next key from a
+  /// real keyboard, with the on-screen one away, brings it straight back.
+  void noteSoftKeyboard(bool open) {
+    if (open == _softKeyboardOpen) return;
+    _softKeyboardOpen = open;
+    if (open && _keyboardSeen) {
+      _keyboardSeen = false;
+      notifyListeners();
+    }
+  }
+
   /// Forgets everything seen, back to the OS fallback. For tests.
   @visibleForTesting
   void reset() {
     _touchSeen = false;
     _mouseSeen = false;
     _keyboardSeen = false;
+    _softKeyboardOpen = false;
     _lastPointer = null;
     notifyListeners();
   }
@@ -147,11 +171,12 @@ class InputProfile extends ChangeNotifier {
   /// Soft keyboards commit text through the IME, but many of them also send
   /// a few keys as key events — Backspace, Enter, the arrows of a space-bar
   /// cursor swipe — and Android delivers volume and back buttons the same
-  /// way. None of those prove a keyboard, so this counts only what a phone
-  /// never sends: a printable character, a modifier, Escape, Tab, the
-  /// function and paging keys. A false positive is cheap anyway: the key
-  /// bar comes back the moment the soft keyboard opens, see
-  /// [InputDevices.showsKeyBar].
+  /// way. None of those prove a keyboard, so this counts only what a phone's
+  /// own keyboard never sends: a printable character, a modifier, Escape,
+  /// Tab, the function and paging keys. A terminal user's soft keyboard
+  /// sends those too, which is why nothing counts while one is open — see
+  /// [noteSoftKeyboard]. A false positive is cheap anyway: the key bar comes
+  /// back the moment the soft keyboard opens, see [InputDevices.showsKeyBar].
   static bool isHardwareKeyEvidence(KeyEvent event) {
     if (event is! KeyDownEvent || event.synthesized) return false;
     if (event.deviceType != KeyEventDeviceType.keyboard) return false;
@@ -328,6 +353,9 @@ class _InputProfileScopeState extends State<InputProfileScope> {
   ThemeData? _base;
   ThemeData? _touchTheme;
 
+  /// What [InputProfile.noteSoftKeyboard] was last told, or is about to be.
+  bool? _softKeyboardNoted;
+
   @override
   void initState() {
     super.initState();
@@ -338,11 +366,17 @@ class _InputProfileScopeState extends State<InputProfileScope> {
   void didUpdateWidget(InputProfileScope oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (widget.profile == null) InputProfile.instance.attach();
+    if (widget.profile != oldWidget.profile) _softKeyboardNoted = null;
   }
 
   /// [base] with the targets touch needs: padded tap targets, and no
   /// compact density, which would take 8dp back off them. Cached, because
   /// this rebuilds on every frame of the soft keyboard sliding in.
+  ///
+  /// This is where the AWS style's tight console density goes on a touch
+  /// screen, and that is meant: a control a finger misses is worse than a
+  /// looser layout. Rows of a fixed height that hold buttons grow with them
+  /// rather than clipping the target to the row.
   ThemeData _forTouch(ThemeData base) {
     if (!identical(base, _base)) {
       _base = base;
@@ -358,11 +392,23 @@ class _InputProfileScopeState extends State<InputProfileScope> {
     return _touchTheme!;
   }
 
+  void _noteSoftKeyboard(bool open) {
+    if (open == _softKeyboardNoted) return;
+    _softKeyboardNoted = open;
+    final profile = _profile;
+    // After the frame: a keyboard that lapses notifies the profile's
+    // listeners, and this is the middle of a build. Nothing is lost by the
+    // wait — a soft keyboard sends no keys in the frame it first appears.
+    WidgetsBinding.instance
+        .addPostFrameCallback((_) => profile.noteSoftKeyboard(open));
+  }
+
   @override
   Widget build(BuildContext context) {
     final softKeyboardOpen = (MediaQuery.maybeViewInsetsOf(context)?.bottom ??
             0) >
         InputProfileScope.softKeyboardMinHeight;
+    _noteSoftKeyboard(softKeyboardOpen);
     return _InputProfileInherited(
       notifier: _profile,
       softKeyboardOpen: softKeyboardOpen,

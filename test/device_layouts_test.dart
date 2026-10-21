@@ -12,6 +12,7 @@ import 'package:secure_shell_go/models/app_settings.dart';
 import 'package:secure_shell_go/models/host.dart';
 import 'package:secure_shell_go/models/remote_entry.dart';
 import 'package:secure_shell_go/screens/file_browser_pane.dart';
+import 'package:secure_shell_go/screens/host_edit_screen.dart';
 import 'package:secure_shell_go/screens/host_list_screen.dart';
 import 'package:secure_shell_go/screens/remote_editor_screen.dart';
 import 'package:secure_shell_go/screens/session_screen.dart';
@@ -111,6 +112,30 @@ class EmptyFs implements RemoteFileSystem {
       throw UnimplementedError('${invocation.memberName} is not faked');
 }
 
+/// A home with one folder in it, for the file browser, noting every listing.
+class OneFolderFs extends EmptyFs {
+  final List<String> listed = [];
+
+  @override
+  Future<List<RemoteEntry>> list(String path) async {
+    listed.add(path);
+    if (path != '/home/dev') return const [];
+    return const [
+      RemoteEntry(
+        name: 'app',
+        path: '/home/dev/app',
+        kind: RemoteEntryKind.directory,
+      ),
+    ];
+  }
+
+  @override
+  Future<bool> exists(String path) async => true;
+
+  @override
+  Future<bool> isDirectory(String path) async => true;
+}
+
 /// One readable file, for the editor.
 class OneFileFs extends EmptyFs {
   static final Uint8List bytes =
@@ -185,14 +210,15 @@ SessionController buildSession(SessionTransport transport) =>
       keepaliveScheduler: (_, _) => NoopTimer(),
     );
 
-SessionManager buildManager() => SessionManager(
+SessionManager buildManager({RemoteFileSystem Function()? fileSystem}) =>
+    SessionManager(
       foreground:
           SessionForegroundController(channel: FakeForegroundChannel()),
       createController: (connection, resolve, resolveCreds) =>
           SessionController(
         connection: connection,
         storage: StubStorage(),
-        openFileSystem: () async => EmptyFs(),
+        openFileSystem: () async => fileSystem?.call() ?? EmptyFs(),
         resolveRemoteTarget: resolve,
         resolveDestinationCredentials: resolveCreds,
         keepaliveScheduler: (_, _) => NoopTimer(),
@@ -357,7 +383,7 @@ void main() {
   });
 
   group('the terminal key bar', () {
-    Future<void> pumpTerminal(
+    Future<SessionController> pumpTerminal(
       WidgetTester tester,
       InputProfile profile, {
       TargetPlatform platform = TargetPlatform.android,
@@ -382,6 +408,7 @@ void main() {
         await tester.pump();
       }
       expect(session.isShellReady, isTrue);
+      return session;
     }
 
     testWidgets('automatically: there for touch, gone with a keyboard',
@@ -413,6 +440,36 @@ void main() {
       await pumpTerminal(tester, InputProfile(),
           platform: TargetPlatform.linux);
       expect(find.byType(TerminalKeyBar), findsOneWidget);
+    });
+
+    testWidgets('a sticky Ctrl does not outlast the row', (tester) async {
+      final profile = profileOf([PointerDeviceKind.touch]);
+      final session = await pumpTerminal(tester, profile);
+      await tester.tap(find.text('Ctrl'));
+      await tester.pump();
+      expect(session.transformInput!('c'), '\x03');
+
+      await tester.tap(find.text('Ctrl'));
+      await tester.pump();
+      // A keyboard cover's Ctrl, pressed on its own: the row goes, and with
+      // it the only sign that Ctrl was armed.
+      profile.noteHardwareKey();
+      await tester.pump();
+      expect(find.byType(TerminalKeyBar), findsNothing);
+      expect(session.transformInput!('c'), 'c');
+    });
+
+    testWidgets('Paste is an icon, not a glyph a font may lack',
+        (tester) async {
+      await pumpTerminal(tester, profileOf([PointerDeviceKind.touch]));
+      expect(
+        find.descendant(
+          of: find.byType(TerminalKeyBar),
+          matching: find.byIcon(Icons.content_paste),
+        ),
+        findsOneWidget,
+      );
+      expect(find.textContaining('⎘'), findsNothing);
     });
 
     testWidgets('never hides it from touch, and Settings applies live',
@@ -501,6 +558,41 @@ void main() {
     });
   });
 
+  group('the editor tab strip', () {
+    testWidgets('under touch, a close button is a whole 48dp target',
+        (tester) async {
+      // A phone: wider windows list open files in a side panel instead.
+      tester.view.physicalSize = const Size(412, 915);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      await tester.pumpWidget(app(
+        profile: profileOf([PointerDeviceKind.touch]),
+        home: Scaffold(
+          body: Builder(
+            builder: (context) => TextButton(
+              onPressed: () => openRemoteEditor(
+                context,
+                filesystem: OneFileFs(),
+                settingsStore: settings,
+                paths: const ['/srv/app.py', '/srv/lib.py'],
+                hostLabel: 'demo',
+              ),
+              child: const Text('open editor'),
+            ),
+          ),
+        ),
+      ));
+      await tester.tap(find.text('open editor'));
+      await tester.pumpAndSettle();
+
+      // 21dp above the button's middle: inside 48dp, outside a 38dp strip.
+      final close = find.byTooltip('Close app.py');
+      await tester.tapAt(tester.getCenter(close) - const Offset(0, 21));
+      await tester.pumpAndSettle();
+      expect(find.byTooltip('Close app.py'), findsNothing);
+    });
+  });
+
   group('HingeCut', () {
     const window = Rect.fromLTWH(0, 0, 1200, 900);
 
@@ -581,12 +673,57 @@ void main() {
     });
   });
 
+  group('the host form', () {
+    testWidgets('fits a 320dp window, all the way down', (tester) async {
+      final sessions = SessionManager();
+      addTearDown(sessions.dispose);
+      await tester.runAsync(() async {
+        await hosts.add(FakeTransportBase.hostFor(
+          id: 'bastion',
+          label: 'Bastion in the old datacentre, eu-west',
+        ));
+      });
+      // Tall: a ListView builds only what is on screen, and the jump host
+      // field is well below the fold of a phone.
+      tester.view.physicalSize = const Size(320, 2400);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+
+      await tester.pumpWidget(app(
+        profile: profileOf([PointerDeviceKind.touch]),
+        home: HostEditScreen(
+          hostStore: hosts,
+          credentialStore: CredentialStore(backend: MemoryBackend()),
+          sshService: SshService(knownHosts: knownHosts),
+          settingsStore: settings,
+          sessions: sessions,
+        ),
+      ));
+      for (var i = 0; i < 20; i++) {
+        await tester.runAsync(
+          () => Future<void>.delayed(const Duration(milliseconds: 5)),
+        );
+        await tester.pump();
+      }
+      expect(find.text('Connect via jump host'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+
+      await tester.tap(find.text('Direct connection'));
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
+    });
+  });
+
   group('the session screen', () {
     late SessionManager manager;
     late TerminalWorkspace workspace;
 
+    /// What the sessions' file browsers list; nothing, unless a test says.
+    RemoteFileSystem? fileSystem;
+
     setUp(() {
-      manager = buildManager();
+      fileSystem = null;
+      manager = buildManager(fileSystem: () => fileSystem ?? EmptyFs());
       workspace = TerminalWorkspace();
     });
 
@@ -679,6 +816,73 @@ void main() {
         // Named, because there is a keyboard to press them on.
         expect(find.text('Ctrl+Shift+V'), findsOneWidget);
       });
+
+      testWidgets('a middle click does not open the menu', (tester) async {
+        manager.open(ShellTransport());
+        await pumpSessions(
+          tester,
+          profile: profileOf([PointerDeviceKind.mouse]),
+          platform: TargetPlatform.linux,
+        );
+        await tester.tap(
+          find.byType(TerminalPane),
+          buttons: kMiddleMouseButton,
+          kind: PointerDeviceKind.mouse,
+        );
+        await tester.pumpAndSettle();
+        expect(find.text('Select all'), findsNothing);
+      });
+
+      testWidgets('a finger right after a mouse still opens a file row',
+          (tester) async {
+        final fs = OneFolderFs();
+        fileSystem = fs;
+        manager.open(ShellTransport(id: 'h1', label: 'Alpha'));
+        // A second session, so a row has somewhere to be dragged to.
+        manager.open(ShellTransport(id: 'h2', label: 'Beta'));
+        final profile = profileOf([PointerDeviceKind.mouse]);
+        // Listening to the app's pointers, as it does in the app.
+        profile.attach();
+        addTearDown(profile.detach);
+        await pumpSessions(tester, profile: profile);
+        for (var i = 0; i < 5; i++) {
+          await tester.pump();
+        }
+        // The other session's browser is built too, behind this one.
+        final row = find.text('app').hitTestable();
+        expect(row, findsOneWidget);
+
+        // A real tap takes a frame or two between finger down and up, and
+        // that frame is where the row was rebuilt for the new pointer.
+        final finger = await tester.startGesture(
+          tester.getCenter(row),
+          kind: PointerDeviceKind.touch,
+        );
+        await tester.pump();
+        expect(profile.lastPointer, PointerClass.touch);
+        await finger.up();
+        await tester.pump();
+        await tester.pump();
+        expect(fs.listed.last, '/home/dev/app');
+      });
+
+      testWidgets('the path bar has one slash between each folder',
+          (tester) async {
+        fileSystem = OneFolderFs();
+        manager.open(ShellTransport());
+        await pumpSessions(
+          tester,
+          profile: profileOf([PointerDeviceKind.touch]),
+        );
+        for (var i = 0; i < 5; i++) {
+          await tester.pump();
+        }
+        // "/ home / dev": the root's own crumb, then one separator.
+        Finder inFiles(Finder finder) =>
+            find.descendant(of: find.byType(FileBrowserPane), matching: finder);
+        expect(inFiles(find.text('home')), findsOneWidget);
+        expect(inFiles(find.text('/')), findsNWidgets(2));
+      });
     });
 
     group('by size', () {
@@ -727,6 +931,69 @@ void main() {
         await tester.tap(find.byTooltip('Show files beside the terminal'));
         await tester.pump();
         expect(tester.getSize(find.byType(TerminalPane)).width, paneWidth);
+      });
+
+      testWidgets('a 320dp phone keeps room for the host name',
+          (tester) async {
+        manager.open(ShellTransport(label: 'Production web'));
+        var asked = 0;
+        await pumpSessions(
+          tester,
+          profile: profileOf([PointerDeviceKind.touch]),
+          size: const Size(320, 640),
+          onAddSession: () => asked++,
+        );
+        expect(find.byTooltip('Browse files'), findsOneWidget);
+        expect(find.byTooltip('Snippets'), findsNothing);
+        expect(
+          tester.getSize(find.text('Production web')).width,
+          greaterThan(120),
+        );
+
+        await tester.tap(find.byTooltip('More'));
+        await tester.pumpAndSettle();
+        expect(find.text('Server stats'), findsOneWidget);
+        expect(find.text('Disconnect'), findsOneWidget);
+        await tester.tap(find.text('New session'));
+        await tester.pumpAndSettle();
+        expect(asked, 1);
+      });
+
+      testWidgets('a wider phone keeps its buttons', (tester) async {
+        manager.open(ShellTransport());
+        await pumpSessions(
+          tester,
+          profile: profileOf([PointerDeviceKind.touch]),
+          size: const Size(393, 852),
+        );
+        expect(find.byTooltip('Snippets'), findsOneWidget);
+        expect(find.byTooltip('More'), findsNothing);
+      });
+
+      testWidgets('touch makes a split pane\'s header a 48dp target',
+          (tester) async {
+        manager.open(ShellTransport(id: 'h1', label: 'Alpha'));
+        manager.open(ShellTransport(id: 'h2', label: 'Beta'));
+        final profile = profileOf([PointerDeviceKind.mouse]);
+        await pumpSessions(tester, profile: profile);
+        workspace.splitFocused(WorkspaceAxis.row);
+        // Then a finger on a touch laptop: the split stays.
+        profile.notePointer(PointerDeviceKind.touch);
+        await tester.pump();
+        await tester.pump();
+        // A finger at the edge of a 48dp target, 21dp above the middle of
+        // the button: inside the target, outside a 30dp strip.
+        for (final (tooltip, item) in [
+          ('Pane', 'Split right'),
+          ('Session in this pane', 'Leave this pane empty'),
+        ]) {
+          final button = find.byTooltip(tooltip).first;
+          await tester.tapAt(tester.getCenter(button) - const Offset(0, 21));
+          await tester.pumpAndSettle();
+          expect(find.text(item), findsOneWidget, reason: tooltip);
+          await tester.tapAt(const Offset(5, 795));
+          await tester.pumpAndSettle();
+        }
       });
 
       testWidgets('touch makes the tab strip a 48dp target', (tester) async {
@@ -813,29 +1080,144 @@ void main() {
     });
 
     group('shortcuts', () {
+      Future<void> chord(
+        WidgetTester tester,
+        LogicalKeyboardKey key, {
+        bool shift = false,
+      }) async {
+        await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
+        if (shift) await tester.sendKeyDownEvent(LogicalKeyboardKey.shiftLeft);
+        await tester.sendKeyEvent(key);
+        if (shift) await tester.sendKeyUpEvent(LogicalKeyboardKey.shiftLeft);
+        await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
+        // Twice: the focus a page puts back lands after the frame.
+        await tester.pump();
+        await tester.pump();
+      }
+
       testWidgets('Ctrl+Tab and Ctrl+Shift+Tab walk the tabs',
           (tester) async {
+        // Three, so that the next tab and the previous one differ.
         final alpha = manager.open(ShellTransport(id: 'h1', label: 'Alpha'));
+        final beta = manager.open(ShellTransport(id: 'h2', label: 'Beta'));
+        final gamma = manager.open(ShellTransport(id: 'h3', label: 'Gamma'));
+        manager.select(beta.id);
+        await pumpSessions(
+          tester,
+          profile: profileOf([PointerDeviceKind.touch], keyboard: true),
+        );
+
+        await chord(tester, LogicalKeyboardKey.tab);
+        expect(manager.activeId, gamma.id);
+        await chord(tester, LogicalKeyboardKey.tab, shift: true);
+        expect(manager.activeId, beta.id);
+        await chord(tester, LogicalKeyboardKey.tab, shift: true);
+        expect(manager.activeId, alpha.id);
+        // And round the end.
+        await chord(tester, LogicalKeyboardKey.tab, shift: true);
+        expect(manager.activeId, gamma.id);
+      });
+
+      testWidgets('Ctrl+PgDn and Ctrl+PgUp are left to the shell',
+          (tester) async {
+        manager.open(ShellTransport(id: 'h1', label: 'Alpha'));
         final beta = manager.open(ShellTransport(id: 'h2', label: 'Beta'));
         await pumpSessions(
           tester,
           profile: profileOf([PointerDeviceKind.touch], keyboard: true),
         );
+        await chord(tester, LogicalKeyboardKey.pageDown);
         expect(manager.activeId, beta.id);
+        await chord(tester, LogicalKeyboardKey.pageUp);
+        expect(manager.activeId, beta.id);
+      });
 
-        await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
-        await tester.sendKeyEvent(LogicalKeyboardKey.tab);
-        await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
-        await tester.pump();
+      testWidgets('Ctrl+Shift+E goes to the files and back to the terminal',
+          (tester) async {
+        final alpha = manager.open(ShellTransport());
+        await pumpSessions(
+          tester,
+          profile: profileOf([PointerDeviceKind.touch], keyboard: true),
+          size: const Size(412, 915),
+        );
+        expect(FocusManager.instance.primaryFocus?.debugLabel, 'terminal');
+
+        await chord(tester, LogicalKeyboardKey.keyE, shift: true);
+        expect(alpha.view, SessionView.files);
+        expect(find.byTooltip('Back to terminal (Ctrl+Shift+E)'),
+            findsOneWidget);
+
+        // The same chord again, with nothing clicked in between.
+        await chord(tester, LogicalKeyboardKey.keyE, shift: true);
+        expect(alpha.view, SessionView.terminal);
+        expect(FocusManager.instance.primaryFocus?.debugLabel, 'terminal');
+
+        await chord(tester, LogicalKeyboardKey.keyE, shift: true);
+        expect(alpha.view, SessionView.files);
+      });
+
+      testWidgets('from the files, the other shortcuts still work',
+          (tester) async {
+        final alpha = manager.open(ShellTransport(id: 'h1', label: 'Alpha'));
+        final beta = manager.open(ShellTransport(id: 'h2', label: 'Beta'));
+        var asked = 0;
+        await pumpSessions(
+          tester,
+          profile: profileOf([PointerDeviceKind.touch], keyboard: true),
+          size: const Size(412, 915),
+          onAddSession: () => asked++,
+        );
+        await chord(tester, LogicalKeyboardKey.keyE, shift: true);
+        expect(beta.view, SessionView.files);
+
+        await chord(tester, LogicalKeyboardKey.tab);
         expect(manager.activeId, alpha.id);
+        // Alpha shows its terminal, so the caret goes there.
+        expect(FocusManager.instance.primaryFocus?.debugLabel, 'terminal');
 
-        await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
-        await tester.sendKeyDownEvent(LogicalKeyboardKey.shiftLeft);
-        await tester.sendKeyEvent(LogicalKeyboardKey.tab);
-        await tester.sendKeyUpEvent(LogicalKeyboardKey.shiftLeft);
-        await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
-        await tester.pump();
+        // Back to Beta, which is still on its files: no terminal to type in,
+        // and the keys still reach the screen.
+        await chord(tester, LogicalKeyboardKey.tab);
         expect(manager.activeId, beta.id);
+        await chord(tester, LogicalKeyboardKey.keyT, shift: true);
+        expect(asked, 1);
+      });
+
+      testWidgets('Ctrl+Tab moves between panes rather than swapping them',
+          (tester) async {
+        final alpha = manager.open(ShellTransport(id: 'h1', label: 'Alpha'));
+        final beta = manager.open(ShellTransport(id: 'h2', label: 'Beta'));
+        final gamma = manager.open(ShellTransport(id: 'h3', label: 'Gamma'));
+        await pumpSessions(
+          tester,
+          profile: profileOf([PointerDeviceKind.mouse], keyboard: true),
+          platform: TargetPlatform.linux,
+        );
+        final left = workspace.focusedPaneId;
+        expect(workspace.focusedSessionId, gamma.id);
+        // The new pane on the right takes the first session not on screen.
+        final right = workspace.splitFocused(WorkspaceAxis.row)!.id;
+        await tester.pump();
+        await tester.pump();
+        expect(workspace.focusedSessionId, alpha.id);
+
+        // Back from Alpha, round the end, is Gamma — in the left pane.
+        await chord(tester, LogicalKeyboardKey.tab, shift: true);
+        expect(workspace.focusedPaneId, left);
+        expect(workspace.paneById(left)!.sessionId, gamma.id);
+        expect(workspace.paneById(right)!.sessionId, alpha.id);
+        expect(manager.activeId, gamma.id);
+
+        await chord(tester, LogicalKeyboardKey.tab);
+        expect(workspace.focusedPaneId, right);
+        expect(workspace.paneById(left)!.sessionId, gamma.id);
+        expect(workspace.paneById(right)!.sessionId, alpha.id);
+
+        // Beta has no pane, so it comes to the one in focus.
+        await chord(tester, LogicalKeyboardKey.tab);
+        expect(workspace.focusedPaneId, right);
+        expect(workspace.paneById(right)!.sessionId, beta.id);
+        expect(workspace.paneById(left)!.sessionId, gamma.id);
       });
 
       testWidgets('Ctrl+Shift+T from inside the terminal asks for a session',

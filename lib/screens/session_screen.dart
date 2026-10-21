@@ -141,6 +141,16 @@ enum _Panes {
 /// carrying everything that is.
 enum _MonitorAction { stats, services, tail }
 
+/// The app bar's overflow menu, on a phone too narrow for its icons: every
+/// action but the files toggle, so the host's name keeps room to be read.
+enum _OverflowAction { snippets, stats, services, tail, newSession, close }
+
+/// Below this width the snippets, monitoring, new-session and disconnect
+/// buttons go into [_OverflowAction]'s menu. A 320dp phone has room for the
+/// back arrow, the files toggle and about three more icons; with all five the
+/// host's name was down to its first letter and an ellipsis.
+const double _overflowActionsBelow = 360;
+
 class _SessionsScreenState extends State<SessionsScreen> {
   StreamSubscription<void>? _changes;
   StreamSubscription<void>? _workspaceChanges;
@@ -180,6 +190,17 @@ class _SessionsScreenState extends State<SessionsScreen> {
   /// The terminal has the whole width, where it would otherwise share it with
   /// the file browser. Route-scoped: the next visit starts side by side.
   bool _terminalFullWidth = false;
+
+  /// Where the keyboard goes when it leaves a terminal for something that
+  /// takes no typing — the files, or a tab that shows them.
+  ///
+  /// Under the [Shortcuts] in [build], which is the point. Unfocusing would
+  /// hand the keyboard to the route's scope, above them, and Ctrl+Shift+E,
+  /// Ctrl+Tab and Ctrl+Shift+T would then reach nothing until a click put it
+  /// back somewhere below. Skips traversal: it is a resting place, not a
+  /// control Tab should stop on.
+  final FocusNode _screenFocus =
+      FocusNode(debugLabel: 'sessions screen', skipTraversal: true);
 
   @override
   void initState() {
@@ -236,6 +257,7 @@ class _SessionsScreenState extends State<SessionsScreen> {
     // The sessions are deliberately *not* disposed here — they belong to the
     // manager and outlive this route.
     unawaited(widget.keepAwake.setEnabled(false));
+    _screenFocus.dispose();
     super.dispose();
   }
 
@@ -302,12 +324,25 @@ class _SessionsScreenState extends State<SessionsScreen> {
   }
 
   /// Ctrl+Tab and Ctrl+Shift+Tab: the next or previous tab, wrapping round.
+  ///
+  /// In a split workspace a session that already has a pane is reached by
+  /// moving the focus to that pane. Showing it in the focused one, as a tab
+  /// tap does, would trade the two panes' sessions — a layout rearranged by a
+  /// key that only meant "go to the next one".
   void _cycleSession({required bool backwards}) {
     final entries = widget.sessions.sessions;
     if (entries.length < 2) return;
     final at = entries.indexWhere((s) => s.id == widget.sessions.activeId);
     final next = (at + (backwards ? -1 : 1)) % entries.length;
-    _selectSession(entries[next].id);
+    final id = entries[next].id;
+    final pane =
+        _workspaceOn(context) ? _workspace.paneForSession(id) : null;
+    if (pane != null) {
+      _workspace.focusPane(pane.id);
+      widget.sessions.select(id);
+      return;
+    }
+    _selectSession(id);
   }
 
   /// The terminal takes the whole width, or gives the files their side back.
@@ -327,6 +362,24 @@ class _SessionsScreenState extends State<SessionsScreen> {
     _show(active.view == SessionView.terminal
         ? SessionView.files
         : SessionView.terminal);
+  }
+
+  void _handleOverflowAction(_OverflowAction action, ManagedSession active) {
+    switch (action) {
+      case _OverflowAction.snippets:
+        _openSnippetPicker();
+      case _OverflowAction.stats:
+        unawaited(_handleMonitorAction(_MonitorAction.stats, active.controller));
+      case _OverflowAction.services:
+        unawaited(
+            _handleMonitorAction(_MonitorAction.services, active.controller));
+      case _OverflowAction.tail:
+        unawaited(_handleMonitorAction(_MonitorAction.tail, active.controller));
+      case _OverflowAction.newSession:
+        _addSession();
+      case _OverflowAction.close:
+        unawaited(_closeActive());
+    }
   }
 
   void _handleWorkspaceAction(_WorkspaceAction action) {
@@ -389,9 +442,12 @@ class _SessionsScreenState extends State<SessionsScreen> {
   void _show(SessionView view) {
     final active = widget.sessions.active;
     if (active == null || active.view == view) return;
-    // Drop the soft keyboard on the way out of the terminal, or the file list
-    // opens behind it.
-    FocusManager.instance.primaryFocus?.unfocus();
+    // Take the focus out of the terminal, which drops the soft keyboard on
+    // the way to the files — or the file list opens behind it. To the
+    // screen's own node, not by unfocusing: see [_screenFocus]. Coming back
+    // to the terminal, the page puts the caret in it if there is a keyboard
+    // to type with.
+    _screenFocus.requestFocus();
     widget.sessions.showView(active.id, view);
   }
 
@@ -505,6 +561,7 @@ class _SessionsScreenState extends State<SessionsScreen> {
       settingsStore: widget.settingsStore,
       active: active,
       panes: panes,
+      screenFocus: _screenFocus,
     );
   }
 
@@ -642,6 +699,7 @@ class _SessionsScreenState extends State<SessionsScreen> {
 
     final closed = active.isClosed;
     final theme = Theme.of(context);
+    final narrow = size.width < _overflowActionsBelow;
 
     final scaffold = Scaffold(
       appBar: AppBar(
@@ -809,52 +867,96 @@ class _SessionsScreenState extends State<SessionsScreen> {
               ),
               onPressed: _toggleTerminalFullWidth,
             ),
-          IconButton(
-            tooltip: 'Snippets',
-            icon: const Icon(Icons.bolt_outlined),
-            onPressed: _openSnippetPicker,
-          ),
-          // Monitoring. Disabled on a closed session: all three run commands
-          // over the transport, and there is not one.
-          PopupMenuButton<_MonitorAction>(
-            tooltip: 'Monitor this server',
-            icon: const Icon(Icons.monitor_heart_outlined),
-            enabled: !closed,
-            onSelected: (action) =>
-                unawaited(_handleMonitorAction(action, active.controller)),
-            itemBuilder: (context) => const [
-              PopupMenuItem<_MonitorAction>(
-                value: _MonitorAction.stats,
-                child: Text('Server stats'),
-              ),
-              PopupMenuItem<_MonitorAction>(
-                value: _MonitorAction.services,
-                child: Text('Services & processes'),
-              ),
-              PopupMenuItem<_MonitorAction>(
-                value: _MonitorAction.tail,
-                child: Text('Tail a file…'),
-              ),
-            ],
-          ),
-          // With one session open this is the only sign that a second one is
-          // possible, so it stays in the bar rather than living only in the
-          // tab strip that has not appeared yet.
-          IconButton(
-            tooltip: SessionShortcuts.tooltip(
-              'New session',
-              SessionShortcuts.newSession,
-              keyboard: input.keyboard,
+          if (narrow)
+            PopupMenuButton<_OverflowAction>(
+              tooltip: 'More',
+              icon: const Icon(Icons.more_vert),
+              onSelected: (action) => _handleOverflowAction(action, active),
+              itemBuilder: (context) => [
+                const PopupMenuItem<_OverflowAction>(
+                  value: _OverflowAction.snippets,
+                  child: Text('Snippets'),
+                ),
+                const PopupMenuDivider(),
+                PopupMenuItem<_OverflowAction>(
+                  value: _OverflowAction.stats,
+                  enabled: !closed,
+                  child: const Text('Server stats'),
+                ),
+                PopupMenuItem<_OverflowAction>(
+                  value: _OverflowAction.services,
+                  enabled: !closed,
+                  child: const Text('Services & processes'),
+                ),
+                PopupMenuItem<_OverflowAction>(
+                  value: _OverflowAction.tail,
+                  enabled: !closed,
+                  child: const Text('Tail a file…'),
+                ),
+                const PopupMenuDivider(),
+                const PopupMenuItem<_OverflowAction>(
+                  value: _OverflowAction.newSession,
+                  child: Text('New session'),
+                ),
+                PopupMenuItem<_OverflowAction>(
+                  value: _OverflowAction.close,
+                  child: Text(
+                    closed ? 'Close tab' : 'Disconnect',
+                    style: closed
+                        ? null
+                        : TextStyle(color: theme.colorScheme.error),
+                  ),
+                ),
+              ],
+            )
+          else ...[
+            IconButton(
+              tooltip: 'Snippets',
+              icon: const Icon(Icons.bolt_outlined),
+              onPressed: _openSnippetPicker,
             ),
-            icon: const Icon(Icons.add),
-            onPressed: _addSession,
-          ),
-          IconButton(
-            tooltip: closed ? 'Close tab' : 'Disconnect',
-            icon: Icon(closed ? Icons.close : Icons.power_settings_new),
-            color: closed ? null : theme.colorScheme.error,
-            onPressed: () => unawaited(_closeActive()),
-          ),
+            // Monitoring. Disabled on a closed session: all three run
+            // commands over the transport, and there is not one.
+            PopupMenuButton<_MonitorAction>(
+              tooltip: 'Monitor this server',
+              icon: const Icon(Icons.monitor_heart_outlined),
+              enabled: !closed,
+              onSelected: (action) =>
+                  unawaited(_handleMonitorAction(action, active.controller)),
+              itemBuilder: (context) => const [
+                PopupMenuItem<_MonitorAction>(
+                  value: _MonitorAction.stats,
+                  child: Text('Server stats'),
+                ),
+                PopupMenuItem<_MonitorAction>(
+                  value: _MonitorAction.services,
+                  child: Text('Services & processes'),
+                ),
+                PopupMenuItem<_MonitorAction>(
+                  value: _MonitorAction.tail,
+                  child: Text('Tail a file…'),
+                ),
+              ],
+            ),
+            // With one session open this is the only sign that a second one
+            // is possible, so it stays in the bar rather than living only in
+            // the tab strip that has not appeared yet.
+            IconButton(
+              tooltip: SessionShortcuts.tooltip(
+                'New session',
+                SessionShortcuts.newSession,
+                keyboard: input.keyboard,
+              ),
+              icon: const Icon(Icons.add),
+              onPressed: _addSession,
+            ),
+            IconButton(
+              tooltip: closed ? 'Close tab' : 'Disconnect',
+              icon: Icon(closed ? Icons.close : Icons.power_settings_new),
+              color: closed ? null : theme.colorScheme.error,
+              onPressed: () => unawaited(_closeActive()),
+            ),
+          ],
         ],
       ),
       body: SafeArea(
@@ -907,7 +1009,10 @@ class _SessionsScreenState extends State<SessionsScreen> {
             onInvoke: (_) => _toggleTerminalFullWidth(),
           ),
         },
-        child: scaffold,
+        child: Focus(
+          focusNode: _screenFocus,
+          child: scaffold,
+        ),
       ),
     );
   }
@@ -927,6 +1032,7 @@ class _SessionPage extends StatefulWidget {
     required this.settingsStore,
     required this.active,
     required this.panes,
+    required this.screenFocus,
   });
 
   final ManagedSession entry;
@@ -934,6 +1040,10 @@ class _SessionPage extends StatefulWidget {
   final SettingsStore settingsStore;
   final bool active;
   final _Panes panes;
+
+  /// The screen's resting place for the keyboard, under its shortcuts — see
+  /// `_SessionsScreenState._screenFocus`.
+  final FocusNode screenFocus;
 
   @override
   State<_SessionPage> createState() => _SessionPageState();
@@ -984,12 +1094,16 @@ class _SessionPageState extends State<_SessionPage> {
         if (widget.entry.view == SessionView.terminal &&
             !widget.entry.isClosed) {
           _terminalFocus.requestFocus();
+        } else {
+          _focusScreenIfStranded();
         }
       });
     }
-    // Back from the files with Ctrl+Shift+E: the toggle dropped the focus to
-    // put the soft keyboard away, which a hardware keyboard has no use for —
-    // the next key belongs in the terminal it just switched back to.
+    // Back from the files with Ctrl+Shift+E: the toggle took the focus out of
+    // the terminal to put the soft keyboard away, which a hardware keyboard
+    // has no use for — the next key belongs in the terminal it just switched
+    // back to. Off to the files some other way (a shared file arriving), the
+    // terminal behind them must not keep the keys.
     final view = widget.entry.view;
     if (view != _shownView) {
       _shownView = view;
@@ -1000,7 +1114,26 @@ class _SessionPageState extends State<_SessionPage> {
         WidgetsBinding.instance.addPostFrameCallback((_) {
           if (mounted && widget.active) _terminalFocus.requestFocus();
         });
+      } else if (widget.active && view == SessionView.files) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted && widget.active) _focusScreenIfStranded();
+        });
       }
+    }
+  }
+
+  /// Gives the keyboard to the screen where this page has left it nowhere
+  /// useful: in its terminal, now hidden behind the files, or dropped to the
+  /// route's scope above the screen's shortcuts — which is where it lands
+  /// when the tab that had it goes to the back. Focus anywhere else, a
+  /// dialog or the file browser's path field, is left where it is.
+  void _focusScreenIfStranded() {
+    final primary = FocusManager.instance.primaryFocus;
+    final screen = widget.screenFocus;
+    if (primary == null ||
+        _terminalFocus.hasFocus ||
+        identical(primary, screen.enclosingScope)) {
+      screen.requestFocus();
     }
   }
 

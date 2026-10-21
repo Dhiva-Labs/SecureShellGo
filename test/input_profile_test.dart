@@ -151,6 +151,43 @@ void main() {
       expect(profile.attached, isFalse);
     });
 
+    testWidgets('keys from a terminal\'s soft keyboard do not count',
+        (tester) async {
+      await tester.pumpWidget(MaterialApp(
+        builder: (context, child) =>
+            InputProfileScope(profile: profile, child: child!),
+        home: const Scaffold(),
+      ));
+      profile.attach();
+      addTearDown(tester.view.resetViewInsets);
+
+      // Hacker's Keyboard or Unexpected Keyboard on screen: their Esc, Tab
+      // and Ctrl arrive as key events, the same as a keyboard's.
+      tester.view.viewInsets = const FakeViewPadding(bottom: 900);
+      await tester.pump();
+      await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+      await tester.sendKeyEvent(LogicalKeyboardKey.tab);
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
+      expect(profile.keyboardSeen, isFalse);
+
+      // With it away, an Esc can only be a keyboard's.
+      tester.view.resetViewInsets();
+      await tester.pump();
+      await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+      expect(profile.keyboardSeen, isTrue);
+
+      // And the soft keyboard coming back lets that lapse: the next key
+      // from a real keyboard, with it away again, brings it back.
+      tester.view.viewInsets = const FakeViewPadding(bottom: 900);
+      await tester.pump();
+      expect(profile.keyboardSeen, isFalse);
+      tester.view.resetViewInsets();
+      await tester.pump();
+      await tester.sendKeyEvent(LogicalKeyboardKey.keyA);
+      expect(profile.keyboardSeen, isTrue);
+    });
+
     testWidgets('a modifier on its own is a keyboard', (tester) async {
       await tester.pumpWidget(const SizedBox());
       profile.attach();
