@@ -237,7 +237,23 @@ void main() {
     await tester.runAsync(() => tester.tap(find.text(label)));
     await tester.pump();
     await settleIo(tester);
-    if (checks != null) await tester.runAsync(checks);
+    if (checks != null) {
+      // The save encrypts and shells out to `chmod`; on a busy machine that
+      // outlasts settleIo's slice, and a fixed wait failed these tests in
+      // the full suite while they passed alone. So a failing check gets
+      // more turns of both loops before it counts, for up to ten seconds.
+      // A check that something was *not* written still passes on its first
+      // try, exactly as it did with the fixed wait.
+      for (var attempt = 0;; attempt++) {
+        try {
+          await tester.runAsync(checks);
+          break;
+        } catch (_) {
+          if (attempt >= 20) rethrow;
+          await settleIo(tester, rounds: 25);
+        }
+      }
+    }
     await tester.pump();
   }
 
