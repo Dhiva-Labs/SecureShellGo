@@ -97,6 +97,35 @@ void main() {
       expect(stripper.flush(), 'x' * 10);
     });
 
+    test('moves and inserts past any real width stop at the longest line',
+        () {
+      const longest = TerminalTextStripper.maxLineLength;
+      const huge = '9223372036854775807';
+      for (final chunk in [
+        '\x1b[20000000Cx\n',
+        '\x1b[${huge}Cx\n',
+        '\x1b[${huge}Gx\n',
+        'abc\r\x1b[$huge@x\n',
+        'abc\r\x1b[1000000@x\n',
+        'abc\x1b[2D\x1b[${huge}P\n',
+        'abc\x1b[2D\x1b[${huge}X\n',
+        'abc\x1b[${huge}D\n',
+        '\t' * (longest * 2),
+      ]) {
+        for (final line in strip([chunk]).split('\n')) {
+          expect(line.length, lessThanOrEqualTo(longest), reason: chunk);
+        }
+      }
+      // At the right edge, as on a screen.
+      final edge = strip(['\x1b[20000000Cx']);
+      expect(edge, hasLength(longest + 1));
+      expect(edge.trim(), 'x');
+      expect(strip(['abc\x1b[2D\x1b[${huge}P']), 'a');
+      expect(strip(['abc\x1b[2D\x1b[${huge}X']), 'a');
+      expect(strip(['abc\r\x1b[2@']), '  abc');
+      expect(strip(['abc\r\x1b[$huge@x']), 'x');
+    });
+
     test('wide and astral characters pass through', () {
       expect(strip(['日本語 🙂 ok\r\n']), '日本語 🙂 ok\n');
     });
@@ -224,6 +253,19 @@ void main() {
       await recorder.discard();
       expect(await file.exists(), isFalse);
     });
+
+    test('one on a full disk still closes, with the reason', () async {
+      final recorder = SessionRecorder(sink: FileLogSink(File('/dev/full')));
+      recorder.add('x\r\n');
+      await recorder.sink.failed.then((_) {}, onError: (Object _) {})
+          .timeout(const Duration(seconds: 5));
+      expect(recorder.stoppedBy, RecordingStop.failed);
+      // Flushing a sink that has failed never completes; this must.
+      await expectLater(
+        recorder.finish().timeout(const Duration(seconds: 5)),
+        throwsA(isA<FileSystemException>()),
+      );
+    }, skip: !File('/dev/full').existsSync());
 
     test('a file that cannot be written stops the recording', () async {
       final terminal = RecordingTerminal();

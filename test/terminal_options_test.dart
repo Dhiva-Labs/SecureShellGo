@@ -20,6 +20,7 @@ import 'package:secure_shell_go/services/known_hosts_service.dart';
 import 'package:secure_shell_go/services/session_controller.dart';
 import 'package:secure_shell_go/services/session_foreground.dart';
 import 'package:secure_shell_go/services/session_manager.dart';
+import 'package:secure_shell_go/services/session_recorder.dart';
 import 'package:secure_shell_go/services/settings_store.dart';
 import 'package:secure_shell_go/services/sftp_service.dart';
 import 'package:secure_shell_go/services/ssh_service.dart';
@@ -48,8 +49,11 @@ class PrintingShell implements SSHSession {
   Future<void> get done => _done.future;
   @override
   int? get exitCode => null;
+
+  /// Everything typed into it.
+  final typed = StringBuffer();
   @override
-  void write(Uint8List data) {}
+  void write(Uint8List data) => typed.write(utf8.decode(data));
   @override
   void close() {}
   @override
@@ -126,6 +130,28 @@ class FakeSaver implements DocumentSaver {
     if (cancel) return null;
     saved.add((name: suggestedName, bytes: bytes, mimeType: mimeType));
     return SavedDocument(displayName: suggestedName);
+  }
+}
+
+/// Android's, with a limit small enough for a test to fill.
+class SmallDocumentDestination extends DocumentLogDestination {
+  SmallDocumentDestination(super.saver);
+
+  @override
+  int? get maxBytes => 200;
+}
+
+/// Where a test's log goes, saved without asking: a desktop's.
+class FakeLogSaver implements SessionLogSaver {
+  int saves = 0;
+
+  @override
+  bool get asksWhere => false;
+
+  @override
+  Future<String?> save() async {
+    saves++;
+    return 'test.log';
   }
 }
 
@@ -300,6 +326,52 @@ void main() {
       expect(state.blinking, isFalse);
     });
 
+    testWidgets('no blinking while the app is in the background',
+        (tester) async {
+      await use(tester, (s) => s.copyWith(cursorBlink: true));
+      await pumpPane(tester);
+      final state = tester.state<TerminalCursorOverlayState>(
+        find.byType(TerminalCursorOverlay),
+      );
+      expect(state.blinking, isTrue);
+      // On Android the terminal keeps the keyboard's focus while paused.
+      for (final away in [
+        AppLifecycleState.inactive,
+        AppLifecycleState.hidden,
+        AppLifecycleState.paused,
+      ]) {
+        tester.binding.handleAppLifecycleStateChanged(away);
+        await tester.pump();
+        expect(state.blinking, isFalse, reason: '$away');
+        expect(state.blinkOn, isTrue);
+      }
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+      await tester.pump();
+      expect(state.blinking, isTrue);
+    });
+
+    testWidgets('a block cursor covers all of a wide character',
+        (tester) async {
+      final (_, transport) = await pumpPane(tester);
+      await print(tester, transport, 'ab');
+      final state = tester.state<TerminalCursorOverlayState>(
+        find.byType(TerminalCursorOverlay),
+      );
+      final narrow = state.cursorRect!;
+      // Back onto 日, two cells wide.
+      await print(tester, transport, '\r日本\r');
+      final wide = state.cursorRect!;
+      expect(wide.width, moreOrLessEquals(narrow.width * 2));
+      expect(wide.height, narrow.height);
+
+      // The character is drawn again inside the block, and only there.
+      final paint = tester.renderObject(find.descendant(
+        of: find.byType(TerminalCursorOverlay),
+        matching: find.byType(CustomPaint),
+      ));
+      expect(paint, paints..rect(rect: wide)..clipRect(rect: wide)..paragraph());
+    });
+
     testWidgets('a steady cursor runs no timer', (tester) async {
       await pumpPane(tester);
       final state = tester.state<TerminalCursorOverlayState>(
@@ -361,6 +433,17 @@ void main() {
         final (_, transport) = await pumpPane(tester);
         await print(tester, transport, '\x07');
         expect(haptics, ['HapticFeedback.vibrate']);
+      });
+
+      testWidgets('a burst of bells is one ring', (tester) async {
+        watchHaptics(tester);
+        final (_, transport) = await pumpPane(tester);
+        await print(tester, transport, '\x07' * 20);
+        await print(tester, transport, '\x07\x07');
+        expect(haptics, hasLength(1));
+        await tester.pump(const Duration(milliseconds: 300));
+        await print(tester, transport, '\x07');
+        expect(haptics, hasLength(2));
       });
 
       testWidgets('flashes the screen when asked to', (tester) async {
@@ -550,12 +633,14 @@ void main() {
 
     testWidgets('Ctrl+Shift+- is readline\'s undo, not a zoom',
         (tester) async {
-      await pumpPane(
+      final (_, transport) = await pumpPane(
         tester,
         profile: profileOf(PointerDeviceKind.mouse, keyboard: true),
       );
       await chord(tester, LogicalKeyboardKey.minus, shift: true);
       expect(view(tester).textStyle.fontSize, AppSettings.defaultFontSize);
+      // Ctrl+_, which xterm on its own sends nothing for.
+      expect(transport.shell.typed.toString(), '\x1f');
     });
   });
 
@@ -579,6 +664,9 @@ void main() {
 
       await tester.enterText(find.byType(TextField), 'apple');
       await tester.pump();
+      // Searched once typing pauses.
+      expect(controller.highlights, isEmpty);
+      await tester.pump(const Duration(milliseconds: 200));
       expect(find.text('2 of 2'), findsOneWidget);
       // Two matches and the current one over the second.
       expect(controller.highlights, hasLength(3));
@@ -624,7 +712,7 @@ void main() {
       await tester.pump();
       await tester.pump();
       await tester.enterText(find.byType(TextField), 'needle');
-      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 200));
       expect(find.text('1 of 1'), findsOneWidget);
       expect(scroll.position.pixels, 0);
     });
@@ -637,8 +725,31 @@ void main() {
       await tester.pump();
       await tester.tap(find.byTooltip('Regular expression'));
       await tester.enterText(find.byType(TextField), '(oops');
-      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 200));
       expect(find.text('Invalid pattern'), findsOneWidget);
+    });
+
+    testWidgets('a regular expression that never finishes says so',
+        (tester) async {
+      final (session, transport) = await pumpPane(tester);
+      await print(tester, transport, '${'a' * 59}!');
+      TerminalPane.showFind(session);
+      await tester.pump();
+      await tester.pump();
+      await tester.tap(find.byTooltip('Regular expression'));
+      await tester.enterText(find.byType(TextField), r'^(\w+\s?)+$');
+      await tester.pump(const Duration(milliseconds: 200));
+      expect(find.text('Searching…'), findsOneWidget);
+      // The search runs on its own isolate, on the real clock; frames go on
+      // being drawn meanwhile.
+      for (var i = 0; i < 10 && find.text('Searching…').evaluate().isNotEmpty;
+          i++) {
+        await tester.runAsync(
+          () => Future<void>.delayed(const Duration(milliseconds: 100)),
+        );
+        await tester.pump(const Duration(milliseconds: 500));
+      }
+      expect(find.text('Pattern too slow'), findsOneWidget);
     });
   });
 
@@ -666,6 +777,38 @@ void main() {
 
       await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
       await tester.tapAt(at, kind: PointerDeviceKind.mouse);
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
+      await tester.pump(const Duration(milliseconds: 400));
+      expect(opened, [Uri.parse(url)]);
+    });
+
+    testWidgets('under mouse reporting, Ctrl+click is the program\'s',
+        (tester) async {
+      final opened = <Uri>[];
+      final (_, transport) = await pumpPane(
+        tester,
+        profile: profileOf(PointerDeviceKind.mouse, keyboard: true),
+        openLink: (uri) async {
+          opened.add(uri);
+          return true;
+        },
+      );
+      // tmux with `set -g mouse on`.
+      await print(tester, transport, 'see $url.\r\n\x1b[?1000h\x1b[?1006h');
+      final at = centreOf(tester, const CellOffset(8, 0));
+
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
+      await tester.tapAt(at, kind: PointerDeviceKind.mouse);
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
+      await tester.pump(const Duration(milliseconds: 400));
+      expect(opened, isEmpty);
+      // The click went to the program, as a mouse report.
+      expect(transport.shell.typed.toString(), contains('\x1b[<'));
+
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.shiftLeft);
+      await tester.tapAt(at, kind: PointerDeviceKind.mouse);
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.shiftLeft);
       await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
       await tester.pump(const Duration(milliseconds: 400));
       expect(opened, [Uri.parse(url)]);
@@ -770,33 +913,37 @@ void main() {
       SessionLogActions.debugDestination = DocumentLogDestination(saver);
     });
 
+    SessionManager newManager() => SessionManager(
+          foreground:
+              SessionForegroundController(channel: FakeForegroundChannel()),
+          createController: (connection, resolve, resolveCreds) =>
+              buildSession(connection),
+        );
+
+    Widget screenFor(SessionManager manager) => MaterialApp(
+          theme: AppTheme.dark,
+          builder: (context, child) => InputProfileScope(
+            profile: profileOf(PointerDeviceKind.touch),
+            child: child!,
+          ),
+          home: SessionsScreen(
+            sessions: manager,
+            settingsStore: settings,
+            keepAwake: NoopKeepAwake(),
+          ),
+        );
+
     Future<(SessionManager, ShellTransport)> pumpScreen(
         WidgetTester tester) async {
       final transport = ShellTransport();
-      final manager = SessionManager(
-        foreground:
-            SessionForegroundController(channel: FakeForegroundChannel()),
-        createController: (connection, resolve, resolveCreds) =>
-            buildSession(connection),
-      );
+      final manager = newManager();
       addTearDown(manager.dispose);
       manager.open(transport);
       // A phone, so the terminal has the page to itself.
       tester.view.physicalSize = const Size(412, 900);
       tester.view.devicePixelRatio = 1;
       addTearDown(tester.view.reset);
-      await tester.pumpWidget(MaterialApp(
-        theme: AppTheme.dark,
-        builder: (context, child) => InputProfileScope(
-          profile: profileOf(PointerDeviceKind.touch),
-          child: child!,
-        ),
-        home: SessionsScreen(
-          sessions: manager,
-          settingsStore: settings,
-          keepAwake: NoopKeepAwake(),
-        ),
-      ));
+      await tester.pumpWidget(screenFor(manager));
       for (var i = 0; i < 5; i++) {
         await tester.pump();
       }
@@ -894,6 +1041,129 @@ void main() {
       await tester.pumpAndSettle();
       expect(utf8.decode(saver.saved.single.bytes), contains('last words'));
       expect(manager.isEmpty, isTrue);
+    });
+
+    testWidgets('a log file that cannot be written says so', (tester) async {
+      // Opens, and then every write fails: a full disk.
+      final full = Link('${dir.path}/full.log');
+      await tester.runAsync(() => full.create('/dev/full'));
+      SessionLogActions.debugDestination =
+          FileLogDestination(choose: (_) async => full.path);
+      final (_, transport) = await pumpScreen(tester);
+      await menu(tester, 'Record session log…');
+      await tester.tap(find.text('Choose file…'));
+      await tester.pumpAndSettle();
+      expect(find.text('REC'), findsOneWidget);
+
+      await print(tester, transport, 'output\r\n');
+      await settleIo(tester);
+      await tester.pumpAndSettle();
+      expect(find.text('REC'), findsNothing);
+      expect(find.textContaining('it could not be written'), findsOneWidget);
+    }, skip: !File('/dev/full').existsSync());
+
+    testWidgets('a log that fills up on screen asks where to save it',
+        (tester) async {
+      SessionLogActions.debugDestination = SmallDocumentDestination(saver);
+      final (_, transport) = await pumpScreen(tester);
+      await menu(tester, 'Record session log…');
+      await tester.tap(find.text('Start'));
+      await tester.pumpAndSettle();
+      await print(tester, transport, '${'x' * 300}\r\n');
+      await tester.pumpAndSettle();
+      expect(find.text('REC'), findsNothing);
+      expect(saver.saved.single.bytes, hasLength(200));
+      expect(find.textContaining('The session log is full'), findsOneWidget);
+      expect(find.textContaining('Session log saved'), findsOneWidget);
+    });
+
+    testWidgets('a log that fills up off screen is kept, and offered back',
+        (tester) async {
+      SessionLogActions.debugDestination = SmallDocumentDestination(saver);
+      final (manager, transport) = await pumpScreen(tester);
+      await menu(tester, 'Record session log…');
+      await tester.tap(find.text('Start'));
+      await tester.pumpAndSettle();
+
+      // Back to the host list: the session runs on with nothing showing it.
+      await tester.pumpWidget(const MaterialApp(home: Scaffold()));
+      await print(tester, transport, '${'x' * 300}\r\n');
+      final terminal = manager.sessions.single.controller.terminal;
+      expect(terminal.isRecording, isFalse);
+      final ending = terminal.unannounced.single;
+      expect(ending.isSettled, isTrue);
+      expect(ending.needsSaving, isTrue);
+      expect(saver.saved, isEmpty);
+
+      await tester.pumpWidget(screenFor(manager));
+      await tester.pumpAndSettle();
+      expect(find.textContaining('The session log is full'), findsOneWidget);
+      expect(terminal.unannounced, isEmpty);
+      await tester.tap(find.text('Save…'));
+      await tester.pumpAndSettle();
+      expect(saver.saved.single.bytes, hasLength(200));
+      expect(
+        utf8.decode(saver.saved.single.bytes),
+        startsWith('Session log for dev@example.com'),
+      );
+    });
+
+    test('one that fills up with nothing on screen is finished and saved',
+        () async {
+      final manager = newManager();
+      addTearDown(manager.dispose);
+      final terminal = manager.open(ShellTransport()).controller.terminal;
+      final logSaver = FakeLogSaver();
+      final sink = MemoryLogSink();
+      terminal.startRecording(SessionRecorder(
+        sink: sink,
+        plainText: false,
+        maxBytes: 10,
+        saver: logSaver,
+      ));
+      terminal.write('more than ten bytes');
+      final ending = terminal.unannounced.single;
+      await ending.settled.timeout(const Duration(seconds: 5));
+      expect(logSaver.saves, 1);
+      expect(ending.savedAs, 'test.log');
+      expect(sink.length, 10);
+    });
+
+    test('the app closing finishes a running log, and saves it', () async {
+      final manager = newManager();
+      final terminal = manager.open(ShellTransport()).controller.terminal;
+      final file = File('${dir.path}/closing.log');
+      final logSaver = FakeLogSaver();
+      terminal.startRecording(
+        SessionRecorder(sink: FileLogSink(file), saver: logSaver),
+      );
+      terminal.write('last words\r\nhalf a li');
+      await manager.dispose();
+      expect(logSaver.saves, 1);
+      final log = await file.readAsString();
+      expect(log, startsWith('last words\nhalf a li\n'));
+      expect(log.trimRight(), matches(RegExp(r'Session log ended [\d: -]+$')));
+    });
+
+    test('.log is added without replacing a file nobody was asked about',
+        () async {
+      final taken = File('${dir.path}/notes.log')..writeAsStringSync('keep me');
+      Future<String> named(String path) =>
+          FileLogDestination.withLogExtension('${dir.path}/$path');
+      expect(await named('notes'), '${dir.path}/notes (1).log');
+      File('${dir.path}/notes (1).log').writeAsStringSync('');
+      expect(await named('notes'), '${dir.path}/notes (2).log');
+      expect(await named('fresh'), '${dir.path}/fresh.log');
+      // An extension the user typed is theirs, replace and all: the dialog
+      // asked about that one.
+      expect(await named('notes.log'), '${dir.path}/notes.log');
+
+      final sink = await FileLogDestination(
+        choose: (_) async => '${dir.path}/notes',
+      ).open('suggested.log');
+      expect((sink! as FileLogSink).file.path, '${dir.path}/notes (2).log');
+      await sink.close();
+      expect(taken.readAsStringSync(), 'keep me');
     });
   });
 }

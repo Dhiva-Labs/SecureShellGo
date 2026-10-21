@@ -14,6 +14,13 @@ import '../services/terminal_search.dart';
 /// up. While the search is open, new output also re-runs it — at most every
 /// [refreshDelay], so a stream of output keeps the count true without a
 /// search per line — and the current match stays the one the user was on.
+///
+/// Typing searches once the typing pauses ([typeQuery]), and the lines'
+/// text is kept between searches ([TerminalTextIndex]), so neither a
+/// keystroke nor a burst of output reads the whole scrollback again. A
+/// regular expression is searched for on another isolate ([RegexSearch]),
+/// given [regexTimeLimit], and reported as too slow past that: one that
+/// backtracks for minutes must not hang the app.
 class TerminalFindController extends ChangeNotifier {
   TerminalFindController({
     required this.terminal,
@@ -23,6 +30,8 @@ class TerminalFindController extends ChangeNotifier {
     this.matchColor = const Color(0x66FFD54F),
     this.currentColor = const Color(0xAAFF9100),
     this.refreshDelay = const Duration(milliseconds: 500),
+    this.typingDelay = const Duration(milliseconds: 200),
+    this.regexTimeLimit = const Duration(seconds: 2),
   });
 
   final Terminal terminal;
@@ -38,6 +47,12 @@ class TerminalFindController extends ChangeNotifier {
   final Color matchColor;
   final Color currentColor;
   final Duration refreshDelay;
+
+  /// How long typing has to pause before [typeQuery] searches.
+  final Duration typingDelay;
+
+  /// How long a regular expression may take over the whole scrollback.
+  final Duration regexTimeLimit;
 
   /// The most matches found and highlighted; past this the count reads
   /// "1000+" and the newest ones are kept.
@@ -64,9 +79,34 @@ class TerminalFindController extends ChangeNotifier {
   String? get error => _error;
   String? _error;
 
+  /// The regular expression took longer than [regexTimeLimit], and was
+  /// stopped. Output arriving does not try it again; changing it does.
+  bool get tooSlow => _tooSlow;
+  bool _tooSlow = false;
+
+  /// A regular expression is being searched for, on another isolate.
+  bool get searching => _search != null;
+
   final List<TerminalHighlight> _highlights = [];
   TerminalHighlight? _currentHighlight;
   Timer? _refresh;
+  Timer? _typing;
+
+  /// Only while open: the text of the whole scrollback is a lot to keep.
+  TerminalTextIndex _index = TerminalTextIndex();
+
+  RegexSearch? _search;
+
+  /// Whether [_search] is a refresh, for a query already shown.
+  bool _searchKeepsPlace = false;
+
+  /// Output arrived while [_search] ran: search again once it is done.
+  bool _refreshWanted = false;
+
+  /// How many wrapped lines the last search read from the buffer, rather
+  /// than reusing what it had already read.
+  @visibleForTesting
+  int get linesRead => _index.linesRead;
 
   void open() {
     if (_open) return;
@@ -82,22 +122,59 @@ class TerminalFindController extends ChangeNotifier {
     terminal.removeListener(_scheduleRefresh);
     _refresh?.cancel();
     _refresh = null;
+    _typing?.cancel();
+    _typing = null;
+    _cancelSearch();
     _clearHighlights();
+    _index = TerminalTextIndex();
     _matches = const [];
     _current = null;
     _truncated = false;
+    _tooSlow = false;
     notifyListeners();
   }
 
+  /// Searches for [value] now: a toggle, or a query from a selection.
   set query(TerminalSearchQuery value) {
-    if (value == _query) return;
+    if (value == _query && _typing == null) return;
     _query = value;
     if (_open) _run(keepPlace: false);
     notifyListeners();
   }
 
-  void next() => _step(1);
-  void previous() => _step(-1);
+  /// [value] as it is being typed: searched for once typing pauses for
+  /// [typingDelay], rather than once per keystroke. Clearing the field is
+  /// not waited for.
+  void typeQuery(TerminalSearchQuery value) {
+    if (value == _query) return;
+    _query = value;
+    _typing?.cancel();
+    _typing = null;
+    if (_open) {
+      if (value.isEmpty) {
+        _run(keepPlace: false);
+      } else {
+        _typing = Timer(typingDelay, () {
+          _typing = null;
+          if (!_open) return;
+          _run(keepPlace: false);
+          notifyListeners();
+        });
+      }
+    }
+    notifyListeners();
+  }
+
+  /// Enter while a search is still waiting for typing to pause searches
+  /// now — which shows the first match — rather than stepping through the
+  /// last query's.
+  void next() => _typing != null ? _searchNow() : _step(1);
+  void previous() => _typing != null ? _searchNow() : _step(-1);
+
+  void _searchNow() {
+    _run(keepPlace: false);
+    notifyListeners();
+  }
 
   void _step(int by) {
     final current = _current;
@@ -111,7 +188,14 @@ class TerminalFindController extends ChangeNotifier {
     if (_refresh != null) return;
     _refresh = Timer(refreshDelay, () {
       _refresh = null;
-      if (!_open) return;
+      // A search typing is about to start covers this output too.
+      if (!_open || _typing != null) return;
+      if (_search != null) {
+        _refreshWanted = true;
+        return;
+      }
+      // Not again for each burst of output: it would only time out again.
+      if (_tooSlow) return;
       _run(keepPlace: true);
       notifyListeners();
     });
@@ -121,25 +205,80 @@ class TerminalFindController extends ChangeNotifier {
   /// user was on (its highlight's anchor has followed it as output arrived);
   /// otherwise the newest match on or above [bottomRow] is taken, which is
   /// where the eye already is.
+  ///
+  /// Literal text is searched for here and now; a regular expression on
+  /// another isolate, and the matches already shown stay until it is done.
   void _run({required bool keepPlace}) {
+    _typing?.cancel();
+    _typing = null;
+    _cancelSearch();
+    final query = _query;
+    if (query.isEmpty) {
+      _show(TerminalSearchResult.empty, keepPlace: false);
+      return;
+    }
+    final RegExp pattern;
+    try {
+      pattern = query.compile();
+    } on FormatException catch (e) {
+      _showProblem(error: e.message);
+      return;
+    }
+    final lines = _index.read(terminal.buffer);
+    final texts = [for (final line in lines) line.text];
+    if (!query.regex) {
+      final found = matchLines(texts, pattern, limit: limit);
+      _show(
+        resolveMatches(terminal.buffer, lines, found),
+        keepPlace: keepPlace,
+      );
+      return;
+    }
+
+    final search = RegexSearch.start(
+      texts,
+      query,
+      limit: limit,
+      timeLimit: regexTimeLimit,
+    );
+    _search = search;
+    _searchKeepsPlace = keepPlace;
+    unawaited(search.result.then((found) {
+      if (!identical(_search, search)) return;
+      _search = null;
+      if (!_open) return;
+      if (found != null) {
+        _show(
+          resolveMatches(terminal.buffer, lines, found),
+          keepPlace: keepPlace,
+        );
+      } else {
+        _showProblem(tooSlow: true);
+      }
+      notifyListeners();
+      if (_refreshWanted) {
+        _refreshWanted = false;
+        _scheduleRefresh();
+      }
+    }));
+  }
+
+  void _cancelSearch() {
+    final search = _search;
+    _search = null;
+    _refreshWanted = false;
+    search?.cancel();
+  }
+
+  void _show(TerminalSearchResult result, {required bool keepPlace}) {
     final anchor = _currentHighlight?.p1;
     final previous =
         keepPlace && anchor != null && anchor.attached ? anchor.offset : null;
     _clearHighlights();
     _error = null;
-    try {
-      final result = searchTerminalBuffer(
-        terminal.buffer,
-        _query,
-        limit: limit,
-      );
-      _matches = result.matches;
-      _truncated = result.truncated;
-    } on FormatException catch (e) {
-      _matches = const [];
-      _truncated = false;
-      _error = e.message;
-    }
+    _tooSlow = false;
+    _matches = result.matches;
+    _truncated = result.truncated;
     _current = previous != null
         ? matchNear(_matches, previous)
         : nearestMatchAbove(
@@ -157,6 +296,17 @@ class TerminalFindController extends ChangeNotifier {
     }
     // Output arriving does not pull the view away from what is being read.
     _showCurrent(reveal: previous == null);
+  }
+
+  /// No matches, and why: a pattern that does not compile, or one that took
+  /// too long.
+  void _showProblem({String? error, bool tooSlow = false}) {
+    _clearHighlights();
+    _matches = const [];
+    _current = null;
+    _truncated = false;
+    _error = error;
+    _tooSlow = tooSlow;
   }
 
   void _showCurrent({required bool reveal}) {
@@ -195,7 +345,10 @@ class TerminalFindController extends ChangeNotifier {
   /// "3 of 12", "No results", "1000+".
   String get summary {
     if (_error != null) return 'Invalid pattern';
+    if (_tooSlow) return 'Pattern too slow';
     if (_query.isEmpty) return '';
+    // A new pattern, not a refresh of the one shown.
+    if (_search != null && !_searchKeepsPlace) return 'Searching…';
     if (_matches.isEmpty) return 'No results';
     final total = '${_matches.length}${_truncated ? '+' : ''}';
     final index = _current;
@@ -206,6 +359,8 @@ class TerminalFindController extends ChangeNotifier {
   void dispose() {
     if (_open) terminal.removeListener(_scheduleRefresh);
     _refresh?.cancel();
+    _typing?.cancel();
+    _cancelSearch();
     _clearHighlights();
     super.dispose();
   }
@@ -301,11 +456,17 @@ class _TerminalFindBarState extends State<TerminalFindBar> {
 
   void _setQuery({String? pattern, bool? caseSensitive, bool? regex}) {
     final query = widget.find.query;
-    widget.find.query = TerminalSearchQuery(
+    final next = TerminalSearchQuery(
       pattern ?? query.pattern,
       caseSensitive: caseSensitive ?? query.caseSensitive,
       regex: regex ?? query.regex,
     );
+    // Typing waits for a pause; a toggle is one decision, searched at once.
+    if (pattern != null) {
+      widget.find.typeQuery(next);
+    } else {
+      widget.find.query = next;
+    }
   }
 
   @override
@@ -314,7 +475,7 @@ class _TerminalFindBarState extends State<TerminalFindBar> {
     final find = widget.find;
     final query = find.query;
     final buttonSize = widget.touch ? 48.0 : 36.0;
-    final error = find.error != null;
+    final error = find.error != null || find.tooSlow;
 
     Widget iconButton({
       required IconData icon,

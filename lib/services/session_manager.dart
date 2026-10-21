@@ -4,6 +4,7 @@ import '../models/host.dart';
 import 'device_storage.dart';
 import 'network_watch.dart';
 import 'session_controller.dart';
+import 'session_recorder.dart';
 import 'server_side_job.dart';
 import 'session_foreground.dart';
 import 'sftp_service.dart';
@@ -188,6 +189,10 @@ class SessionManager {
 
   final List<ManagedSession> _sessions = [];
   final Map<String, StreamSubscription<void>> _watchers = {};
+
+  /// Each session's log recordings, for the ones that stop by themselves.
+  /// See [_settleLog].
+  final Map<String, StreamSubscription<SessionRecorder>> _logWatchers = {};
   final _changes = StreamController<void>.broadcast();
 
   var _idCounter = 0;
@@ -283,6 +288,10 @@ class SessionManager {
     _watchers[id] = controller.changes.listen((_) {
       _noticeTransitions(entry);
       _notify();
+    });
+    _logWatchers[id] = controller.terminal.recordingChanges.listen((recorder) {
+      final ending = recorder.ending;
+      if (ending != null && !ending.isSettled) unawaited(_settleLog(ending));
     });
     if (uploads.isNotEmpty) controller.requestUpload(uploads);
     _syncNetworkWatch();
@@ -490,7 +499,60 @@ class SessionManager {
     unawaited(_foreground.release());
     _syncForegroundLabel();
 
+    await _endLogOnClose(entry);
+    await _logWatchers.remove(id)?.cancel();
     await entry.controller.dispose();
+  }
+
+  /// A log recording that stopped by itself — full, or its file could not
+  /// be written — finished, and saved where that asks nobody.
+  ///
+  /// Here rather than in whatever shows the session, because that may be
+  /// nothing: a session runs on with the sessions screen closed, and a log
+  /// that filled up then must still be closed and kept. Whatever shows the
+  /// session next tells the user ([RecordingTerminal.unannounced]), and
+  /// offers to save a log that has to ask where.
+  static Future<void> _settleLog(SessionLogEnding ending) async {
+    final recorder = ending.recorder;
+    final failed = recorder.stoppedBy == RecordingStop.failed;
+    try {
+      await recorder.finish();
+    } catch (e) {
+      // A file that could not be written does not close cleanly either;
+      // that it could not be written is what the user is told.
+      if (!failed) {
+        ending.settle(error: e);
+        return;
+      }
+    }
+    final saver = recorder.saver;
+    if (failed || saver == null) {
+      ending.settle();
+    } else if (saver.asksWhere) {
+      ending.settle(needsSaving: true);
+    } else {
+      try {
+        ending.settle(savedAs: await saver.save());
+      } catch (e) {
+        ending.settle(error: e);
+      }
+    }
+  }
+
+  /// Finishes the log [entry] is recording, if it is, before the session
+  /// goes, and saves it unless saving asks where. Closing a tab from the
+  /// sessions screen has already stopped and saved it, picker and all; this
+  /// is for the app closing, where there is no one to ask.
+  static Future<void> _endLogOnClose(ManagedSession entry) async {
+    final recorder = entry.controller.terminal.stopRecording();
+    if (recorder == null) return;
+    try {
+      await recorder.finish(footer: sessionLogFooter(DateTime.now()));
+      final saver = recorder.saver;
+      if (saver != null && !saver.asksWhere) await saver.save();
+    } catch (_) {
+      // The session is going, and nothing is left to tell.
+    }
   }
 
   /// Ends every session — the app shutting down, not a user action.
