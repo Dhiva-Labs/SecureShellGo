@@ -9,6 +9,7 @@ import '../services/backup_passphrase.dart';
 import '../services/backup_payload.dart';
 import '../services/backup_service.dart';
 import '../services/device_storage.dart';
+import '../services/diagnostics_log.dart';
 import '../theme.dart';
 
 /// Export the app's configuration to an encrypted file, and import one back.
@@ -60,6 +61,7 @@ class _BackupScreenState extends State<BackupScreen> {
       ),
     );
     if (choice == null || !mounted) return;
+    DiagnosticsLog.instance.learnSecret(choice.passphrase);
 
     setState(() {
       _busy = true;
@@ -145,6 +147,7 @@ class _BackupScreenState extends State<BackupScreen> {
       builder: (_) => _ImportPassphraseDialog(fileName: picked!.name),
     );
     if (passphrase == null || !mounted) return;
+    DiagnosticsLog.instance.learnSecret(passphrase);
 
     setState(() {
       _busy = true;

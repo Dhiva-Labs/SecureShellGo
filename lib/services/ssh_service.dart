@@ -6,6 +6,7 @@ import 'package:dartssh2/dartssh2.dart';
 
 import '../models/host.dart';
 import '../models/known_host.dart';
+import 'diagnostics_log.dart';
 import 'host_field_input.dart';
 import 'host_key_policy.dart';
 import 'jump_host_chain.dart';
@@ -642,6 +643,14 @@ class SshService {
     Duration timeout = defaultTimeout,
     bool agentForwarding = false,
   }) async {
+    // Every connection passes here, with a password or key that may have
+    // been typed for it and never saved — so never seen by the credential
+    // store, which is where the diagnostics log learns the rest.
+    DiagnosticsLog.instance
+      ..learnSecret(credentials.password)
+      ..learnSecret(credentials.passphrase)
+      ..learnSecret(credentials.privateKeyPem);
+
     // Resolved before any socket is opened, so a self-reference or a loop
     // costs nothing and cannot recurse.
     final hops = await _resolveHops(host);

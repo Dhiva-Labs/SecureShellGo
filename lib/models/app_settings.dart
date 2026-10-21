@@ -234,7 +234,7 @@ class AppSettings {
     this.terminalFont = TerminalFont.system,
     this.keyBarMode = KeyBarMode.auto,
     this.editorFontSize = defaultFontSize,
-    this.diagnosticsLog = true,
+    this.diagnosticsLog = false,
     this.localeOverride,
   });
 
@@ -301,6 +301,10 @@ class AppSettings {
   /// Whether errors and crashes are written to a log on this device, for the
   /// user to copy into a bug report. Secrets are scrubbed before anything is
   /// written, the file is capped in size, and nothing is ever sent anywhere.
+  ///
+  /// Off unless the user turns it on — and off for a settings file that
+  /// does not say, or cannot be read: a log of what went wrong is still a
+  /// record of what the user did, and keeping one is their choice.
   final bool diagnosticsLog;
 
   /// A language tag such as `pt-BR` the app uses instead of the device's
@@ -464,7 +468,7 @@ class AppSettings {
       editorFontSize: clampEditorFontSize(
         (json['editorFontSize'] as num?)?.toDouble() ?? terminalFontSize,
       ),
-      diagnosticsLog: json['diagnosticsLog'] as bool? ?? true,
+      diagnosticsLog: json['diagnosticsLog'] as bool? ?? false,
       localeOverride: switch (json['localeOverride']) {
         final String tag when tag.trim().isNotEmpty => tag,
         _ => null,

@@ -65,7 +65,7 @@ void main() {
     expect(saved.bell, TerminalBell.visual);
     expect(saved.scrollbackLines, 50000);
     expect(saved.keyBarMode, KeyBarMode.never);
-    expect(saved.diagnosticsLog, isFalse);
+    expect(saved.diagnosticsLog, isTrue, reason: 'off by default, so on');
 
     // And it is on disk, not just in memory. The writes run on the real
     // event loop and finish on the test's clock, so both have to turn.

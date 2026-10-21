@@ -13,6 +13,7 @@ import 'package:secure_shell_go/services/backup_service.dart';
 import 'package:secure_shell_go/services/bookmark_store.dart';
 import 'package:secure_shell_go/services/credential_store.dart';
 import 'package:secure_shell_go/services/device_storage.dart';
+import 'package:secure_shell_go/services/diagnostics_log.dart';
 import 'package:secure_shell_go/services/host_store.dart';
 import 'package:secure_shell_go/services/known_hosts_service.dart';
 import 'package:secure_shell_go/services/settings_store.dart';
@@ -335,6 +336,12 @@ void main() {
       final json = jsonDecode(utf8.decode(plain!)) as Map<String, dynamic>;
       expect(json['includesKnownHosts'], isTrue);
       expect((json['knownHosts'] as List).single['hostname'], 'a.example.org');
+      // And the passphrase can never reach the diagnostics log.
+      expect(
+        DiagnosticsLog.instance.scrubber.scrub('[a very good passphrase]'),
+        '[[redacted]]',
+      );
+      DiagnosticsLog.instance.scrubber.forgetAll();
     });
   });
 }
