@@ -21,9 +21,50 @@ void main() {
         m[1]!,
   ]..sort();
 
-  Set<String> placeholders(String text) => {
-        for (final m in RegExp(r'\{(\w+)').allMatches(text)) m[1]!,
-      };
+  // The arguments an ICU message uses — `{name}`, and the `{count, plural,
+  // …}` it branches on, with each branch's own text searched in turn. Branch
+  // text is not an argument: `=1{There is…}` must not read as a placeholder
+  // called "There", or no plural could ever match its translation.
+  Set<String> placeholders(String text) {
+    final names = <String>{};
+    late int Function(int) message;
+    int argument(int i) {
+      final close = text.indexOf(RegExp('[,}]'), i);
+      if (close < 0) return text.length;
+      names.add(text.substring(i, close).trim());
+      if (text[close] == '}') return close + 1;
+      // `{name, plural, key{…} key{…}}`: skip to each branch's text.
+      var j = text.indexOf(RegExp('[,}]'), close + 1);
+      if (j < 0) return text.length;
+      if (text[j] == '}') return j + 1;
+      while (true) {
+        final open = text.indexOf(RegExp('[{}]'), j + 1);
+        if (open < 0) return text.length;
+        if (text[open] == '}') return open + 1;
+        j = message(open + 1);
+      }
+    }
+
+    message = (i) {
+      while (i < text.length) {
+        if (text[i] == '}') return i;
+        i = text[i] == '{' ? argument(i + 1) : i + 1;
+      }
+      return i;
+    };
+    message(0);
+    return names;
+  }
+
+  test('placeholders are read past plural branch text', () {
+    expect(
+      placeholders('{count, plural, =1{There is one on {host}.} '
+          'other{There are {count} on {host}.}}'),
+      {'count', 'host'},
+    );
+    expect(placeholders('Sign in to {host}'), {'host'});
+    expect(placeholders('{count, plural, other{Выбрано: {count}}}'), {'count'});
+  });
 
   test('there are eight translations', () {
     expect(others, ['de', 'es', 'fr', 'ja', 'ko', 'pt', 'ru', 'zh']);
