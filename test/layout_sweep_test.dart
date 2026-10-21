@@ -37,6 +37,7 @@ import 'package:secure_shell_go/screens/remote_editor_screen.dart';
 import 'package:secure_shell_go/screens/server_stats_screen.dart';
 import 'package:secure_shell_go/screens/session_screen.dart';
 import 'package:secure_shell_go/screens/settings_screen.dart';
+import 'package:secure_shell_go/screens/terminal_pane.dart';
 import 'package:secure_shell_go/screens/tunnels_screen.dart';
 import 'package:secure_shell_go/services/credential_store.dart';
 import 'package:secure_shell_go/services/device_storage.dart';
@@ -48,6 +49,7 @@ import 'package:secure_shell_go/services/server_probe.dart';
 import 'package:secure_shell_go/services/session_controller.dart';
 import 'package:secure_shell_go/services/session_foreground.dart';
 import 'package:secure_shell_go/services/session_manager.dart';
+import 'package:secure_shell_go/services/session_recorder.dart';
 import 'package:secure_shell_go/services/settings_store.dart';
 import 'package:secure_shell_go/services/sftp_service.dart';
 import 'package:secure_shell_go/services/ssh_service.dart';
@@ -55,6 +57,8 @@ import 'package:secure_shell_go/services/terminal_workspace.dart';
 import 'package:secure_shell_go/services/tunnel_runtime.dart';
 import 'package:secure_shell_go/services/tunnel_store.dart';
 import 'package:secure_shell_go/theme.dart';
+import 'package:secure_shell_go/widgets/terminal_find_bar.dart';
+import 'package:secure_shell_go/widgets/terminal_fonts.dart';
 
 import 'fake_exec_session.dart';
 import 'support/fake_transport.dart';
@@ -390,6 +394,13 @@ Future<void> _loadFonts() async {
     'Roboto-Light.ttf',
   ]);
   await load('MaterialIcons', ['MaterialIcons-Regular.otf']);
+  // The terminal's bundled typeface, from the app's own assets.
+  final bundled = FontLoader(TerminalFonts.jetBrainsMono);
+  for (final face in ['Regular', 'Bold']) {
+    final bytes = File('assets/fonts/JetBrainsMono-$face.ttf').readAsBytesSync();
+    bundled.addFont(Future.value(ByteData.view(bytes.buffer)));
+  }
+  await bundled.load();
   // The app's terminal-ish text asks for 'monospace', which the test
   // renderer does not have; without this it draws as blocks.
   const mono = '/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf';
@@ -576,6 +587,7 @@ void main() {
     required _Hands hands,
     SessionView view = SessionView.terminal,
     List<ui.DisplayFeature> features = const [],
+    Future<void> Function(WidgetTester tester)? after,
   }) async {
     final manager = _demoSessions();
     final workspace = TerminalWorkspace();
@@ -592,6 +604,7 @@ void main() {
       device,
       hands: hands,
       features: features,
+      after: after,
       () => SessionsScreen(
         sessions: manager,
         settingsStore: settings,
@@ -790,6 +803,40 @@ void main() {
           );
         });
       }
+
+      // The find bar open over the terminal, a session log being recorded,
+      // and the bundled font with an underline cursor — which xterm itself
+      // would draw on the wrong row.
+      testWidgets('terminal find and log', skip: _skip, (tester) async {
+        await tester.runAsync(() => settings.update((s) => s.copyWith(
+              terminalFont: TerminalFont.jetBrainsMono,
+              cursorStyle: TerminalCursorStyle.underline,
+            )));
+        await renderSessions(
+          tester,
+          'terminal_find',
+          device,
+          hands: _Hands.touch,
+          after: (tester) async {
+            final session = tester
+                .widget<TerminalPane>(find.byType(TerminalPane).first)
+                .session;
+            session.terminal
+                .startRecording(SessionRecorder(sink: MemoryLogSink()));
+            TerminalPane.showFind(session);
+            await tester.pump();
+            await tester.pump();
+            await tester.enterText(
+              find.descendant(
+                of: find.byType(TerminalFindBar),
+                matching: find.byType(TextField),
+              ),
+              'deploy',
+            );
+            await tester.pump();
+          },
+        );
+      });
 
       // The file browser on its own page: on a phone it takes turns with the
       // terminal, so the sessions renders above only show it from a tablet up.

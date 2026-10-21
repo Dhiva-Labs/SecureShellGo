@@ -20,6 +20,7 @@ import 'remote_exec.dart';
 import 'remote_path.dart';
 import 'session_keepalive.dart';
 import 'session_reconnect.dart';
+import 'session_recorder.dart';
 import 'server_side_job.dart';
 import 'sftp_service.dart';
 import 'ssh_service.dart';
@@ -125,6 +126,7 @@ class SessionController {
     ReconnectSupport? reconnect,
     ReconnectDelayScheduler reconnectScheduler = Timer.new,
     DateTime Function() clock = DateTime.now,
+    this.scrollbackLines = 10000,
   })  : _connection = connection,
         // ignore: prefer_initializing_formals
         _clock = clock,
@@ -275,13 +277,20 @@ class SessionController {
   /// `xterm`'s `Terminal` is pure Dart (`package:xterm/core.dart`), so this
   /// keeps `services/` free of Flutter: the view supplies the font, the theme
   /// and the gestures, and this supplies the bytes.
-  late final Terminal terminal = Terminal(
-    maxLines: 10000,
+  ///
+  /// A [RecordingTerminal], so a session log can copy what it shows; see
+  /// `session_recorder.dart`.
+  late final RecordingTerminal terminal = RecordingTerminal(
+    maxLines: scrollbackLines,
     platform: TerminalTargetPlatform.linux,
     onOutput: _sendToShell,
     onResize: _handleTerminalResize,
     onBell: () => onBell?.call(),
   );
+
+  /// Lines of history [terminal] keeps (Settings > Terminal > Scrollback),
+  /// fixed for the life of the session.
+  final int scrollbackLines;
 
   /// Set by the view, since a bell is haptics and a haptic is not a service.
   void Function()? onBell;

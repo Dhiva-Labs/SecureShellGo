@@ -28,6 +28,7 @@ import 'services/tunnel_runtime.dart';
 import 'services/tunnel_store.dart';
 import 'theme.dart';
 import 'widgets/app_lock_gate.dart';
+import 'widgets/terminal_fonts.dart';
 import 'widgets/vault_passphrase_dialog.dart';
 
 // Framework errors, uncaught errors and uncaught async errors go to the
@@ -37,6 +38,8 @@ void main() => DiagnosticsLog.instance.runGuarded(_startApp);
 
 void _startApp() {
   WidgetsFlutterBinding.ensureInitialized();
+  // The bundled terminal font's licence, on the licences page.
+  TerminalFonts.registerLicence();
   SystemChrome.setSystemUIOverlayStyle(
     const SystemUiOverlayStyle(
       statusBarColor: Colors.transparent,
@@ -172,6 +175,8 @@ class _SecureShellGoAppState extends State<SecureShellGoApp> {
     // every session checks its link instead of waiting for keep-alives to
     // notice — see `network_watch.dart`.
     network: NetworkWatch.forPlatform(),
+    // Settings > Terminal > Scrollback, for each session as it opens.
+    scrollbackLines: () => _settingsStore.current.scrollbackLines,
     resolveDestinationCredentials: _credentialStore.load,
     connectWithAgentForwarding: (host, credentials) => _sshService.connect(
       host: host,

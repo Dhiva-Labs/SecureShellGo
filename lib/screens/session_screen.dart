@@ -19,6 +19,7 @@ import '../services/tunnel_runtime.dart';
 import '../theme.dart';
 import '../widgets/hinge_split.dart';
 import '../widgets/session_banners.dart';
+import '../widgets/session_log_actions.dart';
 import '../widgets/session_shortcuts.dart';
 import '../widgets/snippet_picker.dart';
 import '../widgets/transfer_hub_panel.dart';
@@ -140,6 +141,10 @@ enum _Panes {
 /// them is something the user reaches for mid-keystroke — the bar is already
 /// carrying everything that is.
 enum _MonitorAction { stats, services, tail }
+
+/// The session's menu, the app bar's ⋮: the terminal's find and session log,
+/// then the monitoring views.
+enum _SessionMenu { find, recordLog, stopLog, stats, services, tail }
 
 class _SessionsScreenState extends State<SessionsScreen> {
   StreamSubscription<void>? _changes;
@@ -363,6 +368,31 @@ class _SessionsScreenState extends State<SessionsScreen> {
     }
   }
 
+  Future<void> _handleSessionMenu(
+    _SessionMenu choice,
+    SessionController session,
+  ) async {
+    switch (choice) {
+      case _SessionMenu.find:
+        // On a phone the file browser may be in front; find is for the
+        // terminal, so that comes forward first.
+        _show(SessionView.terminal);
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) TerminalPane.showFind(session);
+        });
+      case _SessionMenu.recordLog:
+        await SessionLogActions.start(context, session);
+      case _SessionMenu.stopLog:
+        await SessionLogActions.stop(context, session);
+      case _SessionMenu.stats:
+        await _handleMonitorAction(_MonitorAction.stats, session);
+      case _SessionMenu.services:
+        await _handleMonitorAction(_MonitorAction.services, session);
+      case _SessionMenu.tail:
+        await _handleMonitorAction(_MonitorAction.tail, session);
+    }
+  }
+
   void _addSession() {
     final add = widget.onAddSession;
     if (add != null) {
@@ -448,18 +478,20 @@ class _SessionsScreenState extends State<SessionsScreen> {
   Future<void> _closeSession(ManagedSession entry) async {
     if (!entry.isClosed) {
       final transfers = entry.controller.transfers.activeCount;
+      final question = transfers > 0
+          ? 'Close the session on ${entry.host.displayName}? '
+              '$transfers transfer${transfers == 1 ? '' : 's'} '
+              '${transfers == 1 ? 'is' : 'are'} still running and will '
+              'be cancelled.'
+          : 'Close the session on ${entry.host.displayName}?';
+      final logNote = SessionLogActions.isRecording(entry.controller)
+          ? ' Its session log will be saved first.'
+          : '';
       final confirmed = await showDialog<bool>(
         context: context,
         builder: (context) => AlertDialog(
           title: const Text('Disconnect?'),
-          content: Text(
-            transfers > 0
-                ? 'Close the session on ${entry.host.displayName}? '
-                    '$transfers transfer${transfers == 1 ? '' : 's'} '
-                    '${transfers == 1 ? 'is' : 'are'} still running and will '
-                    'be cancelled.'
-                : 'Close the session on ${entry.host.displayName}?',
-          ),
+          content: Text('$question$logNote'),
           actions: [
             TextButton(
               onPressed: () => Navigator.of(context).pop(false),
@@ -473,6 +505,10 @@ class _SessionsScreenState extends State<SessionsScreen> {
         ),
       );
       if (confirmed != true) return;
+    }
+    // A log being recorded is saved before its session goes.
+    if (SessionLogActions.isRecording(entry.controller) && mounted) {
+      await SessionLogActions.stopBeforeClose(context, entry.controller);
     }
 
     // The last tab closing takes the screen with it — there is nothing left
@@ -814,28 +850,66 @@ class _SessionsScreenState extends State<SessionsScreen> {
             icon: const Icon(Icons.bolt_outlined),
             onPressed: _openSnippetPicker,
           ),
-          // Monitoring. Disabled on a closed session: all three run commands
-          // over the transport, and there is not one.
-          PopupMenuButton<_MonitorAction>(
-            tooltip: 'Monitor this server',
-            icon: const Icon(Icons.monitor_heart_outlined),
-            enabled: !closed,
-            onSelected: (action) =>
-                unawaited(_handleMonitorAction(action, active.controller)),
-            itemBuilder: (context) => const [
-              PopupMenuItem<_MonitorAction>(
-                value: _MonitorAction.stats,
-                child: Text('Server stats'),
-              ),
-              PopupMenuItem<_MonitorAction>(
-                value: _MonitorAction.services,
-                child: Text('Services & processes'),
-              ),
-              PopupMenuItem<_MonitorAction>(
-                value: _MonitorAction.tail,
-                child: Text('Tail a file…'),
-              ),
-            ],
+          // The session's menu: find and the session log first — they work
+          // on the terminal's own buffer, so a closed session's scrollback
+          // can still be searched and its log saved — then monitoring,
+          // disabled on a closed session: all three run commands over the
+          // transport, and there is not one.
+          PopupMenuButton<_SessionMenu>(
+            tooltip: 'More',
+            icon: const Icon(Icons.more_vert),
+            onSelected: (choice) =>
+                unawaited(_handleSessionMenu(choice, active.controller)),
+            itemBuilder: (context) {
+              final recording =
+                  SessionLogActions.isRecording(active.controller);
+              return [
+                PopupMenuItem<_SessionMenu>(
+                  value: _SessionMenu.find,
+                  child: Row(
+                    children: [
+                      const Expanded(child: Text('Find in terminal')),
+                      if (input.keyboard) ...[
+                        const SizedBox(width: 24),
+                        Text(
+                          'Ctrl+Shift+F',
+                          style: theme.textTheme.bodySmall?.copyWith(
+                            color: theme.colorScheme.onSurfaceVariant,
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+                if (recording)
+                  const PopupMenuItem<_SessionMenu>(
+                    value: _SessionMenu.stopLog,
+                    child: Text('Stop recording and save'),
+                  )
+                else
+                  PopupMenuItem<_SessionMenu>(
+                    value: _SessionMenu.recordLog,
+                    enabled: !closed,
+                    child: const Text('Record session log…'),
+                  ),
+                const PopupMenuDivider(),
+                PopupMenuItem<_SessionMenu>(
+                  value: _SessionMenu.stats,
+                  enabled: !closed,
+                  child: const Text('Server stats'),
+                ),
+                PopupMenuItem<_SessionMenu>(
+                  value: _SessionMenu.services,
+                  enabled: !closed,
+                  child: const Text('Services & processes'),
+                ),
+                PopupMenuItem<_SessionMenu>(
+                  value: _SessionMenu.tail,
+                  enabled: !closed,
+                  child: const Text('Tail a file…'),
+                ),
+              ];
+            },
           ),
           // With one session open this is the only sign that a second one is
           // possible, so it stays in the bar rather than living only in the
@@ -1084,6 +1158,13 @@ class _SessionPageState extends State<_SessionPage> {
     }
   }
 
+  /// The banner's "Close tab", on a session that has already ended: its log,
+  /// if one is still being kept, is saved first.
+  Future<void> _closeTab() async {
+    await SessionLogActions.stopBeforeClose(context, _session);
+    await widget.manager.close(widget.entry.id);
+  }
+
   Widget _terminalPane() {
     return TerminalPane(
       key: _terminalPaneKey,
@@ -1119,7 +1200,7 @@ class _SessionPageState extends State<_SessionPage> {
       children: [
         SessionBanners(
           session: entry,
-          onCloseTab: () => unawaited(widget.manager.close(entry.id)),
+          onCloseTab: () => unawaited(_closeTab()),
         ),
         Expanded(
           child: switch (widget.panes) {

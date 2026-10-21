@@ -36,6 +36,13 @@ class TerminalOptionsSection extends StatelessWidget {
           labelOf: (c) => c.label,
           onChanged: (c) => apply((s) => s.copyWith(cursorStyle: c)),
         ),
+        SwitchListTile(
+          secondary: const Icon(Icons.flare_outlined),
+          title: const Text('Blinking cursor'),
+          subtitle: const Text('Blinks while the terminal has the keyboard'),
+          value: settings.cursorBlink,
+          onChanged: (on) => apply((s) => s.copyWith(cursorBlink: on)),
+        ),
         SettingsChoice<TerminalBell>(
           label: 'Bell',
           icon: Icons.notifications_none,
@@ -50,8 +57,8 @@ class TerminalOptionsSection extends StatelessWidget {
           value: settings.scrollbackLines,
           values: AppSettings.scrollbackChoices,
           labelOf: _lines,
-          helper: 'Lines of history kept for each session. More uses more '
-              'memory per open session.',
+          helper: 'Lines of history kept for each session, from the next '
+              'session you open. More uses more memory per open session.',
           onChanged: (n) => apply((s) => s.copyWith(scrollbackLines: n)),
         ),
       ],

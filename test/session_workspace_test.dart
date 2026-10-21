@@ -232,8 +232,9 @@ void main() {
 
       expect(find.byIcon(Icons.splitscreen_outlined), findsOneWidget);
       expect(workspace.focusedSessionId, alpha.id);
-      // One pane still means no pane chrome.
-      expect(find.byIcon(Icons.more_vert), findsNothing);
+      // One pane still means no pane chrome. (The app bar's ⋮ is the
+      // session's menu, not a pane's.)
+      expect(find.byTooltip('Pane'), findsNothing);
     });
   });
 
@@ -263,7 +264,7 @@ void main() {
       expect(workspace.paneCount, 2);
       // Both servers on screen at once, which is the whole point.
       expect(workspace.visibleSessionIds, hasLength(2));
-      expect(find.byIcon(Icons.more_vert), findsNWidgets(2));
+      expect(find.byTooltip('Pane'), findsNWidgets(2));
       expect(find.byType(TerminalPane), findsNWidgets(2));
     });
 
