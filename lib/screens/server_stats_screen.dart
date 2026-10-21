@@ -291,10 +291,40 @@ class _Unknown extends StatelessWidget {
 }
 
 class _Row extends StatelessWidget {
-  const _Row(this.label, this.value);
+  const _Row(this.label, this.value, {this.labelWidth = 96});
 
   final String label;
   final String value;
+
+  /// Shared by every row of a card, so the values line up.
+  final double labelWidth;
+
+  static const _labelStyle = TextStyle(fontSize: 12.5);
+
+  /// The label column for [labels]: wide enough for the widest one on a
+  /// single line ("Betriebszeit" and "Temps d'activité" need more than the
+  /// English did), never under 96, and never more than 45% of [maxWidth] —
+  /// past that a label wraps between words rather than starving the values.
+  static double labelWidthFor(
+    BuildContext context,
+    Iterable<String> labels,
+    double maxWidth,
+  ) {
+    final style = DefaultTextStyle.of(context).style.merge(_labelStyle);
+    var widest = 0.0;
+    for (final label in labels) {
+      final painter = TextPainter(
+        text: TextSpan(text: label, style: style),
+        textDirection: Directionality.of(context),
+        textScaler: MediaQuery.textScalerOf(context),
+        maxLines: 1,
+      )..layout();
+      if (painter.width > widest) widest = painter.width;
+      painter.dispose();
+    }
+    final cap = maxWidth.isFinite ? maxWidth * 0.45 : double.infinity;
+    return (widest + 12).clamp(96.0, cap < 96 ? 96.0 : cap);
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -304,11 +334,10 @@ class _Row extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           SizedBox(
-            width: 96,
+            width: labelWidth,
             child: Text(
               label,
-              style: TextStyle(
-                fontSize: 12.5,
+              style: _labelStyle.copyWith(
                 color: Theme.of(context).colorScheme.onSurfaceVariant,
               ),
             ),
@@ -338,24 +367,42 @@ class _IdentityCard extends StatelessWidget {
     return _Card(
       title: l10n.statsCardSystem,
       icon: Icons.dns_outlined,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          if (stats.hostname != null)
-            _Row(l10n.statsHostname, stats.hostname!),
-          if (stats.kernel != null)
-            _Row(l10n.statsKernel, stats.kernel!)
-          else
-            _Unknown(l10n.statsKernelUnknown),
-          if (uptime != null)
-            _Row(l10n.statsUptime, formatUptime(uptime, l10n: l10n))
-          else
-            _Unknown(l10n.statsUptimeUnknown),
-          if (cpuCount != null)
-            _Row(l10n.statsCpus, '$cpuCount')
-          else
-            _Unknown(l10n.statsCpusUnknown),
-        ],
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final width = _Row.labelWidthFor(
+            context,
+            [
+              if (stats.hostname != null) l10n.statsHostname,
+              if (stats.kernel != null) l10n.statsKernel,
+              if (uptime != null) l10n.statsUptime,
+              if (cpuCount != null) l10n.statsCpus,
+            ],
+            constraints.maxWidth,
+          );
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              if (stats.hostname != null)
+                _Row(l10n.statsHostname, stats.hostname!, labelWidth: width),
+              if (stats.kernel != null)
+                _Row(l10n.statsKernel, stats.kernel!, labelWidth: width)
+              else
+                _Unknown(l10n.statsKernelUnknown),
+              if (uptime != null)
+                _Row(
+                  l10n.statsUptime,
+                  formatUptime(uptime, l10n: l10n),
+                  labelWidth: width,
+                )
+              else
+                _Unknown(l10n.statsUptimeUnknown),
+              if (cpuCount != null)
+                _Row(l10n.statsCpus, '$cpuCount', labelWidth: width)
+              else
+                _Unknown(l10n.statsCpusUnknown),
+            ],
+          );
+        },
       ),
     );
   }
@@ -559,14 +606,17 @@ class _UsageBar extends StatelessWidget {
               RemotePath.formatBytes(used),
               style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w600),
             ),
-            Text(
-              ' ${l10n.statsUsageOfTotal(RemotePath.formatBytes(total))}',
-              style: TextStyle(
-                fontSize: 13,
-                color: Theme.of(context).colorScheme.onSurfaceVariant,
+            // Takes the room left over, wrapping if a language's "of" is too
+            // long for a small phone, and keeps the percentage at the end.
+            Expanded(
+              child: Text(
+                ' ${l10n.statsUsageOfTotal(RemotePath.formatBytes(total))}',
+                style: TextStyle(
+                  fontSize: 13,
+                  color: Theme.of(context).colorScheme.onSurfaceVariant,
+                ),
               ),
             ),
-            const Spacer(),
             if (fraction != null)
               Text(
                 l10n.statsUsagePercent((fraction * 100).toStringAsFixed(0)),
