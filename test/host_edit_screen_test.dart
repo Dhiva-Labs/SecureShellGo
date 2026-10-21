@@ -268,6 +268,15 @@ void main() {
     await tester.pump();
   }
 
+  /// Turns both event loops until [condition] holds, for up to about ten
+  /// seconds — for what the screen shows once a save has finished, which on
+  /// a busy machine can land after [tapAndRun]'s checks already passed.
+  Future<void> settleUntil(WidgetTester tester, bool Function() condition) async {
+    for (var attempt = 0; attempt < 20 && !condition(); attempt++) {
+      await settleIo(tester, rounds: 25);
+    }
+  }
+
   /// Same reasoning, for a test that has to put something on disk before the
   /// form opens.
   Future<T> withRealIo<T>(
@@ -305,6 +314,10 @@ void main() {
         expect((await credentials.load(saved.id))?.password, 'hunter2');
       });
 
+      await settleUntil(
+        tester,
+        () => ssh.attempts == 1 && find.byType(ErrorBanner).evaluate().isNotEmpty,
+      );
       expect(ssh.attempts, 1);
       // The connection failed, which is a real error and shown as one — but
       // the host is saved regardless, which is the point of the ordering.
@@ -423,6 +436,14 @@ void main() {
       await tapAndRun(tester, 'Save host', checks: () async {
         expect(await hosts.all(), hasLength(1));
       });
+      // The host lands first; the word on its password follows.
+      await settleUntil(
+        tester,
+        () => find
+            .textContaining('Host saved, but its password was not')
+            .evaluate()
+            .isNotEmpty,
+      );
 
       expect(find.byType(ErrorBanner), findsNothing);
       expect(
