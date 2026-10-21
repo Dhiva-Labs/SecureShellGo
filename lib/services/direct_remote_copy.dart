@@ -141,7 +141,9 @@ class SSHDirectCopyUnavailable implements Exception {
 ///
 /// **What it costs.** While the exec runs, A holds a forwarded agent that
 /// will sign with the destination's key. Anyone with root on A can use it
-/// for that window, which is why the route is opt-in in the UI.
+/// for that window. The Direct option is ticked by default where it can run,
+/// since it keeps the bytes off this device, and can be unticked for any
+/// transfer where that window is not acceptable.
 ///
 /// **Verify, then move.** After exec exits 0 we `stat` the destination
 /// through our own SFTP session to B (which is separately authenticated on
