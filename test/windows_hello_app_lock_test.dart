@@ -1,6 +1,9 @@
 import 'package:flutter/services.dart';
+import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:secure_shell_go/l10n/l10n.dart';
 import 'package:secure_shell_go/models/app_settings.dart';
+import 'package:secure_shell_go/screens/settings/setting_labels.dart';
 import 'package:secure_shell_go/services/app_lock.dart';
 import 'package:secure_shell_go/services/app_lock_controller.dart';
 
@@ -222,20 +225,23 @@ void main() {
 
   group('platform wording', () {
     test('Windows is told to set up Hello, Android a screen lock', () {
+      final en = lookupAppLocalizations(const Locale('en'));
       expect(
-        AppLockPlatform.setupHintFor(isWindows: true),
+        AppLockPlatform.setupHintFor(isWindows: true).textIn(en),
         contains('Windows Hello'),
       );
       expect(
-        AppLockPlatform.setupHintFor(isWindows: false),
+        AppLockPlatform.setupHintFor(isWindows: false).textIn(en),
         contains('screen lock'),
       );
+      final windows = AppLockPlatform.reasonFor(
+        isLinux: false,
+        isWindows: true,
+        isMacOS: false,
+      );
+      expect(windows, AppLockUnavailable.windowsHelloOff);
       expect(
-        AppLockPlatform.reasonFor(
-          isLinux: false,
-          isWindows: true,
-          isMacOS: false,
-        ),
+        windows.textIn(en),
         isNot(contains('not available in this build')),
       );
     });

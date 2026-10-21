@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 
+import '../../l10n/l10n.dart';
 import '../../models/app_settings.dart';
+import 'setting_labels.dart';
 import 'settings_section.dart';
 
 /// Keyboard and touch input: when the terminal's and the editor's rows of
@@ -18,24 +20,21 @@ class InputSettingsSection extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = context.l10n;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        SettingsSectionHeader('Keyboard', style: settings.uiStyle),
+        SettingsSectionHeader(l10n.settingsKeyboard, style: settings.uiStyle),
         SettingsChoice<KeyBarMode>(
-          label: 'Extra keys row',
+          label: l10n.settingsExtraKeys,
           icon: Icons.keyboard_alt_outlined,
           value: settings.keyBarMode,
           values: KeyBarMode.values,
-          labelOf: (m) => m.label,
+          labelOf: (m) => m.labelIn(l10n),
           helper: switch (settings.keyBarMode) {
-            KeyBarMode.auto => 'Esc, Tab, Ctrl and arrows over the on-screen '
-                'keyboard, in the terminal and the editor. Hidden while a '
-                'hardware keyboard is in use, and back when the on-screen '
-                'one opens.',
-            KeyBarMode.always => 'Shown even with a hardware keyboard.',
-            KeyBarMode.never => 'Hidden. Ctrl and Esc then need a hardware '
-                'keyboard.',
+            KeyBarMode.auto => l10n.settingsExtraKeysAutoHelp,
+            KeyBarMode.always => l10n.settingsExtraKeysAlwaysHelp,
+            KeyBarMode.never => l10n.settingsExtraKeysNeverHelp,
           },
           onChanged: (m) => apply((s) => s.copyWith(keyBarMode: m)),
         ),

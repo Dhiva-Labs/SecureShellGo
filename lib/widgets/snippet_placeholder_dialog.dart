@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import '../l10n/l10n.dart';
+
 /// Asks for one value per name in [names], in order. Returns a map keyed by
 /// name, or null if the user cancelled — the caller (`snippet_picker.dart`)
 /// treats null as "do not send anything".
@@ -7,13 +9,13 @@ import 'package:flutter/material.dart';
 /// A blank value is allowed through: a placeholder the user means to leave
 /// empty (clearing an optional argument) is their call, not this dialog's.
 ///
-/// [confirmLabel] names what happens next: the terminal sends the command,
-/// a fleet run only fills it in.
+/// [confirmLabel] names what happens next: the terminal sends the command
+/// (the default, "Send"), a fleet run only fills it in.
 Future<Map<String, String>?> showSnippetPlaceholderDialog(
   BuildContext context, {
   required String snippetName,
   required List<String> names,
-  String confirmLabel = 'Send',
+  String? confirmLabel,
 }) {
   return showDialog<Map<String, String>>(
     context: context,
@@ -37,7 +39,7 @@ class _PlaceholderDialog extends StatefulWidget {
 
   final String snippetName;
   final List<String> names;
-  final String confirmLabel;
+  final String? confirmLabel;
 
   @override
   State<_PlaceholderDialog> createState() => _PlaceholderDialogState();
@@ -80,13 +82,13 @@ class _PlaceholderDialogState extends State<_PlaceholderDialog> {
       actions: [
         TextButton(
           onPressed: () => Navigator.of(context).pop(),
-          child: const Text('Cancel'),
+          child: Text(MaterialLocalizations.of(context).cancelButtonLabel),
         ),
         FilledButton(
           onPressed: () => Navigator.of(context).pop({
             for (final name in names) name: _controllers[name]!.text,
           }),
-          child: Text(widget.confirmLabel),
+          child: Text(widget.confirmLabel ?? context.l10n.snippetsSend),
         ),
       ],
     );

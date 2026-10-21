@@ -155,14 +155,9 @@ class TunnelBinding {
 
   bool get isBroken => host == null;
 
-  /// What the group header, and a broken row's subtitle, should say.
+  /// What the group header, and a broken row's subtitle, should say. The
+  /// tunnels screen says "Missing host" in the app's language instead.
   String get hostLabel => host?.displayName ?? 'Missing host';
-
-  /// The inline explanation for a broken row, or null when the row is fine.
-  String? get brokenMessage => isBroken
-      ? 'The saved host this tunnel rides on has been deleted, so there is '
-          'nothing to carry it. Edit the tunnel to point it at another host.'
-      : null;
 }
 
 /// Every tunnel that rides on one host, in list order.

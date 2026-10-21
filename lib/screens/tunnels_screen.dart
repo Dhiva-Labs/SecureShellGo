@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
+import '../l10n/l10n.dart';
 import '../models/app_settings.dart';
 import '../models/tunnel_profile.dart';
 import '../services/host_store.dart';
@@ -88,9 +89,7 @@ class _TunnelsScreenState extends State<TunnelsScreen> {
 
     if (hosts.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Save a host first — a tunnel rides on one.'),
-        ),
+        SnackBar(content: Text(context.l10n.tunnelsNeedHost)),
       );
       return;
     }
@@ -119,24 +118,25 @@ class _TunnelsScreenState extends State<TunnelsScreen> {
       context: context,
       builder: (context) {
         final theme = Theme.of(context);
+        final l10n = context.l10n;
+        final material = MaterialLocalizations.of(context);
         return AlertDialog(
-          title: const Text('Delete tunnel?'),
+          title: Text(l10n.tunnelsDeleteTitle),
           content: Text(
-            'This removes "${profile.displayName}". If it is running it '
-            'will be stopped first.',
+            l10n.tunnelsDeleteBody(profile.displayNameIn(l10n)),
             style: const TextStyle(height: 1.35),
           ),
           actions: [
             TextButton(
               onPressed: () => Navigator.of(context).pop(false),
-              child: const Text('Cancel'),
+              child: Text(material.cancelButtonLabel),
             ),
             FilledButton(
               style: FilledButton.styleFrom(
                 backgroundColor: theme.colorScheme.error,
               ),
               onPressed: () => Navigator.of(context).pop(true),
-              child: const Text('Delete'),
+              child: Text(material.deleteButtonTooltip),
             ),
           ],
         );
@@ -169,12 +169,13 @@ class _TunnelsScreenState extends State<TunnelsScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = context.l10n;
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Tunnels'),
+        title: Text(l10n.tunnelsTitle),
         actions: [
           IconButton(
-            tooltip: 'Stop all',
+            tooltip: l10n.tunnelsStopAll,
             icon: const Icon(Icons.stop_circle_outlined),
             onPressed: widget.tunnels.activeCount == 0
                 ? null
@@ -213,7 +214,7 @@ class _TunnelsScreenState extends State<TunnelsScreen> {
       ),
       floatingActionButton: FloatingActionButton(
         onPressed: _addTunnel,
-        tooltip: 'Add tunnel',
+        tooltip: l10n.tunnelsAdd,
         child: const Icon(Icons.add),
       ),
     );
@@ -226,6 +227,7 @@ class _EmptyTunnels extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final l10n = context.l10n;
     return Center(
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 32),
@@ -238,12 +240,14 @@ class _EmptyTunnels extends StatelessWidget {
               color: theme.colorScheme.onSurfaceVariant,
             ),
             const SizedBox(height: 16),
-            Text('No tunnels yet', style: theme.textTheme.titleMedium),
+            Text(
+              l10n.tunnelsEmptyTitle,
+              textAlign: TextAlign.center,
+              style: theme.textTheme.titleMedium,
+            ),
             const SizedBox(height: 8),
             Text(
-              'A tunnel forwards a port over one of your saved hosts: a local '
-              'port to a machine only that host can reach, a port on the '
-              'server back to this device, or a SOCKS5 proxy.',
+              l10n.tunnelsEmptyBody,
               textAlign: TextAlign.center,
               style: theme.textTheme.bodySmall?.copyWith(height: 1.4),
             ),
@@ -284,7 +288,8 @@ class _GroupHeader extends StatelessWidget {
         // narrow phone with large text it ran off the edge.
         Flexible(
           child: Text(
-            group.hostLabel.toUpperCase(),
+            (group.isBroken ? context.l10n.tunnelsMissingHost : group.hostLabel)
+                .toUpperCase(),
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
             style: theme.textTheme.labelSmall?.copyWith(
@@ -335,6 +340,8 @@ class _TunnelTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final l10n = context.l10n;
+    final material = MaterialLocalizations.of(context);
     final broken = binding.isBroken;
 
     return ListTile(
@@ -344,7 +351,7 @@ class _TunnelTile extends StatelessWidget {
         children: [
           Flexible(
             child: Text(
-              profile.displayName,
+              profile.displayNameIn(l10n),
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
             ),
@@ -352,8 +359,7 @@ class _TunnelTile extends StatelessWidget {
           if (profile.bindsAllInterfaces) ...[
             const SizedBox(width: 6),
             Tooltip(
-              message: 'Listening on every interface — reachable from your '
-                  'network',
+              message: l10n.tunnelsAllInterfaces,
               child: Icon(
                 Icons.public,
                 size: 15,
@@ -368,7 +374,7 @@ class _TunnelTile extends StatelessWidget {
         children: [
           const SizedBox(height: 2),
           Text(
-            profile.portSummary,
+            profile.summaryIn(l10n),
             style: theme.textTheme.bodySmall?.copyWith(
               fontFamily: AppTheme.monoFontFamily,
               fontFamilyFallback: AppTheme.monoFontFamilyFallback,
@@ -377,7 +383,7 @@ class _TunnelTile extends StatelessWidget {
           const SizedBox(height: 4),
           if (broken)
             Text(
-              binding.brokenMessage!,
+              l10n.tunnelsHostDeleted,
               style: theme.textTheme.bodySmall?.copyWith(
                 color: theme.colorScheme.error,
                 height: 1.3,
@@ -404,7 +410,7 @@ class _TunnelTile extends StatelessWidget {
               onChanged: broken ? null : onToggle,
             ),
           PopupMenuButton<_TunnelMenuAction>(
-            tooltip: 'More',
+            tooltip: material.moreButtonTooltip,
             onSelected: (action) {
               switch (action) {
                 case _TunnelMenuAction.edit:
@@ -413,14 +419,14 @@ class _TunnelTile extends StatelessWidget {
                   onDelete();
               }
             },
-            itemBuilder: (context) => const [
+            itemBuilder: (context) => [
               PopupMenuItem(
                 value: _TunnelMenuAction.edit,
-                child: Text('Edit'),
+                child: Text(l10n.tunnelsEdit),
               ),
               PopupMenuItem(
                 value: _TunnelMenuAction.delete,
-                child: Text('Delete'),
+                child: Text(material.deleteButtonTooltip),
               ),
             ],
           ),
@@ -442,11 +448,12 @@ class _StatusLine extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final l10n = context.l10n;
     final message = status.message;
 
     if (status.state == TunnelState.error) {
       return Text(
-        message ?? 'Stopped after an error.',
+        message ?? l10n.tunnelsStoppedAfterError,
         style: theme.textTheme.bodySmall?.copyWith(
           color: theme.colorScheme.error,
           height: 1.3,
@@ -456,7 +463,7 @@ class _StatusLine extends StatelessWidget {
 
     if (!status.isRunning) {
       return Text(
-        'Stopped',
+        l10n.tunnelsStopped,
         style: theme.textTheme.bodySmall?.copyWith(
           color: theme.colorScheme.onSurfaceVariant,
         ),
@@ -465,11 +472,9 @@ class _StatusLine extends StatelessWidget {
 
     final parts = <String>[
       if (status.state == TunnelState.starting)
-        'Starting…'
+        l10n.tunnelsStarting
       else ...[
-        status.connections == 1
-            ? '1 connection'
-            : '${status.connections} connections',
+        l10n.tunnelsConnections(status.connections),
         '↑ ${RemotePath.formatBytes(status.bytesUp)}',
         '↓ ${RemotePath.formatBytes(status.bytesDown)}',
       ],
@@ -513,7 +518,7 @@ class _TypeBadge extends StatelessWidget {
         ? theme.colorScheme.primary
         : theme.colorScheme.onSurfaceVariant;
     return Tooltip(
-      message: '${type.label} (ssh ${type.sshFlag})',
+      message: '${type.labelIn(context.l10n)} (ssh ${type.sshFlag})',
       child: Container(
         width: 34,
         height: 34,

@@ -101,7 +101,8 @@ class SettingsChoice<T> extends StatelessWidget {
           labelText: label,
           prefixIcon: icon == null ? null : Icon(icon),
           helperText: helper,
-          helperMaxLines: 5,
+          // Room for the longer languages at large text sizes.
+          helperMaxLines: 8,
         ),
         items: [
           for (final v in values)

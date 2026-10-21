@@ -1314,5 +1314,1314 @@
   "vaultUnlockButton": "Unlock",
   "@vaultUnlockButton": {
     "description": "Vault unlock dialog: confirm button."
+  },
+  "settingsTitle": "Settings",
+  "@settingsTitle": {
+    "description": "Settings screen: app bar title."
+  },
+  "settingsAppearance": "Appearance",
+  "@settingsAppearance": {
+    "description": "Settings: section header for the look of the app (style, brightness, language)."
+  },
+  "settingsUiStyle": "UI style",
+  "@settingsUiStyle": {
+    "description": "Settings > Appearance: label above the list of visual styles for the app chrome."
+  },
+  "settingsStyleAurora": "Aurora (default)",
+  "@settingsStyleAurora": {
+    "description": "Settings > UI style: the default style. \"Aurora\" is a proper name; keep it, translate \"(default)\"."
+  },
+  "settingsStyleAws": "AWS-inspired",
+  "@settingsStyleAws": {
+    "description": "Settings > UI style: a style that looks like the AWS console, without claiming to be it. Keep \"AWS\"."
+  },
+  "settingsStyleGcp": "Google Cloud-inspired",
+  "@settingsStyleGcp": {
+    "description": "Settings > UI style: a style that looks like the Google Cloud console, without claiming to be it. Keep \"Google Cloud\"."
+  },
+  "settingsStyleAzure": "Azure-inspired",
+  "@settingsStyleAzure": {
+    "description": "Settings > UI style: a style that looks like the Azure portal, without claiming to be it. Keep \"Azure\"."
+  },
+  "settingsBrightness": "Brightness",
+  "@settingsBrightness": {
+    "description": "Settings > Appearance: label above the light/dark/system choice."
+  },
+  "settingsBrightnessSystem": "Match system",
+  "@settingsBrightnessSystem": {
+    "description": "Settings > Brightness: follow the operating system's light or dark mode."
+  },
+  "settingsBrightnessLight": "Light",
+  "@settingsBrightnessLight": {
+    "description": "Settings > Brightness: the light theme."
+  },
+  "settingsBrightnessDark": "Dark",
+  "@settingsBrightnessDark": {
+    "description": "Settings > Brightness: the dark theme."
+  },
+  "settingsTerminal": "Terminal",
+  "@settingsTerminal": {
+    "description": "Settings: section header for the terminal's look and behaviour."
+  },
+  "settingsFontSize": "Font size",
+  "@settingsFontSize": {
+    "description": "Settings > Terminal: label for the terminal font size slider."
+  },
+  "settingsPointSize": "{size} pt",
+  "@settingsPointSize": {
+    "description": "Settings: a font size in typographic points, beside the size sliders, e.g. \"13 pt\".",
+    "placeholders": {
+      "size": {
+        "type": "int"
+      }
+    }
+  },
+  "settingsColourScheme": "Colour scheme",
+  "@settingsColourScheme": {
+    "description": "Settings > Terminal: label above the list of terminal colour palettes."
+  },
+  "settingsSchemeClassic": "{appName} (default)",
+  "@settingsSchemeClassic": {
+    "description": "Settings > Colour scheme: the app's own default palette, named after the app.",
+    "placeholders": {
+      "appName": {
+        "type": "String"
+      }
+    }
+  },
+  "settingsSchemeBlackOnWhite": "Black on white",
+  "@settingsSchemeBlackOnWhite": {
+    "description": "Settings > Colour scheme: plain black text on a white background."
+  },
+  "settingsSchemeRetroGreen": "Retro green",
+  "@settingsSchemeRetroGreen": {
+    "description": "Settings > Colour scheme: green text on black, like an old phosphor terminal."
+  },
+  "settingsFont": "Font",
+  "@settingsFont": {
+    "description": "Settings > Terminal: label of the typeface dropdown."
+  },
+  "settingsFontSystem": "System font",
+  "@settingsFontSystem": {
+    "description": "Settings > Terminal > Font: the device's own monospace font (the other choice is JetBrains Mono)."
+  },
+  "settingsCursor": "Cursor",
+  "@settingsCursor": {
+    "description": "Settings > Terminal: label of the cursor shape dropdown."
+  },
+  "settingsCursorBlock": "Block",
+  "@settingsCursorBlock": {
+    "description": "Settings > Terminal > Cursor: a filled rectangle the size of one character."
+  },
+  "settingsCursorUnderline": "Underline",
+  "@settingsCursorUnderline": {
+    "description": "Settings > Terminal > Cursor: a line under the character."
+  },
+  "settingsCursorBar": "Bar",
+  "@settingsCursorBar": {
+    "description": "Settings > Terminal > Cursor: a thin vertical line before the character."
+  },
+  "settingsCursorBlink": "Blinking cursor",
+  "@settingsCursorBlink": {
+    "description": "Settings > Terminal: switch that makes the cursor blink."
+  },
+  "settingsCursorBlinkHelp": "Blinks while the terminal has the keyboard",
+  "@settingsCursorBlinkHelp": {
+    "description": "Settings > Terminal: subtitle of the blinking cursor switch."
+  },
+  "settingsBell": "Bell",
+  "@settingsBell": {
+    "description": "Settings > Terminal: label of the dropdown for what the terminal bell (BEL character) does."
+  },
+  "settingsBellVibrate": "Vibrate",
+  "@settingsBellVibrate": {
+    "description": "Settings > Terminal > Bell: the device vibrates briefly."
+  },
+  "settingsBellVisual": "Flash the screen",
+  "@settingsBellVisual": {
+    "description": "Settings > Terminal > Bell: the terminal flashes briefly."
+  },
+  "settingsBellOff": "Off",
+  "@settingsBellOff": {
+    "description": "Settings > Terminal > Bell: the bell does nothing."
+  },
+  "settingsScrollback": "Scrollback",
+  "@settingsScrollback": {
+    "description": "Settings > Terminal: label of the dropdown for how many lines of history a terminal keeps."
+  },
+  "settingsScrollbackLines": "{count, plural, one{{count} line} other{{count} lines}}",
+  "@settingsScrollbackLines": {
+    "description": "Settings > Terminal > Scrollback: one choice, e.g. \"10,000 lines\". The number is formatted for the language.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "format": "decimalPattern"
+      }
+    }
+  },
+  "settingsScrollbackHelp": "Lines of history kept for each session, from the next session you open. More uses more memory per open session.",
+  "@settingsScrollbackHelp": {
+    "description": "Settings > Terminal > Scrollback: helper text."
+  },
+  "settingsEditor": "Editor",
+  "@settingsEditor": {
+    "description": "Settings: section header for the remote file editor."
+  },
+  "settingsTextSize": "Text size",
+  "@settingsTextSize": {
+    "description": "Settings > Editor: label for the editor text size slider."
+  },
+  "settingsEditorZoomHint": "Pinch, or {zoomIn} and {zoomOut}, in the editor changes it too.",
+  "@settingsEditorZoomHint": {
+    "description": "Settings > Editor: hint under the text size slider. The placeholders are keyboard shortcuts (Ctrl + and Ctrl −).",
+    "placeholders": {
+      "zoomIn": {
+        "type": "String"
+      },
+      "zoomOut": {
+        "type": "String"
+      }
+    }
+  },
+  "settingsKeyboard": "Keyboard",
+  "@settingsKeyboard": {
+    "description": "Settings: section header for keyboard and touch input."
+  },
+  "settingsExtraKeys": "Extra keys row",
+  "@settingsExtraKeys": {
+    "description": "Settings > Keyboard: label of the dropdown for the row of extra keys (Esc, Tab, Ctrl, arrows) shown above the on-screen keyboard."
+  },
+  "settingsKeyBarAuto": "Automatic",
+  "@settingsKeyBarAuto": {
+    "description": "Settings > Keyboard > Extra keys row: shown or hidden automatically."
+  },
+  "settingsKeyBarAlways": "Always",
+  "@settingsKeyBarAlways": {
+    "description": "Settings > Keyboard > Extra keys row: always shown."
+  },
+  "settingsKeyBarNever": "Never",
+  "@settingsKeyBarNever": {
+    "description": "Settings > Keyboard > Extra keys row: never shown."
+  },
+  "settingsExtraKeysAutoHelp": "Esc, Tab, Ctrl and arrows over the on-screen keyboard, in the terminal and the editor. Hidden while a hardware keyboard is in use, and back when the on-screen one opens.",
+  "@settingsExtraKeysAutoHelp": {
+    "description": "Settings > Keyboard: helper text for \"Automatic\". Esc, Tab and Ctrl are key names; keep them as printed on keyboards."
+  },
+  "settingsExtraKeysAlwaysHelp": "Shown even with a hardware keyboard.",
+  "@settingsExtraKeysAlwaysHelp": {
+    "description": "Settings > Keyboard: helper text for \"Always\"."
+  },
+  "settingsExtraKeysNeverHelp": "Hidden. Ctrl and Esc then need a hardware keyboard.",
+  "@settingsExtraKeysNeverHelp": {
+    "description": "Settings > Keyboard: helper text for \"Never\". Ctrl and Esc are key names."
+  },
+  "settingsSession": "Session",
+  "@settingsSession": {
+    "description": "Settings: section header for options that apply while connected to a server."
+  },
+  "settingsKeepScreenAwake": "Keep screen awake",
+  "@settingsKeepScreenAwake": {
+    "description": "Settings > Session: switch title."
+  },
+  "settingsKeepScreenAwakeHelp": "Prevents the screen from sleeping while a session is open",
+  "@settingsKeepScreenAwakeHelp": {
+    "description": "Settings > Session: subtitle of the keep screen awake switch."
+  },
+  "settingsShowHiddenFiles": "Show hidden files by default",
+  "@settingsShowHiddenFiles": {
+    "description": "Settings > Session: switch title; hidden files are those starting with a dot."
+  },
+  "settingsShowHiddenFilesHelp": "Applies the next time you open the file browser",
+  "@settingsShowHiddenFilesHelp": {
+    "description": "Settings > Session: subtitle of the hidden files switch."
+  },
+  "settingsCommands": "Commands",
+  "@settingsCommands": {
+    "description": "Settings: section header above the Snippets row."
+  },
+  "settingsSnippets": "Snippets",
+  "@settingsSnippets": {
+    "description": "Settings > Commands: row that opens the saved commands (\"snippets\") list."
+  },
+  "settingsSnippetsHelp": "Saved commands you can send to any session",
+  "@settingsSnippetsHelp": {
+    "description": "Settings > Commands: subtitle of the Snippets row."
+  },
+  "settingsNetworking": "Networking",
+  "@settingsNetworking": {
+    "description": "Settings: section header above the Tunnels row."
+  },
+  "settingsTunnels": "Tunnels",
+  "@settingsTunnels": {
+    "description": "Settings > Networking: row that opens the port forwarding (\"tunnels\") list."
+  },
+  "settingsTunnelsHelp": "Forward ports over a saved host, or run a SOCKS5 proxy",
+  "@settingsTunnelsHelp": {
+    "description": "Settings > Networking: subtitle of the Tunnels row."
+  },
+  "settingsSecurity": "Security",
+  "@settingsSecurity": {
+    "description": "Settings: section header for app lock, known hosts and backup."
+  },
+  "settingsAppLock": "App lock",
+  "@settingsAppLock": {
+    "description": "Settings > Security: switch that makes the app ask for the device PIN, fingerprint or similar before showing anything."
+  },
+  "settingsAppLockAsk": "Ask for this device's unlock method before showing the app",
+  "@settingsAppLockAsk": {
+    "description": "Settings > Security: subtitle of the App lock switch when it can be turned on."
+  },
+  "settingsAppLockUnavailable": "Unavailable on this device",
+  "@settingsAppLockUnavailable": {
+    "description": "Settings > Security: subtitle of the App lock switch when this device cannot lock the app."
+  },
+  "settingsAppLockChecking": "Checking whether this device can lock the app…",
+  "@settingsAppLockChecking": {
+    "description": "Settings > Security: shown under App lock for a moment while the platform is asked."
+  },
+  "settingsAppLockExplanation": "Locks the app's screen. Your saved passwords are always encrypted by your system's secure storage, with or without this.",
+  "@settingsAppLockExplanation": {
+    "description": "Settings > Security: what App lock does and does not do. It only hides the screen; it is not what encrypts passwords. Keep that distinction exact."
+  },
+  "settingsAppLockLinux": "Linux has no per-app unlock that {appName} can use without administrator rights, which would lock out anyone who does not have them.",
+  "@settingsAppLockLinux": {
+    "description": "Settings > Security: why App lock is unavailable on Linux.",
+    "placeholders": {
+      "appName": {
+        "type": "String"
+      }
+    }
+  },
+  "settingsAppLockWindowsOff": "Windows Hello is turned off or not supported on this PC.",
+  "@settingsAppLockWindowsOff": {
+    "description": "Settings > Security: why App lock is unavailable on this Windows PC. \"Windows Hello\" is a product name."
+  },
+  "settingsAppLockMacos": "Touch ID and password unlock are not available in this build yet.",
+  "@settingsAppLockMacos": {
+    "description": "Settings > Security: why App lock is unavailable on macOS. \"Touch ID\" is a product name."
+  },
+  "settingsAppLockOtherPlatform": "App lock is not available on this platform.",
+  "@settingsAppLockOtherPlatform": {
+    "description": "Settings > Security: why App lock is unavailable on any other platform."
+  },
+  "settingsAppLockSetupWindows": "Set up Windows Hello (a PIN, fingerprint or face) in Windows Settings first, then this can be turned on.",
+  "@settingsAppLockSetupWindows": {
+    "description": "Settings > Security: App lock needs Windows Hello set up first. \"Windows Settings\" is the Windows app of that name."
+  },
+  "settingsAppLockSetupDevice": "Set a screen lock (PIN, pattern, password or biometric) on this device first, then this can be turned on.",
+  "@settingsAppLockSetupDevice": {
+    "description": "Settings > Security: App lock needs an Android screen lock set up first."
+  },
+  "settingsAppLockAfter": "Lock when away for",
+  "@settingsAppLockAfter": {
+    "description": "Settings > Security: label above the choices of how long the app may be in the background before it locks."
+  },
+  "settingsLockImmediately": "Immediately",
+  "@settingsLockImmediately": {
+    "description": "Settings > Security > Lock when away for: lock as soon as the app is left."
+  },
+  "settingsLockAfterMinutes": "{minutes, plural, one{After {minutes} minute} other{After {minutes} minutes}}",
+  "@settingsLockAfterMinutes": {
+    "description": "Settings > Security > Lock when away for: lock after this many minutes in the background (1, 5 or 15).",
+    "placeholders": {
+      "minutes": {
+        "type": "int"
+      }
+    }
+  },
+  "settingsAppLockKeepsRunning": "Sessions and tunnels keep running while the app is locked.",
+  "@settingsAppLockKeepsRunning": {
+    "description": "Settings > Security: note under the lock timeout choices."
+  },
+  "settingsKnownHosts": "Known hosts",
+  "@settingsKnownHosts": {
+    "description": "Settings > Security: row that opens the list of trusted server host keys (OpenSSH's \"known hosts\")."
+  },
+  "settingsKnownHostsHelp": "Manage trusted host keys",
+  "@settingsKnownHostsHelp": {
+    "description": "Settings > Security: subtitle of the Known hosts row."
+  },
+  "settingsBackup": "Backup",
+  "@settingsBackup": {
+    "description": "Settings > Security: row that opens the encrypted backup screen."
+  },
+  "settingsBackupHelp": "Export or restore an encrypted copy of your setup",
+  "@settingsBackupHelp": {
+    "description": "Settings > Security: subtitle of the Backup row."
+  },
+  "settingsDiagnostics": "Diagnostics",
+  "@settingsDiagnostics": {
+    "description": "Settings: section header for the local diagnostics log."
+  },
+  "settingsDiagnosticsKeep": "Keep a diagnostics log",
+  "@settingsDiagnosticsKeep": {
+    "description": "Settings > Diagnostics: switch title."
+  },
+  "settingsDiagnosticsKeepHelp": "Records errors and crashes on this device, with passwords and keys removed, for you to copy into a bug report. Nothing is sent anywhere.",
+  "@settingsDiagnosticsKeepHelp": {
+    "description": "Settings > Diagnostics: subtitle of the switch. \"Nothing is sent anywhere\" is a privacy promise; keep it as firm."
+  },
+  "settingsDiagnosticsCopy": "Copy diagnostics",
+  "@settingsDiagnosticsCopy": {
+    "description": "Settings > Diagnostics: row that copies the log to the clipboard."
+  },
+  "settingsDiagnosticsCopyHelp": "Puts the log on the clipboard",
+  "@settingsDiagnosticsCopyHelp": {
+    "description": "Settings > Diagnostics: subtitle of the Copy diagnostics row."
+  },
+  "settingsDiagnosticsView": "View diagnostics",
+  "@settingsDiagnosticsView": {
+    "description": "Settings > Diagnostics: row that opens the log."
+  },
+  "settingsDiagnosticsClear": "Clear diagnostics",
+  "@settingsDiagnosticsClear": {
+    "description": "Settings > Diagnostics: row that deletes the log."
+  },
+  "settingsDiagnosticsEmpty": "The diagnostics log is empty.",
+  "@settingsDiagnosticsEmpty": {
+    "description": "Settings > Diagnostics: snackbar when there is nothing to copy."
+  },
+  "settingsDiagnosticsCopied": "Copied {size} of diagnostics. Paste them into your bug report.",
+  "@settingsDiagnosticsCopied": {
+    "description": "Settings > Diagnostics: snackbar after copying. size is e.g. \"12.4 KB\" or \"300 characters\".",
+    "placeholders": {
+      "size": {
+        "type": "String"
+      }
+    }
+  },
+  "settingsDiagnosticsCharacters": "{count, plural, one{{count} character} other{{count} characters}}",
+  "@settingsDiagnosticsCharacters": {
+    "description": "Settings > Diagnostics: the size of a short log, used inside the \"Copied …\" snackbar.",
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "settingsDiagnosticsKilobytes": "{size} KB",
+  "@settingsDiagnosticsKilobytes": {
+    "description": "Settings > Diagnostics: the size of a log in kilobytes, used inside the \"Copied …\" snackbar. Use the local unit abbreviation (e.g. Ko in French).",
+    "placeholders": {
+      "size": {
+        "type": "String"
+      }
+    }
+  },
+  "settingsDiagnosticsCleared": "Diagnostics log cleared.",
+  "@settingsDiagnosticsCleared": {
+    "description": "Settings > Diagnostics: snackbar after clearing the log."
+  },
+  "settingsDiagnosticsLogTitle": "Diagnostics log",
+  "@settingsDiagnosticsLogTitle": {
+    "description": "Diagnostics log screen: app bar title."
+  },
+  "settingsDiagnosticsClearShort": "Clear",
+  "@settingsDiagnosticsClearShort": {
+    "description": "Diagnostics log screen: tooltip of the button that deletes the log."
+  },
+  "settingsDiagnosticsCopiedShort": "Diagnostics copied.",
+  "@settingsDiagnosticsCopiedShort": {
+    "description": "Diagnostics log screen: snackbar after copying the log."
+  },
+  "settingsDiagnosticsNothing": "Nothing has been recorded.",
+  "@settingsDiagnosticsNothing": {
+    "description": "Diagnostics log screen: shown when the log is empty."
+  },
+  "settingsAbout": "About {appName}",
+  "@settingsAbout": {
+    "description": "Settings: last row, opens the About box.",
+    "placeholders": {
+      "appName": {
+        "type": "String"
+      }
+    }
+  },
+  "settingsAboutText": "An SSH terminal client with an SFTP file browser. Host keys are checked against a local known-hosts store using trust-on-first-use, a changed key blocks the connection until you explicitly approve it, and that store is sealed with a key held in the device keystore. Saved passwords and keys are encrypted on-device.",
+  "@settingsAboutText": {
+    "description": "About box: what the app is and how it protects host keys and passwords. Security wording: keep each claim exactly as strong as the English, no stronger."
+  },
+  "backupTitle": "Backup",
+  "@backupTitle": {
+    "description": "Backup screen: app bar title."
+  },
+  "backupExport": "Export",
+  "@backupExport": {
+    "description": "Backup screen: section header for writing a backup file."
+  },
+  "backupExportIntro": "Writes your hosts, groups, snippets, tunnels, bookmarks and settings to a single encrypted file, protected by a passphrase you choose.",
+  "@backupExportIntro": {
+    "description": "Backup screen: what an export contains."
+  },
+  "backupHostKeysNote": "Trusted host keys are left out unless you include them. Without them, a restored install verifies each server again on first connect.",
+  "@backupHostKeysNote": {
+    "description": "Backup screen: note that trusted server host keys are not exported by default."
+  },
+  "backupSaveTo": "Save to…",
+  "@backupSaveTo": {
+    "description": "Backup screen: button that opens the system \"save as\" dialog."
+  },
+  "backupSaveToHelp": "Any folder, or a cloud drive such as Google Drive, OneDrive or Dropbox.",
+  "@backupSaveToHelp": {
+    "description": "Backup screen: hint under \"Save to…\". Product names stay as they are."
+  },
+  "backupSaveToDownloads": "Save to Downloads",
+  "@backupSaveToDownloads": {
+    "description": "Backup screen: button that saves the backup in the Downloads folder."
+  },
+  "backupExportToFile": "Export to a file",
+  "@backupExportToFile": {
+    "description": "Backup screen: export button where there is no \"save as\" dialog."
+  },
+  "backupImport": "Import",
+  "@backupImport": {
+    "description": "Backup screen: section header for reading a backup file."
+  },
+  "backupImportIntro": "Reads a {extension} file. You will see what is inside it and choose whether to merge or replace before anything changes.",
+  "@backupImportIntro": {
+    "description": "Backup screen: what importing does. extension is the file extension, \".ssgbackup\".",
+    "placeholders": {
+      "extension": {
+        "type": "String"
+      }
+    }
+  },
+  "backupImportFromFile": "Import from a file",
+  "@backupImportFromFile": {
+    "description": "Backup screen: button that picks a backup file to import."
+  },
+  "backupNotSaved": "Not saved.",
+  "@backupNotSaved": {
+    "description": "Backup screen: status after the user closed the \"save as\" dialog without saving."
+  },
+  "backupSaved": "Saved {fileName}.",
+  "@backupSaved": {
+    "description": "Backup screen: status after saving the backup file.",
+    "placeholders": {
+      "fileName": {
+        "type": "String"
+      }
+    }
+  },
+  "backupSavedToDownloads": "Saved {fileName} to Downloads.",
+  "@backupSavedToDownloads": {
+    "description": "Backup screen: status after saving the backup file in the Downloads folder.",
+    "placeholders": {
+      "fileName": {
+        "type": "String"
+      }
+    }
+  },
+  "backupWriteFailed": "Could not write the backup: {error}",
+  "@backupWriteFailed": {
+    "description": "Backup screen: status when the file could not be written. error is a technical message, in English.",
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
+  "backupReadFileFailed": "Could not read that file.",
+  "@backupReadFileFailed": {
+    "description": "Backup screen: status when the picked file could not be read."
+  },
+  "backupReadFailed": "Could not read that backup.",
+  "@backupReadFailed": {
+    "description": "Backup screen: status when the picked file is not a readable backup."
+  },
+  "backupImportFailed": "The import did not finish: {error}",
+  "@backupImportFailed": {
+    "description": "Backup screen: status when applying the backup failed. error is a technical message, in English.",
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
+  "backupImported": "Imported. You now have {hosts}, {snippets}, {tunnels}, {bookmarks}.",
+  "@backupImported": {
+    "description": "Backup screen: status after an import. Each placeholder is a count with its noun, e.g. \"3 hosts\".",
+    "placeholders": {
+      "hosts": {
+        "type": "String"
+      },
+      "snippets": {
+        "type": "String"
+      },
+      "tunnels": {
+        "type": "String"
+      },
+      "bookmarks": {
+        "type": "String"
+      }
+    }
+  },
+  "backupCountHosts": "{count, plural, one{{count} host} other{{count} hosts}}",
+  "@backupCountHosts": {
+    "description": "Backup screen: a number of saved servers, inside \"Imported. You now have …\".",
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "backupCountSnippets": "{count, plural, one{{count} snippet} other{{count} snippets}}",
+  "@backupCountSnippets": {
+    "description": "Backup screen: a number of saved commands, inside \"Imported. You now have …\".",
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "backupCountTunnels": "{count, plural, one{{count} tunnel} other{{count} tunnels}}",
+  "@backupCountTunnels": {
+    "description": "Backup screen: a number of saved port forwards, inside \"Imported. You now have …\".",
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "backupCountBookmarks": "{count, plural, one{{count} bookmark} other{{count} bookmarks}}",
+  "@backupCountBookmarks": {
+    "description": "Backup screen: a number of saved folder bookmarks, inside \"Imported. You now have …\".",
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "backupImportedNeedCredentials": "{count, plural, one{{count} host will ask for a password or key on first connect.} other{{count} hosts will ask for a password or key on first connect.}}",
+  "@backupImportedNeedCredentials": {
+    "description": "Backup screen: added after an import that carried no passwords or keys for some servers.",
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "backupImportedKeysAdded": "{count, plural, one{Added {count} trusted host key.} other{Added {count} trusted host keys.}}",
+  "@backupImportedKeysAdded": {
+    "description": "Backup screen: added after an import that trusted server host keys from the backup.",
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "backupImportedKeysKept": "{count, plural, one{Kept this device's own keys for {count} server it already knew; the backup's keys for it were not used.} other{Kept this device's own keys for {count} servers it already knew; the backup's keys for them were not used.}}",
+  "@backupImportedKeysKept": {
+    "description": "Backup screen: added after an import; host keys already on this device win over the backup's.",
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "backupImportedKeysNotTrusted": "{count, plural, one{Did not trust the {count} host key in the backup; that server will be checked on first connect.} other{Did not trust the {count} host keys in the backup; those servers will be checked on first connect.}}",
+  "@backupImportedKeysNotTrusted": {
+    "description": "Backup screen: added after an import where the user chose not to trust the backup's host keys.",
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "backupImportedKeyringLocked": "The system keyring is locked, so the added keys last until the app closes.",
+  "@backupImportedKeyringLocked": {
+    "description": "Backup screen: added after an import when the trusted keys could not be saved permanently."
+  },
+  "backupExportTitle": "Export backup",
+  "@backupExportTitle": {
+    "description": "Export dialog: title."
+  },
+  "backupPassphrase": "Passphrase",
+  "@backupPassphrase": {
+    "description": "Export and open dialogs: the field for the passphrase that encrypts the backup."
+  },
+  "backupShow": "Show",
+  "@backupShow": {
+    "description": "Export dialog: tooltip of the button that shows the passphrase."
+  },
+  "backupHide": "Hide",
+  "@backupHide": {
+    "description": "Export dialog: tooltip of the button that hides the passphrase."
+  },
+  "backupStrength": "Strength:",
+  "@backupStrength": {
+    "description": "Export dialog: label before the passphrase strength word (Too short, Weak, Fair, Strong)."
+  },
+  "backupStrengthTooShort": "Too short",
+  "@backupStrengthTooShort": {
+    "description": "Export dialog: passphrase strength, below the minimum length."
+  },
+  "backupStrengthWeak": "Weak",
+  "@backupStrengthWeak": {
+    "description": "Export dialog: passphrase strength."
+  },
+  "backupStrengthFair": "Fair",
+  "@backupStrengthFair": {
+    "description": "Export dialog: passphrase strength, acceptable but not strong."
+  },
+  "backupStrengthStrong": "Strong",
+  "@backupStrengthStrong": {
+    "description": "Export dialog: passphrase strength."
+  },
+  "backupHintTooShort": "{count, plural, one{Use at least {count} character.} other{Use at least {count} characters.}}",
+  "@backupHintTooShort": {
+    "description": "Export dialog: hint under a passphrase that is too short. count is the minimum length (12).",
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "backupHintWeak": "Weak. A few unrelated words are stronger than one long one.",
+  "@backupHintWeak": {
+    "description": "Export dialog: hint under a weak passphrase."
+  },
+  "backupHintFair": "Fair. Longer is the easiest improvement.",
+  "@backupHintFair": {
+    "description": "Export dialog: hint under a fair passphrase."
+  },
+  "backupHintStrong": "Strong.",
+  "@backupHintStrong": {
+    "description": "Export dialog: hint under a strong passphrase."
+  },
+  "backupConfirmPassphrase": "Confirm passphrase",
+  "@backupConfirmPassphrase": {
+    "description": "Export dialog: the field for typing the passphrase again."
+  },
+  "backupMismatch": "These do not match.",
+  "@backupMismatch": {
+    "description": "Export dialog: error when the two passphrases differ."
+  },
+  "backupNoRecovery": "There is no way to recover this file without the passphrase. It is not stored anywhere.",
+  "@backupNoRecovery": {
+    "description": "Export dialog: warning that a forgotten passphrase cannot be recovered. Keep it as absolute as the English."
+  },
+  "backupIncludeCredentials": "Include saved passwords and keys",
+  "@backupIncludeCredentials": {
+    "description": "Export dialog: checkbox that adds server passwords and private keys to the file."
+  },
+  "backupIncludeCredentialsHelp": "Off by default. With this on, the file contains your server passwords and private keys, and its safety is only as good as the passphrase above.",
+  "@backupIncludeCredentialsHelp": {
+    "description": "Export dialog: subtitle of the passwords and keys checkbox."
+  },
+  "backupCredentialsWarning": "Treat this file like the passwords themselves: anyone who gets both it and the passphrase gets your servers.",
+  "@backupCredentialsWarning": {
+    "description": "Export dialog: warning shown once passwords and keys are included. Keep it as blunt as the English."
+  },
+  "backupIncludeHostKeys": "Include trusted host keys",
+  "@backupIncludeHostKeys": {
+    "description": "Export dialog: checkbox that adds the trusted server host keys to the file."
+  },
+  "backupIncludeHostKeysHelp": "Off by default. Lets a restored device recognise your servers without asking again, if you choose to trust them when importing. A device that already knows a server keeps its own keys for it.",
+  "@backupIncludeHostKeysHelp": {
+    "description": "Export dialog: subtitle of the host keys checkbox."
+  },
+  "backupExportAction": "Export",
+  "@backupExportAction": {
+    "description": "Export dialog: the button that writes the file."
+  },
+  "backupOpenTitle": "Open backup",
+  "@backupOpenTitle": {
+    "description": "Import: title of the dialog that asks for the passphrase."
+  },
+  "backupOpenAction": "Open",
+  "@backupOpenAction": {
+    "description": "Import: button that decrypts the backup with the passphrase."
+  },
+  "backupContainsTitle": "This backup contains",
+  "@backupContainsTitle": {
+    "description": "Import preview dialog: title above the list of counts."
+  },
+  "backupRowHosts": "Hosts",
+  "@backupRowHosts": {
+    "description": "Import preview: count row for saved servers."
+  },
+  "backupRowGroups": "Groups",
+  "@backupRowGroups": {
+    "description": "Import preview: count row for host groups."
+  },
+  "backupRowSnippets": "Snippets",
+  "@backupRowSnippets": {
+    "description": "Import preview: count row for saved commands."
+  },
+  "backupRowTunnels": "Tunnels",
+  "@backupRowTunnels": {
+    "description": "Import preview: count row for saved port forwards."
+  },
+  "backupRowBookmarks": "Bookmarks",
+  "@backupRowBookmarks": {
+    "description": "Import preview: count row for folder bookmarks."
+  },
+  "backupRowHostKeys": "Trusted host keys",
+  "@backupRowHostKeys": {
+    "description": "Import preview: count row for trusted server host keys."
+  },
+  "backupIncludesCredentials": "{count, plural, one{Includes {count} saved password or key.} other{Includes {count} saved passwords or keys.}}",
+  "@backupIncludesCredentials": {
+    "description": "Import preview: the backup carries this many passwords or private keys.",
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "backupNoCredentials": "{count, plural, one{No saved passwords or keys. {count} host will ask on first connect.} other{No saved passwords or keys. {count} hosts will ask on first connect.}}",
+  "@backupNoCredentials": {
+    "description": "Import preview: the backup carries no passwords or keys, so this many servers will ask for one.",
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "backupSettingsReplaced": "Settings in the file will replace your current settings in both modes.",
+  "@backupSettingsReplaced": {
+    "description": "Import preview: settings are replaced whether the user picks Merge or Replace."
+  },
+  "backupNoNewServers": "No new servers to trust: this device already knows every server in the backup and keeps its own keys for them.",
+  "@backupNoNewServers": {
+    "description": "Import preview: none of the backup's host keys are for servers new to this device."
+  },
+  "backupNewServerKeys": "Host keys for servers this device has never connected to:",
+  "@backupNewServerKeys": {
+    "description": "Import preview: heading above a list of server names and key fingerprints."
+  },
+  "backupTrustKeys": "Trust these keys",
+  "@backupTrustKeys": {
+    "description": "Import preview: checkbox that trusts the listed host keys. Off by default."
+  },
+  "backupTrustKeysHelp": "Only if you made this backup yourself. A trusted key is accepted without asking the next time you connect; left off, each server is checked on first connect.",
+  "@backupTrustKeysHelp": {
+    "description": "Import preview: subtitle of \"Trust these keys\". Security wording: keep \"only if\" as strict as the English."
+  },
+  "backupOtherKeysKept": "{count, plural, one{The backup has other keys for {count} server this device already knows. They are not used: this device keeps its own.} other{The backup has other keys for {count} servers this device already knows. They are not used: this device keeps its own.}}",
+  "@backupOtherKeysKept": {
+    "description": "Import preview: host keys in the backup that differ from this device's are ignored.",
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "backupEmptyWarning": "This backup is empty. Replacing with it would remove everything you have.",
+  "@backupEmptyWarning": {
+    "description": "Import preview: warning when the backup holds nothing."
+  },
+  "backupReplace": "Replace",
+  "@backupReplace": {
+    "description": "Import preview: button that replaces everything with the backup's contents."
+  },
+  "backupMerge": "Merge",
+  "@backupMerge": {
+    "description": "Import preview: button that adds the backup's contents to what is already here."
+  },
+  "knownHostsTitle": "Known hosts",
+  "@knownHostsTitle": {
+    "description": "Known hosts screen: app bar title. The list of server host keys this device trusts (OpenSSH's \"known hosts\")."
+  },
+  "knownHostsForgetTitle": "Forget this host key?",
+  "@knownHostsForgetTitle": {
+    "description": "Known hosts: title of the dialog that removes a trusted key."
+  },
+  "knownHostsForgetBody": "The next connection to {host} will be treated as first-use again and ask you to verify its key.",
+  "@knownHostsForgetBody": {
+    "description": "Known hosts: body of the forget dialog. host is \"hostname:port\".",
+    "placeholders": {
+      "host": {
+        "type": "String"
+      }
+    }
+  },
+  "knownHostsForget": "Forget",
+  "@knownHostsForget": {
+    "description": "Known hosts: button and tooltip that remove a trusted key."
+  },
+  "knownHostsFingerprintCopied": "Fingerprint copied",
+  "@knownHostsFingerprintCopied": {
+    "description": "Known hosts: snackbar after copying a key fingerprint."
+  },
+  "knownHostsAdded": "Added {date}",
+  "@knownHostsAdded": {
+    "description": "Known hosts: when the key was trusted. date is like 2026-10-21.",
+    "placeholders": {
+      "date": {
+        "type": "String"
+      }
+    }
+  },
+  "knownHostsEmptyTitle": "No trusted host keys yet",
+  "@knownHostsEmptyTitle": {
+    "description": "Known hosts: title when the list is empty."
+  },
+  "knownHostsEmptyBody": "Keys are added automatically the first time you connect to a new server and accept its fingerprint.",
+  "@knownHostsEmptyBody": {
+    "description": "Known hosts: explanation when the list is empty."
+  },
+  "appLockLocked": "{appName} is locked",
+  "@appLockLocked": {
+    "description": "Lock screen: title shown over the app while it is locked.",
+    "placeholders": {
+      "appName": {
+        "type": "String"
+      }
+    }
+  },
+  "appLockStillRunning": "Your sessions and tunnels are still running.",
+  "@appLockStillRunning": {
+    "description": "Lock screen: reassurance under the title."
+  },
+  "appLockUnlock": "Unlock",
+  "@appLockUnlock": {
+    "description": "Lock screen: button that asks for the device PIN, fingerprint or similar."
+  },
+  "appLockWaiting": "Waiting…",
+  "@appLockWaiting": {
+    "description": "Lock screen: the button while the system unlock prompt is open."
+  },
+  "appLockTriesLeft": "{count, plural, =1{One more try before a short wait.} other{{count} more tries before a short wait.}}",
+  "@appLockTriesLeft": {
+    "description": "Lock screen: after a failed unlock, how many tries are left before a short pause. Must not sound like a threat to the user's data: running out only costs a wait.",
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "appLockTooManySeconds": "{count, plural, one{Too many attempts. Try again in {count} second.} other{Too many attempts. Try again in {count} seconds.}}",
+  "@appLockTooManySeconds": {
+    "description": "Lock screen: shown during the pause after too many failed unlocks.",
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "appLockTooManyMinutes": "{count, plural, one{Too many attempts. Try again in {count} minute.} other{Too many attempts. Try again in {count} minutes.}}",
+  "@appLockTooManyMinutes": {
+    "description": "Lock screen: shown during the pause after too many failed unlocks.",
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "appLockPromptReason": "Unlock {appName}",
+  "@appLockPromptReason": {
+    "description": "The system unlock prompt (Windows Hello): why it is asking.",
+    "placeholders": {
+      "appName": {
+        "type": "String"
+      }
+    }
+  },
+  "snippetsTitle": "Snippets",
+  "@snippetsTitle": {
+    "description": "Snippets screen: app bar title. A snippet is a saved shell command."
+  },
+  "snippetsAdd": "Add snippet",
+  "@snippetsAdd": {
+    "description": "Snippets: button, tooltip and screen title for adding a saved command."
+  },
+  "snippetsEditTitle": "Edit snippet",
+  "@snippetsEditTitle": {
+    "description": "Snippet editor: app bar title when changing a saved command."
+  },
+  "snippetsDeleteTitle": "Delete snippet?",
+  "@snippetsDeleteTitle": {
+    "description": "Snippets: title of the delete confirmation."
+  },
+  "snippetsDeleteBody": "This removes \"{name}\". This cannot be undone.",
+  "@snippetsDeleteBody": {
+    "description": "Snippets: body of the delete confirmation. name is the snippet's name; use the language's own quotation marks.",
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "snippetsEmptyTitle": "No snippets yet",
+  "@snippetsEmptyTitle": {
+    "description": "Snippets: title when the list is empty."
+  },
+  "snippetsEmptyBody": "Save a command once and fire it into any session from the lightning-bolt icon in the terminal.",
+  "@snippetsEmptyBody": {
+    "description": "Snippets: explanation when the list is empty."
+  },
+  "snippetsName": "Name",
+  "@snippetsName": {
+    "description": "Snippet editor: the name field."
+  },
+  "snippetsNameHint": "e.g. Tail app log",
+  "@snippetsNameHint": {
+    "description": "Snippet editor: example name in the empty name field (a command that follows an application's log file)."
+  },
+  "snippetsRequired": "Required",
+  "@snippetsRequired": {
+    "description": "Snippet editor: error under an empty required field."
+  },
+  "snippetsCommand": "Command",
+  "@snippetsCommand": {
+    "description": "Snippet editor: the shell command field."
+  },
+  "snippetsCommandHelp": "Wrap a name in braces — {example} — to ask for it each time this runs. Use {open} and {close} for a literal brace.",
+  "@snippetsCommandHelp": {
+    "description": "Snippet editor: helper text. example is \"{name}\", open is \"{{\" and close is \"}}\".",
+    "placeholders": {
+      "example": {
+        "type": "String"
+      },
+      "open": {
+        "type": "String"
+      },
+      "close": {
+        "type": "String"
+      }
+    }
+  },
+  "snippetsDescription": "Description (optional)",
+  "@snippetsDescription": {
+    "description": "Snippet editor: the optional description field."
+  },
+  "snippetsSaving": "Saving…",
+  "@snippetsSaving": {
+    "description": "Snippet editor: the save button while saving."
+  },
+  "snippetsSave": "Save snippet",
+  "@snippetsSave": {
+    "description": "Snippet editor: the save button."
+  },
+  "snippetsSaveFailed": "Could not save this snippet.",
+  "@snippetsSaveFailed": {
+    "description": "Snippet editor: error when saving failed."
+  },
+  "snippetsSearch": "Search snippets",
+  "@snippetsSearch": {
+    "description": "Snippet picker (from a terminal): search field hint."
+  },
+  "snippetsNoneSaved": "No snippets saved yet",
+  "@snippetsNoneSaved": {
+    "description": "Snippet picker: shown when there are no snippets at all."
+  },
+  "snippetsNoMatch": "No snippets match \"{query}\"",
+  "@snippetsNoMatch": {
+    "description": "Snippet picker: shown when the search finds nothing; use the language's own quotation marks.",
+    "placeholders": {
+      "query": {
+        "type": "String"
+      }
+    }
+  },
+  "snippetsSend": "Send",
+  "@snippetsSend": {
+    "description": "Snippet values dialog: button that sends the command to the terminal."
+  },
+  "tunnelsTitle": "Tunnels",
+  "@tunnelsTitle": {
+    "description": "Tunnels screen: app bar title. A tunnel is a saved SSH port forward."
+  },
+  "tunnelsStopAll": "Stop all",
+  "@tunnelsStopAll": {
+    "description": "Tunnels: tooltip of the button that stops every running tunnel."
+  },
+  "tunnelsAdd": "Add tunnel",
+  "@tunnelsAdd": {
+    "description": "Tunnels: tooltip of the add button."
+  },
+  "tunnelsNeedHost": "Save a host first — a tunnel rides on one.",
+  "@tunnelsNeedHost": {
+    "description": "Tunnels: snackbar when adding a tunnel with no saved servers."
+  },
+  "tunnelsDeleteTitle": "Delete tunnel?",
+  "@tunnelsDeleteTitle": {
+    "description": "Tunnels: title of the delete confirmation."
+  },
+  "tunnelsDeleteBody": "This removes \"{name}\". If it is running it will be stopped first.",
+  "@tunnelsDeleteBody": {
+    "description": "Tunnels: body of the delete confirmation; use the language's own quotation marks.",
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "tunnelsEmptyTitle": "No tunnels yet",
+  "@tunnelsEmptyTitle": {
+    "description": "Tunnels: title when the list is empty."
+  },
+  "tunnelsEmptyBody": "A tunnel forwards a port over one of your saved hosts: a local port to a machine only that host can reach, a port on the server back to this device, or a SOCKS5 proxy.",
+  "@tunnelsEmptyBody": {
+    "description": "Tunnels: explanation when the list is empty."
+  },
+  "tunnelsMissingHost": "Missing host",
+  "@tunnelsMissingHost": {
+    "description": "Tunnels: group header for tunnels whose saved server was deleted."
+  },
+  "tunnelsHostDeleted": "The saved host this tunnel rides on has been deleted, so there is nothing to carry it. Edit the tunnel to point it at another host.",
+  "@tunnelsHostDeleted": {
+    "description": "Tunnels: shown on a tunnel whose saved server was deleted."
+  },
+  "tunnelsAllInterfaces": "Listening on every interface — reachable from your network",
+  "@tunnelsAllInterfaces": {
+    "description": "Tunnels: tooltip of the globe icon on a tunnel open to other devices. A security warning; keep it as plain."
+  },
+  "tunnelsEdit": "Edit",
+  "@tunnelsEdit": {
+    "description": "Tunnels: menu item that opens the tunnel editor."
+  },
+  "tunnelsStopped": "Stopped",
+  "@tunnelsStopped": {
+    "description": "Tunnels: status of a tunnel that is not running."
+  },
+  "tunnelsStoppedAfterError": "Stopped after an error.",
+  "@tunnelsStoppedAfterError": {
+    "description": "Tunnels: status of a tunnel that failed."
+  },
+  "tunnelsStarting": "Starting…",
+  "@tunnelsStarting": {
+    "description": "Tunnels: status of a tunnel that is starting."
+  },
+  "tunnelsConnections": "{count, plural, one{{count} connection} other{{count} connections}}",
+  "@tunnelsConnections": {
+    "description": "Tunnels: how many connections a running tunnel carries now.",
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "tunnelsRunning": "{count, plural, one{{count} tunnel running} other{{count} tunnels running}}",
+  "@tunnelsRunning": {
+    "description": "Terminal screen: tooltip of the chip that says tunnels are running.",
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "tunnelsTypeLocal": "Local forward",
+  "@tunnelsTypeLocal": {
+    "description": "Tunnel type: OpenSSH's -L, this device listens."
+  },
+  "tunnelsTypeRemote": "Remote forward",
+  "@tunnelsTypeRemote": {
+    "description": "Tunnel type: OpenSSH's -R, the server listens."
+  },
+  "tunnelsTypeDynamic": "Dynamic (SOCKS5)",
+  "@tunnelsTypeDynamic": {
+    "description": "Tunnel type: OpenSSH's -D, a SOCKS5 proxy."
+  },
+  "tunnelsSocksSummary": "SOCKS5 on {address}",
+  "@tunnelsSocksSummary": {
+    "description": "Tunnels: one-line summary of a SOCKS5 proxy tunnel; address is like 127.0.0.1:1080.",
+    "placeholders": {
+      "address": {
+        "type": "String"
+      }
+    }
+  },
+  "tunnelsNewTitle": "New tunnel",
+  "@tunnelsNewTitle": {
+    "description": "Tunnel editor: app bar title when adding."
+  },
+  "tunnelsEditTitle": "Edit tunnel",
+  "@tunnelsEditTitle": {
+    "description": "Tunnel editor: app bar title when editing."
+  },
+  "tunnelsSaveFailed": "Could not save this tunnel: {error}",
+  "@tunnelsSaveFailed": {
+    "description": "Tunnel editor: error when saving failed. error is a technical message, in English.",
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
+  "tunnelsName": "Name",
+  "@tunnelsName": {
+    "description": "Tunnel editor: the name field."
+  },
+  "tunnelsNameHint": "Postgres on the app box",
+  "@tunnelsNameHint": {
+    "description": "Tunnel editor: example name in the empty name field (a PostgreSQL database on the application server)."
+  },
+  "tunnelsCarriedBy": "Carried by",
+  "@tunnelsCarriedBy": {
+    "description": "Tunnel editor: label of the dropdown that picks the saved server whose SSH connection carries the tunnel."
+  },
+  "tunnelsCarriedByHelp": "The saved host whose SSH connection carries it",
+  "@tunnelsCarriedByHelp": {
+    "description": "Tunnel editor: helper text of \"Carried by\"."
+  },
+  "tunnelsType": "Type",
+  "@tunnelsType": {
+    "description": "Tunnel editor: label above the three tunnel types."
+  },
+  "tunnelsDescribeLocal": "Listen here, and open each connection from the server.",
+  "@tunnelsDescribeLocal": {
+    "description": "Tunnel editor: what a local forward does."
+  },
+  "tunnelsDescribeRemote": "The server listens, and each connection comes back to this device.",
+  "@tunnelsDescribeRemote": {
+    "description": "Tunnel editor: what a remote forward does."
+  },
+  "tunnelsDescribeDynamic": "A SOCKS5 proxy here; the client picks the destination.",
+  "@tunnelsDescribeDynamic": {
+    "description": "Tunnel editor: what a dynamic forward does."
+  },
+  "tunnelsListenHere": "Listen on this device",
+  "@tunnelsListenHere": {
+    "description": "Tunnel editor: section label (shown in capitals) above the local port."
+  },
+  "tunnelsLocalPort": "Local port",
+  "@tunnelsLocalPort": {
+    "description": "Tunnel editor: port number on this device."
+  },
+  "tunnelsForwardTo": "Forward to, from the server",
+  "@tunnelsForwardTo": {
+    "description": "Tunnel editor: section label (shown in capitals) above the destination the server connects to."
+  },
+  "tunnelsDestinationHost": "Destination host",
+  "@tunnelsDestinationHost": {
+    "description": "Tunnel editor: the machine the server connects to."
+  },
+  "tunnelsDestinationHostHint": "{name} or {address}",
+  "@tunnelsDestinationHostHint": {
+    "description": "Tunnel editor: example in the empty destination field; name and address are a host name and an IP address.",
+    "placeholders": {
+      "name": {
+        "type": "String"
+      },
+      "address": {
+        "type": "String"
+      }
+    }
+  },
+  "tunnelsDestinationPort": "Destination port",
+  "@tunnelsDestinationPort": {
+    "description": "Tunnel editor: the port the server connects to."
+  },
+  "tunnelsSocksHere": "SOCKS5 proxy on this device",
+  "@tunnelsSocksHere": {
+    "description": "Tunnel editor: section label (shown in capitals) for a dynamic forward."
+  },
+  "tunnelsSocksExplain": "Point a browser or a command at this port and every connection it makes is opened by the server instead. No destination to fill in — the client names one each time.",
+  "@tunnelsSocksExplain": {
+    "description": "Tunnel editor: how a SOCKS5 tunnel is used."
+  },
+  "tunnelsServerListens": "The server listens on",
+  "@tunnelsServerListens": {
+    "description": "Tunnel editor: section label (shown in capitals) for a remote forward."
+  },
+  "tunnelsServerBind": "Bind address on the server",
+  "@tunnelsServerBind": {
+    "description": "Tunnel editor: the address the server listens on."
+  },
+  "tunnelsServerBindHint": "{address}, or blank for every interface",
+  "@tunnelsServerBindHint": {
+    "description": "Tunnel editor: hint in the empty server bind address field; address is 127.0.0.1.",
+    "placeholders": {
+      "address": {
+        "type": "String"
+      }
+    }
+  },
+  "tunnelsServerPort": "Port on the server",
+  "@tunnelsServerPort": {
+    "description": "Tunnel editor: the port the server listens on."
+  },
+  "tunnelsGatewayPorts": "A blank bind address asks the server to listen on every interface, which most servers refuse unless GatewayPorts is on.",
+  "@tunnelsGatewayPorts": {
+    "description": "Tunnel editor: note for a remote forward. GatewayPorts is an OpenSSH server option; keep it as is."
+  },
+  "tunnelsHandedTo": "Connections are handed to",
+  "@tunnelsHandedTo": {
+    "description": "Tunnel editor: section label (shown in capitals) for where a remote forward delivers connections."
+  },
+  "tunnelsDeviceAddress": "Address on this device",
+  "@tunnelsDeviceAddress": {
+    "description": "Tunnel editor: the address on this device that connections go to."
+  },
+  "tunnelsDevicePort": "Port on this device",
+  "@tunnelsDevicePort": {
+    "description": "Tunnel editor: the port on this device that connections go to."
+  },
+  "tunnelsAllowOthers": "Allow other devices to use it",
+  "@tunnelsAllowOthers": {
+    "description": "Tunnel editor: switch that listens on every network interface instead of only this device."
+  },
+  "tunnelsBindingAll": "Binding {address}",
+  "@tunnelsBindingAll": {
+    "description": "Tunnel editor: subtitle of the switch when on; address is 0.0.0.0.",
+    "placeholders": {
+      "address": {
+        "type": "String"
+      }
+    }
+  },
+  "tunnelsBindingLoopback": "Binding {address} — this device only",
+  "@tunnelsBindingLoopback": {
+    "description": "Tunnel editor: subtitle of the switch when off; address is 127.0.0.1.",
+    "placeholders": {
+      "address": {
+        "type": "String"
+      }
+    }
+  },
+  "tunnelsExposeWarning": "This exposes the tunnel to your network: anything that can reach this device can use it to reach the other end, with no authentication of its own.",
+  "@tunnelsExposeWarning": {
+    "description": "Tunnel editor: security warning when the tunnel is open to other devices. Keep it as strong as the English."
+  },
+  "tunnelsPrivilegedPort": "Ports below {ceiling} are privileged. Unless this app is running with administrator rights, binding port {port} will be refused by the system.",
+  "@tunnelsPrivilegedPort": {
+    "description": "Tunnel editor: warning about ports below 1024.",
+    "placeholders": {
+      "ceiling": {
+        "type": "int"
+      },
+      "port": {
+        "type": "int"
+      }
+    }
+  },
+  "tunnelsEnterAddress": "Enter the address to forward to.",
+  "@tunnelsEnterAddress": {
+    "description": "Tunnel editor: error under an empty destination field."
+  },
+  "tunnelsPortEmpty": "Enter a port.",
+  "@tunnelsPortEmpty": {
+    "description": "Tunnel editor: error under an empty port field."
+  },
+  "tunnelsPortNotNumber": "Ports are numbers.",
+  "@tunnelsPortNotNumber": {
+    "description": "Tunnel editor: error when a port is not a number."
+  },
+  "tunnelsPortZero": "Port 0 is not a port to listen on.",
+  "@tunnelsPortZero": {
+    "description": "Tunnel editor: error when port 0 is typed where something must listen."
+  },
+  "tunnelsPortRange": "Ports run from {min} to {max}.",
+  "@tunnelsPortRange": {
+    "description": "Tunnel editor: error when a port is out of range (1 to 65535).",
+    "placeholders": {
+      "min": {
+        "type": "int"
+      },
+      "max": {
+        "type": "int"
+      }
+    }
+  },
+  "errorBannerShowDetails": "Show details",
+  "@errorBannerShowDetails": {
+    "description": "Error banner: button that shows the technical details of an error."
+  },
+  "errorBannerHideDetails": "Hide details",
+  "@errorBannerHideDetails": {
+    "description": "Error banner: button that hides the technical details again."
   }
 }

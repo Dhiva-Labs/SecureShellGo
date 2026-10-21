@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import '../app_version.dart';
+import '../l10n/l10n.dart';
 import '../models/app_settings.dart';
 import '../services/app_lock.dart';
 import '../services/app_lock_controller.dart';
@@ -20,6 +21,7 @@ import 'settings/diagnostics_section.dart';
 import 'settings/editor_section.dart';
 import 'settings/input_section.dart';
 import 'settings/language_section.dart';
+import 'settings/setting_labels.dart';
 import 'settings/settings_section.dart';
 import 'settings/terminal_section.dart';
 import 'snippets_screen.dart';
@@ -175,53 +177,45 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   void _showAbout() {
+    final l10n = context.l10n;
     showAboutDialog(
       context: context,
-      applicationName: 'SecureShell Go',
+      applicationName: l10n.appTitle,
       applicationVersion: appDisplayVersion,
       applicationIcon: const Icon(Icons.terminal, size: 40),
-      children: const [
-        Text(
-          'An SSH terminal client with an SFTP file browser. Host keys are '
-          'checked against a local known-hosts store using trust-on-first-use, '
-          'a changed key blocks the connection until you explicitly approve '
-          'it, and that store is sealed with a key held in the device '
-          'keystore. Saved passwords and keys are encrypted on-device.',
-        ),
-      ],
+      children: [Text(l10n.settingsAboutText)],
     );
   }
 
   /// The app-lock block: the toggle, the honest description of what it does,
   /// and the idle timeout once it is on.
-  List<Widget> _appLockRows(ThemeData theme) {
+  List<Widget> _appLockRows(ThemeData theme, AppLocalizations l10n) {
     final support = _lockSupport;
     final available = support == AppLockSupport.available;
     final enabled = _settings.appLockEnabled && available;
 
     final String explanation;
     if (support == null) {
-      explanation = 'Checking whether this device can lock the app…';
+      explanation = l10n.settingsAppLockChecking;
     } else if (support == AppLockSupport.noDeviceCredential) {
-      explanation = AppLockPlatform.currentSetupHint;
+      explanation = AppLockPlatform.currentSetupHint.textIn(l10n);
     } else if (!available) {
-      explanation = AppLockPlatform.currentReason;
+      explanation = AppLockPlatform.currentReason.textIn(l10n);
     } else {
       // The one sentence this feature must not overstate. A UI gate is not
       // encryption, and implying otherwise would let someone conclude their
       // data is safer than it is.
-      explanation = "Locks the app's screen. Your saved passwords are always "
-          "encrypted by your system's secure storage, with or without this.";
+      explanation = l10n.settingsAppLockExplanation;
     }
 
     return [
       SwitchListTile(
         secondary: const Icon(Icons.lock_outline),
-        title: const Text('App lock'),
+        title: Text(l10n.settingsAppLock),
         subtitle: Text(
           available
-              ? 'Ask for this device\'s unlock method before showing the app'
-              : 'Unavailable on this device',
+              ? l10n.settingsAppLockAsk
+              : l10n.settingsAppLockUnavailable,
         ),
         value: enabled,
         onChanged: available
@@ -243,7 +237,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
       if (enabled) ...[
         Padding(
           padding: const EdgeInsets.fromLTRB(16, 4, 16, 4),
-          child: Text('Lock when away for', style: theme.textTheme.bodyLarge),
+          child: Text(
+            l10n.settingsAppLockAfter,
+            style: theme.textTheme.bodyLarge,
+          ),
         ),
         RadioGroup<AppLockTimeout>(
           groupValue: _settings.appLockTimeout,
@@ -257,7 +254,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
               for (final timeout in AppLockTimeout.values)
                 RadioListTile<AppLockTimeout>(
                   value: timeout,
-                  title: Text(timeout.label),
+                  title: Text(timeout.labelIn(l10n)),
                   dense: true,
                 ),
             ],
@@ -266,7 +263,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
         Padding(
           padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
           child: Text(
-            'Sessions and tunnels keep running while the app is locked.',
+            l10n.settingsAppLockKeepsRunning,
             style: theme.textTheme.bodySmall?.copyWith(
               color: theme.colorScheme.onSurfaceVariant,
             ),
@@ -279,11 +276,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final l10n = context.l10n;
     final divisions =
         (AppSettings.maxFontSize - AppSettings.minFontSize).round();
+    final fontSize = l10n.settingsPointSize(_settings.terminalFontSize.round());
 
     return Scaffold(
-      appBar: AppBar(title: const Text('Settings')),
+      appBar: AppBar(title: Text(l10n.settingsTitle)),
       // A no-op on a phone; on a tablet or DeX window this keeps the
       // preference rows from stretching edge to edge.
       body: Center(
@@ -291,10 +290,16 @@ class _SettingsScreenState extends State<SettingsScreen> {
           constraints: const BoxConstraints(maxWidth: 600),
           child: ListView(
             children: [
-              SettingsSectionHeader('Appearance', style: _settings.uiStyle),
+              SettingsSectionHeader(
+                l10n.settingsAppearance,
+                style: _settings.uiStyle,
+              ),
               Padding(
                 padding: const EdgeInsets.fromLTRB(16, 4, 16, 4),
-                child: Text('UI style', style: theme.textTheme.bodyLarge),
+                child: Text(
+                  l10n.settingsUiStyle,
+                  style: theme.textTheme.bodyLarge,
+                ),
               ),
               RadioGroup<UiStyle>(
                 groupValue: _settings.uiStyle,
@@ -308,7 +313,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     for (final style in UiStyle.values)
                       RadioListTile<UiStyle>(
                         value: style,
-                        title: Text(style.label),
+                        title: Text(style.labelIn(l10n)),
                         // On a narrow phone with large text the preview
                         // squeezed each name into three lines; the name is
                         // the part that has to stay readable.
@@ -325,7 +330,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
               ),
               Padding(
                 padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
-                child: Text('Brightness', style: theme.textTheme.bodyLarge),
+                child: Text(
+                  l10n.settingsBrightness,
+                  style: theme.textTheme.bodyLarge,
+                ),
               ),
               RadioGroup<ThemeBrightness>(
                 groupValue: _settings.themeBrightness,
@@ -341,7 +349,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     for (final brightness in ThemeBrightness.values)
                       RadioListTile<ThemeBrightness>(
                         value: brightness,
-                        title: Text(brightness.label),
+                        title: Text(brightness.labelIn(l10n)),
                         dense: true,
                       ),
                   ],
@@ -349,16 +357,23 @@ class _SettingsScreenState extends State<SettingsScreen> {
               ),
               LanguageSettingsSection(settings: _settings, apply: _apply),
               const Divider(height: 32),
-              SettingsSectionHeader('Terminal', style: _settings.uiStyle),
+              SettingsSectionHeader(
+                l10n.settingsTerminal,
+                style: _settings.uiStyle,
+              ),
               _TerminalPreview(settings: _settings),
               Padding(
                 padding: const EdgeInsets.fromLTRB(16, 14, 16, 0),
                 child: Row(
                   children: [
-                    Text('Font size', style: theme.textTheme.bodyLarge),
-                    const Spacer(),
+                    Expanded(
+                      child: Text(
+                        l10n.settingsFontSize,
+                        style: theme.textTheme.bodyLarge,
+                      ),
+                    ),
                     Text(
-                      '${_settings.terminalFontSize.round()} pt',
+                      fontSize,
                       style: theme.textTheme.bodySmall?.copyWith(
                         color: theme.colorScheme.onSurfaceVariant,
                       ),
@@ -373,14 +388,17 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   min: AppSettings.minFontSize,
                   max: AppSettings.maxFontSize,
                   divisions: divisions,
-                  label: '${_settings.terminalFontSize.round()} pt',
+                  label: fontSize,
                   onChanged: _previewFontSize,
                   onChangeEnd: _persistFontSize,
                 ),
               ),
               Padding(
                 padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
-                child: Text('Colour scheme', style: theme.textTheme.bodyLarge),
+                child: Text(
+                  l10n.settingsColourScheme,
+                  style: theme.textTheme.bodyLarge,
+                ),
               ),
               RadioGroup<TerminalColorScheme>(
                 groupValue: _settings.colorScheme,
@@ -394,7 +412,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     for (final scheme in TerminalColorScheme.values)
                       RadioListTile<TerminalColorScheme>(
                         value: scheme,
-                        title: Text(scheme.label),
+                        title: Text(scheme.labelIn(l10n)),
                         secondary: _SchemeSwatch(scheme: scheme),
                         dense: true,
                       ),
@@ -407,66 +425,70 @@ class _SettingsScreenState extends State<SettingsScreen> {
               const Divider(height: 32),
               InputSettingsSection(settings: _settings, apply: _apply),
               const Divider(height: 32),
-              SettingsSectionHeader('Session', style: _settings.uiStyle),
+              SettingsSectionHeader(
+                l10n.settingsSession,
+                style: _settings.uiStyle,
+              ),
               SwitchListTile(
-                title: const Text('Keep screen awake'),
-                subtitle: const Text(
-                  'Prevents the screen from sleeping while a session is open',
-                ),
+                title: Text(l10n.settingsKeepScreenAwake),
+                subtitle: Text(l10n.settingsKeepScreenAwakeHelp),
                 value: _settings.keepScreenAwake,
                 onChanged: (value) => unawaited(
                   _apply((s) => s.copyWith(keepScreenAwake: value)),
                 ),
               ),
               SwitchListTile(
-                title: const Text('Show hidden files by default'),
-                subtitle: const Text(
-                  'Applies the next time you open the file browser',
-                ),
+                title: Text(l10n.settingsShowHiddenFiles),
+                subtitle: Text(l10n.settingsShowHiddenFilesHelp),
                 value: _settings.showHiddenFilesByDefault,
                 onChanged: (value) => unawaited(
                   _apply((s) => s.copyWith(showHiddenFilesByDefault: value)),
                 ),
               ),
               const Divider(height: 32),
-              SettingsSectionHeader('Commands', style: _settings.uiStyle),
+              SettingsSectionHeader(
+                l10n.settingsCommands,
+                style: _settings.uiStyle,
+              ),
               ListTile(
                 leading: const Icon(Icons.bolt_outlined),
-                title: const Text('Snippets'),
-                subtitle: const Text('Saved commands you can send to any session'),
+                title: Text(l10n.settingsSnippets),
+                subtitle: Text(l10n.settingsSnippetsHelp),
                 trailing: const Icon(Icons.chevron_right),
                 onTap: _openSnippets,
               ),
               if (widget.tunnels != null && widget.hostStore != null) ...[
                 const Divider(height: 32),
-                SettingsSectionHeader('Networking', style: _settings.uiStyle),
+                SettingsSectionHeader(
+                  l10n.settingsNetworking,
+                  style: _settings.uiStyle,
+                ),
                 ListTile(
                   leading: const Icon(Icons.swap_horiz),
-                  title: const Text('Tunnels'),
-                  subtitle: const Text(
-                    'Forward ports over a saved host, or run a SOCKS5 proxy',
-                  ),
+                  title: Text(l10n.settingsTunnels),
+                  subtitle: Text(l10n.settingsTunnelsHelp),
                   trailing: const Icon(Icons.chevron_right),
                   onTap: _openTunnels,
                 ),
               ],
               const Divider(height: 32),
-              SettingsSectionHeader('Security', style: _settings.uiStyle),
-              if (widget.appLock != null) ..._appLockRows(theme),
+              SettingsSectionHeader(
+                l10n.settingsSecurity,
+                style: _settings.uiStyle,
+              ),
+              if (widget.appLock != null) ..._appLockRows(theme, l10n),
               ListTile(
                 leading: const Icon(Icons.vpn_key_outlined),
-                title: const Text('Known hosts'),
-                subtitle: const Text('Manage trusted host keys'),
+                title: Text(l10n.settingsKnownHosts),
+                subtitle: Text(l10n.settingsKnownHostsHelp),
                 trailing: const Icon(Icons.chevron_right),
                 onTap: _openKnownHosts,
               ),
               if (widget.backupService != null)
                 ListTile(
                   leading: const Icon(Icons.archive_outlined),
-                  title: const Text('Backup'),
-                  subtitle: const Text(
-                    'Export or restore an encrypted copy of your setup',
-                  ),
+                  title: Text(l10n.settingsBackup),
+                  subtitle: Text(l10n.settingsBackupHelp),
                   trailing: const Icon(Icons.chevron_right),
                   onTap: _openBackup,
                 ),
@@ -475,7 +497,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
               const Divider(height: 32),
               ListTile(
                 leading: const Icon(Icons.info_outline),
-                title: const Text('About SecureShell Go'),
+                title: Text(l10n.settingsAbout(l10n.appTitle)),
                 trailing: const Icon(Icons.chevron_right),
                 onTap: _showAbout,
               ),

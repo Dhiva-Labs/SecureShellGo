@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../l10n/l10n.dart';
 import '../theme.dart';
 
 /// A red inline banner for a human-readable error, with an optional
@@ -65,7 +66,11 @@ class _ErrorBannerState extends State<ErrorBanner> {
                   minimumSize: const Size(0, 32),
                   tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                 ),
-                child: Text(_expanded ? 'Hide details' : 'Show details'),
+                child: Text(
+                  _expanded
+                      ? context.l10n.errorBannerHideDetails
+                      : context.l10n.errorBannerShowDetails,
+                ),
               ),
             ),
             if (_expanded)

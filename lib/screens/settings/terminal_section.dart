@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 
+import '../../l10n/l10n.dart';
 import '../../models/app_settings.dart';
+import 'setting_labels.dart';
 import 'settings_section.dart';
 
 /// The terminal's options beyond size and colours: history length, cursor,
@@ -17,59 +19,51 @@ class TerminalOptionsSection extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = context.l10n;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         SettingsChoice<TerminalFont>(
-          label: 'Font',
+          label: l10n.settingsFont,
           icon: Icons.font_download_outlined,
           value: settings.terminalFont,
           values: TerminalFont.values,
-          labelOf: (f) => f.label,
+          labelOf: (f) => f.labelIn(l10n),
           onChanged: (f) => apply((s) => s.copyWith(terminalFont: f)),
         ),
         SettingsChoice<TerminalCursorStyle>(
-          label: 'Cursor',
+          label: l10n.settingsCursor,
           icon: Icons.text_fields,
           value: settings.cursorStyle,
           values: TerminalCursorStyle.values,
-          labelOf: (c) => c.label,
+          labelOf: (c) => c.labelIn(l10n),
           onChanged: (c) => apply((s) => s.copyWith(cursorStyle: c)),
         ),
         SwitchListTile(
           secondary: const Icon(Icons.flare_outlined),
-          title: const Text('Blinking cursor'),
-          subtitle: const Text('Blinks while the terminal has the keyboard'),
+          title: Text(l10n.settingsCursorBlink),
+          subtitle: Text(l10n.settingsCursorBlinkHelp),
           value: settings.cursorBlink,
           onChanged: (on) => apply((s) => s.copyWith(cursorBlink: on)),
         ),
         SettingsChoice<TerminalBell>(
-          label: 'Bell',
+          label: l10n.settingsBell,
           icon: Icons.notifications_none,
           value: settings.bell,
           values: TerminalBell.values,
-          labelOf: (b) => b.label,
+          labelOf: (b) => b.labelIn(l10n),
           onChanged: (b) => apply((s) => s.copyWith(bell: b)),
         ),
         SettingsChoice<int>(
-          label: 'Scrollback',
+          label: l10n.settingsScrollback,
           icon: Icons.history,
           value: settings.scrollbackLines,
           values: AppSettings.scrollbackChoices,
-          labelOf: _lines,
-          helper: 'Lines of history kept for each session, from the next '
-              'session you open. More uses more memory per open session.',
+          labelOf: l10n.settingsScrollbackLines,
+          helper: l10n.settingsScrollbackHelp,
           onChanged: (n) => apply((s) => s.copyWith(scrollbackLines: n)),
         ),
       ],
     );
-  }
-
-  static String _lines(int n) {
-    final text = n.toString().replaceAllMapped(
-          RegExp(r'\B(?=(\d{3})+$)'),
-          (_) => ',',
-        );
-    return '$text lines';
   }
 }

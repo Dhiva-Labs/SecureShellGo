@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../../l10n/l10n.dart';
 import '../../models/app_settings.dart';
 import 'settings_section.dart';
 
@@ -26,19 +27,28 @@ class _EditorSettingsSectionState extends State<EditorSettingsSection> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final l10n = context.l10n;
     final size = _dragging ?? widget.settings.editorFontSize;
+    final points = l10n.settingsPointSize(size.round());
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        SettingsSectionHeader('Editor', style: widget.settings.uiStyle),
+        SettingsSectionHeader(
+          l10n.settingsEditor,
+          style: widget.settings.uiStyle,
+        ),
         Padding(
           padding: const EdgeInsets.fromLTRB(16, 14, 16, 0),
           child: Row(
             children: [
-              Text('Text size', style: theme.textTheme.bodyLarge),
-              const Spacer(),
+              Expanded(
+                child: Text(
+                  l10n.settingsTextSize,
+                  style: theme.textTheme.bodyLarge,
+                ),
+              ),
               Text(
-                '${size.round()} pt',
+                points,
                 style: theme.textTheme.bodySmall?.copyWith(
                   color: theme.colorScheme.onSurfaceVariant,
                 ),
@@ -55,7 +65,7 @@ class _EditorSettingsSectionState extends State<EditorSettingsSection> {
             divisions: (AppSettings.maxEditorFontSize -
                     AppSettings.minEditorFontSize)
                 .round(),
-            label: '${size.round()} pt',
+            label: points,
             onChanged: (value) => setState(() => _dragging = value),
             onChangeEnd: (value) {
               setState(() => _dragging = null);
@@ -66,7 +76,7 @@ class _EditorSettingsSectionState extends State<EditorSettingsSection> {
         Padding(
           padding: const EdgeInsets.fromLTRB(16, 0, 16, 4),
           child: Text(
-            'Pinch, or Ctrl + and Ctrl −, in the editor changes it too.',
+            l10n.settingsEditorZoomHint('Ctrl +', 'Ctrl −'),
             style: theme.textTheme.bodySmall?.copyWith(
               color: theme.colorScheme.onSurfaceVariant,
             ),

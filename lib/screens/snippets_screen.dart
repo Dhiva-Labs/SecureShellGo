@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
+import '../l10n/l10n.dart';
 import '../models/snippet.dart';
 import '../services/snippet_store.dart';
 import 'snippet_edit_screen.dart';
@@ -54,21 +55,22 @@ class _SnippetsScreenState extends State<SnippetsScreen> {
       context: context,
       builder: (context) {
         final theme = Theme.of(context);
+        final l10n = context.l10n;
+        final material = MaterialLocalizations.of(context);
         return AlertDialog(
-          title: const Text('Delete snippet?'),
-          content:
-              Text('This removes "${snippet.name}". This cannot be undone.'),
+          title: Text(l10n.snippetsDeleteTitle),
+          content: Text(l10n.snippetsDeleteBody(snippet.name)),
           actions: [
             TextButton(
               onPressed: () => Navigator.of(context).pop(false),
-              child: const Text('Cancel'),
+              child: Text(material.cancelButtonLabel),
             ),
             FilledButton(
               style: FilledButton.styleFrom(
                 backgroundColor: theme.colorScheme.error,
               ),
               onPressed: () => Navigator.of(context).pop(true),
-              child: const Text('Delete'),
+              child: Text(material.deleteButtonTooltip),
             ),
           ],
         );
@@ -82,11 +84,12 @@ class _SnippetsScreenState extends State<SnippetsScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = context.l10n;
     return Scaffold(
-      appBar: AppBar(title: const Text('Snippets')),
+      appBar: AppBar(title: Text(l10n.snippetsTitle)),
       floatingActionButton: FloatingActionButton(
         onPressed: _addSnippet,
-        tooltip: 'Add snippet',
+        tooltip: l10n.snippetsAdd,
         child: const Icon(Icons.add),
       ),
       body: FutureBuilder<List<Snippet>>(
@@ -113,7 +116,8 @@ class _SnippetsScreenState extends State<SnippetsScreen> {
                 ),
                 onTap: () => unawaited(_editSnippet(snippet)),
                 trailing: IconButton(
-                  tooltip: 'Delete',
+                  tooltip:
+                      MaterialLocalizations.of(context).deleteButtonTooltip,
                   icon: const Icon(Icons.delete_outline),
                   onPressed: () => unawaited(_deleteSnippet(snippet)),
                 ),
@@ -134,6 +138,7 @@ class _EmptySnippets extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final l10n = context.l10n;
     return Center(
       child: Padding(
         padding: const EdgeInsets.all(32),
@@ -146,11 +151,14 @@ class _EmptySnippets extends StatelessWidget {
               color: theme.colorScheme.onSurfaceVariant.withValues(alpha: 0.6),
             ),
             const SizedBox(height: 20),
-            Text('No snippets yet', style: theme.textTheme.titleLarge),
+            Text(
+              l10n.snippetsEmptyTitle,
+              textAlign: TextAlign.center,
+              style: theme.textTheme.titleLarge,
+            ),
             const SizedBox(height: 8),
             Text(
-              'Save a command once and fire it into any session from the '
-              'lightning-bolt icon in the terminal.',
+              l10n.snippetsEmptyBody,
               textAlign: TextAlign.center,
               style: theme.textTheme.bodyMedium?.copyWith(
                 color: theme.colorScheme.onSurfaceVariant,
@@ -160,7 +168,7 @@ class _EmptySnippets extends StatelessWidget {
             FilledButton.icon(
               onPressed: onAdd,
               icon: const Icon(Icons.add),
-              label: const Text('Add snippet'),
+              label: Text(l10n.snippetsAdd),
             ),
           ],
         ),

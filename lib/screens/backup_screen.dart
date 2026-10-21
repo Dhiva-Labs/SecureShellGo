@@ -4,6 +4,7 @@ import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 
+import '../l10n/l10n.dart';
 import '../services/backup_crypto.dart';
 import '../services/backup_passphrase.dart';
 import '../services/backup_payload.dart';
@@ -54,6 +55,7 @@ class _BackupScreenState extends State<BackupScreen> {
   /// [chooseLocation] picks between the system's "save as" UI — any folder,
   /// or a cloud provider — and Downloads.
   Future<void> _export({required bool chooseLocation}) async {
+    final l10n = context.l10n;
     final choice = await showDialog<_ExportChoice>(
       context: context,
       builder: (_) => _ExportDialog(
@@ -84,8 +86,8 @@ class _BackupScreenState extends State<BackupScreen> {
         if (!mounted) return;
         setState(
           () => _status = saved == null
-              ? 'Not saved.'
-              : 'Saved ${saved.displayName}.',
+              ? l10n.backupNotSaved
+              : l10n.backupSaved(saved.displayName),
         );
         return;
       }
@@ -97,7 +99,9 @@ class _BackupScreenState extends State<BackupScreen> {
         await writer.add(bytes);
         final saved = await writer.finish();
         if (!mounted) return;
-        setState(() => _status = 'Saved ${saved.displayName} to Downloads.');
+        setState(
+          () => _status = l10n.backupSavedToDownloads(saved.displayName),
+        );
       } catch (e) {
         await writer.abort();
         rethrow;
@@ -107,7 +111,7 @@ class _BackupScreenState extends State<BackupScreen> {
       setState(() => _status = e.message);
     } catch (e) {
       if (!mounted) return;
-      setState(() => _status = 'Could not write the backup: $e');
+      setState(() => _status = l10n.backupWriteFailed('$e'));
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -122,6 +126,7 @@ class _BackupScreenState extends State<BackupScreen> {
   }
 
   Future<void> _import() async {
+    final l10n = context.l10n;
     final PickedLocalFile? picked;
     try {
       picked = await _storage.pickFile();
@@ -137,7 +142,7 @@ class _BackupScreenState extends State<BackupScreen> {
       bytes = await File(picked.path).readAsBytes();
     } catch (e) {
       if (!mounted) return;
-      setState(() => _status = 'Could not read that file.');
+      setState(() => _status = l10n.backupReadFileFailed);
       return;
     }
     if (!mounted) return;
@@ -173,7 +178,7 @@ class _BackupScreenState extends State<BackupScreen> {
       if (!mounted) return;
       setState(() {
         _busy = false;
-        _status = 'Could not read that backup.';
+        _status = l10n.backupReadFailed;
       });
       return;
     }
@@ -204,67 +209,41 @@ class _BackupScreenState extends State<BackupScreen> {
         trustKnownHosts: choice.trustKnownHosts,
       );
       if (!mounted) return;
-      setState(() => _status = _describe(result));
+      setState(() => _status = _describe(l10n, result));
     } catch (e) {
       if (!mounted) return;
-      setState(() => _status = 'The import did not finish: $e');
+      setState(() => _status = l10n.backupImportFailed('$e'));
     } finally {
       if (mounted) setState(() => _busy = false);
     }
   }
 
-  static String _describe(ImportResult result) {
-    final parts = <String>[
-      '${result.hosts} host${result.hosts == 1 ? '' : 's'}',
-      '${result.snippets} snippet${result.snippets == 1 ? '' : 's'}',
-      '${result.tunnels} tunnel${result.tunnels == 1 ? '' : 's'}',
-      '${result.bookmarks} bookmark${result.bookmarks == 1 ? '' : 's'}',
-    ];
-    final buffer = StringBuffer('Imported. You now have ')
-      ..write(parts.join(', '))
-      ..write('.');
-    if (result.hostsNeedingCredentials > 0) {
-      buffer.write(
-        ' ${result.hostsNeedingCredentials} host'
-        '${result.hostsNeedingCredentials == 1 ? '' : 's'} will ask for a '
-        'password or key on first connect.',
-      );
-    }
-    if (result.knownHostsAdded > 0) {
-      buffer.write(
-        ' Added ${result.knownHostsAdded} trusted host '
-        'key${result.knownHostsAdded == 1 ? '' : 's'}.',
-      );
-    }
-    if (result.knownHostsKept > 0) {
-      buffer.write(
-        ' Kept this device\'s own keys for ${result.knownHostsKept} '
-        'server${result.knownHostsKept == 1 ? '' : 's'} it already knew; '
-        'the backup\'s keys for '
-        '${result.knownHostsKept == 1 ? 'it' : 'them'} were not used.',
-      );
-    }
-    if (result.knownHostsNotTrusted > 0) {
-      buffer.write(
-        ' Did not trust the ${result.knownHostsNotTrusted} host '
-        'key${result.knownHostsNotTrusted == 1 ? '' : 's'} in the backup; '
-        'those servers will be checked on first connect.',
-      );
-    }
-    if (result.knownHostsNotSaved) {
-      buffer.write(
-        ' The system keyring is locked, so the added keys last until the '
-        'app closes.',
-      );
-    }
-    return buffer.toString();
+  static String _describe(AppLocalizations l10n, ImportResult result) {
+    return [
+      l10n.backupImported(
+        l10n.backupCountHosts(result.hosts),
+        l10n.backupCountSnippets(result.snippets),
+        l10n.backupCountTunnels(result.tunnels),
+        l10n.backupCountBookmarks(result.bookmarks),
+      ),
+      if (result.hostsNeedingCredentials > 0)
+        l10n.backupImportedNeedCredentials(result.hostsNeedingCredentials),
+      if (result.knownHostsAdded > 0)
+        l10n.backupImportedKeysAdded(result.knownHostsAdded),
+      if (result.knownHostsKept > 0)
+        l10n.backupImportedKeysKept(result.knownHostsKept),
+      if (result.knownHostsNotTrusted > 0)
+        l10n.backupImportedKeysNotTrusted(result.knownHostsNotTrusted),
+      if (result.knownHostsNotSaved) l10n.backupImportedKeyringLocked,
+    ].join(' ');
   }
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final l10n = context.l10n;
     return Scaffold(
-      appBar: AppBar(title: const Text('Backup')),
+      appBar: AppBar(title: Text(l10n.backupTitle)),
       body: Center(
         child: ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: 600),
@@ -272,26 +251,22 @@ class _BackupScreenState extends State<BackupScreen> {
             padding: const EdgeInsets.only(bottom: 32),
             children: [
               if (_busy) const LinearProgressIndicator(minHeight: 2),
-              const _SectionHeader('Export'),
-              const Padding(
-                padding: EdgeInsets.fromLTRB(16, 0, 16, 8),
+              _SectionHeader(l10n.backupExport),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
                 child: Text(
-                  'Writes your hosts, groups, snippets, tunnels, bookmarks '
-                  'and settings to a single encrypted file, protected by a '
-                  'passphrase you choose.',
-                  style: TextStyle(height: 1.35),
+                  l10n.backupExportIntro,
+                  style: const TextStyle(height: 1.35),
                 ),
               ),
-              const Padding(
-                padding: EdgeInsets.fromLTRB(16, 0, 16, 12),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
                 child: _NoteCard(
                   icon: Icons.vpn_key_outlined,
                   // Called out here rather than buried in a release note: a
                   // user restoring on a new device will see host-key warnings
                   // and should know now that it is by design.
-                  text: 'Trusted host keys are left out unless you include '
-                      'them. Without them, a restored install verifies each '
-                      'server again on first connect.',
+                  text: l10n.backupHostKeysNote,
                 ),
               ),
               if (_saver != null) ...[
@@ -302,14 +277,13 @@ class _BackupScreenState extends State<BackupScreen> {
                         ? null
                         : () => unawaited(_export(chooseLocation: true)),
                     icon: const Icon(Icons.save_as_outlined),
-                    label: const Text('Save to…'),
+                    label: Text(l10n.backupSaveTo),
                   ),
                 ),
                 Padding(
                   padding: const EdgeInsets.fromLTRB(16, 6, 16, 10),
                   child: Text(
-                    'Any folder, or a cloud drive such as Google Drive, '
-                    'OneDrive or Dropbox.',
+                    l10n.backupSaveToHelp,
                     style: theme.textTheme.bodySmall?.copyWith(
                       color: theme.colorScheme.onSurfaceVariant,
                     ),
@@ -324,25 +298,23 @@ class _BackupScreenState extends State<BackupScreen> {
                             ? null
                             : () => unawaited(_export(chooseLocation: false)),
                         icon: const Icon(Icons.download_for_offline_outlined),
-                        label: const Text('Save to Downloads'),
+                        label: Text(l10n.backupSaveToDownloads),
                       )
                     : FilledButton.icon(
                         onPressed: _busy
                             ? null
                             : () => unawaited(_export(chooseLocation: false)),
                         icon: const Icon(Icons.upload_file_outlined),
-                        label: const Text('Export to a file'),
+                        label: Text(l10n.backupExportToFile),
                       ),
               ),
               const Divider(height: 40),
-              const _SectionHeader('Import'),
-              const Padding(
-                padding: EdgeInsets.fromLTRB(16, 0, 16, 12),
+              _SectionHeader(l10n.backupImport),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
                 child: Text(
-                  'Reads a .ssgbackup file. You will see what is inside it '
-                  'and choose whether to merge or replace before anything '
-                  'changes.',
-                  style: TextStyle(height: 1.35),
+                  l10n.backupImportIntro('.${BackupService.fileExtension}'),
+                  style: const TextStyle(height: 1.35),
                 ),
               ),
               Padding(
@@ -350,7 +322,7 @@ class _BackupScreenState extends State<BackupScreen> {
                 child: OutlinedButton.icon(
                   onPressed: _busy ? null : () => unawaited(_import()),
                   icon: const Icon(Icons.download_outlined),
-                  label: const Text('Import from a file'),
+                  label: Text(l10n.backupImportFromFile),
                 ),
               ),
               if (_status != null)
@@ -417,9 +389,10 @@ class _ExportDialogState extends State<_ExportDialog> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final l10n = context.l10n;
     final strength = BackupPassphrase.strengthOf(_passphrase.text);
     return AlertDialog(
-      title: const Text('Export backup'),
+      title: Text(l10n.backupExportTitle),
       content: SingleChildScrollView(
         child: Column(
           mainAxisSize: MainAxisSize.min,
@@ -431,27 +404,28 @@ class _ExportDialogState extends State<_ExportDialog> {
               autofocus: true,
               onChanged: (_) => setState(() {}),
               decoration: InputDecoration(
-                labelText: 'Passphrase',
-                helperText: BackupPassphrase.hintFor(_passphrase.text),
-                helperMaxLines: 2,
+                labelText: l10n.backupPassphrase,
+                helperText: strength.hintIn(l10n),
+                helperMaxLines: 4,
                 suffixIcon: IconButton(
                   icon: Icon(
                     _obscure ? Icons.visibility_off : Icons.visibility,
                   ),
                   onPressed: () => setState(() => _obscure = !_obscure),
-                  tooltip: _obscure ? 'Show' : 'Hide',
+                  tooltip: _obscure ? l10n.backupShow : l10n.backupHide,
                 ),
               ),
             ),
             const SizedBox(height: 6),
-            Row(
+            Wrap(
+              spacing: 4,
               children: [
                 Text(
-                  'Strength: ',
+                  l10n.backupStrength,
                   style: theme.textTheme.bodySmall,
                 ),
                 Text(
-                  strength.label,
+                  strength.labelIn(l10n),
                   style: theme.textTheme.bodySmall?.copyWith(
                     fontWeight: FontWeight.w600,
                     color: switch (strength) {
@@ -475,17 +449,16 @@ class _ExportDialogState extends State<_ExportDialog> {
               obscureText: _obscure,
               onChanged: (_) => setState(() {}),
               decoration: InputDecoration(
-                labelText: 'Confirm passphrase',
+                labelText: l10n.backupConfirmPassphrase,
                 errorText: _confirm.text.isNotEmpty && !_matches
-                    ? 'These do not match.'
+                    ? l10n.backupMismatch
                     : null,
               ),
             ),
             const SizedBox(height: 8),
-            const Text(
-              'There is no way to recover this file without the passphrase. '
-              'It is not stored anywhere.',
-              style: TextStyle(height: 1.3, fontSize: 12),
+            Text(
+              l10n.backupNoRecovery,
+              style: const TextStyle(height: 1.3, fontSize: 12),
             ),
             const SizedBox(height: 12),
             CheckboxListTile(
@@ -494,12 +467,10 @@ class _ExportDialogState extends State<_ExportDialog> {
                   setState(() => _includeCredentials = v ?? false),
               contentPadding: EdgeInsets.zero,
               controlAffinity: ListTileControlAffinity.leading,
-              title: const Text('Include saved passwords and keys'),
-              subtitle: const Text(
-                'Off by default. With this on, the file contains your server '
-                'passwords and private keys, and its safety is only as good '
-                'as the passphrase above.',
-                style: TextStyle(height: 1.3),
+              title: Text(l10n.backupIncludeCredentials),
+              subtitle: Text(
+                l10n.backupIncludeCredentialsHelp,
+                style: const TextStyle(height: 1.3),
               ),
             ),
             if (_includeCredentials)
@@ -512,8 +483,7 @@ class _ExportDialogState extends State<_ExportDialog> {
                   borderRadius: BorderRadius.circular(8),
                 ),
                 child: Text(
-                  'Treat this file like the passwords themselves: anyone who '
-                  'gets both it and the passphrase gets your servers.',
+                  l10n.backupCredentialsWarning,
                   style: theme.textTheme.bodySmall?.copyWith(height: 1.3),
                 ),
               ),
@@ -524,13 +494,10 @@ class _ExportDialogState extends State<_ExportDialog> {
                     setState(() => _includeKnownHosts = v ?? false),
                 contentPadding: EdgeInsets.zero,
                 controlAffinity: ListTileControlAffinity.leading,
-                title: const Text('Include trusted host keys'),
-                subtitle: const Text(
-                  'Off by default. Lets a restored device recognise your '
-                  'servers without asking again, if you choose to trust '
-                  'them when importing. A device that already knows a '
-                  'server keeps its own keys for it.',
-                  style: TextStyle(height: 1.3),
+                title: Text(l10n.backupIncludeHostKeys),
+                subtitle: Text(
+                  l10n.backupIncludeHostKeysHelp,
+                  style: const TextStyle(height: 1.3),
                 ),
               ),
           ],
@@ -539,7 +506,7 @@ class _ExportDialogState extends State<_ExportDialog> {
       actions: [
         TextButton(
           onPressed: () => Navigator.of(context).pop(),
-          child: const Text('Cancel'),
+          child: _OneLine(MaterialLocalizations.of(context).cancelButtonLabel),
         ),
         FilledButton(
           onPressed: _canExport
@@ -551,7 +518,7 @@ class _ExportDialogState extends State<_ExportDialog> {
                     ),
                   )
               : null,
-          child: const Text('Export'),
+          child: _OneLine(l10n.backupExportAction),
         ),
       ],
     );
@@ -579,8 +546,9 @@ class _ImportPassphraseDialogState extends State<_ImportPassphraseDialog> {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = context.l10n;
     return AlertDialog(
-      title: const Text('Open backup'),
+      title: Text(l10n.backupOpenTitle),
       content: Column(
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -592,18 +560,18 @@ class _ImportPassphraseDialogState extends State<_ImportPassphraseDialog> {
             obscureText: true,
             autofocus: true,
             onSubmitted: (v) => Navigator.of(context).pop(v),
-            decoration: const InputDecoration(labelText: 'Passphrase'),
+            decoration: InputDecoration(labelText: l10n.backupPassphrase),
           ),
         ],
       ),
       actions: [
         TextButton(
           onPressed: () => Navigator.of(context).pop(),
-          child: const Text('Cancel'),
+          child: _OneLine(MaterialLocalizations.of(context).cancelButtonLabel),
         ),
         FilledButton(
           onPressed: () => Navigator.of(context).pop(_passphrase.text),
-          child: const Text('Open'),
+          child: _OneLine(l10n.backupOpenAction),
         ),
       ],
     );
@@ -660,52 +628,36 @@ class _ImportPreviewDialogState extends State<ImportPreviewDialog> {
       fontFamilyFallback: AppTheme.monoFontFamilyFallback,
     );
     final kept = hostKeys.serversKept;
+    final l10n = context.l10n;
     return AlertDialog(
-      title: const Text('This backup contains'),
+      title: Text(l10n.backupContainsTitle),
       content: SingleChildScrollView(
         child: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            _CountRow('Hosts', contents.hosts),
-            _CountRow('Groups', contents.groups),
-            _CountRow('Snippets', contents.snippets),
-            _CountRow('Tunnels', contents.tunnels),
-            _CountRow('Bookmarks', contents.bookmarks),
+            _CountRow(l10n.backupRowHosts, contents.hosts),
+            _CountRow(l10n.backupRowGroups, contents.groups),
+            _CountRow(l10n.backupRowSnippets, contents.snippets),
+            _CountRow(l10n.backupRowTunnels, contents.tunnels),
+            _CountRow(l10n.backupRowBookmarks, contents.bookmarks),
             if (contents.includesKnownHosts)
-              _CountRow('Trusted host keys', contents.knownHosts),
+              _CountRow(l10n.backupRowHostKeys, contents.knownHosts),
             const Divider(height: 20),
             Text(
               contents.includesCredentials
-                  ? 'Includes ${contents.credentials} saved '
-                      'password${contents.credentials == 1 ? '' : 's'} or key'
-                      '${contents.credentials == 1 ? '' : 's'}.'
-                  : 'No saved passwords or keys. '
-                      '${contents.hostsNeedingCredentials} host'
-                      '${contents.hostsNeedingCredentials == 1 ? '' : 's'} '
-                      'will ask on first connect.',
+                  ? l10n.backupIncludesCredentials(contents.credentials)
+                  : l10n.backupNoCredentials(contents.hostsNeedingCredentials),
               style: small,
             ),
             const SizedBox(height: 10),
-            Text(
-              'Settings in the file will replace your current settings in '
-              'both modes.',
-              style: small,
-            ),
+            Text(l10n.backupSettingsReplaced, style: small),
             if (contents.includesKnownHosts) ...[
               const SizedBox(height: 10),
               if (hostKeys.toAdd.isEmpty)
-                Text(
-                  'No new servers to trust: this device already knows every '
-                  'server in the backup and keeps its own keys for them.',
-                  style: small,
-                )
+                Text(l10n.backupNoNewServers, style: small)
               else ...[
-                Text(
-                  'Host keys for servers this device has never connected '
-                  'to:',
-                  style: small,
-                ),
+                Text(l10n.backupNewServerKeys, style: small),
                 const SizedBox(height: 4),
                 for (final key in hostKeys.toAdd)
                   Padding(
@@ -721,28 +673,20 @@ class _ImportPreviewDialogState extends State<ImportPreviewDialog> {
                   onChanged: (v) => setState(() => _trust = v ?? false),
                   contentPadding: EdgeInsets.zero,
                   controlAffinity: ListTileControlAffinity.leading,
-                  title: const Text('Trust these keys'),
-                  subtitle: const Text(
-                    'Only if you made this backup yourself. A trusted key is '
-                    'accepted without asking the next time you connect; '
-                    'left off, each server is checked on first connect.',
-                    style: TextStyle(height: 1.3),
+                  title: Text(l10n.backupTrustKeys),
+                  subtitle: Text(
+                    l10n.backupTrustKeysHelp,
+                    style: const TextStyle(height: 1.3),
                   ),
                 ),
               ],
               if (kept > 0)
-                Text(
-                  'The backup has other keys for $kept '
-                  'server${kept == 1 ? '' : 's'} this device already knows. '
-                  'They are not used: this device keeps its own.',
-                  style: small,
-                ),
+                Text(l10n.backupOtherKeysKept(kept), style: small),
             ],
             if (contents.isEmpty) ...[
               const SizedBox(height: 10),
               Text(
-                'This backup is empty. Replacing with it would remove '
-                'everything you have.',
+                l10n.backupEmptyWarning,
                 style: theme.textTheme.bodySmall?.copyWith(
                   color: theme.colorScheme.error,
                   height: 1.3,
@@ -755,19 +699,34 @@ class _ImportPreviewDialogState extends State<ImportPreviewDialog> {
       actions: [
         TextButton(
           onPressed: () => Navigator.of(context).pop(),
-          child: const Text('Cancel'),
+          child: _OneLine(MaterialLocalizations.of(context).cancelButtonLabel),
         ),
         TextButton(
           onPressed: () => _choose(ImportMode.replace),
-          child: const Text('Replace'),
+          child: _OneLine(l10n.backupReplace),
         ),
         FilledButton(
           onPressed: () => _choose(ImportMode.merge),
-          child: const Text('Merge'),
+          child: _OneLine(l10n.backupMerge),
         ),
       ],
     );
   }
+}
+
+/// A dialog button label that shrinks rather than breaks: one long word,
+/// like German's „Zusammenführen“ or Russian's «Экспортировать», split
+/// mid-word on a narrow phone with large text.
+class _OneLine extends StatelessWidget {
+  const _OneLine(this.label);
+
+  final String label;
+
+  @override
+  Widget build(BuildContext context) => FittedBox(
+        fit: BoxFit.scaleDown,
+        child: Text(label, maxLines: 1, softWrap: false),
+      );
 }
 
 class _CountRow extends StatelessWidget {
@@ -782,8 +741,7 @@ class _CountRow extends StatelessWidget {
       padding: const EdgeInsets.symmetric(vertical: 2),
       child: Row(
         children: [
-          Text(label),
-          const Spacer(),
+          Expanded(child: Text(label)),
           Text('$count', style: const TextStyle(fontWeight: FontWeight.w600)),
         ],
       ),
@@ -843,4 +801,25 @@ class _SectionHeader extends StatelessWidget {
       ),
     );
   }
+}
+
+/// The export dialog's words for a passphrase's strength. Public for its
+/// test.
+extension PassphraseStrengthText on PassphraseStrength {
+  String labelIn(AppLocalizations l10n) => switch (this) {
+        PassphraseStrength.tooShort => l10n.backupStrengthTooShort,
+        PassphraseStrength.weak => l10n.backupStrengthWeak,
+        PassphraseStrength.fair => l10n.backupStrengthFair,
+        PassphraseStrength.strong => l10n.backupStrengthStrong,
+      };
+
+  /// The line under the field. Says what would actually help rather than
+  /// just naming the bucket.
+  String hintIn(AppLocalizations l10n) => switch (this) {
+        PassphraseStrength.tooShort =>
+          l10n.backupHintTooShort(BackupPassphrase.minLength),
+        PassphraseStrength.weak => l10n.backupHintWeak,
+        PassphraseStrength.fair => l10n.backupHintFair,
+        PassphraseStrength.strong => l10n.backupHintStrong,
+      };
 }

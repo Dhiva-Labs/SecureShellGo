@@ -2,7 +2,9 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:intl/intl.dart';
 
+import '../../l10n/l10n.dart';
 import '../../models/app_settings.dart';
 import '../../services/diagnostics_log.dart';
 import '../../theme.dart';
@@ -28,10 +30,11 @@ class DiagnosticsSettingsSection extends StatelessWidget {
 
   Future<void> _copy(BuildContext context) async {
     final messenger = ScaffoldMessenger.of(context);
+    final l10n = context.l10n;
     final text = await _log.read();
     if (text.isEmpty) {
       messenger.showSnackBar(
-        const SnackBar(content: Text('The diagnostics log is empty.')),
+        SnackBar(content: Text(l10n.settingsDiagnosticsEmpty)),
       );
       return;
     }
@@ -39,8 +42,7 @@ class DiagnosticsSettingsSection extends StatelessWidget {
     messenger.showSnackBar(
       SnackBar(
         content: Text(
-          'Copied ${_describeSize(text.length)} of diagnostics. Paste them '
-          'into your bug report.',
+          l10n.settingsDiagnosticsCopied(_describeSize(l10n, text.length)),
         ),
       ),
     );
@@ -48,9 +50,10 @@ class DiagnosticsSettingsSection extends StatelessWidget {
 
   Future<void> _clear(BuildContext context) async {
     final messenger = ScaffoldMessenger.of(context);
+    final l10n = context.l10n;
     await _log.clear();
     messenger.showSnackBar(
-      const SnackBar(content: Text('Diagnostics log cleared.')),
+      SnackBar(content: Text(l10n.settingsDiagnosticsCleared)),
     );
   }
 
@@ -64,18 +67,18 @@ class DiagnosticsSettingsSection extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = context.l10n;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        SettingsSectionHeader('Diagnostics', style: settings.uiStyle),
+        SettingsSectionHeader(
+          l10n.settingsDiagnostics,
+          style: settings.uiStyle,
+        ),
         SwitchListTile(
           secondary: const Icon(Icons.bug_report_outlined),
-          title: const Text('Keep a diagnostics log'),
-          subtitle: const Text(
-            'Records errors and crashes on this device, with passwords and '
-            'keys removed, for you to copy into a bug report. Nothing is '
-            'sent anywhere.',
-          ),
+          title: Text(l10n.settingsDiagnosticsKeep),
+          subtitle: Text(l10n.settingsDiagnosticsKeepHelp),
           value: settings.diagnosticsLog,
           onChanged: (on) => apply((s) => s.copyWith(diagnosticsLog: on)),
         ),
@@ -84,19 +87,19 @@ class DiagnosticsSettingsSection extends StatelessWidget {
         if (settings.diagnosticsLog) ...[
           ListTile(
             leading: const Icon(Icons.copy_all_outlined),
-            title: const Text('Copy diagnostics'),
-            subtitle: const Text('Puts the log on the clipboard'),
+            title: Text(l10n.settingsDiagnosticsCopy),
+            subtitle: Text(l10n.settingsDiagnosticsCopyHelp),
             onTap: () => unawaited(_copy(context)),
           ),
           ListTile(
             leading: const Icon(Icons.article_outlined),
-            title: const Text('View diagnostics'),
+            title: Text(l10n.settingsDiagnosticsView),
             trailing: const Icon(Icons.chevron_right),
             onTap: () => _view(context),
           ),
           ListTile(
             leading: const Icon(Icons.delete_sweep_outlined),
-            title: const Text('Clear diagnostics'),
+            title: Text(l10n.settingsDiagnosticsClear),
             onTap: () => unawaited(_clear(context)),
           ),
         ],
@@ -105,9 +108,13 @@ class DiagnosticsSettingsSection extends StatelessWidget {
   }
 }
 
-String _describeSize(int characters) {
-  if (characters < 1024) return '$characters characters';
-  return '${(characters / 1024).toStringAsFixed(characters < 10240 ? 1 : 0)} KB';
+String _describeSize(AppLocalizations l10n, int characters) {
+  if (characters < 1024) return l10n.settingsDiagnosticsCharacters(characters);
+  final kilobytes = NumberFormat.decimalPatternDigits(
+    locale: l10n.localeName,
+    decimalDigits: characters < 10240 ? 1 : 0,
+  ).format(characters / 1024);
+  return l10n.settingsDiagnosticsKilobytes(kilobytes);
 }
 
 /// The diagnostics log, read-only, with Copy and Clear.
@@ -125,12 +132,11 @@ class _DiagnosticsLogScreenState extends State<DiagnosticsLogScreen> {
 
   Future<void> _copy() async {
     final messenger = ScaffoldMessenger.of(context);
+    final copied = context.l10n.settingsDiagnosticsCopiedShort;
     final text = await _text;
     if (text.isEmpty) return;
     await Clipboard.setData(ClipboardData(text: text));
-    messenger.showSnackBar(
-      const SnackBar(content: Text('Diagnostics copied.')),
-    );
+    messenger.showSnackBar(SnackBar(content: Text(copied)));
   }
 
   void _clear() {
@@ -142,17 +148,18 @@ class _DiagnosticsLogScreenState extends State<DiagnosticsLogScreen> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final l10n = context.l10n;
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Diagnostics log'),
+        title: Text(l10n.settingsDiagnosticsLogTitle),
         actions: [
           IconButton(
-            tooltip: 'Copy',
+            tooltip: MaterialLocalizations.of(context).copyButtonLabel,
             icon: const Icon(Icons.copy_all_outlined),
             onPressed: () => unawaited(_copy()),
           ),
           IconButton(
-            tooltip: 'Clear',
+            tooltip: l10n.settingsDiagnosticsClearShort,
             icon: const Icon(Icons.delete_sweep_outlined),
             onPressed: _clear,
           ),
@@ -170,7 +177,7 @@ class _DiagnosticsLogScreenState extends State<DiagnosticsLogScreen> {
               child: Padding(
                 padding: const EdgeInsets.all(24),
                 child: Text(
-                  'Nothing has been recorded.',
+                  l10n.settingsDiagnosticsNothing,
                   textAlign: TextAlign.center,
                   style: theme.textTheme.bodyMedium?.copyWith(
                     color: theme.colorScheme.onSurfaceVariant,
