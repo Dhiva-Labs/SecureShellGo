@@ -4,13 +4,19 @@ import 'dart:typed_data';
 
 import 'package:dartssh2/dartssh2.dart';
 
+import 'ssh_certificate.dart';
 import 'x11_forwarding.dart';
 
 /// What a session's shell channel asks the server to forward back to this
 /// device: the SSH agent ([Host.agentForwarding]), X11 windows
 /// ([Host.x11Forwarding]), or both.
 class ShellForwarding {
-  const ShellForwarding({this.agent, this.x11, this.notices = const []});
+  const ShellForwarding({
+    this.agent,
+    this.x11,
+    this.notices = const [],
+    this.certificate,
+  });
 
   /// Answers the server's `auth-agent@openssh.com` channels.
   final SSHAgentHandler? agent;
@@ -21,6 +27,12 @@ class ShellForwarding {
   /// Things to tell the person at the top of the shell, decided before it
   /// opened — X11 asked for on a device with no display, say.
   final List<String> notices;
+
+  /// The certificate the connection offered first, if any. A certificate
+  /// without `permit-agent-forwarding` or `permit-X11-forwarding` is the
+  /// commonest reason a server refuses those, so a refusal says so. Nothing
+  /// to forward on its own.
+  final SshCertificate? certificate;
 
   bool get isEmpty => agent == null && x11 == null && notices.isEmpty;
 }
@@ -224,9 +236,7 @@ Future<SSHSession> openForwardedShell({
       if (agent && message.contains(refusedAgentRequest)) {
         agent = false;
         if (!agentGranted) {
-          notices.add('The server refused agent forwarding, so keys on this '
-              'device cannot be used from this shell. Its sshd_config may '
-              'have AllowAgentForwarding no.');
+          notices.add(_refusedAgentNotice(forwarding.certificate));
         }
         continue;
       }
@@ -234,14 +244,37 @@ Future<SSHSession> openForwardedShell({
         // Asked for after the agent, so the agent was granted.
         if (agent) agentGranted = true;
         x11 = null;
-        notices.add('The server refused X11 forwarding, so graphical '
-            'programs cannot open windows here. Its sshd_config may have '
-            'X11Forwarding no, or xauth may not be installed there.');
+        notices.add(_refusedX11Notice(forwarding.certificate));
         continue;
       }
       rethrow;
     }
   }
+}
+
+/// Why the server may have refused the agent: the sign-in certificate first,
+/// when it does not permit forwarding — sshd checks that before its own
+/// configuration — then the server's settings.
+String _refusedAgentNotice(SshCertificate? certificate) {
+  const lead = 'The server refused agent forwarding, so keys on this device '
+      'cannot be used from this shell.';
+  if (certificate != null && !certificate.permitsAgentForwarding) {
+    return '$lead The certificate this host signs in with does not permit '
+        'it (no permit-agent-forwarding); ask its CA for one that does.';
+  }
+  return '$lead Its sshd_config may have AllowAgentForwarding no.';
+}
+
+/// The same for X11 and `permit-X11-forwarding`.
+String _refusedX11Notice(SshCertificate? certificate) {
+  const lead = 'The server refused X11 forwarding, so graphical programs '
+      'cannot open windows here.';
+  if (certificate != null && !certificate.permitsX11Forwarding) {
+    return '$lead The certificate this host signs in with does not permit '
+        'it (no permit-X11-forwarding); ask its CA for one that does.';
+  }
+  return '$lead Its sshd_config may have X11Forwarding no, or xauth may not '
+      'be installed there.';
 }
 
 /// What dartssh2's `SSHChannelRequestError` says, lowercased, when the
@@ -268,6 +301,8 @@ class ShellSessionWithNotices implements SSHSession {
   })  : _notice = Uint8List.fromList([
           for (final notice in notices) ..._line(notice),
         ]),
+        // A named parameter cannot be private.
+        // ignore: prefer_initializing_formals
         _later = later;
 
   final SSHSession _inner;

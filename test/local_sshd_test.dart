@@ -90,6 +90,24 @@ void main() {
       expect(result.stdout.trim(), 'cert-ok');
     }, skip: skip, timeout: timeout);
 
+    test('one without permit-agent-forwarding is named when the agent is '
+        'refused', () async {
+      final connection = await lab.connect(
+        lab.host(
+          authMethod: SshAuthMethod.privateKey,
+          certificate: lab.read('ptyonly-cert.pub'),
+          agentForwarding: true,
+        ),
+        SshCredentials(privateKeyPem: lab.read('certkey')),
+        agent: lab.agent,
+      );
+      addTearDown(connection.close);
+      final shell = await _Shell.open(connection);
+      expect(await shell.run('echo still-here'), contains('still-here'));
+      expect(shell.errors, contains('no permit-agent-forwarding'));
+      shell.close();
+    }, skip: skip, timeout: timeout);
+
     test('and without the certificate the same key is refused', () async {
       await expectLater(
         lab.connect(
@@ -318,9 +336,11 @@ class _Lab {
         'ssh-keygen',
         ['-q', '-t', type, if (type == 'rsa') ...['-b', '2048'], '-N', '',
           '-C', name, '-f', at(name)]);
-    Future<void> sign(String pub, String id, {String validity = '-5m:+1d'}) =>
+    Future<void> sign(String pub, String id,
+            {String validity = '-5m:+1d', List<String> options = const []}) =>
         run('ssh-keygen', ['-q', '-s', at('ca'), '-I', id, '-n',
-          Platform.environment['USER']!, '-V', validity, at(pub)]);
+          Platform.environment['USER']!, '-V', validity,
+          for (final o in options) ...['-O', o], at(pub)]);
 
     for (final name in [
       'hostkey', 'ca', 'userkey', 'agent-only', 'certkey', 'agentcert',
@@ -333,7 +353,10 @@ class _Lab {
     File(at('expired.pub')).writeAsStringSync(slurp('certkey.pub'));
     // Not next to the key, so ssh-add does not load it into the agent too.
     File(at('agentcert-copy.pub')).writeAsStringSync(slurp('agentcert.pub'));
+    File(at('ptyonly.pub')).writeAsStringSync(slurp('certkey.pub'));
     await sign('certkey.pub', 'cert-id');
+    await sign('ptyonly.pub', 'pty-only-id',
+        options: ['clear', 'permit-pty']);
     await sign('rsacert.pub', 'rsa-cert-id');
     await sign('agentcert-copy.pub', 'agent-cert-id');
     await sign('expired.pub', 'expired-id', validity: '20200101:20200102');

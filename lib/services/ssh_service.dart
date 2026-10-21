@@ -1306,6 +1306,7 @@ class SshService {
         return _Identities(
           [certificateIdentity(certificate, pair), ...pairs],
           keys: pairs,
+          certificate: certificate,
         );
       }
     }
@@ -1352,7 +1353,7 @@ class SshService {
             presentedType: certificate.type,
           ),
           ...offered,
-        ]);
+        ], certificate: certificate);
       }
     }
     return _Identities(
@@ -1411,6 +1412,7 @@ class SshService {
       agent: forwardedAgent,
       x11: x11,
       notices: notices,
+      certificate: identities.certificate,
     );
     return forwarding.isEmpty ? null : forwarding;
   }
@@ -1530,7 +1532,12 @@ class SshService {
 
 /// What [SshService._prepareIdentities] settled on for one host.
 class _Identities {
-  const _Identities(this.offered, {this.keys = const [], this.certificateNote});
+  const _Identities(
+    this.offered, {
+    this.keys = const [],
+    this.certificateNote,
+    this.certificate,
+  });
 
   /// What dartssh2 offers the server, in order; null for none.
   final List<SSHIdentity>? offered;
@@ -1542,6 +1549,10 @@ class _Identities {
   /// Why the host's certificate was left out, for the failure message if
   /// the login then fails without it.
   final String? certificateNote;
+
+  /// The certificate offered first, when there is one. Its extensions say
+  /// what the shell may forward; see [ShellForwarding.certificate].
+  final SshCertificate? certificate;
 }
 
 /// An agent identity whose signing stops the login clock: the agent may be
