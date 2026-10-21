@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:secure_shell_go/services/terminal_search.dart';
 import 'package:secure_shell_go/widgets/terminal_find_bar.dart';
@@ -70,6 +72,94 @@ void main() {
       expect(texts.first, 'line 11');
       expect(texts.last, 'line 0');
       expect(texts, hasLength(12));
+    });
+
+    test('just the text reads exactly what the cell map does', () {
+      final terminal = terminalWith(
+        '日本\x1b[3Cabcdefghijklmnopqrstuvwxyz🎉\r\n x',
+      );
+      for (final line in wrappedLinesNewestFirst(terminal.buffer)) {
+        expect(readLineText(terminal.buffer, line.firstRow, line.lastRow),
+            line.text);
+      }
+    });
+  });
+
+  group('keeping the text between searches', () {
+    List<String> fresh(Terminal terminal) => [
+          for (final line in TerminalTextIndex().read(terminal.buffer))
+            line.text,
+        ];
+
+    List<String> texts(TerminalTextIndex index, Terminal terminal) =>
+        [for (final line in index.read(terminal.buffer)) line.text];
+
+    test('the scrollback is read once, the screen every time', () {
+      final terminal = terminalWith(
+        [for (var i = 0; i < 300; i++) 'line $i'].join('\r\n'),
+      );
+      final index = TerminalTextIndex();
+      expect(texts(index, terminal), fresh(terminal));
+      expect(index.linesRead, 300);
+
+      expect(texts(index, terminal), fresh(terminal));
+      expect(index.linesRead, terminal.viewHeight);
+
+      terminal.write('\r\nmore\r\nand more');
+      expect(texts(index, terminal), fresh(terminal));
+      // The screen, and the two lines that scrolled up off it.
+      expect(index.linesRead, terminal.viewHeight + 2);
+    });
+
+    test('what changes on screen is read as it is now', () {
+      final terminal = terminalWith(
+        [for (var i = 0; i < 30; i++) 'line $i'].join('\r\n'),
+      );
+      final index = TerminalTextIndex();
+      index.read(terminal.buffer);
+      // Up two lines, overwrite, erase another; and a long line that wraps
+      // from the screen into the scrollback as more output follows it.
+      terminal.write('\x1b[2A\rchanged\x1b[K\x1b[1B\r\x1b[2K');
+      expect(texts(index, terminal), fresh(terminal));
+      expect(texts(index, terminal), contains('changed'));
+      terminal.write('\r\n${'w' * 70}\r\nnext\r\nnext\r\nnext');
+      expect(texts(index, terminal), fresh(terminal));
+      expect(texts(index, terminal), contains('w' * 70));
+    });
+
+    test('lines dropped off the top are gone, and a resize starts again', () {
+      final terminal = terminalWith(
+        [for (var i = 0; i < 40; i++) 'line $i'].join('\r\n'),
+        maxLines: 30,
+      );
+      final index = TerminalTextIndex();
+      index.read(terminal.buffer);
+      terminal.write('\r\n${[for (var i = 0; i < 5; i++) 'late $i'].join('\r\n')}');
+      expect(texts(index, terminal), fresh(terminal));
+      expect(texts(index, terminal).last, 'line 15');
+
+      for (final (columns, rows) in [(12, 4), (12, 6), (30, 6)]) {
+        terminal.resize(columns, rows);
+        expect(texts(index, terminal), fresh(terminal));
+        expect(index.linesRead,
+            wrappedLinesNewestFirst(terminal.buffer).length);
+      }
+    });
+
+    test('a search keeps it too', () {
+      final terminal = terminalWith(
+        [for (var i = 0; i < 300; i++) 'line $i'].join('\r\n'),
+      );
+      final index = TerminalTextIndex();
+      const query = TerminalSearchQuery('line 1');
+      final first =
+          searchTerminalBuffer(terminal.buffer, query, index: index).matches;
+      expect(index.linesRead, 300);
+      final second =
+          searchTerminalBuffer(terminal.buffer, query, index: index).matches;
+      expect(index.linesRead, terminal.viewHeight);
+      expect(second, first);
+      expect(first, search(terminal, 'line 1'));
     });
   });
 
@@ -321,6 +411,116 @@ void main() {
       expect(big.truncated, isTrue);
       expect(big.summary, '1000 of 1000+');
       big.close();
+    });
+
+    /// Until [condition] holds of [find], which notifies as searches end.
+    Future<void> until(
+      TerminalFindController find,
+      bool Function() condition,
+    ) async {
+      final done = Completer<void>();
+      void check() {
+        if (condition() && !done.isCompleted) done.complete();
+      }
+
+      find.addListener(check);
+      check();
+      try {
+        await done.future.timeout(const Duration(seconds: 10));
+      } finally {
+        find.removeListener(check);
+      }
+    }
+
+    test('typing searches once it pauses, not per keystroke', () async {
+      final typing = TerminalFindController(
+        terminal: terminal,
+        controller: controller,
+        reveal: revealed.add,
+        typingDelay: const Duration(milliseconds: 50),
+      );
+      addTearDown(typing.dispose);
+      typing.open();
+      for (final pattern in ['a', 'ap', 'app', 'apple']) {
+        typing.typeQuery(TerminalSearchQuery(pattern));
+      }
+      expect(typing.matches, isEmpty);
+      await Future<void>.delayed(const Duration(milliseconds: 120));
+      expect(typing.summary, '3 of 3');
+
+      // Enter before the pause searches straight away.
+      typing.typeQuery(const TerminalSearchQuery('apples'));
+      typing.next();
+      expect(typing.summary, '1 of 1');
+      // Clearing the field is not waited for.
+      typing.typeQuery(const TerminalSearchQuery(''));
+      expect(typing.matches, isEmpty);
+      expect(controller.highlights, isEmpty);
+      typing.close();
+    });
+
+    test('a regular expression is searched for on another isolate', () async {
+      find.open();
+      find.query = const TerminalSearchQuery(r'ap+les?\b', regex: true);
+      expect(find.searching, isTrue);
+      expect(find.summary, 'Searching…');
+      await until(find, () => !find.searching);
+      expect(find.matches, search(terminal, r'ap+les?\b', regex: true));
+      expect(find.matches, hasLength(3));
+      expect(find.summary, '3 of 3');
+      expect(controller.highlights, hasLength(4));
+    });
+
+    test('one that backtracks for ever is stopped, and nothing waits for it',
+        () async {
+      // Exponential in the length of the line: this would never finish.
+      final slow = terminalWith('${'a' * 59}!', columns: 80);
+      final stuck = TerminalFindController(
+        terminal: slow,
+        controller: controller,
+        reveal: revealed.add,
+        refreshDelay: Duration.zero,
+        regexTimeLimit: const Duration(milliseconds: 300),
+      );
+      addTearDown(stuck.dispose);
+      stuck.open();
+      final clock = Stopwatch()..start();
+      stuck.query = const TerminalSearchQuery(r'^(\w+\s?)+$', regex: true);
+      expect(clock.elapsedMilliseconds, lessThan(250));
+      // This isolate is free to run its timers — and so to draw frames.
+      final ticked = Completer<void>();
+      Timer(const Duration(milliseconds: 20), ticked.complete);
+      await ticked.future;
+      expect(clock.elapsedMilliseconds, lessThan(250));
+      expect(stuck.searching, isTrue);
+
+      await until(stuck, () => !stuck.searching);
+      expect(stuck.tooSlow, isTrue);
+      expect(stuck.summary, 'Pattern too slow');
+      expect(stuck.matches, isEmpty);
+      expect(clock.elapsed, lessThan(const Duration(seconds: 5)));
+
+      // More output does not set it off again.
+      slow.write('\r\nmore');
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+      expect(stuck.searching, isFalse);
+      expect(stuck.summary, 'Pattern too slow');
+
+      // Another pattern is searched for as usual.
+      stuck.query = const TerminalSearchQuery(r'mo+re', regex: true);
+      await until(stuck, () => !stuck.searching);
+      expect(stuck.tooSlow, isFalse);
+      expect(stuck.summary, '1 of 1');
+    });
+
+    test('output during a regular-expression search is searched next',
+        () async {
+      find.open();
+      find.query = const TerminalSearchQuery('apple', regex: true);
+      terminal.write('\r\nfive apple');
+      await until(find, () => find.matches.length == 4 && !find.searching);
+      // Still on the match it was on.
+      expect(find.summary, '3 of 4');
     });
 
     test('its colours are translucent, so the text shows through', () {

@@ -73,11 +73,26 @@ class FileLogDestination implements SessionLogDestination {
   Future<SessionLogSink?> open(String suggestedName) async {
     final path = await _choose(suggestedName);
     if (path == null || path.isEmpty) return null;
-    // GTK's dialog does not add an extension the user left off.
-    final named = path.split(Platform.pathSeparator).last.contains('.')
-        ? path
-        : '$path.log';
-    return FileLogSink(File(named));
+    return FileLogSink(File(await withLogExtension(path)));
+  }
+
+  /// [path] as chosen, or with `.log` added when it has no extension —
+  /// GTK's dialog does not add one the user left off.
+  ///
+  /// The dialog asked before replacing what the user typed, not the name
+  /// with `.log` on the end, so that must not replace anything either: a
+  /// name already taken becomes `name (1).log`, and so on.
+  @visibleForTesting
+  static Future<String> withLogExtension(String path) async {
+    if (path.split(Platform.pathSeparator).last.contains('.')) return path;
+    var candidate = '$path.log';
+    var n = 0;
+    // A link to nowhere is taken too: writing to it would create its target.
+    while (await FileSystemEntity.type(candidate, followLinks: false) !=
+        FileSystemEntityType.notFound) {
+      candidate = '$path (${++n}).log';
+    }
+    return candidate;
   }
 
   @override
@@ -126,25 +141,31 @@ class DocumentLogDestination implements SessionLogDestination {
   }
 }
 
-/// What a running log needs at the end, beside the recorder itself.
-class _RunningLog {
+/// Where a running log is saved at the end, kept with the recorder so that
+/// whoever finishes it — the menu, or the session manager when it stopped
+/// by itself — saves it the same way.
+class _RunningLog implements SessionLogSaver {
   _RunningLog(this.destination, this.sink, this.fileName);
 
   final SessionLogDestination destination;
   final SessionLogSink sink;
   final String fileName;
+
+  @override
+  bool get asksWhere => !destination.choosesFileFirst;
+
+  @override
+  Future<String?> save() => destination.save(sink, fileName);
 }
 
 /// "Record session log…" and "Stop recording" in the session menu, and what
-/// the terminal does when a recording stops by itself.
+/// the terminal says when a recording stops by itself.
 class SessionLogActions {
   const SessionLogActions._();
 
   /// Replaces [SessionLogDestination.forPlatform] in tests.
   @visibleForTesting
   static SessionLogDestination? debugDestination;
-
-  static final Expando<_RunningLog> _running = Expando();
 
   static bool isRecording(SessionController session) =>
       session.terminal.isRecording;
@@ -181,8 +202,8 @@ class SessionLogActions {
       maxBytes: destination.maxBytes,
       header: 'Session log for ${session.host.target}, started '
           '${sessionLogTimestamp(now)}',
+      saver: _RunningLog(destination, sink, fileName),
     );
-    _running[recorder] = _RunningLog(destination, sink, fileName);
     terminal.startRecording(recorder);
     _tell(messenger, 
       SnackBar(
@@ -206,23 +227,28 @@ class SessionLogActions {
     return _finish(context, recorder);
   }
 
-  /// A recording that stopped itself: full, or its file could not be
-  /// written. Says so, and offers to save what there is.
-  static Future<void> stoppedBySelf(
+  /// Tells the user about a recording that stopped by itself — full, or
+  /// its file could not be written — once the session manager has finished
+  /// it (and saved it, where that asks nobody).
+  ///
+  /// [justNow]: it stopped while this session was on screen, so a log that
+  /// has to ask where to go asks straight away. Otherwise it stopped while
+  /// the user was elsewhere, and a message offers to save it.
+  ///
+  /// Nothing is said if [context] has gone by then: the next terminal to
+  /// show this session says it instead.
+  static Future<void> announce(
     BuildContext context,
-    SessionRecorder recorder,
-  ) async {
+    RecordingTerminal terminal,
+    SessionLogEnding ending, {
+    bool justNow = false,
+  }) async {
     final messenger = ScaffoldMessenger.maybeOf(context);
-    final log = _running[recorder];
-    if (log == null) return;
+    await ending.settled;
+    if (!context.mounted || !terminal.announce(ending)) return;
+    final recorder = ending.recorder;
     if (recorder.stoppedBy == RecordingStop.failed) {
-      _running[recorder] = null;
-      try {
-        await recorder.finish();
-      } catch (_) {
-        // Already failing; the message below is what matters.
-      }
-      _tell(messenger, 
+      _tell(messenger,
         SnackBar(
           content: Text(
             'The session log stopped: it could not be written '
@@ -232,34 +258,56 @@ class SessionLogActions {
       );
       return;
     }
-    if (!context.mounted) return;
-    await _finish(
-      context,
-      recorder,
-      reason: 'The session log is full, so recording stopped.',
-    );
+    const reason = 'The session log is full, so recording stopped.';
+    final saved = ending.savedAs;
+    final error = ending.error;
+    final log = recorder.saver;
+    if (error != null) {
+      _tell(messenger,
+        SnackBar(content: Text('$reason Could not save it: $error')),
+      );
+    } else if (ending.needsSaving && log is _RunningLog) {
+      if (justNow) {
+        await _save(messenger, log, reason: reason);
+      } else {
+        _tell(messenger,
+          SnackBar(
+            content: const Text(reason),
+            duration: const Duration(seconds: 30),
+            action: SnackBarAction(
+              label: 'Save…',
+              onPressed: () => unawaited(_save(messenger, log)),
+            ),
+          ),
+        );
+      }
+    } else {
+      _tell(messenger,
+        SnackBar(
+          content: Text(
+            saved == null ? reason : '$reason Session log saved: $saved',
+          ),
+        ),
+      );
+    }
   }
 
   static Future<bool> _finish(
     BuildContext context,
-    SessionRecorder recorder, {
-    String? reason,
-  }) async {
-    final log = _running[recorder];
-    _running[recorder] = null;
-    if (log == null) return true;
+    SessionRecorder recorder,
+  ) async {
     final messenger = ScaffoldMessenger.maybeOf(context);
     try {
-      await recorder.finish(
-        footer: 'Session log ended ${sessionLogTimestamp(DateTime.now())}',
-      );
+      await recorder.finish(footer: sessionLogFooter(DateTime.now()));
     } catch (e) {
-      _tell(messenger, 
+      _tell(messenger,
         SnackBar(content: Text('Could not finish the session log: $e')),
       );
       return true;
     }
-    return _save(messenger, log, reason: reason);
+    final log = recorder.saver;
+    if (log is! _RunningLog) return true;
+    return _save(messenger, log);
   }
 
   static Future<bool> _save(

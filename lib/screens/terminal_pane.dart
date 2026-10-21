@@ -132,6 +132,12 @@ class _TerminalPaneState extends State<TerminalPane>
     duration: const Duration(milliseconds: 220),
   );
 
+  /// Running for [_bellInterval] after the bell rings, when it does not ring
+  /// again: a burst of bells (`cat` of a binary file, `yes $'\a'`) is a
+  /// vibration or a flash every so often, not one long buzz.
+  Timer? _bellQuiet;
+  static const Duration _bellInterval = Duration(milliseconds: 250);
+
   late final TerminalFindController _find = TerminalFindController(
     terminal: _terminal,
     controller: _terminalController,
@@ -220,6 +226,15 @@ class _TerminalPaneState extends State<TerminalPane>
     widget.session.onBell = _handleBell;
     widget.session.transformInput = _applySticky;
     unawaited(widget.session.ensureShell());
+    // A log that stopped by itself while this session was not on screen.
+    if (_terminal.unannounced.isNotEmpty) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        for (final ending in _terminal.unannounced) {
+          unawaited(SessionLogActions.announce(context, _terminal, ending));
+        }
+      });
+    }
   }
 
   void _followSettings(AppSettings settings) {
@@ -242,7 +257,8 @@ class _TerminalPaneState extends State<TerminalPane>
 
   /// Settings > Terminal > Bell.
   void _handleBell() {
-    if (!mounted) return;
+    if (!mounted || _bellQuiet != null) return;
+    _bellQuiet = Timer(_bellInterval, () => _bellQuiet = null);
     switch (_bell) {
       case TerminalBell.vibrate:
         Feedback.forLongPress(context);
@@ -448,9 +464,7 @@ class _TerminalPaneState extends State<TerminalPane>
   /// terminal would otherwise send every one of them to the shell.
   KeyEventResult _handleHardwareKeyEvent(FocusNode node, KeyEvent event) {
     if (event is KeyUpEvent) {
-      if (_hoverLink != null && !HardwareKeyboard.instance.isControlPressed) {
-        _clearHoverLink();
-      }
+      if (_hoverLink != null && !_linkModifierHeld) _clearHoverLink();
       return KeyEventResult.ignored;
     }
 
@@ -460,6 +474,18 @@ class _TerminalPaneState extends State<TerminalPane>
     if (_handleZoomKey(event)) return KeyEventResult.handled;
 
     final keys = HardwareKeyboard.instance;
+    // Ctrl+_ — Ctrl+Shift+- on most layouts — is undo in readline and
+    // Emacs. xterm sends nothing for it: its Ctrl table is the letters, and
+    // only without Shift.
+    if (keys.isControlPressed &&
+        !keys.isAltPressed &&
+        (event.logicalKey == LogicalKeyboardKey.underscore ||
+            (keys.isShiftPressed &&
+                event.logicalKey == LogicalKeyboardKey.minus))) {
+      _terminal.textInput('\x1f');
+      return KeyEventResult.handled;
+    }
+
     if (!keys.isControlPressed || !keys.isShiftPressed) {
       return KeyEventResult.ignored;
     }
@@ -533,7 +559,7 @@ class _TerminalPaneState extends State<TerminalPane>
       items: [
         if (link != null) ...[
           item(_TerminalMenu.openLink, 'Open link', Icons.open_in_new,
-              keys: 'Ctrl+click'),
+              keys: _linkClickKeys),
           item(_TerminalMenu.copyLink, 'Copy link', Icons.link),
           const PopupMenuDivider(),
         ],
@@ -590,11 +616,22 @@ class _TerminalPaneState extends State<TerminalPane>
   }
 
   /// Ctrl, or ⌘ on a Mac — the modifier that turns a click into "follow".
+  ///
+  /// With Shift as well while the program has asked for the mouse (tmux or
+  /// vim with mouse mode on): xterm already sends it every click, Ctrl+click
+  /// included, and a click meant for tmux must not also open a browser.
   bool get _linkModifierHeld {
     final keys = HardwareKeyboard.instance;
-    return keys.isControlPressed ||
+    final held = keys.isControlPressed ||
         (defaultTargetPlatform == TargetPlatform.macOS && keys.isMetaPressed);
+    if (_terminal.mouseMode == MouseMode.none) return held;
+    return held && keys.isShiftPressed;
   }
+
+  /// What to hold to open a link with a click, for the context menu.
+  String get _linkClickKeys => _terminal.mouseMode == MouseMode.none
+      ? 'Ctrl+click'
+      : 'Ctrl+Shift+click';
 
   /// With Ctrl held, a link under the mouse is highlighted and the pointer
   /// becomes a hand, so it is clear before clicking what Ctrl+click will do.
@@ -870,11 +907,19 @@ class _TerminalPaneState extends State<TerminalPane>
 
   // ----------------------------------------------------------- session log
 
+  /// The badge comes and goes; a log that stopped by itself is finished and
+  /// saved by the session manager, and said here once it has been.
   void _handleRecording(SessionRecorder recorder) {
     if (!mounted) return;
     setState(() {});
-    if (recorder.stoppedBy != null) {
-      unawaited(SessionLogActions.stoppedBySelf(context, recorder));
+    final ending = recorder.ending;
+    if (ending != null) {
+      unawaited(SessionLogActions.announce(
+        context,
+        _terminal,
+        ending,
+        justNow: true,
+      ));
     }
   }
 
@@ -883,7 +928,7 @@ class _TerminalPaneState extends State<TerminalPane>
   /// Ctrl+= / Ctrl+− / Ctrl+0, as in the editor and most terminal
   /// emulators: larger, smaller, back to the default. Saved like a
   /// pinch-zoom, so the next session opens at the same size. Ctrl+Shift+−
-  /// is left alone: that is Ctrl+_, readline's undo.
+  /// is not a zoom: that is Ctrl+_, readline's undo, and goes to the shell.
   bool _handleZoomKey(KeyEvent event) {
     final keys = HardwareKeyboard.instance;
     final modifier = keys.isControlPressed ||
@@ -971,6 +1016,7 @@ class _TerminalPaneState extends State<TerminalPane>
   void dispose() {
     unawaited(_settingsChanges?.cancel());
     unawaited(_recordingChanges?.cancel());
+    _bellQuiet?.cancel();
     _cancelLongPress();
     if (identical(_panes[widget.session], this)) _panes[widget.session] = null;
     // Before the controller: the highlights it disposes notify through it.

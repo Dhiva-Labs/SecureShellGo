@@ -85,7 +85,8 @@ class TerminalCursorOverlay extends StatefulWidget {
 }
 
 @visibleForTesting
-class TerminalCursorOverlayState extends State<TerminalCursorOverlay> {
+class TerminalCursorOverlayState extends State<TerminalCursorOverlay>
+    with WidgetsBindingObserver {
   final GlobalKey _paintKey = GlobalKey();
   final _repaint = _Repaint();
   Timer? _blinkTimer;
@@ -94,9 +95,12 @@ class TerminalCursorOverlayState extends State<TerminalCursorOverlay> {
   bool get blinkOn => _blinkOn;
   bool _blinkOn = true;
 
-  /// Whether a blink timer is running — only while blinking is on and the
-  /// terminal has the keyboard, so a session in a background tab costs
-  /// nothing.
+  /// Whether a blink timer is running — only while blinking is on, the
+  /// terminal has the keyboard and the app is in front, so a session in a
+  /// background tab, or an app in the background, costs nothing.
+  ///
+  /// The app being in front is not the same as the keyboard: on Android a
+  /// paused app keeps its focus, and so would keep its timer.
   @visibleForTesting
   bool get blinking => _blinkTimer != null;
 
@@ -106,8 +110,12 @@ class TerminalCursorOverlayState extends State<TerminalCursorOverlay> {
     widget.terminal.addListener(_handleTerminalChange);
     widget.focusNode.addListener(_handleFocusChange);
     widget.scrollController.addListener(_repaint.notify);
+    WidgetsBinding.instance.addObserver(this);
     _syncBlink();
   }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) => _syncBlink();
 
   @override
   void didUpdateWidget(TerminalCursorOverlay oldWidget) {
@@ -129,6 +137,7 @@ class TerminalCursorOverlayState extends State<TerminalCursorOverlay> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     widget.terminal.removeListener(_handleTerminalChange);
     widget.focusNode.removeListener(_handleFocusChange);
     widget.scrollController.removeListener(_repaint.notify);
@@ -150,7 +159,9 @@ class TerminalCursorOverlayState extends State<TerminalCursorOverlay> {
   }
 
   void _syncBlink() {
-    final wanted = widget.blink && widget.focusNode.hasFocus;
+    final lifecycle = WidgetsBinding.instance.lifecycleState;
+    final inFront = lifecycle == null || lifecycle == AppLifecycleState.resumed;
+    final wanted = widget.blink && widget.focusNode.hasFocus && inFront;
     if (wanted && _blinkTimer == null) {
       _restartBlink();
     } else if (!wanted && _blinkTimer != null) {
@@ -173,8 +184,9 @@ class TerminalCursorOverlayState extends State<TerminalCursorOverlay> {
   @visibleForTesting
   Rect? get cursorRect => _cursorRect();
 
-  /// The cursor's cell in this overlay's coordinates, or null before the
-  /// terminal has been laid out.
+  /// The cursor's cell in this overlay's coordinates — both cells of a wide
+  /// character (`日`) the cursor is on — or null before the terminal has been
+  /// laid out.
   Rect? _cursorRect() {
     final view = widget.viewKey.currentState;
     final box = _paintKey.currentContext?.findRenderObject() as RenderBox?;
@@ -183,11 +195,28 @@ class TerminalCursorOverlayState extends State<TerminalCursorOverlay> {
     }
     try {
       final global = view.globalCursorRect;
-      return box.globalToLocal(global.topLeft) & global.size;
+      final cell = box.globalToLocal(global.topLeft) & global.size;
+      return _cellUnderCursor()?.width == 2
+          ? Rect.fromLTWH(cell.left, cell.top, cell.width * 2, cell.height)
+          : cell;
     } catch (_) {
       // Not laid out yet: no viewport to measure against.
       return null;
     }
+  }
+
+  /// What the cursor is on: the character and how many cells it takes, or
+  /// null for nothing (a blank, or past the end of the line).
+  ({int codePoint, int width})? _cellUnderCursor() {
+    final buffer = widget.terminal.buffer;
+    final row = buffer.absoluteCursorY;
+    if (row < 0 || row >= buffer.height) return null;
+    final line = buffer.lines[row];
+    final x = buffer.cursorX;
+    if (x >= line.length) return null;
+    final codePoint = line.getCodePoint(x);
+    if (codePoint == 0 || codePoint == 0x20) return null;
+    return (codePoint: codePoint, width: line.getWidth(x));
   }
 
   @override
@@ -272,27 +301,25 @@ class _CursorPainter extends CustomPainter {
 
   /// The character under a block cursor, in the background colour, laid out
   /// exactly as xterm lays out each of its own cells so it sits where the
-  /// original did.
+  /// original did — and kept inside the block, so a glyph wider than its
+  /// cells cannot paint background over the text beside it.
   void _paintCharacterUnder(Canvas canvas, Rect rect) {
     final widget = state.widget;
-    final buffer = widget.terminal.buffer;
-    final row = buffer.absoluteCursorY;
-    if (row < 0 || row >= buffer.height) return;
-    final line = buffer.lines[row];
-    final x = buffer.cursorX;
-    if (x >= line.length) return;
-    final codePoint = line.getCodePoint(x);
-    if (codePoint == 0 || codePoint == 0x20) return;
+    final cell = state._cellUnderCursor();
+    if (cell == null) return;
 
     final style = widget.textStyle.toTextStyle(
       color: widget.theme.background,
     );
     final builder = ui.ParagraphBuilder(style.getParagraphStyle())
       ..pushStyle(style.getTextStyle(textScaler: textScaler))
-      ..addText(String.fromCharCode(codePoint));
+      ..addText(String.fromCharCode(cell.codePoint));
     final paragraph = builder.build()
       ..layout(const ui.ParagraphConstraints(width: double.infinity));
+    canvas.save();
+    canvas.clipRect(rect);
     canvas.drawParagraph(paragraph, rect.topLeft);
+    canvas.restore();
     paragraph.dispose();
   }
 

@@ -28,12 +28,22 @@ class RecordingTerminal extends Terminal {
 
   /// The recording that just started or stopped — stopped here, or by
   /// itself ([SessionRecorder.stoppedBy] says why: it is full, or its file
-  /// could not be written).
+  /// could not be written; [SessionRecorder.ending] is what became of it).
   Stream<SessionRecorder> get recordingChanges => _recordingChanges.stream;
   final _recordingChanges =
       StreamController<SessionRecorder>.broadcast(sync: true);
 
   bool get isRecording => _recorder != null;
+
+  /// Recordings that stopped by themselves and have not been told to the
+  /// user yet, oldest first: it happened while the session was not on
+  /// screen, or before the message could be shown.
+  List<SessionLogEnding> get unannounced => List.unmodifiable(_unannounced);
+  final List<SessionLogEnding> _unannounced = [];
+
+  /// Takes [ending] off [unannounced], to tell the user about it. False
+  /// when something else already has.
+  bool announce(SessionLogEnding ending) => _unannounced.remove(ending);
 
   /// Starts copying output into [recorder]. One recording at a time.
   void startRecording(SessionRecorder recorder) {
@@ -44,6 +54,8 @@ class RecordingTerminal extends Terminal {
     recorder._onStopped = () {
       if (identical(_recorder, recorder)) {
         _recorder = null;
+        final ending = recorder.ending;
+        if (ending != null) _unannounced.add(ending);
         _recordingChanges.add(recorder);
       }
     };
@@ -129,11 +141,17 @@ class FileLogSink implements SessionLogSink {
     _sink.add(bytes);
   }
 
+  /// Writes what is still buffered and closes the file. Completes with the
+  /// error when the file could not be written.
+  ///
+  /// `close` rather than `flush` and then `close`: once the file has failed,
+  /// [IOSink.flush] never completes, and whatever waited on it — the "could
+  /// not be written" message — would wait for ever. `close` writes what is
+  /// buffered either way.
   @override
   Future<void> close() async {
     if (_closed) return;
     _closed = true;
-    await _sink.flush();
     await _sink.close();
   }
 
@@ -158,6 +176,60 @@ class FileLogSink implements SessionLogSink {
 /// Why a recording stopped by itself.
 enum RecordingStop { full, failed }
 
+/// What becomes of a finished log, decided when the recording starts.
+abstract class SessionLogSaver {
+  /// Saving asks the user where — Android's "save as" — so it waits for
+  /// someone to be looking. A desktop's file was chosen before recording
+  /// started, and finishing it is saving it.
+  bool get asksWhere;
+
+  /// Saves the finished log. Returns what to call it in a message, or null
+  /// when the user backed out of choosing where. Throws when it could not
+  /// be written.
+  Future<String?> save();
+}
+
+/// A recording that stopped by itself — full, or its file could not be
+/// written — and what became of it.
+///
+/// The session's owner (`SessionManager`) finishes it and, where that asks
+/// nobody, saves it, whether or not the session is on screen; whatever
+/// shows the session tells the user, then or the next time it is shown
+/// ([RecordingTerminal.unannounced]).
+class SessionLogEnding {
+  SessionLogEnding._(this.recorder);
+
+  final SessionRecorder recorder;
+
+  /// Completes once the log is finished, and saved unless [needsSaving].
+  Future<void> get settled => _settled.future;
+  final Completer<void> _settled = Completer<void>();
+
+  bool get isSettled => _settled.isCompleted;
+
+  /// What it was saved as.
+  String? get savedAs => _savedAs;
+  String? _savedAs;
+
+  /// Finished, but saving it asks the user where ([SessionLogSaver.asksWhere]),
+  /// which is for whatever shows the session to offer.
+  bool get needsSaving => _needsSaving;
+  bool _needsSaving = false;
+
+  /// Why it could not be saved.
+  Object? get error => _error;
+  Object? _error;
+
+  /// Records what became of it. Once.
+  void settle({String? savedAs, bool needsSaving = false, Object? error}) {
+    if (_settled.isCompleted) return;
+    _savedAs = savedAs;
+    _needsSaving = needsSaving;
+    _error = error;
+    _settled.complete();
+  }
+}
+
 /// One recording of a session's output.
 ///
 /// As received — escape sequences and all, so `cat` on the file replays the
@@ -170,6 +242,7 @@ class SessionRecorder {
     this.plainText = true,
     this.maxBytes,
     this.header,
+    this.saver,
     DateTime Function() clock = DateTime.now,
   })  : _clock = clock,
         startedAt = clock(),
@@ -192,6 +265,10 @@ class SessionRecorder {
   /// A first line saying what this is a log of.
   final String? header;
 
+  /// Where the finished log goes, for whoever finishes it. Null when the
+  /// sink is all there is to it.
+  final SessionLogSaver? saver;
+
   final DateTime Function() _clock;
   final DateTime startedAt;
   final TerminalTextStripper? _stripper;
@@ -204,6 +281,10 @@ class SessionRecorder {
 
   /// What went wrong, when [stoppedBy] is [RecordingStop.failed].
   Object? failure;
+
+  /// What became of it, once it has stopped by itself.
+  SessionLogEnding? get ending => _ending;
+  SessionLogEnding? _ending;
 
   bool _ended = false;
   void Function()? _onStopped;
@@ -245,6 +326,7 @@ class SessionRecorder {
   void _stopBySelf(RecordingStop why) {
     if (stoppedBy != null || _ended) return;
     stoppedBy = why;
+    _ending = SessionLogEnding._(this);
     _onStopped?.call();
   }
 
@@ -283,8 +365,9 @@ class SessionRecorder {
 /// unfinished one. Anything that moves to another line (`vim`, `htop`) is
 /// beyond a plain-text log, as it is beyond `script`.
 class TerminalTextStripper {
-  /// A line longer than this is written out as it stands, so output with no
-  /// newlines in it cannot grow without bound.
+  /// The right edge: the cursor goes no further, and printing at the last
+  /// column ends the line there, so output with no newlines in it cannot
+  /// grow without bound.
   static const int maxLineLength = 16384;
 
   final List<int> _line = [];
@@ -363,14 +446,15 @@ class TerminalTextStripper {
         _column = 0;
       case 0x08:
         if (_column > 0) _column--;
-      case 0x09:
-        _put(c);
       default:
         // Every other C0 and C1 control (the bell, shift-in/out, NUL) and
-        // DEL: nothing a reader of the log would want.
-        if (c < 0x20 || c == 0x7F || (c >= 0x80 && c < 0xA0)) return;
+        // DEL: nothing a reader of the log would want. Tabs are kept.
+        if (c != 0x09 &&
+            (c < 0x20 || c == 0x7F || (c >= 0x80 && c < 0xA0))) {
+          return;
+        }
         _put(c);
-        if (_line.length >= maxLineLength) _endLine(out, newline: true);
+        if (_column >= maxLineLength) _endLine(out, newline: true);
     }
   }
 
@@ -392,7 +476,13 @@ class TerminalTextStripper {
     // Private sequences (`ESC [ ? 25 l`, `ESC [ > c`) never touch the text.
     if (raw.isNotEmpty && '<=>?'.contains(raw[0])) return;
     final first = int.tryParse(raw.split(';').first) ?? 0;
-    final n = first < 1 ? 1 : first;
+    // A terminal clamps a count to its screen; this one to the longest line
+    // it keeps, or `ESC [ 2000000000 C` would pad a line out to gigabytes.
+    final n = first < 1
+        ? 1
+        : first > maxLineLength
+            ? maxLineLength
+            : first;
     switch (String.fromCharCode(command)) {
       case 'K':
         switch (first) {
@@ -406,11 +496,11 @@ class TerminalTextStripper {
             _line.clear();
         }
       case 'C':
-        _column += n;
+        _column = _clampColumn(_column + n);
       case 'D':
         _column = _column > n ? _column - n : 0;
       case 'G':
-        _column = n - 1;
+        _column = _clampColumn(n - 1);
       case 'P':
         if (_column < _line.length) {
           final end = _column + n < _line.length ? _column + n : _line.length;
@@ -419,6 +509,8 @@ class TerminalTextStripper {
       case '@':
         if (_column < _line.length) {
           _line.insertAll(_column, List<int>.filled(n, 0x20));
+          // What is pushed past the right edge is gone, as on a screen.
+          if (_line.length > maxLineLength) _line.length = maxLineLength;
         }
       case 'X':
         for (var i = _column; i < _column + n && i < _line.length; i++) {
@@ -426,6 +518,10 @@ class TerminalTextStripper {
         }
     }
   }
+
+  /// The last column a line has: the cursor goes no further right.
+  static int _clampColumn(int column) =>
+      column < maxLineLength ? column : maxLineLength - 1;
 
   void _put(int c) {
     while (_line.length < _column) {
@@ -467,6 +563,10 @@ String sessionLogFileName(String label, DateTime when) {
       '${two(when.hour)}-${two(when.minute)}-${two(when.second)}';
   return '$safe-$stamp.log';
 }
+
+/// A log's last line.
+String sessionLogFooter(DateTime when) =>
+    'Session log ended ${sessionLogTimestamp(when)}';
 
 /// "2026-10-21 14:03:22", for a log's first and last lines.
 String sessionLogTimestamp(DateTime when) {
