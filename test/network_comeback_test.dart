@@ -108,6 +108,84 @@ void main() {
           reason: 'nothing registered once nobody listens');
     });
 
+    test('Android\'s first report after watching again is a starting point',
+        () async {
+      final platform = StreamController<dynamic>.broadcast();
+      final watch = PlatformNetworkWatch(
+        android: true,
+        platformEvents: platform.stream,
+      );
+      var sub = watch.events.listen((_) {});
+      platform.add({'event': 'available', 'network': '100'});
+      await pump();
+      await sub.cancel();
+
+      // The last session closed, and a new one opens on another network.
+      // Registering again, Android reports the one that is current now —
+      // which is where this watch starts, not a change.
+      final seen = <NetworkEvent>[];
+      sub = watch.events.listen(seen.add);
+      platform.add({'event': 'available', 'network': '101'});
+      await pump();
+      await sub.cancel();
+
+      expect(seen, isEmpty);
+    });
+
+    test('a desktop fingerprint ignores what changes while the network does '
+        'not', () {
+      String fingerprint(Map<String, List<String>> interfaces) =>
+          PlatformNetworkWatch.fingerprintOf([
+            for (final MapEntry(:key, :value) in interfaces.entries)
+              _Interface(key, value),
+          ]);
+      final wifi = {
+        'wlp0s20f3': [
+          '192.168.1.5',
+          'fe80::1e4e:5a1f:b67d:ffab',
+          '2001:db8:1:2:1e4e:5a1f:b67d:ffab',
+          '2001:db8:1:2:9c41:22aa:7e10:3b5d',
+        ],
+      };
+      final start = fingerprint(wifi);
+
+      // A new temporary IPv6 address, the old one retired.
+      expect(
+        fingerprint({
+          'wlp0s20f3': [
+            '192.168.1.5',
+            '2001:db8:1:2:1e4e:5a1f:b67d:ffab',
+            '2001:db8:1:2:4410:8f2e:c1d3:907a',
+          ],
+        }),
+        start,
+      );
+      // Containers and VMs starting.
+      expect(
+        fingerprint({
+          ...wifi,
+          'docker0': ['172.17.0.1'],
+          'br-3f2a1b9c0d4e': ['172.18.0.1'],
+          'veth1a2b3c4': ['fe80::a8f0:2ff:fe11:1'],
+          'virbr0': ['192.168.122.1'],
+          'lxdbr0': ['10.162.213.1', 'fd42:f72:6d9:135e::1'],
+          'vEthernet (WSL)': ['172.29.48.1'],
+        }),
+        start,
+      );
+
+      // But another network is still another network, and so is a VPN.
+      expect(
+        fingerprint({
+          'wlp0s20f3': ['10.0.0.7', '2001:db8:77:1:1e4e:5a1f:b67d:ffab'],
+        }),
+        isNot(start),
+      );
+      expect(fingerprint({...wifi, 'wg0': ['10.8.0.2']}), isNot(start));
+      expect(fingerprint({'docker0': ['172.17.0.1']}), isEmpty,
+          reason: 'containers alone are no network');
+    });
+
     test('a desktop looks at its interfaces, and its clock', () async {
       final looks = ['eth0=10.0.0.2', 'eth0=10.0.0.2', 'wlan0=192.168.1.5'];
       var now = DateTime(2026, 10, 21, 12);
@@ -381,4 +459,19 @@ void main() {
     expect(FakeTransportBase.defaultHost.persistentSession,
         PersistentSession.off);
   });
+}
+
+/// A network interface with the given addresses, for the fingerprint.
+class _Interface implements NetworkInterface {
+  _Interface(this.name, List<String> addresses)
+      : addresses = [for (final a in addresses) InternetAddress(a)];
+
+  @override
+  final String name;
+
+  @override
+  final List<InternetAddress> addresses;
+
+  @override
+  int get index => 0;
 }

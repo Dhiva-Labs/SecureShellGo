@@ -114,11 +114,6 @@ class SessionManager {
   /// app restarts. See [_resumeServerJobs].
   final ServerJobStore? _serverJobs;
 
-  /// Jobs this manager is already following: job id to the source session
-  /// and task doing it, so a second session opening does not start a
-  /// second follower for the same job.
-  final Map<String, ({String sessionId, String taskId})> _following = {};
-
   /// Builds the controller for a new session, honouring the injected factory
   /// when there is one.
   ///
@@ -271,6 +266,7 @@ class SessionManager {
       slot++;
     }
     controller.persistentSlot = slot;
+    controller.onServerJobHandedOff = () => unawaited(_resumeServerJobs());
 
     _sessions.add(entry);
     _activeId = id;
@@ -305,6 +301,11 @@ class SessionManager {
   /// So a job waits, original untouched, until its source and destination
   /// are both open, and is then followed through the source's ordinary
   /// transfer queue like any other copy.
+  ///
+  /// Never a second follower for a job some session already has — whether
+  /// it is one this picked up, or the transfer that launched the job in the
+  /// first place. Every session opening and every reconnect lands here, and
+  /// a job that is being followed is in the store from its launch on.
   Future<void> _resumeServerJobs() async {
     final store = _serverJobs;
     if (store == null) return;
@@ -315,26 +316,20 @@ class SessionManager {
       return;
     }
     for (final record in records) {
-      final following = _following[record.jobId];
-      if (following != null && _isStillFollowing(following)) continue;
+      if (_sessions
+          .any((s) => s.controller.isFollowingServerJob(record.jobId))) {
+        continue;
+      }
       final source = liveForHost(record.sourceHostId).firstOrNull;
       final destination = liveForHost(record.destinationHostId)
           .where((s) => s.id != source?.id)
           .firstOrNull;
       if (source == null || destination == null) continue;
-      final task = source.controller.resumeServerJob(
+      source.controller.resumeServerJob(
         record,
         destinationSessionId: destination.id,
       );
-      _following[record.jobId] = (sessionId: source.id, taskId: task.id);
     }
-  }
-
-  bool _isStillFollowing(({String sessionId, String taskId}) following) {
-    final session = byId(following.sessionId);
-    if (session == null || session.isClosed) return false;
-    return session.controller.transfers.tasks
-        .any((t) => t.id == following.taskId && t.status.isActive);
   }
 
   /// Acts on a session dropping or coming back, for the *other* sessions.

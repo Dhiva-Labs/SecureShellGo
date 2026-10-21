@@ -623,6 +623,95 @@ void main() {
       expect(task.error, 'Waiting for B to reconnect…');
     });
 
+    group('resumed while the run it was cut off in is still unwinding', () {
+      // The reconnect lands while the executor is still stuck on the dead
+      // channel; it notices its cancel only afterwards, and its ending must
+      // not be the transfer's.
+      for (final (how, unwind) in <(String, Object)>[
+        ('cancelled', const TransferCancelled()),
+        ('interrupted', const TransferInterrupted()),
+        ('a channel error', StateError('channel closed')),
+      ]) {
+        test('runs again, however that run ends: $how', () async {
+          final gates = <Completer<void>>[];
+          final queue = TransferQueue(
+            executor: (task, handle) async {
+              final gate = Completer<void>();
+              gates.add(gate);
+              await gate.future;
+              if (gates.length == 1) throw unwind;
+            },
+          );
+          addTearDown(queue.dispose);
+          final task = queue.enqueueDownload(remotePath: '/a', name: 'a');
+          await Future<void>.delayed(Duration.zero);
+
+          queue.interruptAll();
+          queue.resumeInterrupted();
+          gates.single.complete();
+          await Future<void>.delayed(Duration.zero);
+          await Future<void>.delayed(Duration.zero);
+
+          expect(gates, hasLength(2), reason: 'run again, on the new link');
+          expect(task.status, TransferStatus.running);
+          gates.last.complete();
+          await queue.changes.firstWhere((_) => task.status.isFinished);
+          expect(task.status, TransferStatus.completed);
+          expect(queue.tasks.single.id, task.id);
+        });
+      }
+
+      test('waits again if the link drops again first', () async {
+        final gate = Completer<void>();
+        var runs = 0;
+        final queue = TransferQueue(
+          executor: (task, handle) async {
+            runs++;
+            await gate.future;
+            handle.throwIfCancelled();
+          },
+        );
+        addTearDown(queue.dispose);
+        final task = queue.enqueueDownload(remotePath: '/a', name: 'a');
+        await Future<void>.delayed(Duration.zero);
+
+        queue.interruptAll();
+        queue.resumeInterrupted();
+        queue.interruptAll();
+        gate.complete();
+        await Future<void>.delayed(Duration.zero);
+        await Future<void>.delayed(Duration.zero);
+
+        expect(task.status, TransferStatus.interrupted);
+        expect(runs, 1);
+      });
+
+      test('stays cancelled when the user cancels it meanwhile', () async {
+        final gate = Completer<void>();
+        var runs = 0;
+        final queue = TransferQueue(
+          executor: (task, handle) async {
+            runs++;
+            await gate.future;
+            handle.throwIfCancelled();
+          },
+        );
+        addTearDown(queue.dispose);
+        final task = queue.enqueueDownload(remotePath: '/a', name: 'a');
+        await Future<void>.delayed(Duration.zero);
+
+        queue.interruptAll();
+        queue.resumeInterrupted();
+        queue.cancel(task.id);
+        gate.complete();
+        await Future<void>.delayed(Duration.zero);
+        await Future<void>.delayed(Duration.zero);
+
+        expect(task.status, TransferStatus.cancelled);
+        expect(runs, 1);
+      });
+    });
+
     test('only the ones picked are interrupted, resumed or failed', () async {
       final release = Completer<void>();
       final queue = TransferQueue(

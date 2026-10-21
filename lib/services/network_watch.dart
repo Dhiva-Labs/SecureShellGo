@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:io';
 
+import 'package:flutter/foundation.dart' show visibleForTesting;
 import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart' show AppLifecycleListener;
 
@@ -77,6 +78,13 @@ class DefaultNetworkTracker {
     if (_current != network) return null;
     _current = null;
     return NetworkEvent.lost;
+  }
+
+  /// Forgets everything, so the next report is a starting point again — as
+  /// it is when the callback is registered afresh.
+  void reset() {
+    _current = null;
+    _seen = false;
   }
 }
 
@@ -203,6 +211,7 @@ class PlatformNetworkWatch implements NetworkWatch {
     _platform = null;
     _poll?.cancel();
     _poll = null;
+    _tracker.reset();
     _interfaceTracker.reset();
     _wake.reset();
   }
@@ -242,14 +251,50 @@ class PlatformNetworkWatch implements NetworkWatch {
     _events.add(event);
   }
 
-  /// Every non-loopback address on the machine, sorted, as one string.
-  static Future<String> interfaceFingerprint() async {
-    final interfaces = await NetworkInterface.list();
-    final addresses = [
+  /// The addresses that say which network this machine is on, sorted, as
+  /// one string. See [fingerprintOf].
+  static Future<String> interfaceFingerprint() async =>
+      fingerprintOf(await NetworkInterface.list());
+
+  /// [interfaceFingerprint] of [interfaces].
+  ///
+  /// Leaves out what changes while the network does not, because every
+  /// change here is a [NetworkEvent.changed] — which checks every link and
+  /// gives a reconnect that ran out of time a fresh schedule:
+  ///
+  /// - loopback and link-local addresses;
+  /// - the bridges of containers and virtual machines on this computer
+  ///   ([_localBridge]), which come and go as containers start and stop;
+  /// - an IPv6 address past its /64 prefix. Temporary (privacy) addresses
+  ///   are replaced every day or so within the same prefix; the prefix is
+  ///   what changes with the network.
+  @visibleForTesting
+  static String fingerprintOf(Iterable<NetworkInterface> interfaces) {
+    final entries = <String>{
       for (final interface in interfaces)
-        for (final address in interface.addresses)
-          '${interface.name}=${address.address}',
-    ]..sort();
-    return addresses.join(',');
+        if (!_localBridge.hasMatch(interface.name))
+          for (final address in interface.addresses)
+            if (!address.isLoopback && !address.isLinkLocal)
+              '${interface.name}=${_networkPart(address)}',
+    };
+    return (entries.toList()..sort()).join(',');
+  }
+
+  /// Interfaces that only reach containers and virtual machines on this
+  /// computer: Docker's, Podman's, Kubernetes CNI's, libvirt's, LXC's and
+  /// LXD's, Incus's, VirtualBox's and VMware's host-only ones on Linux, and
+  /// WSL's and Hyper-V's Default Switch on Windows. A VPN is not one of
+  /// them: one coming up is a change of network.
+  static final RegExp _localBridge = RegExp(
+    r'^(docker\d|br-[0-9a-f]{12}$|veth|cni\d|flannel\.|cali[0-9a-f]|podman\d|'
+    r'virbr\d|lxcbr\d|lxdbr\d|incusbr\d|vboxnet\d|vmnet\d|'
+    r'vEthernet \((WSL|Default Switch))',
+  );
+
+  static String _networkPart(InternetAddress address) {
+    if (address.type != InternetAddressType.IPv6) return address.address;
+    final prefix = address.rawAddress.take(8);
+    return '${prefix.map((b) => b.toRadixString(16).padLeft(2, '0')).join()}'
+        '::/64';
   }
 }

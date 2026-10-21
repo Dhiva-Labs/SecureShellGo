@@ -48,6 +48,12 @@ const persistentPlainFallbackNotice =
 const persistentScreenMissingNotice =
     'SecureShell Go: GNU screen is not installed on this server, so this '
     'shell will not survive a disconnect.';
+const persistentTmuxFailedNotice =
+    'SecureShell Go: tmux exited with an error, so this shell will not '
+    'survive a disconnect.';
+const persistentScreenFailedNotice =
+    'SecureShell Go: GNU screen exited with an error, so this shell will not '
+    'survive a disconnect.';
 
 /// The command that runs in place of the login shell for [kind], attaching
 /// to [name] when it is already running and starting it when not — or null
@@ -57,12 +63,19 @@ const persistentScreenMissingNotice =
 /// is missing too, the login shell, after one line saying why.
 /// screen: `screen -dRR name` (reattach here, detaching it anywhere else,
 /// or start it); when screen is missing, the login shell and the line.
+///
+/// tmux and screen are run, not `exec`ed, so that one which is there but
+/// fails — a tmux whose server speaks another protocol version, a screen
+/// that cannot open the terminal — still leaves a shell: the login shell,
+/// after a line saying so. Otherwise the session would show "Shell ended",
+/// and Restart would run the same failing command again. One that ends
+/// well — a detach, the last window closed — ends the channel as before.
 String? persistentShellCommand(PersistentSession kind, String name) {
   final quoted = posixSingleQuote(name);
   const has = 'command -v';
   const quiet = '>/dev/null 2>&1';
-  final tmux = 'exec tmux new -A -s $quoted';
-  final screen = 'exec screen -dRR $quoted';
+  final tmux = 'tmux new -A -s $quoted && exit';
+  final screen = 'screen -dRR $quoted && exit';
   const plain = r'exec "${SHELL:-/bin/sh}" -l';
   String say(String notice) => 'echo ${posixSingleQuote(notice)}';
 
@@ -71,12 +84,15 @@ String? persistentShellCommand(PersistentSession kind, String name) {
     case PersistentSession.off:
       return null;
     case PersistentSession.tmux:
-      script = 'if $has tmux $quiet; then $tmux; fi; '
+      script = 'if $has tmux $quiet; then $tmux; '
+          '${say(persistentTmuxFailedNotice)}; $plain; fi; '
           'if $has screen $quiet; then '
-          '${say(persistentScreenFallbackNotice)}; $screen; fi; '
+          '${say(persistentScreenFallbackNotice)}; $screen; '
+          '${say(persistentScreenFailedNotice)}; $plain; fi; '
           '${say(persistentPlainFallbackNotice)}; $plain';
     case PersistentSession.screen:
-      script = 'if $has screen $quiet; then $screen; fi; '
+      script = 'if $has screen $quiet; then $screen; '
+          '${say(persistentScreenFailedNotice)}; $plain; fi; '
           '${say(persistentScreenMissingNotice)}; $plain';
   }
   return 'exec sh -c ${posixSingleQuote(script)}';
@@ -93,6 +109,10 @@ String? persistentShellCommand(PersistentSession kind, String name) {
 /// an editor included.
 String? persistentProbeCommand(PersistentSession kind, String name) {
   final quoted = posixSingleQuote(name);
+  // tmux matches a bare target against the start of session names too, so
+  // `ssg-box-1` would find tab 10's `ssg-box-10`; `=` asks for this name and
+  // no other. (`new -A -s`, which attaches, already looks up names exactly.)
+  final exactly = posixSingleQuote('=$name');
   const quiet = '>/dev/null 2>&1';
   final String script;
   switch (kind) {
@@ -100,7 +120,7 @@ String? persistentProbeCommand(PersistentSession kind, String name) {
       return null;
     case PersistentSession.tmux:
       script = 'if command -v tmux $quiet; then '
-          'if tmux has-session -t $quoted $quiet; then echo attach; '
+          'if tmux has-session -t $exactly $quiet; then echo attach; '
           'else echo new; fi; '
           'elif command -v screen $quiet; then '
           'if screen -S $quoted -X select . $quiet; then echo attach; '

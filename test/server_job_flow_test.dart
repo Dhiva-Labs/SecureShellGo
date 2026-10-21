@@ -424,6 +424,150 @@ void main() {
     expect(task.route, TransferRoute.direct);
     expect(task.destinationPath, '/srv/big.iso');
   });
+
+  group('the manager follows each job once', () {
+    late Directory dir;
+    late ServerJobStore store;
+    late ServerJobRecord record;
+
+    setUp(() async {
+      dir = await Directory.systemTemp.createTemp('ssg_job_once');
+      store = ServerJobStore(file: File('${dir.path}/jobs.json'));
+      record = ServerJobRecord(
+        jobId: ServerSideJob.newId(),
+        stamp: 1738000000000,
+        sourceHostId: 'a',
+        sourceLabel: 'A',
+        destinationHostId: 'b',
+        destinationLabel: 'B',
+        sourcePath: '/data/big.iso',
+        destinationPath: '/srv/big.iso',
+        name: 'big.iso',
+        isDirectory: false,
+        moveSource: false,
+        overwrite: false,
+        startedAt: DateTime(2026, 10, 21),
+      );
+    });
+
+    tearDown(() => dir.delete(recursive: true));
+
+    /// The source server: every status poll says the job is still going.
+    FakeExecTransport stillRunning() => FakeExecTransport(
+          host: _host('a'),
+          respond: (command) => FakeExecSession(
+            stdout: command.contains('kill -0') ? 'RUNNING\n---\n' : '',
+          ),
+        );
+
+    Future<void> until(bool Function() done) async {
+      for (var i = 0; i < 300 && !done(); i++) {
+        await Future<void>.delayed(const Duration(milliseconds: 10));
+      }
+    }
+
+    List<TransferTask> following(ManagedSession session) => session
+        .controller.transfers.tasks
+        .where((t) => t.status.isActive)
+        .toList();
+
+    SessionManager manager({ReconnectSupport? reconnectB, _Timers? timers}) {
+      final manager = SessionManager(
+        foreground: SessionForegroundController(channel: _QuietForeground()),
+        serverJobs: store,
+        createController: (connection, resolve, resolveCreds) =>
+            SessionController(
+          connection: connection,
+          storage: _NoStorage(),
+          openFileSystem: () async => _RecordingFs({}),
+          resolveRemoteTarget: resolve,
+          resolveDestinationCredentials: (_) async => null,
+          serverJobs: store,
+          reconnect: connection.host.id == 'b' ? reconnectB : null,
+          reconnectScheduler: timers?.schedule ?? Timer.new,
+        ),
+      );
+      addTearDown(manager.closeAll);
+      return manager;
+    }
+
+    test('a job some session is already following gets no second follower',
+        () async {
+      final sessions = manager();
+      final a = sessions.open(stillRunning());
+      final b = sessions.open(FakeExecTransport(host: _host('b')));
+      await settle();
+
+      // What a copy the app has just launched looks like to the manager: a
+      // task on the source following the job, and the job in the store.
+      a.controller.resumeServerJob(record, destinationSessionId: b.id);
+      await store.save(record);
+      await until(() => following(a).single.status == TransferStatus.running);
+
+      // Any session opening — or reconnecting — looks for jobs to pick up.
+      sessions.open(FakeExecTransport(host: _host('c')));
+      await settle();
+
+      expect(following(a), hasLength(1));
+    });
+
+    test('a job handed off after both ends are back is picked up again',
+        () async {
+      await store.save(record);
+      final timers = _Timers();
+      final sessions = manager(
+        timers: timers,
+        reconnectB: ReconnectSupport(
+          loadCredentials: (_) async => const SshCredentials(password: 'x'),
+          connect: ({
+            required host,
+            required credentials,
+            required verifyHostKey,
+          }) async =>
+              FakeExecTransport(host: _host('b')),
+        ),
+      );
+      final a = sessions.open(stillRunning());
+      final destination = FakeExecTransport(host: _host('b'));
+      final b = sessions.open(destination);
+      b.controller.terminal.resize(100, 30);
+      await until(() => following(a).length == 1);
+      final first = following(a).single;
+      await until(() => first.status == TransferStatus.running);
+
+      // The destination drops and is back before the follower on A has
+      // noticed, let alone let go of the job.
+      destination.drop(const SocketException('Connection reset'));
+      await settle();
+      expect(first.status, TransferStatus.interrupted);
+      timers.fireAll();
+      await until(() => !b.controller.isClosed);
+      expect(following(a), [first], reason: 'it is still the follower');
+
+      await until(() => first.status == TransferStatus.cancelled);
+      await until(() => following(a).isNotEmpty);
+      expect(following(a).single.serverJobId, record.jobId);
+      expect(following(a).single.id, isNot(first.id));
+    });
+  });
+}
+
+/// Backoff timers a test fires by hand.
+class _Timers {
+  final List<void Function()> _pending = [];
+
+  Timer schedule(Duration delay, void Function() fire) {
+    _pending.add(fire);
+    return Timer(Duration.zero, () {});
+  }
+
+  void fireAll() {
+    final pending = List.of(_pending);
+    _pending.clear();
+    for (final fire in pending) {
+      fire();
+    }
+  }
 }
 
 Host _host(String id) => Host(
