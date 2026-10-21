@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../l10n/l10n.dart';
 import '../services/host_key_policy.dart';
 import '../theme.dart';
 
@@ -46,6 +47,7 @@ class _HostKeyDialogState extends State<_HostKeyDialog> {
   Widget build(BuildContext context) {
     final prompt = widget.prompt;
     final theme = Theme.of(context);
+    final l10n = context.l10n;
 
     return AlertDialog(
       icon: Icon(
@@ -54,7 +56,7 @@ class _HostKeyDialogState extends State<_HostKeyDialog> {
         size: 32,
       ),
       title: Text(
-        _isChanged ? 'Host key has CHANGED' : 'Unknown host',
+        _isChanged ? l10n.hostKeyChangedTitle : l10n.hostKeyUnknownTitle,
         style: TextStyle(color: _isChanged ? theme.colorScheme.error : null),
       ),
       content: SingleChildScrollView(
@@ -73,53 +75,51 @@ class _HostKeyDialogState extends State<_HostKeyDialog> {
                     color: theme.colorScheme.error.withValues(alpha: 0.5),
                   ),
                 ),
-                child: const Text(
-                  'It is possible that someone is eavesdropping on you right '
-                  'now (a machine-in-the-middle attack). The key offered by '
-                  'the server does not match the one you trusted before.\n\n'
-                  'It could also be innocent — the server may have been '
-                  'rebuilt or its host key rotated. Only continue if you know '
-                  'that happened.',
-                  style: TextStyle(height: 1.35),
+                child: Text(
+                  l10n.hostKeyChangedWarning,
+                  style: const TextStyle(height: 1.35),
                 ),
               ),
               const SizedBox(height: 16),
             ] else ...[
               Text(
-                'The authenticity of ${prompt.hostLabel} cannot be '
-                'established. This is the first time you are connecting'
-                '${prompt.hostHasOtherKeys ? ' with a ${prompt.keyType} key' : ''}.',
+                prompt.hostHasOtherKeys
+                    ? l10n.hostKeyUnknownBodyNewType(
+                        prompt.hostLabel,
+                        prompt.keyType,
+                      )
+                    : l10n.hostKeyUnknownBody(prompt.hostLabel),
                 style: const TextStyle(height: 1.35),
               ),
               const SizedBox(height: 8),
               Text(
-                'Compare the fingerprint below with one you obtained from a '
-                'source you trust — for example by running '
-                '`ssh-keygen -lf /etc/ssh/ssh_host_${_shortType(prompt.keyType)}_key.pub` '
-                'on the server console.',
+                l10n.hostKeyCompareHint(
+                  'ssh-keygen -lf '
+                  '/etc/ssh/ssh_host_${_shortType(prompt.keyType)}_key.pub',
+                ),
                 style: theme.textTheme.bodySmall?.copyWith(height: 1.35),
               ),
               const SizedBox(height: 16),
             ],
-            _FieldRow(label: 'Host', value: prompt.hostLabel),
-            _FieldRow(label: 'Key type', value: prompt.keyType),
+            _FieldRow(label: l10n.hostKeyFieldHost, value: prompt.hostLabel),
+            _FieldRow(label: l10n.hostKeyFieldKeyType, value: prompt.keyType),
             if (_isChanged && prompt.previous != null) ...[
               const SizedBox(height: 12),
               _FingerprintBlock(
-                label: 'Previously trusted',
+                label: l10n.hostKeyPreviouslyTrusted,
                 fingerprint: prompt.previous!.fingerprint,
                 color: theme.colorScheme.onSurfaceVariant,
               ),
               const SizedBox(height: 8),
               _FingerprintBlock(
-                label: 'Offered now',
+                label: l10n.hostKeyOfferedNow,
                 fingerprint: prompt.fingerprint,
                 color: theme.colorScheme.error,
               ),
             ] else ...[
               const SizedBox(height: 12),
               _FingerprintBlock(
-                label: 'SHA256 fingerprint',
+                label: l10n.hostKeyFingerprint,
                 fingerprint: prompt.fingerprint,
                 color: theme.colorScheme.primary,
               ),
@@ -132,9 +132,9 @@ class _HostKeyDialogState extends State<_HostKeyDialog> {
                     setState(() => _acknowledgedRisk = value ?? false),
                 contentPadding: EdgeInsets.zero,
                 controlAffinity: ListTileControlAffinity.leading,
-                title: const Text(
-                  'I verified this new key with the server owner',
-                  style: TextStyle(fontSize: 13),
+                title: Text(
+                  l10n.hostKeyVerifiedNewKey,
+                  style: const TextStyle(fontSize: 13),
                 ),
               ),
             ],
@@ -144,7 +144,7 @@ class _HostKeyDialogState extends State<_HostKeyDialog> {
       actions: [
         TextButton(
           onPressed: () => Navigator.of(context).pop(false),
-          child: Text(_isChanged ? 'Abort connection' : 'Reject'),
+          child: Text(_isChanged ? l10n.hostKeyAbort : l10n.hostKeyReject),
         ),
         if (_isChanged)
           FilledButton(
@@ -155,13 +155,13 @@ class _HostKeyDialogState extends State<_HostKeyDialog> {
             onPressed: _acknowledgedRisk
                 ? () => Navigator.of(context).pop(true)
                 : null,
-            child: const Text('Trust new key'),
+            child: Text(l10n.hostKeyTrustNewKey),
           )
         else
           FilledButton(
             style: FilledButton.styleFrom(minimumSize: const Size(0, 48)),
             onPressed: () => Navigator.of(context).pop(true),
-            child: const Text('Accept & save'),
+            child: Text(l10n.hostKeyAcceptAndSave),
           ),
       ],
     );
@@ -236,7 +236,7 @@ class _FingerprintBlock extends StatelessWidget {
           onTap: () {
             Clipboard.setData(ClipboardData(text: fingerprint));
             ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(content: Text('Fingerprint copied')),
+              SnackBar(content: Text(context.l10n.hostKeyFingerprintCopied)),
             );
           },
           borderRadius: BorderRadius.circular(6),

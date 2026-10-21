@@ -1,5 +1,8 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_localizations/flutter_localizations.dart';
+import 'package:intl/intl.dart';
 
+import '../l10n/l10n.dart';
 import '../models/app_settings.dart';
 import '../models/host.dart';
 import '../services/host_grouping.dart';
@@ -494,7 +497,7 @@ class _AwsHostRow extends StatelessWidget {
                   child: Text(
                     host.lastConnectedAt == null
                         ? '—'
-                        : _formatLastConnected(host.lastConnectedAt!),
+                        : _formatLastConnected(context, host.lastConnectedAt!),
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: mutedStyle,
@@ -511,7 +514,8 @@ class _AwsHostRow extends StatelessWidget {
                               child: CircularProgressIndicator(strokeWidth: 2),
                             )
                           : IconButton(
-                              tooltip: 'More',
+                              tooltip: MaterialLocalizations.of(context)
+                                  .moreButtonTooltip,
                               padding: EdgeInsets.zero,
                               iconSize: 17,
                               visualDensity: VisualDensity.compact,
@@ -671,7 +675,10 @@ class _GcpHostCard extends StatelessWidget {
                         Padding(
                           padding: const EdgeInsets.only(top: 6),
                           child: Text(
-                            _formatLastConnected(host.lastConnectedAt!),
+                            _formatLastConnected(
+                              context,
+                              host.lastConnectedAt!,
+                            ),
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                             style: TextStyle(
@@ -696,7 +703,7 @@ class _GcpHostCard extends StatelessWidget {
                   )
                 else
                   IconButton(
-                    tooltip: 'More',
+                    tooltip: MaterialLocalizations.of(context).moreButtonTooltip,
                     icon: const Icon(Icons.more_vert, size: 20),
                     onPressed: onMore,
                     visualDensity: VisualDensity.compact,
@@ -750,7 +757,7 @@ class _StyledGroupHeader extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
-    final rawName = section.group ?? 'Ungrouped';
+    final rawName = section.group ?? context.l10n.hostListUngrouped;
     final count = section.hosts.length;
 
     final EdgeInsets padding;
@@ -885,7 +892,7 @@ class _GroupOverflowMenu extends StatelessWidget {
       return const SizedBox(width: 40);
     }
     return PopupMenuButton<_GroupMenuAction>(
-      tooltip: 'Group actions',
+      tooltip: context.l10n.hostListGroupActions,
       icon: const Icon(Icons.more_vert, size: 20),
       onSelected: (action) => switch (action) {
         _GroupMenuAction.run => onRunCommand?.call(),
@@ -894,19 +901,19 @@ class _GroupOverflowMenu extends StatelessWidget {
       },
       itemBuilder: (context) => [
         if (onRunCommand != null)
-          const PopupMenuItem(
+          PopupMenuItem(
             value: _GroupMenuAction.run,
-            child: Text('Run command on group…'),
+            child: Text(context.l10n.hostListRunCommandOnGroup),
           ),
         if (onRename != null)
-          const PopupMenuItem(
+          PopupMenuItem(
             value: _GroupMenuAction.rename,
-            child: Text('Rename group'),
+            child: Text(context.l10n.hostGroupRename),
           ),
         if (onDelete != null)
-          const PopupMenuItem(
+          PopupMenuItem(
             value: _GroupMenuAction.delete,
-            child: Text('Delete group'),
+            child: Text(context.l10n.hostListDeleteGroup),
           ),
       ],
     );
@@ -983,8 +990,9 @@ class _ListHostRow extends StatelessWidget {
             ),
             if (host.lastConnectedAt != null)
               Text(
-                'Last connected '
-                '${_formatLastConnected(host.lastConnectedAt!)}',
+                context.l10n.hostListLastConnected(
+                  _formatLastConnected(context, host.lastConnectedAt!),
+                ),
                 style: TextStyle(
                   fontSize: 11,
                   color: Theme.of(context).colorScheme.onSurfaceVariant,
@@ -1001,7 +1009,7 @@ class _ListHostRow extends StatelessWidget {
                 child: CircularProgressIndicator(strokeWidth: 2),
               )
             : IconButton(
-                tooltip: 'More',
+                tooltip: MaterialLocalizations.of(context).moreButtonTooltip,
                 icon: const Icon(Icons.more_vert),
                 onPressed: onMore,
               ),
@@ -1081,7 +1089,10 @@ class _AuroraHostCard extends StatelessWidget {
                         Padding(
                           padding: const EdgeInsets.only(top: 4),
                           child: Text(
-                            _formatLastConnected(host.lastConnectedAt!),
+                            _formatLastConnected(
+                              context,
+                              host.lastConnectedAt!,
+                            ),
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                             style: TextStyle(
@@ -1106,7 +1117,7 @@ class _AuroraHostCard extends StatelessWidget {
                   )
                 else
                   IconButton(
-                    tooltip: 'More',
+                    tooltip: MaterialLocalizations.of(context).moreButtonTooltip,
                     icon: const Icon(Icons.more_vert, size: 20),
                     onPressed: onMore,
                     visualDensity: VisualDensity.compact,
@@ -1163,26 +1174,49 @@ Widget _hostAvatar(
   );
 }
 
-/// `today at 14:32`, `26 Jul at 14:32` this year, `26 Jul 2024` before that —
-/// ported from `host_list_screen.dart`'s pre-wave-2 top-level function of the
-/// same name, used by every row/card variant above.
-String _formatLastConnected(DateTime time) {
+/// `today at 14:32`, `Jul 26 at 14:32` this year, `Jul 26, 2024` before
+/// that, in the current language — ported from `host_list_screen.dart`'s
+/// pre-wave-2 top-level function of the same name, used by every row/card
+/// variant above.
+String _formatLastConnected(BuildContext context, DateTime time) {
+  final l10n = context.l10n;
   final local = time.toLocal();
-  const months = [
-    'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
-    'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
-  ];
   final now = DateTime.now();
   final hh = local.hour.toString().padLeft(2, '0');
   final mm = local.minute.toString().padLeft(2, '0');
 
   if (local.year == now.year && local.month == now.month && local.day == now.day) {
-    return 'today at $hh:$mm';
+    return l10n.hostListLastConnectedToday('$hh:$mm');
   }
-  if (local.year == now.year) {
-    return '${local.day} ${months[local.month - 1]} at $hh:$mm';
+  final date = _formatDate(context, local, withYear: local.year != now.year);
+  if (local.year == now.year) return l10n.hostListLastConnectedOn(date, '$hh:$mm');
+  return date;
+}
+
+/// The month and day (and [withYear], the year) the way the current
+/// language writes them: `Jul 26`, `26. Juli`, `7月26日`.
+///
+/// `intl`'s calendar data is loaded, for every language at once, by
+/// [GlobalMaterialLocalizations] — the app installs it with its own
+/// translations. Without it, as in a widget test's bare MaterialApp, `intl`
+/// has none, not even for English, and throws; such a screen is in English
+/// anyway, so this writes the date the English way by hand.
+String _formatDate(
+  BuildContext context,
+  DateTime date, {
+  required bool withYear,
+}) {
+  if (MaterialLocalizations.of(context) is GlobalMaterialLocalizations) {
+    final locale = context.l10n.localeName;
+    return (withYear ? DateFormat.yMMMd(locale) : DateFormat.MMMd(locale))
+        .format(date);
   }
-  return '${local.day} ${months[local.month - 1]} ${local.year}';
+  const months = [
+    'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+    'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
+  ];
+  final monthDay = '${months[date.month - 1]} ${date.day}';
+  return withYear ? '$monthDay, ${date.year}' : monthDay;
 }
 
 /// The right-click handler for one host, when the screen has a menu for it.

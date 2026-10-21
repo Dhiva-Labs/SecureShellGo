@@ -4,6 +4,7 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../l10n/l10n.dart';
 import '../models/host.dart';
 import '../models/snippet.dart';
 import '../services/app_lock_controller.dart';
@@ -368,8 +369,8 @@ class _HostListScreenState extends State<HostListScreen> {
     if (credentials == null) {
       setState(() => _connectingHostId = null);
       await _showConnectError(
-        'No saved credentials for this host.',
-        details: 'Edit the host to enter its password or key again.',
+        context.l10n.hostListNoCredentials,
+        details: context.l10n.hostListNoCredentialsDetails,
         onEdit: () => _editHost(host),
       );
       return;
@@ -420,7 +421,7 @@ class _HostListScreenState extends State<HostListScreen> {
       if (!mounted) return;
       setState(() => _connectingHostId = null);
       await _showConnectError(
-        'Something went wrong while connecting.',
+        context.l10n.hostConnectUnexpectedError,
         details: e.toString(),
       );
     }
@@ -434,32 +435,32 @@ class _HostListScreenState extends State<HostListScreen> {
   Future<_ExistingSession?> _askAboutExistingSession(Host host, int count) {
     return showDialog<_ExistingSession>(
       context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Already connected'),
-        content: Text(
-          count == 1
-              ? 'There is already a session open on ${host.displayName}.'
-              : 'There are already $count sessions open on '
-                  '${host.displayName}.',
-          style: const TextStyle(height: 1.35),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(),
-            child: const Text('Cancel'),
+      builder: (context) {
+        final l10n = context.l10n;
+        return AlertDialog(
+          title: Text(l10n.hostListAlreadyConnectedTitle),
+          content: Text(
+            l10n.hostListAlreadyConnectedBody(count, host.displayName),
+            style: const TextStyle(height: 1.35),
           ),
-          TextButton(
-            onPressed: () =>
-                Navigator.of(context).pop(_ExistingSession.openAnother),
-            child: const Text('New session'),
-          ),
-          FilledButton(
-            onPressed: () =>
-                Navigator.of(context).pop(_ExistingSession.switchToIt),
-            child: const Text('Switch to it'),
-          ),
-        ],
-      ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: Text(MaterialLocalizations.of(context).cancelButtonLabel),
+            ),
+            TextButton(
+              onPressed: () =>
+                  Navigator.of(context).pop(_ExistingSession.openAnother),
+              child: Text(l10n.hostListNewSession),
+            ),
+            FilledButton(
+              onPressed: () =>
+                  Navigator.of(context).pop(_ExistingSession.switchToIt),
+              child: Text(l10n.hostListSwitchToSession),
+            ),
+          ],
+        );
+      },
     );
   }
 
@@ -474,7 +475,7 @@ class _HostListScreenState extends State<HostListScreen> {
         final theme = Theme.of(context);
         return AlertDialog(
           icon: Icon(Icons.error_outline, color: theme.colorScheme.error),
-          title: const Text('Could not connect'),
+          title: Text(context.l10n.hostListConnectErrorTitle),
           content: SingleChildScrollView(
             child: Column(
               mainAxisSize: MainAxisSize.min,
@@ -501,11 +502,11 @@ class _HostListScreenState extends State<HostListScreen> {
                   Navigator.of(context).pop();
                   onEdit();
                 },
-                child: const Text('Edit host'),
+                child: Text(context.l10n.hostListEditHostButton),
               ),
             FilledButton(
               onPressed: () => Navigator.of(context).pop(),
-              child: const Text('OK'),
+              child: Text(MaterialLocalizations.of(context).okButtonLabel),
             ),
           ],
         );
@@ -520,55 +521,58 @@ class _HostListScreenState extends State<HostListScreen> {
     await Clipboard.setData(ClipboardData(text: host.target));
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('Copied ${host.target}')),
+      SnackBar(content: Text(context.l10n.hostListCopiedTarget(host.target))),
     );
   }
 
   /// Everything that can be done to one saved host, for the sheet a
   /// long-press opens and the menu a right-click opens alike.
-  List<_HostAction> _hostActions(Host host) => [
-        _HostAction(
-          icon: Icons.checklist_outlined,
-          title: 'Select',
-          subtitle: 'Pick more hosts for a fleet-wide action',
-          run: () => _enterSelectionMode(host),
-        ),
-        _HostAction(
-          icon: Icons.folder_outlined,
-          title: 'Browse files',
-          subtitle: 'Connects straight into the file browser',
-          run: () => _connect(host, view: SessionView.files),
-        ),
-        _HostAction(
-          icon: Icons.edit_outlined,
-          title: 'Edit',
-          run: () => _editHost(host),
-        ),
-        _HostAction(
-          icon: Icons.drive_file_move_outline,
-          title: 'Move to group…',
-          subtitle: host.group ?? 'Ungrouped',
-          run: () => unawaited(_reassignGroup(host)),
-        ),
-        _HostAction(
-          icon: Icons.copy_all_outlined,
-          title: 'Copy user@host',
-          subtitle: host.target,
-          run: () => unawaited(_copyTarget(host)),
-        ),
-        _HostAction(
-          icon: Icons.key_off_outlined,
-          title: 'Forget host keys',
-          subtitle: 'Undoes trust-on-first-use for this server',
-          run: () => _forgetHostKeys(host),
-        ),
-        _HostAction(
-          icon: Icons.delete_outline,
-          title: 'Delete',
-          destructive: true,
-          run: () => _deleteHost(host),
-        ),
-      ];
+  List<_HostAction> _hostActions(Host host) {
+    final l10n = context.l10n;
+    return [
+      _HostAction(
+        icon: Icons.checklist_outlined,
+        title: l10n.hostListActionSelect,
+        subtitle: l10n.hostListActionSelectSubtitle,
+        run: () => _enterSelectionMode(host),
+      ),
+      _HostAction(
+        icon: Icons.folder_outlined,
+        title: l10n.hostListActionBrowseFiles,
+        subtitle: l10n.hostListActionBrowseFilesSubtitle,
+        run: () => _connect(host, view: SessionView.files),
+      ),
+      _HostAction(
+        icon: Icons.edit_outlined,
+        title: l10n.hostListActionEdit,
+        run: () => _editHost(host),
+      ),
+      _HostAction(
+        icon: Icons.drive_file_move_outline,
+        title: l10n.hostListActionMoveToGroup,
+        subtitle: host.group ?? l10n.hostListUngrouped,
+        run: () => unawaited(_reassignGroup(host)),
+      ),
+      _HostAction(
+        icon: Icons.copy_all_outlined,
+        title: l10n.hostListActionCopyTarget,
+        subtitle: host.target,
+        run: () => unawaited(_copyTarget(host)),
+      ),
+      _HostAction(
+        icon: Icons.key_off_outlined,
+        title: l10n.hostListActionForgetKeys,
+        subtitle: l10n.hostListActionForgetKeysSubtitle,
+        run: () => _forgetHostKeys(host),
+      ),
+      _HostAction(
+        icon: Icons.delete_outline,
+        title: MaterialLocalizations.of(context).deleteButtonTooltip,
+        destructive: true,
+        run: () => _deleteHost(host),
+      ),
+    ];
+  }
 
   void _showHostActions(Host host) {
     final actions = _hostActions(host);
@@ -762,10 +766,10 @@ class _HostListScreenState extends State<HostListScreen> {
     final selected = await showDialog<String>(
       context: context,
       builder: (context) => SimpleDialog(
-        title: Text('Move "${host.displayName}" to'),
+        title: Text(context.l10n.hostListMoveHostTitle(host.displayName)),
         children: [
           _GroupPickOption(
-            label: 'Ungrouped',
+            label: context.l10n.hostListUngrouped,
             selected: host.group == null,
             // Empty string stands for Ungrouped here — distinct from `null`,
             // which showDialog already uses to mean "dismissed".
@@ -778,7 +782,7 @@ class _HostListScreenState extends State<HostListScreen> {
               onTap: () => Navigator.of(context).pop(name),
             ),
           _GroupPickOption(
-            label: 'New group…',
+            label: context.l10n.hostGroupNewOption,
             selected: false,
             onTap: () => Navigator.of(context).pop(_newGroupDialogSentinel),
           ),
@@ -789,7 +793,9 @@ class _HostListScreenState extends State<HostListScreen> {
 
     String? newGroup;
     if (selected == _newGroupDialogSentinel) {
-      final created = await _promptGroupName(title: 'New group');
+      final created = await _promptGroupName(
+        title: context.l10n.hostGroupNewTitle,
+      );
       if (created == null || !mounted) return;
       newGroup = created;
     } else if (selected.isEmpty) {
@@ -820,7 +826,9 @@ class _HostListScreenState extends State<HostListScreen> {
           controller: controller,
           autofocus: true,
           textCapitalization: TextCapitalization.words,
-          decoration: const InputDecoration(labelText: 'Group name'),
+          decoration: InputDecoration(
+            labelText: context.l10n.hostGroupNameLabel,
+          ),
           onSubmitted: (value) {
             final trimmed = value.trim();
             if (trimmed.isNotEmpty) Navigator.of(context).pop(trimmed);
@@ -829,14 +837,14 @@ class _HostListScreenState extends State<HostListScreen> {
         actions: [
           TextButton(
             onPressed: () => Navigator.of(context).pop(),
-            child: const Text('Cancel'),
+            child: Text(MaterialLocalizations.of(context).cancelButtonLabel),
           ),
           FilledButton(
             onPressed: () {
               final trimmed = controller.text.trim();
               if (trimmed.isNotEmpty) Navigator.of(context).pop(trimmed);
             },
-            child: const Text('Save'),
+            child: Text(MaterialLocalizations.of(context).saveButtonLabel),
           ),
         ],
       ),
@@ -845,7 +853,7 @@ class _HostListScreenState extends State<HostListScreen> {
 
   Future<void> _renameGroup(String name) async {
     final newName = await _promptGroupName(
-      title: 'Rename group',
+      title: context.l10n.hostGroupRename,
       initialName: name,
     );
     if (newName == null || newName == name || !mounted) return;
@@ -865,23 +873,22 @@ class _HostListScreenState extends State<HostListScreen> {
       builder: (context) {
         final theme = Theme.of(context);
         return AlertDialog(
-          title: const Text('Delete group?'),
+          title: Text(context.l10n.hostListDeleteGroupTitle),
           content: Text(
-            'Removes "$name". Its hosts move to Ungrouped — nothing is '
-            'deleted.',
+            context.l10n.hostListDeleteGroupBody(name),
             style: const TextStyle(height: 1.35),
           ),
           actions: [
             TextButton(
               onPressed: () => Navigator.of(context).pop(false),
-              child: const Text('Cancel'),
+              child: Text(MaterialLocalizations.of(context).cancelButtonLabel),
             ),
             FilledButton(
               style: FilledButton.styleFrom(
                 backgroundColor: theme.colorScheme.error,
               ),
               onPressed: () => Navigator.of(context).pop(true),
-              child: const Text('Delete'),
+              child: Text(MaterialLocalizations.of(context).deleteButtonTooltip),
             ),
           ],
         );
@@ -927,19 +934,18 @@ class _HostListScreenState extends State<HostListScreen> {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('Forget host keys?'),
+        title: Text(context.l10n.hostListForgetKeysTitle),
         content: Text(
-          'The next connection to ${host.hostname}:${host.port} will be '
-          'treated as first-use again and ask you to verify its key.',
+          context.l10n.hostListForgetKeysBody('${host.hostname}:${host.port}'),
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.of(context).pop(false),
-            child: const Text('Cancel'),
+            child: Text(MaterialLocalizations.of(context).cancelButtonLabel),
           ),
           FilledButton(
             onPressed: () => Navigator.of(context).pop(true),
-            child: const Text('Forget'),
+            child: Text(context.l10n.hostListForgetButton),
           ),
         ],
       ),
@@ -949,7 +955,9 @@ class _HostListScreenState extends State<HostListScreen> {
     await widget.knownHosts.forgetHost(host.hostname, host.port);
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('Forgot host keys for ${host.displayName}')),
+      SnackBar(
+        content: Text(context.l10n.hostListForgotKeys(host.displayName)),
+      ),
     );
   }
 
@@ -961,14 +969,13 @@ class _HostListScreenState extends State<HostListScreen> {
         builder: (context, setDialogState) {
           final theme = Theme.of(context);
           return AlertDialog(
-            title: const Text('Delete host?'),
+            title: Text(context.l10n.hostListDeleteHostTitle),
             content: Column(
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  'This removes "${host.displayName}" and its saved password '
-                  'or key. This cannot be undone.',
+                  context.l10n.hostListDeleteHostBody(host.displayName),
                   style: const TextStyle(height: 1.35),
                 ),
                 CheckboxListTile(
@@ -977,9 +984,9 @@ class _HostListScreenState extends State<HostListScreen> {
                       setDialogState(() => forgetKeys = value ?? false),
                   contentPadding: EdgeInsets.zero,
                   controlAffinity: ListTileControlAffinity.leading,
-                  title: const Text(
-                    'Also forget its trusted host key(s)',
-                    style: TextStyle(fontSize: 13),
+                  title: Text(
+                    context.l10n.hostListDeleteHostForgetKeys,
+                    style: const TextStyle(fontSize: 13),
                   ),
                 ),
               ],
@@ -987,14 +994,18 @@ class _HostListScreenState extends State<HostListScreen> {
             actions: [
               TextButton(
                 onPressed: () => Navigator.of(context).pop(false),
-                child: const Text('Cancel'),
+                child: Text(
+                  MaterialLocalizations.of(context).cancelButtonLabel,
+                ),
               ),
               FilledButton(
                 style: FilledButton.styleFrom(
                   backgroundColor: theme.colorScheme.error,
                 ),
                 onPressed: () => Navigator.of(context).pop(true),
-                child: const Text('Delete'),
+                child: Text(
+                  MaterialLocalizations.of(context).deleteButtonTooltip,
+                ),
               ),
             ],
           );
@@ -1110,6 +1121,7 @@ class _HostListScreenState extends State<HostListScreen> {
     final active = widget.sessions.active;
     final sessionActive = active != null && !active.isClosed;
     final sshConfig = _hasSshConfigFile(context);
+    final l10n = context.l10n;
 
     final items = <PaletteItem>[
       for (final host in hosts)
@@ -1125,29 +1137,29 @@ class _HostListScreenState extends State<HostListScreen> {
           title: snippet.name,
           subtitle: snippet.command,
           enabled: sessionActive,
-          hint: sessionActive ? null : 'Open a session first',
+          hint: sessionActive ? null : l10n.hostListPaletteNeedsSession,
           onSelect: () => _runSnippetFromPalette(snippet),
         ),
       PaletteItem(
         kind: PaletteItemKind.action,
-        title: 'New host',
+        title: l10n.hostListPaletteNewHost,
         onSelect: () => unawaited(_addHost()),
       ),
       if (sshConfig)
         PaletteItem(
           kind: PaletteItemKind.action,
-          title: 'Import from ssh config',
+          title: l10n.hostListPaletteImportSshConfig,
           onSelect: () => unawaited(_importSshConfig()),
         ),
       if (widget.tunnels != null)
         PaletteItem(
           kind: PaletteItemKind.action,
-          title: 'Tunnels',
+          title: l10n.hostListTunnels,
           onSelect: () => unawaited(_openTunnels()),
         ),
       PaletteItem(
         kind: PaletteItemKind.action,
-        title: 'Settings',
+        title: l10n.hostListSettings,
         onSelect: _openSettings,
       ),
     ];
@@ -1170,6 +1182,7 @@ class _HostListScreenState extends State<HostListScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = context.l10n;
     final sshConfig = _hasSshConfigFile(context);
     final pinHeader =
         MediaQuery.sizeOf(context).height >= _pinnedHeaderMinHeight;
@@ -1225,41 +1238,42 @@ class _HostListScreenState extends State<HostListScreen> {
                 : AppBar(
                     // Shrinks rather than truncating to "SecureShell …" on a
                     // narrow phone with large text.
-                    title: const FittedBox(
+                    title: FittedBox(
                       fit: BoxFit.scaleDown,
                       alignment: AlignmentDirectional.centerStart,
-                      child: Text('SecureShell Go'),
+                      child: Text(l10n.appTitle),
                     ),
                     actions: [
                       IconButton(
-                        tooltip: 'Select hosts',
+                        tooltip: l10n.hostListSelectHosts,
                         icon: const Icon(Icons.checklist_outlined),
                         onPressed: () => _enterSelectionMode(),
                       ),
                       if (sshConfig)
                         PopupMenuButton<_HostListMenuAction>(
-                          tooltip: 'More',
+                          tooltip:
+                              MaterialLocalizations.of(context).moreButtonTooltip,
                           onSelected: (action) {
                             switch (action) {
                               case _HostListMenuAction.importSshConfig:
                                 unawaited(_importSshConfig());
                             }
                           },
-                          itemBuilder: (context) => const [
+                          itemBuilder: (context) => [
                             PopupMenuItem(
                               value: _HostListMenuAction.importSshConfig,
-                              child: Text('Import from ~/.ssh/config'),
+                              child: Text(l10n.sshConfigImportTitle),
                             ),
                           ],
                         ),
                       if (widget.tunnels != null)
                         IconButton(
-                          tooltip: 'Tunnels',
+                          tooltip: l10n.hostListTunnels,
                           icon: const Icon(Icons.swap_horiz),
                           onPressed: () => unawaited(_openTunnels()),
                         ),
                       IconButton(
-                        tooltip: 'Settings',
+                        tooltip: l10n.hostListSettings,
                         icon: const Icon(Icons.settings_outlined),
                         onPressed: _openSettings,
                       ),
@@ -1296,7 +1310,7 @@ class _HostListScreenState extends State<HostListScreen> {
                 ? null
                 : FloatingActionButton(
                     onPressed: _addHost,
-                    tooltip: 'Add host',
+                    tooltip: l10n.hostListAddHost,
                     child: const Icon(Icons.add),
                   ),
           ),
@@ -1310,23 +1324,26 @@ class _HostListScreenState extends State<HostListScreen> {
   /// the fleet actions: run a command, push a file.
   AppBar _buildSelectionAppBar() {
     final count = _selectedHostIds.length;
+    final l10n = context.l10n;
     return AppBar(
       leading: IconButton(
-        tooltip: 'Cancel selection',
+        tooltip: l10n.hostListCancelSelection,
         icon: const Icon(Icons.close),
         onPressed: _exitSelectionMode,
       ),
-      title: Text(count == 0 ? 'Select hosts' : '$count selected'),
+      title: Text(
+        count == 0 ? l10n.hostListSelectHosts : l10n.hostListSelectedCount(count),
+      ),
       actions: [
         IconButton(
-          tooltip: 'Run command…',
+          tooltip: l10n.hostListRunCommand,
           icon: const Icon(Icons.terminal),
           onPressed: count == 0
               ? null
               : () => unawaited(_openFleetRun({..._selectedHostIds})),
         ),
         IconButton(
-          tooltip: 'Push file…',
+          tooltip: l10n.hostListPushFile,
           icon: const Icon(Icons.upload_file_outlined),
           onPressed: count == 0 ? null : () => unawaited(_openFleetPush()),
         ),
@@ -1347,13 +1364,13 @@ class _HostListScreenState extends State<HostListScreen> {
         decoration: InputDecoration(
           isDense: true,
           hintText: InputProfile.of(context).keyboard
-              ? 'Search hosts · $palette for everything'
-              : 'Search hosts',
+              ? context.l10n.hostListSearchHintWithShortcut(palette)
+              : context.l10n.hostListSearchHint,
           prefixIcon: const Icon(Icons.search, size: 20),
           suffixIcon: _query.isEmpty
               ? null
               : IconButton(
-                  tooltip: 'Clear',
+                  tooltip: context.l10n.hostListClearSearch,
                   icon: const Icon(Icons.clear, size: 18),
                   onPressed: () {
                     _searchController.clear();
@@ -1530,10 +1547,13 @@ class _OpenSessionsBar extends StatelessWidget {
     // connected" when one of them is dead would be the sort of small lie that
     // costs a user a command.
     final dropped = total - live;
+    final l10n = context.l10n;
     final label = live == 0
-        ? '$total session${total == 1 ? '' : 's'} · disconnected'
-        : '$live session${live == 1 ? '' : 's'} connected'
-            '${dropped > 0 ? ' · $dropped dropped' : ''}';
+        ? l10n.hostListSessionsDisconnected(total)
+        : [
+            l10n.hostListSessionsConnected(live),
+            if (dropped > 0) l10n.hostListSessionsDropped(dropped),
+          ].join(' · ');
 
     return Material(
       color: theme.colorScheme.primary.withValues(alpha: 0.12),
@@ -1560,7 +1580,10 @@ class _OpenSessionsBar extends StatelessWidget {
                   ),
                 ),
               ),
-              TextButton(onPressed: onResume, child: const Text('Resume')),
+              TextButton(
+                onPressed: onResume,
+                child: Text(l10n.hostListResume),
+              ),
             ],
           ),
         ),
@@ -1598,20 +1621,13 @@ class _TrustStoreResetBanner extends StatelessWidget {
             Expanded(
               child: Text(
                 keyringLocked
-                    ? 'The system keyring could not be read, so your trusted '
-                        'host keys cannot be checked this session. Every '
-                        'server will ask you to verify its key again, and '
-                        'keys you accept will not be saved until the keyring '
-                        'is unlocked and the app restarted.'
-                    : 'The trusted host-key store failed its integrity check '
-                        'and was reset. Every server will ask you to verify '
-                        'its key again — compare each fingerprint against the '
-                        'server itself.',
+                    ? context.l10n.hostListKeyringLocked
+                    : context.l10n.hostListTrustStoreReset,
                 style: const TextStyle(fontSize: 12.5, height: 1.35),
               ),
             ),
             IconButton(
-              tooltip: 'Dismiss',
+              tooltip: context.l10n.hostListDismiss,
               icon: const Icon(Icons.close, size: 18),
               onPressed: onDismiss,
             ),
@@ -1651,11 +1667,14 @@ class _EmptyHostList extends StatelessWidget {
               color: theme.colorScheme.onSurfaceVariant.withValues(alpha: 0.6),
             ),
             const SizedBox(height: 20),
-            Text('No saved hosts yet', style: theme.textTheme.titleLarge),
+            Text(
+              context.l10n.hostListEmptyTitle,
+              textAlign: TextAlign.center,
+              style: theme.textTheme.titleLarge,
+            ),
             const SizedBox(height: 8),
             Text(
-              'Add a server to connect to it in one tap next time. '
-              'Passwords and keys are stored encrypted on this device.',
+              context.l10n.hostListEmptyBody,
               textAlign: TextAlign.center,
               style: theme.textTheme.bodyMedium?.copyWith(
                 color: theme.colorScheme.onSurfaceVariant,
@@ -1665,7 +1684,7 @@ class _EmptyHostList extends StatelessWidget {
             FilledButton.icon(
               onPressed: onAddHost,
               icon: const Icon(Icons.add),
-              label: const Text('Add host'),
+              label: Text(context.l10n.hostListAddHost),
             ),
           ],
         ),
@@ -1696,7 +1715,11 @@ class _NoSearchResults extends StatelessWidget {
               color: theme.colorScheme.onSurfaceVariant.withValues(alpha: 0.6),
             ),
             const SizedBox(height: 16),
-            Text('No hosts match "$query"', style: theme.textTheme.titleMedium),
+            Text(
+              context.l10n.hostListNoMatches(query),
+              textAlign: TextAlign.center,
+              style: theme.textTheme.titleMedium,
+            ),
           ],
         ),
       ),

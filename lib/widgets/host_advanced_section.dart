@@ -1,6 +1,8 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
+import '../l10n/host_labels.dart';
+import '../l10n/l10n.dart';
 import '../models/host.dart';
 
 /// The per-host choices behind the "Advanced" fold of the host form.
@@ -36,17 +38,16 @@ class HostAdvancedOptions {
   bool get isDefault => this == const HostAdvancedOptions();
 
   /// The non-default choices in a few words, for the folded header.
-  String get summary {
+  String summary(AppLocalizations l10n) {
     final parts = [
-      if (transport != HostTransport.ssh) transport.label,
-      if (persistentSession != PersistentSession.off) persistentSession.label,
-      if (agentForwarding) 'agent forwarding',
+      if (transport != HostTransport.ssh) transport.localizedLabel(l10n),
+      if (persistentSession != PersistentSession.off)
+        persistentSession.localizedLabel(l10n),
+      if (agentForwarding) l10n.hostAdvancedSummaryAgent,
       if (x11Forwarding) 'X11',
-      if (legacyAlgorithms) 'legacy algorithms',
+      if (legacyAlgorithms) l10n.hostAdvancedSummaryLegacy,
     ];
-    return parts.isEmpty
-        ? 'Connection, session and forwarding'
-        : parts.join(' · ');
+    return parts.isEmpty ? l10n.hostAdvancedSummaryDefault : parts.join(' · ');
   }
 
   HostAdvancedOptions copyWith({
@@ -113,6 +114,7 @@ class HostAdvancedSection extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final desktop = _isDesktop;
+    final l10n = context.l10n;
     final theme = Theme.of(context);
     final muted = theme.textTheme.bodySmall?.copyWith(
       color: theme.colorScheme.onSurfaceVariant,
@@ -122,17 +124,17 @@ class HostAdvancedSection extends StatelessWidget {
       childrenPadding: const EdgeInsets.only(bottom: 8),
       initiallyExpanded: !options.isDefault,
       leading: const Icon(Icons.tune),
-      title: const Text('Advanced'),
-      subtitle: Text(options.summary, style: muted),
+      title: Text(l10n.hostAdvancedTitle),
+      subtitle: Text(options.summary(l10n), style: muted),
       expandedCrossAxisAlignment: CrossAxisAlignment.start,
       children: [
         const SizedBox(height: 4),
-        Text('Terminal connection', style: theme.textTheme.bodyLarge),
+        Text(l10n.hostAdvancedTransportLabel, style: theme.textTheme.bodyLarge),
         const SizedBox(height: 8),
         SegmentedButton<HostTransport>(
           segments: [
             for (final t in HostTransport.values)
-              ButtonSegment(value: t, label: Text(t.label)),
+              ButtonSegment(value: t, label: Text(t.localizedLabel(l10n))),
           ],
           selected: {options.transport},
           showSelectedIcon: false,
@@ -142,26 +144,23 @@ class HostAdvancedSection extends StatelessWidget {
         const SizedBox(height: 6),
         Text(
           options.transport == HostTransport.mosh
-              ? 'Keeps the terminal alive across network changes and sleep. '
-                  'Needs mosh-server on the host and UDP ports 60000–61000 '
-                  'open. Files and tunnels still use SSH.'
-              : 'The standard connection, used for everything.',
+              ? l10n.hostAdvancedMoshHelp
+              : l10n.hostAdvancedSshHelp,
           style: muted,
         ),
         const SizedBox(height: 16),
         DropdownButtonFormField<PersistentSession>(
           initialValue: options.persistentSession,
           isExpanded: true,
-          decoration: const InputDecoration(
-            labelText: 'Keep the shell running on the server',
-            prefixIcon: Icon(Icons.layers_outlined),
-            helperText: 'A reconnect returns to the same shell. Needs tmux '
-                'or screen on the host.',
+          decoration: InputDecoration(
+            labelText: l10n.hostAdvancedPersistentLabel,
+            prefixIcon: const Icon(Icons.layers_outlined),
+            helperText: l10n.hostAdvancedPersistentHelper,
             helperMaxLines: 5,
           ),
           items: [
             for (final p in PersistentSession.values)
-              DropdownMenuItem(value: p, child: Text(p.label)),
+              DropdownMenuItem(value: p, child: Text(p.localizedLabel(l10n))),
           ],
           onChanged: (value) {
             if (value != null) {
@@ -176,19 +175,13 @@ class HostAdvancedSection extends StatelessWidget {
           onChanged: (value) =>
               onChanged(options.copyWith(agentForwarding: value)),
           secondary: const Icon(Icons.key_outlined),
-          title: const Text('Forward SSH agent'),
+          title: Text(l10n.hostAdvancedAgentForwarding),
           // Android has no OS agent, so there the one key to forward is the
           // one this host signs in with.
           subtitle: Text(
             desktop
-                ? 'Lets git and ssh in the shell use the keys in this '
-                    'computer\'s SSH agent and this host\'s own key. Only '
-                    'for servers you trust: while you are connected, anyone '
-                    'with root there can use them.'
-                : 'Lets git and ssh in the shell use this host\'s own key, '
-                    'which stays on this device. Only for servers you trust: '
-                    'while you are connected, anyone with root there can use '
-                    'it.',
+                ? l10n.hostAdvancedAgentForwardingDesktop
+                : l10n.hostAdvancedAgentForwardingMobile,
           ),
         ),
         SwitchListTile(
@@ -201,24 +194,15 @@ class HostAdvancedSection extends StatelessWidget {
               ? (value) => onChanged(options.copyWith(x11Forwarding: value))
               : null,
           secondary: const Icon(Icons.picture_in_picture_alt_outlined),
-          title: const Text('Forward X11'),
+          title: Text(l10n.hostAdvancedX11),
           subtitle: Text(
             !desktop
-                ? 'Not available on this device: it has no X server to draw '
-                    'the windows on.'
+                ? l10n.hostAdvancedX11Unavailable
                 // Windows X servers have no untrusted mode, so there it is
                 // always ssh -Y's full access, and the row says so.
                 : defaultTargetPlatform == TargetPlatform.windows
-                    ? 'Shows the windows of graphical programs started on '
-                        'the server. Needs an X server running here, such as '
-                        'VcXsrv or X410. Only for servers you trust: while '
-                        'you are connected, the server can see and control '
-                        'every window on this display.'
-                    : 'Shows the windows of graphical programs started on '
-                        'the server. Needs an X server on this device. They '
-                        'get limited access, as with ssh -X; if this display '
-                        'cannot do that, they can see and control every '
-                        'window on it, and the terminal says so.',
+                    ? l10n.hostAdvancedX11Windows
+                    : l10n.hostAdvancedX11Desktop,
           ),
         ),
         SwitchListTile(
@@ -227,12 +211,8 @@ class HostAdvancedSection extends StatelessWidget {
           onChanged: (value) =>
               onChanged(options.copyWith(legacyAlgorithms: value)),
           secondary: const Icon(Icons.history_toggle_off),
-          title: const Text('Allow legacy algorithms'),
-          subtitle: const Text(
-            'Only for an old router or NAS that cannot connect otherwise. '
-            'Adds SHA-1 key exchange and host-key signatures and CBC '
-            'ciphers, which are weaker, for this host only.',
-          ),
+          title: Text(l10n.hostAdvancedLegacy),
+          subtitle: Text(l10n.hostAdvancedLegacyHelp),
         ),
       ],
     );

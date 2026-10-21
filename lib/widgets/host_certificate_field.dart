@@ -2,6 +2,7 @@ import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 
+import '../l10n/l10n.dart';
 import '../services/device_storage.dart';
 import '../services/ssh_certificate.dart';
 import '../theme.dart';
@@ -105,7 +106,11 @@ class _CertificateBody extends StatelessWidget {
       await showKeyFileErrorDialog(context, null, e.message);
     } catch (_) {
       if (!context.mounted) return;
-      await showKeyFileErrorDialog(context, null, 'Could not read that file.');
+      await showKeyFileErrorDialog(
+        context,
+        null,
+        context.l10n.importKeyFileUnreadable,
+      );
     }
   }
 
@@ -120,6 +125,7 @@ class _CertificateBody extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final l10n = context.l10n;
     final muted = theme.textTheme.bodySmall?.copyWith(
       color: theme.colorScheme.onSurfaceVariant,
     );
@@ -133,18 +139,20 @@ class _CertificateBody extends StatelessWidget {
         OutlinedButton.icon(
           onPressed: () => _load(context),
           icon: const Icon(Icons.file_open_outlined, size: 18),
-          label: Text(text == null ? 'Load certificate' : 'Replace'),
+          label: Text(text == null ? l10n.hostCertLoad : l10n.hostCertReplace),
         ),
         TextButton.icon(
           onPressed: () => _paste(context),
           icon: const Icon(Icons.content_paste, size: 18),
-          label: Text(text == null ? 'Paste certificate' : 'Paste another'),
+          label: Text(
+            text == null ? l10n.hostCertPaste : l10n.hostCertPasteAnother,
+          ),
         ),
         if (text != null)
           TextButton.icon(
             onPressed: () => field.onChanged(null),
             icon: const Icon(Icons.delete_outline, size: 18),
-            label: const Text('Remove'),
+            label: Text(l10n.hostCertRemove),
           ),
       ],
     );
@@ -152,17 +160,12 @@ class _CertificateBody extends StatelessWidget {
     final children = <Widget>[];
     if (text == null) {
       children.add(Text(
-        field.signsWithAgent
-            ? 'Optional. For servers that trust a certificate authority: '
-                'the -cert.pub issued for a key in your SSH agent.'
-            : 'Optional. For servers that trust a certificate authority: '
-                'the -cert.pub issued for this key (ssh-keygen -s).',
+        field.signsWithAgent ? l10n.hostCertHintAgent : l10n.hostCertHintKey,
         style: muted,
       ));
     } else if (parsed == null) {
       children.add(Text(
-        'The saved certificate can no longer be read. Remove it, or load '
-        'it again.',
+        l10n.hostCertUnreadable,
         style: muted?.copyWith(color: theme.colorScheme.error),
       ));
     } else {
@@ -187,8 +190,8 @@ class _CertificateBody extends StatelessWidget {
             Expanded(
               child: Text(
                 parsed == null
-                    ? 'Certificate'
-                    : 'Certificate · ${parsed.keyTypeLabel}',
+                    ? l10n.hostCertTitle
+                    : l10n.hostCertTitleWithType(parsed.keyTypeLabel),
                 style: theme.textTheme.bodyLarge,
               ),
             ),
@@ -229,6 +232,7 @@ class _CertificateSummary extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final l10n = context.l10n;
     final muted = theme.textTheme.bodySmall?.copyWith(
       color: theme.colorScheme.onSurfaceVariant,
     );
@@ -269,17 +273,20 @@ class _CertificateSummary extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        row('Key ID', certificate.keyId.isEmpty ? '(none)' : certificate.keyId,
-            style: mono),
         row(
-          'Principals',
-          principals.isEmpty ? '(none)' : principals.join(', '),
+          l10n.hostCertKeyId,
+          certificate.keyId.isEmpty ? l10n.hostCertNone : certificate.keyId,
+          style: mono,
+        ),
+        row(
+          l10n.hostCertPrincipals,
+          principals.isEmpty ? l10n.hostCertNone : principals.join(', '),
           style: principals.isEmpty ? warning : mono,
         ),
-        row('Valid', describeCertificateValidity(certificate)),
+        row(l10n.hostCertValidity, describeCertificateValidity(certificate, l10n)),
         if (options.isNotEmpty)
           row(
-            'Critical options',
+            l10n.hostCertCriticalOptions,
             [
               for (final MapEntry(:key, :value) in options.entries)
                 value.isEmpty ? key : '$key=$value',
@@ -287,45 +294,26 @@ class _CertificateSummary extends StatelessWidget {
             style: mono,
           ),
         row(
-          'Permits',
+          l10n.hostCertPermits,
           certificate.extensions.isEmpty
-              ? '(nothing)'
+              ? l10n.hostCertNothing
               : certificate.extensions.join(', '),
           style: mono,
         ),
         Text(
-          describeCertificateStatus(certificate, now),
+          describeCertificateStatus(certificate, now, l10n),
           style: muted?.copyWith(color: statusColor),
         ),
         if (principals.isEmpty)
-          note(
-            'It names no users. A server that trusts its CA in sshd_config '
-            '(TrustedUserCAKeys) refuses such a certificate; only an '
-            'authorized_keys cert-authority line accepts it for anyone.',
-            style: warning,
-          ),
-        if (unlisted)
-          note(
-            'It does not name the user "$user", so the server will refuse '
-            'it unless it maps principals itself.',
-          ),
+          note(l10n.hostCertNoPrincipals, style: warning),
+        if (unlisted) note(l10n.hostCertUserNotListed(user)),
         if (forced != null)
-          note(
-            'Forces a command: the server runs "$forced" instead of a shell '
-            'or anything this app asks for, so the terminal, files and '
-            'server stats may not work.',
-            style: warning,
-          ),
+          note(l10n.hostCertForcedCommand(forced), style: warning),
         if (from != null)
-          note(
-            'Only accepted from ${from.join(', ')}: the server refuses it '
-            'from any other address.',
-            style: warning,
-          ),
+          note(l10n.hostCertSourceAddresses(from.join(', ')), style: warning),
         if (unknown.isNotEmpty)
           note(
-            'It has a critical option OpenSSH does not know '
-            '(${unknown.join(', ')}), so OpenSSH servers refuse it.',
+            l10n.hostCertUnknownCriticalOptions(unknown.join(', ')),
             style: warning,
           ),
       ],
@@ -335,40 +323,46 @@ class _CertificateSummary extends StatelessWidget {
 
 /// "2026-10-21 15:04 UTC → 2027-10-20 15:09 UTC", with "always" and
 /// "forever" for the open ends.
-String describeCertificateValidity(SshCertificate certificate) {
+String describeCertificateValidity(
+  SshCertificate certificate,
+  AppLocalizations l10n,
+) {
   final after = certificate.validAfter;
   final before = certificate.validBefore;
-  if (after == null && before == null) return 'forever';
-  final from = after == null ? 'always' : formatCertificateTime(after);
-  final to = before == null ? 'forever' : formatCertificateTime(before);
-  return '$from → $to';
+  if (after == null && before == null) return l10n.hostCertValidForever;
+  final from =
+      after == null ? l10n.hostCertValidAlways : formatCertificateTime(after);
+  final to =
+      before == null ? l10n.hostCertValidForever : formatCertificateTime(before);
+  return l10n.hostCertValidRange(from, to);
 }
 
 /// One line on whether the certificate can be used now: "Valid, expires in
 /// 3 days", "Expired on …", "Not valid until …".
-String describeCertificateStatus(SshCertificate certificate, DateTime now) {
+String describeCertificateStatus(
+  SshCertificate certificate,
+  DateTime now,
+  AppLocalizations l10n,
+) {
   switch (certificate.validityAt(now)) {
     case SshCertificateValidity.expired:
-      return 'Expired on ${formatCertificateTime(certificate.validBefore!)}. '
-          'Load a renewed certificate.';
+      return l10n.hostCertExpired(
+        formatCertificateTime(certificate.validBefore!),
+      );
     case SshCertificateValidity.notYetValid:
-      return 'Not valid until '
-          '${formatCertificateTime(certificate.validAfter!)}.';
+      return l10n.hostCertNotYetValid(
+        formatCertificateTime(certificate.validAfter!),
+      );
     case SshCertificateValidity.valid:
       final before = certificate.validBefore;
-      if (before == null) return 'Valid, does not expire.';
+      if (before == null) return l10n.hostCertValidNoExpiry;
       final left = before.difference(now);
-      final String within;
-      if (left.inDays >= 2) {
-        within = '${left.inDays} days';
-      } else if (left.inHours >= 2) {
-        within = '${left.inHours} hours';
-      } else if (left.inMinutes >= 2) {
-        within = '${left.inMinutes} minutes';
-      } else {
-        within = 'a minute';
+      if (left.inDays >= 2) return l10n.hostCertExpiresInDays(left.inDays);
+      if (left.inHours >= 2) return l10n.hostCertExpiresInHours(left.inHours);
+      if (left.inMinutes >= 2) {
+        return l10n.hostCertExpiresInMinutes(left.inMinutes);
       }
-      return 'Valid, expires in $within.';
+      return l10n.hostCertExpiresInAMinute;
   }
 }
 
@@ -403,7 +397,7 @@ class _PasteCertificateDialogState extends State<_PasteCertificateDialog> {
   @override
   Widget build(BuildContext context) {
     return AlertDialog(
-      title: const Text('Paste certificate'),
+      title: Text(context.l10n.hostCertPaste),
       content: TextField(
         controller: _controller,
         autofocus: true,
@@ -425,9 +419,9 @@ class _PasteCertificateDialogState extends State<_PasteCertificateDialog> {
       actions: [
         TextButton(
           onPressed: () => Navigator.of(context).pop(),
-          child: const Text('Cancel'),
+          child: Text(MaterialLocalizations.of(context).cancelButtonLabel),
         ),
-        FilledButton(onPressed: _submit, child: const Text('Use')),
+        FilledButton(onPressed: _submit, child: Text(context.l10n.hostCertUse)),
       ],
     );
   }

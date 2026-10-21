@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import '../l10n/host_labels.dart';
+import '../l10n/l10n.dart';
 import '../models/host.dart';
 import '../services/credential_store.dart';
 import '../services/device_storage.dart';
@@ -159,7 +161,7 @@ class _QuickConnectScreenState extends State<QuickConnectScreen> {
       if (!mounted) return;
       setState(() {
         _connecting = false;
-        _error = 'Something went wrong while connecting.';
+        _error = context.l10n.hostConnectUnexpectedError;
         _errorDetails = e.toString();
       });
     }
@@ -170,7 +172,7 @@ class _QuickConnectScreenState extends State<QuickConnectScreen> {
     final host = _connectedHost;
     final credentials = _connectedCredentials;
     return Scaffold(
-      appBar: AppBar(title: const Text('Quick connect')),
+      appBar: AppBar(title: Text(context.l10n.quickConnectTitle)),
       body: SafeArea(
         child: Center(
           child: ConstrainedBox(
@@ -190,6 +192,7 @@ class _QuickConnectScreenState extends State<QuickConnectScreen> {
   }
 
   Widget _buildForm() {
+    final l10n = context.l10n;
     return AbsorbPointer(
       absorbing: _connecting,
       child: Form(
@@ -204,20 +207,20 @@ class _QuickConnectScreenState extends State<QuickConnectScreen> {
                 '${widget.target.username}@${widget.target.hostname}'
                 ':${widget.target.port}',
               ),
-              subtitle: const Text('Not saved — connecting once'),
+              subtitle: Text(l10n.quickConnectNotSaved),
             ),
             const SizedBox(height: 12),
             SegmentedButton<SshAuthMethod>(
-              segments: const [
+              segments: [
                 ButtonSegment(
                   value: SshAuthMethod.password,
-                  icon: Icon(Icons.password),
-                  label: Text('Password'),
+                  icon: const Icon(Icons.password),
+                  label: Text(SshAuthMethod.password.localizedLabel(l10n)),
                 ),
                 ButtonSegment(
                   value: SshAuthMethod.privateKey,
-                  icon: Icon(Icons.key),
-                  label: Text('Private key'),
+                  icon: const Icon(Icons.key),
+                  label: Text(SshAuthMethod.privateKey.localizedLabel(l10n)),
                 ),
               ],
               selected: {_authMethod},
@@ -232,7 +235,7 @@ class _QuickConnectScreenState extends State<QuickConnectScreen> {
                 autocorrect: false,
                 enableSuggestions: false,
                 decoration: InputDecoration(
-                  labelText: 'Password',
+                  labelText: l10n.hostPasswordLabel,
                   prefixIcon: const Icon(Icons.lock_outline),
                   suffixIcon: IconButton(
                     icon: Icon(
@@ -246,7 +249,7 @@ class _QuickConnectScreenState extends State<QuickConnectScreen> {
                   ),
                 ),
                 validator: (value) => (value == null || value.isEmpty)
-                    ? 'Required'
+                    ? l10n.hostFieldRequired
                     : null,
                 onFieldSubmitted: (_) => _connect(),
               )
@@ -270,18 +273,18 @@ class _QuickConnectScreenState extends State<QuickConnectScreen> {
                   fontFamilyFallback: AppTheme.monoFontFamilyFallback,
                   fontSize: 12,
                 ),
-                decoration: const InputDecoration(
-                  labelText: 'Private key (PEM)',
+                decoration: InputDecoration(
+                  labelText: l10n.hostPrivateKeyLabel,
                   alignLabelWithHint: true,
                   hintText: '-----BEGIN OPENSSH PRIVATE KEY-----\n...',
-                  helperText: 'OpenSSH or PEM format: RSA, ECDSA or '
-                      'ed25519. Paste it, or import a .pem file above.',
+                  helperText: l10n.hostPrivateKeyHelper,
+                  helperMaxLines: 3,
                 ),
                 validator: (value) {
                   final text = (value ?? '').trim();
-                  if (text.isEmpty) return 'Required';
+                  if (text.isEmpty) return l10n.hostFieldRequired;
                   if (!text.contains('BEGIN') || !text.contains('END')) {
-                    return 'Paste the whole key, including BEGIN/END lines';
+                    return l10n.hostPrivateKeyIncomplete;
                   }
                   return null;
                 },
@@ -293,9 +296,9 @@ class _QuickConnectScreenState extends State<QuickConnectScreen> {
                 obscureText: true,
                 autocorrect: false,
                 enableSuggestions: false,
-                decoration: const InputDecoration(
-                  labelText: 'Key passphrase (optional)',
-                  prefixIcon: Icon(Icons.lock_outline),
+                decoration: InputDecoration(
+                  labelText: l10n.hostPassphraseLabel,
+                  prefixIcon: const Icon(Icons.lock_outline),
                 ),
               ),
             ],
@@ -313,7 +316,11 @@ class _QuickConnectScreenState extends State<QuickConnectScreen> {
                       child: CircularProgressIndicator(strokeWidth: 2),
                     )
                   : const Icon(Icons.terminal),
-              label: Text(_connecting ? 'Connecting…' : 'Connect'),
+              label: Text(
+                _connecting
+                    ? l10n.quickConnectConnecting
+                    : l10n.quickConnectConnect,
+              ),
             ),
           ],
         ),
@@ -382,19 +389,16 @@ class _QuickConnectSaveOfferState extends State<QuickConnectSaveOffer> {
       context: context,
       builder: (context) => AlertDialog(
         icon: const Icon(Icons.bookmark_add_outlined),
-        title: const Text('Save this server?'),
-        content: Text(
-          'Connect to ${widget.host.target} in one tap next time, instead '
-          'of entering these details again.',
-        ),
+        title: Text(context.l10n.quickConnectSaveTitle),
+        content: Text(context.l10n.quickConnectSaveBody(widget.host.target)),
         actions: [
           TextButton(
             onPressed: () => Navigator.of(context).pop(false),
-            child: const Text('Not now'),
+            child: Text(context.l10n.quickConnectNotNow),
           ),
           FilledButton(
             onPressed: () => Navigator.of(context).pop(true),
-            child: const Text('Save host'),
+            child: Text(context.l10n.hostSaveHost),
           ),
         ],
       ),
@@ -424,8 +428,7 @@ class _QuickConnectSaveOfferState extends State<QuickConnectSaveOffer> {
         setState(() {
           _saving = false;
           _saved = true;
-          _credentialNotice = 'Host saved, but its password was not: '
-              '${e.message}';
+          _credentialNotice = context.l10n.hostCredentialNotSaved(e.message);
         });
         return;
       }
@@ -438,7 +441,9 @@ class _QuickConnectSaveOfferState extends State<QuickConnectSaveOffer> {
       if (!mounted) return;
       setState(() => _saving = false);
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Could not save this host: $e')),
+        SnackBar(
+          content: Text(context.l10n.hostSaveFailedWithReason('$e')),
+        ),
       );
     }
   }
@@ -446,6 +451,7 @@ class _QuickConnectSaveOfferState extends State<QuickConnectSaveOffer> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final l10n = context.l10n;
     return Padding(
       padding: const EdgeInsets.all(24),
       child: Column(
@@ -455,15 +461,13 @@ class _QuickConnectSaveOfferState extends State<QuickConnectSaveOffer> {
               color: theme.colorScheme.primary, size: 48),
           const SizedBox(height: 16),
           Text(
-            'Connected to ${widget.host.target}',
+            l10n.quickConnectConnectedTo(widget.host.target),
+            textAlign: TextAlign.center,
             style: theme.textTheme.titleMedium,
           ),
           const SizedBox(height: 8),
           Text(
-            _saved
-                ? 'Saved to your host list.'
-                : 'This session is open. Save this server to connect in one '
-                    'tap next time.',
+            _saved ? l10n.quickConnectSaved : l10n.quickConnectSessionOpen,
             textAlign: TextAlign.center,
             style: theme.textTheme.bodyMedium,
           ),
@@ -472,22 +476,27 @@ class _QuickConnectSaveOfferState extends State<QuickConnectSaveOffer> {
             InlineHint(icon: Icons.info_outline, text: _credentialNotice!),
           ],
           const SizedBox(height: 24),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.center,
+          // A Wrap, not a Row: in German or Russian on a small phone the two
+          // buttons are wider than the screen, and the second goes under the
+          // first rather than off the edge.
+          Wrap(
+            alignment: WrapAlignment.center,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            spacing: 12,
+            runSpacing: 8,
             children: [
               TextButton(
                 onPressed: () => Navigator.of(context).pop(),
-                child: const Text('Done'),
+                child: Text(l10n.quickConnectDone),
               ),
-              const SizedBox(width: 12),
               if (!_saved)
                 FilledButton.icon(
                   // The app theme gives every FilledButton
                   // `Size.fromHeight(48)` — an infinite minimum width — so
-                  // that buttons stacked in a column fill it. In a Row that
-                  // is an infinite width constraint and layout fails for the
-                  // whole subtree, which shows up as a page that renders its
-                  // app bar and nothing else. Same override as
+                  // that buttons stacked in a column fill it. In a Row or a
+                  // Wrap that is an infinite width constraint and layout
+                  // fails for the whole subtree, which shows up as a page
+                  // that renders its app bar and nothing else. Same override as
                   // `remote_directory_picker.dart` and `_SelectionBar` in
                   // `file_browser_pane.dart`.
                   style: FilledButton.styleFrom(
@@ -502,7 +511,9 @@ class _QuickConnectSaveOfferState extends State<QuickConnectSaveOffer> {
                           child: CircularProgressIndicator(strokeWidth: 2),
                         )
                       : const Icon(Icons.bookmark_add_outlined),
-                  label: Text(_saving ? 'Saving…' : 'Save this server'),
+                  label: Text(
+                    _saving ? l10n.quickConnectSaving : l10n.quickConnectSaveServer,
+                  ),
                 ),
             ],
           ),

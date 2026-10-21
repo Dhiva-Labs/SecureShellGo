@@ -4,6 +4,8 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../l10n/host_labels.dart';
+import '../l10n/l10n.dart';
 import '../models/host.dart';
 import '../services/credential_store.dart';
 import '../services/device_storage.dart';
@@ -387,15 +389,14 @@ class _HostEditScreenState extends State<HostEditScreen> {
       // have helped.
       if (mounted) {
         setState(() {
-          _credentialNotice = 'Host saved, but its password was not: '
-              '${e.message}';
+          _credentialNotice = context.l10n.hostCredentialNotSaved(e.message);
         });
       }
       return host;
     } catch (e) {
       if (mounted) {
         setState(() {
-          _error = 'Could not save this host.';
+          _error = context.l10n.hostEditSaveFailed;
           _errorDetails = e.toString();
         });
       }
@@ -486,7 +487,7 @@ class _HostEditScreenState extends State<HostEditScreen> {
       if (!mounted) return;
       setState(() {
         _connecting = false;
-        _error = 'Something went wrong while connecting.';
+        _error = context.l10n.hostConnectUnexpectedError;
         _errorDetails = e.toString();
       });
     }
@@ -525,7 +526,7 @@ class _HostEditScreenState extends State<HostEditScreen> {
 
     final pem = _keyController.text.trim();
     if (pem.isEmpty) {
-      await _showKeyImportError(null, 'Generate or paste a private key first.');
+      await _showKeyImportError(null, context.l10n.hostEditKeyMissing);
       return;
     }
 
@@ -538,11 +539,7 @@ class _HostEditScreenState extends State<HostEditScreen> {
         comment: 'secureshellgo@${_hostController.text.trim()}',
       );
     } catch (_) {
-      await _showKeyImportError(
-        null,
-        'Could not read this private key (check the passphrase if it has '
-        'one).',
-      );
+      await _showKeyImportError(null, context.l10n.hostEditKeyUnreadable);
       return;
     }
 
@@ -575,14 +572,14 @@ class _HostEditScreenState extends State<HostEditScreen> {
       }
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Public key installed on the server')),
+        SnackBar(content: Text(context.l10n.hostEditKeyInstalled)),
       );
     } on PublicKeyPushFailure catch (e) {
       if (!mounted) return;
       await _showKeyImportError(null, e.message);
     } catch (_) {
       if (!mounted) return;
-      await _showKeyImportError(null, 'Could not install the key on the server.');
+      await _showKeyImportError(null, context.l10n.hostEditKeyInstallFailed);
     } finally {
       if (mounted) setState(() => _installingKey = false);
     }
@@ -654,12 +651,15 @@ class _HostEditScreenState extends State<HostEditScreen> {
       // As the jump host field below: as wide as the form, not as its
       // longest group name.
       isExpanded: true,
-      decoration: const InputDecoration(
-        labelText: 'Group (optional)',
-        prefixIcon: Icon(Icons.folder_outlined),
+      decoration: InputDecoration(
+        labelText: context.l10n.hostEditGroupLabel,
+        prefixIcon: const Icon(Icons.folder_outlined),
       ),
       items: [
-        const DropdownMenuItem<String?>(value: null, child: Text('No group')),
+        DropdownMenuItem<String?>(
+          value: null,
+          child: Text(context.l10n.hostEditNoGroup),
+        ),
         for (final name in names)
           DropdownMenuItem<String?>(
             value: name,
@@ -669,9 +669,9 @@ class _HostEditScreenState extends State<HostEditScreen> {
               overflow: TextOverflow.ellipsis,
             ),
           ),
-        const DropdownMenuItem<String?>(
+        DropdownMenuItem<String?>(
           value: _newGroupSentinel,
-          child: Text('New group…'),
+          child: Text(context.l10n.hostGroupNewOption),
         ),
       ],
       onChanged: _loadingGroups
@@ -697,14 +697,14 @@ class _HostEditScreenState extends State<HostEditScreen> {
       // dropdown is as wide as its longest item, and a long name pushed a
       // 320dp window's field off its right edge.
       isExpanded: true,
-      decoration: const InputDecoration(
-        labelText: 'Connect via jump host',
-        prefixIcon: Icon(Icons.alt_route),
+      decoration: InputDecoration(
+        labelText: context.l10n.hostEditJumpHostLabel,
+        prefixIcon: const Icon(Icons.alt_route),
       ),
       items: [
-        const DropdownMenuItem<String?>(
+        DropdownMenuItem<String?>(
           value: null,
-          child: Text('Direct connection'),
+          child: Text(context.l10n.hostEditDirectConnection),
         ),
         for (final host in _jumpCandidates)
           DropdownMenuItem<String?>(
@@ -718,7 +718,7 @@ class _HostEditScreenState extends State<HostEditScreen> {
         if (dangling)
           DropdownMenuItem<String?>(
             value: selected,
-            child: const Text('(deleted host)'),
+            child: Text(context.l10n.hostEditDeletedJumpHost),
           ),
       ],
       onChanged: _loadingJumpCandidates
@@ -755,7 +755,10 @@ class _HostEditScreenState extends State<HostEditScreen> {
       children: [
         Padding(
           padding: const EdgeInsets.only(top: 14),
-          child: Text('Colour tag', style: theme.textTheme.bodyLarge),
+          child: Text(
+            context.l10n.hostEditColorTag,
+            style: theme.textTheme.bodyLarge,
+          ),
         ),
         const SizedBox(width: 16),
         Expanded(
@@ -789,7 +792,11 @@ class _HostEditScreenState extends State<HostEditScreen> {
 
     return Scaffold(
       appBar: AppBar(
-        title: Text(widget.isEditing ? 'Edit host' : 'Add host'),
+        title: Text(
+          widget.isEditing
+              ? context.l10n.hostEditTitleEdit
+              : context.l10n.hostEditTitleAdd,
+        ),
       ),
       body: SafeArea(
         child: AbsorbPointer(
@@ -812,15 +819,16 @@ class _HostEditScreenState extends State<HostEditScreen> {
   }
 
   Widget _buildFormFields(ThemeData theme, bool busy) {
+    final l10n = context.l10n;
     return ListView(
       padding: const EdgeInsets.fromLTRB(16, 16, 16, 32),
       children: [
         TextFormField(
           controller: _labelController,
-          decoration: const InputDecoration(
-            labelText: 'Label (optional)',
-            hintText: 'e.g. Home server',
-            prefixIcon: Icon(Icons.label_outline),
+          decoration: InputDecoration(
+            labelText: l10n.hostEditLabelLabel,
+            hintText: l10n.hostEditLabelHint,
+            prefixIcon: const Icon(Icons.label_outline),
           ),
           textInputAction: TextInputAction.next,
         ),
@@ -837,10 +845,10 @@ class _HostEditScreenState extends State<HostEditScreen> {
               child: TextFormField(
                 controller: _hostController,
                 focusNode: _hostFocusNode,
-                decoration: const InputDecoration(
-                  labelText: 'Host',
-                  hintText: 'example.com or 192.168.1.10',
-                  prefixIcon: Icon(Icons.dns_outlined),
+                decoration: InputDecoration(
+                  labelText: l10n.hostEditHostLabel,
+                  hintText: l10n.hostEditHostHint,
+                  prefixIcon: const Icon(Icons.dns_outlined),
                 ),
                 keyboardType: TextInputType.url,
                 autocorrect: false,
@@ -849,7 +857,7 @@ class _HostEditScreenState extends State<HostEditScreen> {
                 textInputAction: TextInputAction.next,
                 validator: (value) =>
                     (value == null || value.trim().isEmpty)
-                        ? 'Required'
+                        ? l10n.hostFieldRequired
                         : null,
               ),
             ),
@@ -857,7 +865,7 @@ class _HostEditScreenState extends State<HostEditScreen> {
             Expanded(
               child: TextFormField(
                 controller: _portController,
-                decoration: const InputDecoration(labelText: 'Port'),
+                decoration: InputDecoration(labelText: l10n.hostEditPortLabel),
                 keyboardType: TextInputType.number,
                 inputFormatters: [
                   FilteringTextInputFormatter.digitsOnly,
@@ -877,16 +885,16 @@ class _HostEditScreenState extends State<HostEditScreen> {
         const SizedBox(height: 16),
         TextFormField(
           controller: _usernameController,
-          decoration: const InputDecoration(
-            labelText: 'Username',
-            prefixIcon: Icon(Icons.person_outline),
+          decoration: InputDecoration(
+            labelText: l10n.hostEditUsernameLabel,
+            prefixIcon: const Icon(Icons.person_outline),
           ),
           autocorrect: false,
           enableSuggestions: false,
           textCapitalization: TextCapitalization.none,
           textInputAction: TextInputAction.next,
           validator: (value) => (value == null || value.trim().isEmpty)
-              ? 'Required'
+              ? l10n.hostFieldRequired
               : null,
         ),
         const SizedBox(height: 16),
@@ -916,8 +924,8 @@ class _HostEditScreenState extends State<HostEditScreen> {
                           }),
                     label: Text(
                       compact && method == SshAuthMethod.agent
-                          ? 'Agent'
-                          : method.label,
+                          ? l10n.hostAuthAgentShort
+                          : method.localizedLabel(l10n),
                     ),
                   ),
               ],
@@ -946,7 +954,7 @@ class _HostEditScreenState extends State<HostEditScreen> {
             autocorrect: false,
             enableSuggestions: false,
             decoration: InputDecoration(
-              labelText: 'Password',
+              labelText: l10n.hostPasswordLabel,
               prefixIcon: const Icon(Icons.lock_outline),
               suffixIcon: IconButton(
                 icon: Icon(
@@ -960,20 +968,14 @@ class _HostEditScreenState extends State<HostEditScreen> {
               ),
             ),
             validator: (value) => (value == null || value.isEmpty)
-                ? 'Required'
+                ? l10n.hostFieldRequired
                 : null,
           )
         // Explicit rather than folded into the trailing `else`, which stays
         // the private-key branch: agent auth has no field to show, because
         // there is deliberately nothing about it to store.
         else if (_authMethod == SshAuthMethod.agent) ...[
-          const InlineHint(
-            icon: Icons.info_outline,
-            text: 'Signing is done by this computer\'s SSH agent — ssh-agent, '
-                'Pageant or the Windows OpenSSH agent — security keys '
-                'included. No password or key is saved for this host, and the '
-                'private key never leaves the agent.',
-          ),
+          InlineHint(icon: Icons.info_outline, text: l10n.hostEditAgentHint),
           const SizedBox(height: 16),
           _buildCertificateField(),
         ] else ...[
@@ -997,7 +999,9 @@ class _HostEditScreenState extends State<HostEditScreen> {
                     )
                   : const Icon(Icons.vpn_key_outlined, size: 18),
               label: Text(
-                _generatingKey ? 'Generating…' : 'Generate new key',
+                _generatingKey
+                    ? l10n.hostEditGeneratingKey
+                    : l10n.hostEditGenerateKey,
               ),
             ),
           ),
@@ -1013,19 +1017,18 @@ class _HostEditScreenState extends State<HostEditScreen> {
               fontFamilyFallback: AppTheme.monoFontFamilyFallback,
               fontSize: 12,
             ),
-            decoration: const InputDecoration(
-              labelText: 'Private key (PEM)',
+            decoration: InputDecoration(
+              labelText: l10n.hostPrivateKeyLabel,
               alignLabelWithHint: true,
               hintText: '-----BEGIN OPENSSH PRIVATE KEY-----\n...',
-              helperText:
-                  'OpenSSH or PEM format: RSA, ECDSA or ed25519. Paste it, '
-                  'or import a .pem file above.',
+              helperText: l10n.hostPrivateKeyHelper,
+              helperMaxLines: 3,
             ),
             validator: (value) {
               final text = (value ?? '').trim();
-              if (text.isEmpty) return 'Required';
+              if (text.isEmpty) return l10n.hostFieldRequired;
               if (!text.contains('BEGIN') || !text.contains('END')) {
-                return 'Paste the whole key, including BEGIN/END lines';
+                return l10n.hostPrivateKeyIncomplete;
               }
               return null;
             },
@@ -1037,10 +1040,10 @@ class _HostEditScreenState extends State<HostEditScreen> {
             obscureText: true,
             autocorrect: false,
             enableSuggestions: false,
-            decoration: const InputDecoration(
-              labelText: 'Key passphrase (optional)',
-              prefixIcon: Icon(Icons.lock_outline),
-              helperText: 'Only if the key is encrypted.',
+            decoration: InputDecoration(
+              labelText: l10n.hostPassphraseLabel,
+              prefixIcon: const Icon(Icons.lock_outline),
+              helperText: l10n.hostEditPassphraseHelper,
             ),
           ),
           const SizedBox(height: 12),
@@ -1056,7 +1059,9 @@ class _HostEditScreenState extends State<HostEditScreen> {
                     )
                   : const Icon(Icons.cloud_upload_outlined, size: 18),
               label: Text(
-                _installingKey ? 'Installing…' : 'Install public key on server…',
+                _installingKey
+                    ? l10n.hostEditInstallingKey
+                    : l10n.hostEditInstallKey,
               ),
             ),
           ),
@@ -1066,13 +1071,12 @@ class _HostEditScreenState extends State<HostEditScreen> {
         const SizedBox(height: 20),
         TextFormField(
           controller: _startupCommandController,
-          decoration: const InputDecoration(
-            labelText: 'Run after connect (optional)',
+          decoration: InputDecoration(
+            labelText: l10n.hostEditStartupLabel,
             hintText: 'cd /var/www && ls',
-            prefixIcon: Icon(Icons.play_arrow_outlined),
-            helperText:
-                'Runs once, automatically, right when the shell opens — '
-                'as if typed and Enter pressed.',
+            prefixIcon: const Icon(Icons.play_arrow_outlined),
+            helperText: l10n.hostEditStartupHelper,
+            helperMaxLines: 3,
           ),
           autocorrect: false,
           enableSuggestions: false,
@@ -1089,11 +1093,7 @@ class _HostEditScreenState extends State<HostEditScreen> {
           onChanged: (value) => setState(() => _advanced = value),
         ),
         const SizedBox(height: 12),
-        const InlineHint(
-          icon: Icons.shield_outlined,
-          text: 'Saved credentials are encrypted on-device by your '
-              "system's secure storage, not stored in plain text.",
-        ),
+        InlineHint(icon: Icons.shield_outlined, text: l10n.hostEditStorageHint),
         if (_credentialNotice != null) ...[
           const SizedBox(height: 12),
           InlineHint(icon: Icons.info_outline, text: _credentialNotice!),
@@ -1107,43 +1107,85 @@ class _HostEditScreenState extends State<HostEditScreen> {
         // Saving is what this screen is for, so it is never the one folded
         // away into a menu — "Save & connect" leads only because it saves
         // too and is the commoner intent.
-        Row(
-          children: [
-            Expanded(
-              child: FilledButton.icon(
-                onPressed: busy ? null : _saveAndConnect,
-                icon: _saving || _connecting
-                    ? const SizedBox(
-                        width: 18,
-                        height: 18,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      )
-                    : const Icon(Icons.play_arrow),
-                label: const Text('Save & connect'),
-              ),
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: FilledButton.tonalIcon(
-                onPressed: busy ? null : _save,
-                icon: const Icon(Icons.save_outlined),
-                label: Text(
-                  widget.isEditing ? 'Save changes' : 'Save host',
-                ),
-              ),
-            ),
-          ],
-        ),
+        _buildSaveButtons(busy),
         const SizedBox(height: 8),
         Center(
           child: TextButton.icon(
             onPressed: busy ? null : _connectWithoutSaving,
             icon: const Icon(Icons.terminal, size: 18),
-            label: const Text('Connect without saving'),
+            label: Text(l10n.hostEditConnectWithoutSaving),
           ),
         ),
       ],
     );
+  }
+
+  /// The two save buttons, side by side — or one above the other when
+  /// either label would not sit in its half of the row in two lines with
+  /// whole words. In German or Russian on a narrow phone, with large text
+  /// especially, a button otherwise breaks "verbinden" into "verbinde" and
+  /// "n", or stacks "Speichern", "&" and "verbinden" three lines tall.
+  Widget _buildSaveButtons(bool busy) {
+    final l10n = context.l10n;
+    final connectLabel = l10n.hostEditSaveAndConnect;
+    final saveLabel =
+        widget.isEditing ? l10n.hostEditSaveChanges : l10n.hostSaveHost;
+    final saveAndConnect = FilledButton.icon(
+      onPressed: busy ? null : _saveAndConnect,
+      icon: _saving || _connecting
+          ? const SizedBox(
+              width: 18,
+              height: 18,
+              child: CircularProgressIndicator(strokeWidth: 2),
+            )
+          : const Icon(Icons.play_arrow),
+      label: Text(connectLabel),
+    );
+    final save = FilledButton.tonalIcon(
+      onPressed: busy ? null : _save,
+      icon: const Icon(Icons.save_outlined),
+      label: Text(saveLabel),
+    );
+    return LayoutBuilder(builder: (context, constraints) {
+      // Half the row less the gap, less what the icon, the space after it
+      // and the button's own padding take (40 + 18 + 8), with a little
+      // over for the ink.
+      final labelWidth = (constraints.maxWidth - 12) / 2 - 72;
+      final style = Theme.of(context).textTheme.labelLarge;
+      final scaler = MediaQuery.textScalerOf(context);
+      final direction = Directionality.of(context);
+      bool fits(String label) {
+        TextPainter painterFor(String text) => TextPainter(
+              text: TextSpan(text: text, style: style),
+              textDirection: direction,
+              textScaler: scaler,
+            );
+        for (final word in label.split(RegExp(r'\s+'))) {
+          final painter = painterFor(word)..layout();
+          final width = painter.width;
+          painter.dispose();
+          if (width > labelWidth) return false;
+        }
+        final painter = painterFor(label)..layout(maxWidth: labelWidth);
+        final lines = painter.computeLineMetrics().length;
+        painter.dispose();
+        return lines <= 2;
+      }
+
+      if (fits(connectLabel) && fits(saveLabel)) {
+        return Row(
+          children: [
+            Expanded(child: saveAndConnect),
+            const SizedBox(width: 12),
+            Expanded(child: save),
+          ],
+        );
+      }
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [saveAndConnect, const SizedBox(height: 8), save],
+      );
+    });
   }
 }
 
@@ -1163,7 +1205,7 @@ class _ColorOption extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Tooltip(
-      message: colorLabel?.label ?? 'No colour',
+      message: colorLabel?.localizedLabel(context.l10n) ?? context.l10n.hostColorNone,
       child: InkWell(
         onTap: onTap,
         customBorder: const CircleBorder(),
@@ -1212,23 +1254,24 @@ class _NewGroupDialogState extends State<_NewGroupDialog> {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = context.l10n;
     return AlertDialog(
-      title: const Text('New group'),
+      title: Text(l10n.hostGroupNewTitle),
       content: TextField(
         controller: _controller,
         autofocus: true,
         textCapitalization: TextCapitalization.words,
-        decoration: const InputDecoration(labelText: 'Group name'),
+        decoration: InputDecoration(labelText: l10n.hostGroupNameLabel),
         onSubmitted: _submit,
       ),
       actions: [
         TextButton(
           onPressed: () => Navigator.of(context).pop(),
-          child: const Text('Cancel'),
+          child: Text(MaterialLocalizations.of(context).cancelButtonLabel),
         ),
         FilledButton(
           onPressed: () => _submit(_controller.text),
-          child: const Text('Create'),
+          child: Text(l10n.hostGroupCreate),
         ),
       ],
     );
