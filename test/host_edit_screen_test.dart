@@ -22,6 +22,8 @@ import 'package:secure_shell_go/widgets/error_banner.dart';
 
 import 'support/certificate_fixture.dart';
 
+import 'support/settle.dart';
+
 /// A keyring that this install has had working before and that is locked
 /// right now — the one remaining state in which a credential cannot be
 /// stored anywhere. Everything else now encrypts rather than refusing.
@@ -145,21 +147,6 @@ void main() {
         ),
       );
 
-  /// Lets work that is waiting on the real filesystem finish.
-  ///
-  /// `testWidgets` runs on a fake clock, so an `await` on a file read
-  /// completes only once the real event loop has turned *and* the test's own
-  /// microtask queue has been flushed. Neither alone is enough, which is why
-  /// this alternates rather than simply waiting.
-  Future<void> settleIo(WidgetTester tester, {int rounds = 60}) async {
-    for (var i = 0; i < rounds; i++) {
-      await tester.runAsync(
-        () => Future<void>.delayed(const Duration(milliseconds: 20)),
-      );
-      await tester.pump();
-    }
-  }
-
   /// Pushes the form onto a route, rather than making it the whole app: the
   /// screen pops itself when it is done, and a navigator with nothing left
   /// under it never settles.
@@ -203,7 +190,7 @@ void main() {
     // spinner meanwhile — so the disk has to be let go of before anything
     // can settle.
     await tester.pump();
-    await settleIo(tester);
+    await settleIo(tester, rounds: 60);
     await tester.pumpAndSettle();
   }
 
@@ -236,36 +223,12 @@ void main() {
     // the device key file, and a fake clock never lets a subprocess finish.
     await tester.runAsync(() => tester.tap(find.text(label)));
     await tester.pump();
-    await settleIo(tester);
+    await settleIo(tester, rounds: 60);
     if (checks != null) {
-      // The save encrypts and shells out to `chmod`; on a busy machine that
-      // outlasts settleIo's slice, and a fixed wait failed these tests in
-      // the full suite while they passed alone. So a failing check gets
-      // more turns of both loops before it counts, for up to ten seconds.
-      // A check that something was *not* written still passes on its first
-      // try, exactly as it did with the fixed wait.
-      //
-      // The failure is caught inside `runAsync` and rethrown out here:
-      // `runAsync` reports anything its callback throws as a test failure
-      // on the spot, so a retry around it would never get to retry.
-      Object? failure;
-      StackTrace? failureStack;
-      for (var attempt = 0; attempt <= 20; attempt++) {
-        failure = null;
-        await tester.runAsync(() async {
-          try {
-            await checks();
-          } catch (e, stack) {
-            failure = e;
-            failureStack = stack;
-          }
-        });
-        if (failure == null) break;
-        await settleIo(tester, rounds: 25);
-      }
-      if (failure != null) {
-        // Say what the screen said: a save that threw shows its cause in the
-        // error banner, and that is the one clue a failure under load leaves.
+      // The save encrypts and shells out to `chmod`, which on a busy
+      // machine outlasts any fixed wait. A failure says what the screen
+      // said: a save that threw shows its cause in the error banner.
+      await checkEventually(tester, checks, describe: () {
         final banners = [
           for (final e in find.byType(ErrorBanner).evaluate())
             '${(e.widget as ErrorBanner).message} '
@@ -275,23 +238,10 @@ void main() {
           for (final e in find.textContaining('Host saved, but').evaluate())
             (e.widget as Text).data ?? '',
         ];
-        Error.throwWithStackTrace(
-          TestFailure('$failure\nOn screen — banners: $banners; '
-              'notices: $notices'),
-          failureStack!,
-        );
-      }
+        return 'On screen — banners: $banners; notices: $notices';
+      });
     }
     await tester.pump();
-  }
-
-  /// Turns both event loops until [condition] holds, for up to about ten
-  /// seconds — for what the screen shows once a save has finished, which on
-  /// a busy machine can land after [tapAndRun]'s checks already passed.
-  Future<void> settleUntil(WidgetTester tester, bool Function() condition) async {
-    for (var attempt = 0; attempt < 20 && !condition(); attempt++) {
-      await settleIo(tester, rounds: 25);
-    }
   }
 
   /// Same reasoning, for a test that has to put something on disk before the
