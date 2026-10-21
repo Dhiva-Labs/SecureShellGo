@@ -8,10 +8,14 @@ saw — the line it came from is the place to start.
 
 ## 0. Builds that have never been compiled
 
-- [ ] **Android (Kotlin):** `flutter build appbundle --release` with
+- [x] **Android (Kotlin):** `flutter build appbundle --release` with
       `android/key.properties` in place. New Kotlin since 1.4.5:
       `NetworkWatchBridge.kt` (network changes), `DocumentSaver.kt` (Save to…),
       the foreground service's `specialUse` type and `onTimeout`.
+      Built and signed with the upload key on 2026-10-22 (68.8 MB .aab). On a
+      network with broken IPv6, build with
+      `JAVA_TOOL_OPTIONS=-Djava.net.preferIPv4Stack=true` or Gradle cannot
+      download its distribution.
 - [ ] **Windows (C++):** `flutter build windows --release`. New C++:
       `windows/runner/windows_hello.{h,cpp}`. If it fails on exceptions, the
       runner's `_HAS_EXCEPTIONS=0` meets the C++/WinRT headers; it needs
