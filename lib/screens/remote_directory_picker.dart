@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
+import '../l10n/l10n.dart';
 import '../models/remote_entry.dart';
 import '../services/remote_path.dart';
 import '../services/session_manager.dart';
@@ -96,8 +97,9 @@ class _RemoteDirectoryPickerState extends State<RemoteDirectoryPicker> {
       setState(() {
         _loading = false;
         _failure = SftpFailure(
-          'Could not open a file session on '
-          '${widget.session.host.displayName}.',
+          context.l10n.folderPickerSessionFailed(
+            widget.session.host.displayName,
+          ),
           details: e.toString(),
         );
       });
@@ -134,7 +136,10 @@ class _RemoteDirectoryPickerState extends State<RemoteDirectoryPicker> {
       if (!mounted) return;
       setState(() {
         _loading = false;
-        _failure = SftpFailure('Could not open $path.', details: e.toString());
+        _failure = SftpFailure(
+          context.l10n.folderPickerOpenFailed(path),
+          details: e.toString(),
+        );
       });
     }
   }
@@ -146,6 +151,7 @@ class _RemoteDirectoryPickerState extends State<RemoteDirectoryPicker> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final l10n = context.l10n;
     final failure = _failure;
     final visible = _visible;
 
@@ -163,7 +169,7 @@ class _RemoteDirectoryPickerState extends State<RemoteDirectoryPicker> {
               overflow: TextOverflow.ellipsis,
             ),
             Text(
-              widget.subtitle ?? 'Choose a folder',
+              widget.subtitle ?? l10n.folderPickerDefaultSubtitle,
               style: TextStyle(
                 fontSize: 11.5,
                 color: theme.colorScheme.onSurfaceVariant,
@@ -173,7 +179,9 @@ class _RemoteDirectoryPickerState extends State<RemoteDirectoryPicker> {
         ),
         actions: [
           IconButton(
-            tooltip: _showHidden ? 'Hidden shown' : 'Show hidden folders',
+            tooltip: _showHidden
+                ? l10n.folderPickerHiddenShownTooltip
+                : l10n.folderPickerShowHiddenTooltip,
             icon: Icon(
               _showHidden ? Icons.visibility : Icons.visibility_off_outlined,
               size: 20,
@@ -231,8 +239,7 @@ class _RemoteDirectoryPickerState extends State<RemoteDirectoryPicker> {
                           child: Padding(
                             padding: const EdgeInsets.all(32),
                             child: Text(
-                              'No folders here. The files still land in this '
-                              'one if you choose it.',
+                              l10n.folderPickerEmpty,
                               textAlign: TextAlign.center,
                               style: theme.textTheme.bodyMedium?.copyWith(
                                 color: theme.colorScheme.onSurfaceVariant,
@@ -331,12 +338,13 @@ class _PickerPathBar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final l10n = context.l10n;
     return Material(
       color: theme.colorScheme.surfaceContainerHigh,
       child: Row(
         children: [
           IconButton(
-            tooltip: 'Up one level',
+            tooltip: l10n.folderPickerUpTooltip,
             icon: const Icon(Icons.arrow_upward, size: 20),
             onPressed: path == RemotePath.root ? null : onUp,
           ),
@@ -359,7 +367,7 @@ class _PickerPathBar extends StatelessWidget {
             ),
           ),
           IconButton(
-            tooltip: 'Home',
+            tooltip: l10n.folderPickerHomeTooltip,
             icon: const Icon(Icons.home_outlined, size: 20),
             onPressed: onHome,
           ),

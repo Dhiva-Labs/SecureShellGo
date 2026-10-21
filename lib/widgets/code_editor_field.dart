@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:xterm/xterm.dart';
 
+import '../l10n/l10n.dart';
 import '../models/syntax_token.dart';
 import '../services/editor_document.dart';
 import '../services/editor_indent.dart';
@@ -925,7 +926,7 @@ class CodeEditorFieldState extends State<CodeEditorField> {
                   container: true,
                   // Painted, not built from widgets, so a screen reader is
                   // told what the column is rather than nothing at all.
-                  label: 'Lines 1–$lineCount',
+                  label: context.l10n.editorGutterLabel(lineCount),
                   child: CustomPaint(
                     painter: _GutterPainter(
                       scroll: _vertical,

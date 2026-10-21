@@ -5,6 +5,7 @@ import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:secure_shell_go/l10n/l10n.dart';
 import 'package:secure_shell_go/models/app_settings.dart';
 import 'package:secure_shell_go/models/remote_entry.dart';
 import 'package:secure_shell_go/screens/remote_editor_screen.dart';
@@ -171,10 +172,19 @@ Future<void> pumpEditor(
   List<String> paths, {
   TargetPlatform platform = TargetPlatform.android,
   SettingsStore? settings,
+  Locale? locale,
 }) async {
   settings ??= SettingsStore(file: File('/nonexistent/settings.json'));
   await tester.pumpWidget(MaterialApp(
     theme: AppTheme.dark.copyWith(platform: platform),
+    // English, as a bare MaterialApp falls back to, unless a test asks for a
+    // language — then the delegates the app itself installs.
+    locale: locale,
+    localizationsDelegates:
+        locale == null ? null : AppLocalizations.localizationsDelegates,
+    supportedLocales: locale == null
+        ? const [Locale('en', 'US')]
+        : AppLocalizations.supportedLocales,
     home: Scaffold(
       body: Builder(
         builder: (context) => TextButton(
@@ -364,6 +374,38 @@ void main() {
     await tester.tap(find.byTooltip('Back'));
     await tester.pumpAndSettle();
     expect(find.text('open editor'), findsOneWidget);
+  });
+
+  testWidgets('speaks German with the German delegates', (tester) async {
+    final fs = ScreenFs()..put('/etc/nginx.conf', conf);
+    await pumpEditor(tester, fs, ['/etc/nginx.conf'],
+        locale: const Locale('de'));
+
+    expect(find.byTooltip('Keine Änderungen zu speichern'), findsOneWidget);
+    expect(find.byTooltip('No changes to save'), findsNothing);
+    expect(find.bySemanticsLabel('Zeilen 1–4'), findsOneWidget);
+    // Language names and line endings are not translated.
+    expect(find.textContaining('nginx / Apache conf'), findsOneWidget);
+    expect(find.textContaining('LF'), findsOneWidget);
+
+    await tester.enterText(find.byType(TextField).first, 'changed\n');
+    await tester.pumpAndSettle();
+    expect(find.byTooltip('Speichern (Ctrl+S)'), findsOneWidget);
+
+    // The guard on leaving, built from the ARB strings and Flutter's own
+    // German back button.
+    await tester.tap(find.byTooltip('Zurück'));
+    await tester.pumpAndSettle();
+    expect(find.text('Nicht gespeicherte Änderungen'), findsOneWidget);
+    expect(
+      find.text('„nginx.conf“ enthält Änderungen, die noch nicht auf dem '
+          'Server sind.'),
+      findsOneWidget,
+    );
+    await tester.tap(find.text('Verwerfen'));
+    await tester.pumpAndSettle();
+    expect(find.text('open editor'), findsOneWidget);
+    expect(fs.textAt('/etc/nginx.conf'), conf);
   });
 
   testWidgets('the find bar counts hits and steps through them',

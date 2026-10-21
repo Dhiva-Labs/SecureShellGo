@@ -3345,5 +3345,3187 @@
         "example": "1"
       }
     }
+  },
+  "filesErrorStartSession": "Could not start a file session.",
+  "@filesErrorStartSession": {
+    "description": "File browser: error banner over the listing when the SFTP channel for the browser could not be opened at all. The technical detail is shown separately."
+  },
+  "filesErrorOpenPath": "Could not open {path}.",
+  "@filesErrorOpenPath": {
+    "description": "File browser: error banner over the listing (or under the Go to path field) when a folder could not be opened for an unexpected reason. {path} is a remote path, e.g. /var/www.",
+    "placeholders": {
+      "path": {
+        "type": "String",
+        "example": "/var/www"
+      }
+    }
+  },
+  "filesJumpHome": "Home",
+  "@filesJumpHome": {
+    "description": "File browser, Go to path bar: quick-jump chip that opens the user's home directory on the server. The other chips are paths (/etc, /var/log) and are not translated."
+  },
+  "transferStoragePermission": "Storage permission is needed to save files to Downloads.",
+  "@transferStoragePermission": {
+    "description": "File browser: error snackbar when the user declined the storage permission a download needs. \"Downloads\" is the device's Downloads folder: use the name the OS shows for it in your language, also inside a path written as Downloads/…/."
+  },
+  "transferDownloadingName": "Downloading {name}",
+  "@transferDownloadingName": {
+    "description": "File browser: snackbar after one file was queued for download. {name} is the file name, e.g. nginx.conf.",
+    "placeholders": {
+      "name": {
+        "type": "String",
+        "example": "nginx.conf"
+      }
+    }
+  },
+  "transferQueuedDownloads": "{count, plural, =1{Queued 1 download} other{Queued {count} downloads}}",
+  "@transferQueuedDownloads": {
+    "description": "File browser: snackbar after several selected files were queued for download. {count} is how many.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "4"
+      }
+    }
+  },
+  "transferDownloadExistsTitle": "File already exists",
+  "@transferDownloadExistsTitle": {
+    "description": "Download name-clash dialog: title, when the device's Downloads folder already has a file with this name."
+  },
+  "transferDownloadExistsBody": "Downloads already contains \"{name}\".",
+  "@transferDownloadExistsBody": {
+    "description": "Download name-clash dialog: body. {name} is the file name, e.g. backup.tar.gz. \"Downloads\" is the device's Downloads folder: use the name the OS shows for it in your language, also inside a path written as Downloads/…/.",
+    "placeholders": {
+      "name": {
+        "type": "String",
+        "example": "backup.tar.gz"
+      }
+    }
+  },
+  "transferApplyToRest": "Do this for the rest of this batch",
+  "@transferApplyToRest": {
+    "description": "Name-clash dialogs (download and upload/server-to-server): checkbox that applies the chosen answer to every remaining clash in the same batch."
+  },
+  "transferReplace": "Replace",
+  "@transferReplace": {
+    "description": "Name-clash dialogs: button that overwrites the existing file with the new one."
+  },
+  "transferKeepBoth": "Keep both",
+  "@transferKeepBoth": {
+    "description": "Name-clash dialogs: main button that keeps the existing file and saves the new one under a numbered name."
+  },
+  "transferFolderEmpty": "{name} is empty — nothing to upload.",
+  "@transferFolderEmpty": {
+    "description": "File browser: snackbar when the local folder picked for upload has no files. {name} is the folder name, e.g. photos.",
+    "placeholders": {
+      "name": {
+        "type": "String",
+        "example": "photos"
+      }
+    }
+  },
+  "transferSkippedName": "Skipped {name}.",
+  "@transferSkippedName": {
+    "description": "File browser: snackbar when the user chose Skip in the name-clash dialog for a folder upload. {name} is the folder name, e.g. photos.",
+    "placeholders": {
+      "name": {
+        "type": "String",
+        "example": "photos"
+      }
+    }
+  },
+  "transferUploadingFolder": "{count, plural, =1{Uploading {name} (1 file, {size}) to {path}} other{Uploading {name} ({count} files, {size}) to {path}}}",
+  "@transferUploadingFolder": {
+    "description": "File browser: snackbar after a local folder was queued for upload. {name} is the folder name, {count} the number of files in it, {size} its total size already formatted (e.g. 3.2 MB), {path} the remote path it lands at, e.g. /home/pi/photos.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "12"
+      },
+      "name": {
+        "type": "String",
+        "example": "photos"
+      },
+      "size": {
+        "type": "String",
+        "example": "3.2 MB"
+      },
+      "path": {
+        "type": "String",
+        "example": "/home/pi/photos"
+      }
+    }
+  },
+  "transferNothingUploaded": "Nothing uploaded — every file was skipped.",
+  "@transferNothingUploaded": {
+    "description": "File browser: snackbar when the user skipped every file in the upload name-clash dialogs."
+  },
+  "transferUploadingName": "Uploading {name} to {directory}",
+  "@transferUploadingName": {
+    "description": "File browser: snackbar after one file was queued for upload. {name} is the file name, {directory} the remote folder, e.g. /home/pi.",
+    "placeholders": {
+      "name": {
+        "type": "String",
+        "example": "notes.txt"
+      },
+      "directory": {
+        "type": "String",
+        "example": "/home/pi"
+      }
+    }
+  },
+  "transferUploadingCount": "{count, plural, =1{Uploading 1 file to {directory}} other{Uploading {count} files to {directory}}}",
+  "@transferUploadingCount": {
+    "description": "File browser: snackbar after several files were queued for upload. {count} is how many, {directory} the remote folder, e.g. /home/pi.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "5"
+      },
+      "directory": {
+        "type": "String",
+        "example": "/home/pi"
+      }
+    }
+  },
+  "transferNoteSkipped": "{count, plural, =1{1 skipped} other{{count} skipped}}",
+  "@transferNoteSkipped": {
+    "description": "Upload and server-to-server snackbars: short note appended after \" · \" saying how many files the user chose to skip, e.g. \"Uploading 3 files to /srv · 1 skipped\".",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "1"
+      }
+    }
+  },
+  "transferNeedSecondServer": "Open a second server in another session first — then files can go straight from one to the other.",
+  "@transferNeedSecondServer": {
+    "description": "File browser: snackbar when the user asks to copy or move to another server but no other server session is open."
+  },
+  "transferPickServerMove": "Move to which server?",
+  "@transferPickServerMove": {
+    "description": "Server picker sheet: heading when moving files to another open server."
+  },
+  "transferPickServerCopy": "Copy to which server?",
+  "@transferPickServerCopy": {
+    "description": "Server picker sheet: heading when copying files to another open server."
+  },
+  "transferPickServerSubtitle": "The files never touch this device",
+  "@transferPickServerSubtitle": {
+    "description": "Server picker sheet: line under the heading — the files go between the servers without being stored on the phone."
+  },
+  "transferFolderReadFailed": "Could not read {name} from the server.",
+  "@transferFolderReadFailed": {
+    "description": "File browser: error snackbar when scanning a folder for download failed. {name} is the folder name, e.g. logs.",
+    "placeholders": {
+      "name": {
+        "type": "String",
+        "example": "logs"
+      }
+    }
+  },
+  "transferFolderNoFiles": "There are no files in {name}.",
+  "@transferFolderNoFiles": {
+    "description": "File browser: snackbar when a folder picked for download has no files. {name} is the folder name, e.g. logs.",
+    "placeholders": {
+      "name": {
+        "type": "String",
+        "example": "logs"
+      }
+    }
+  },
+  "transferFolderUnreadable": "Nothing in {name} could be read.",
+  "@transferFolderUnreadable": {
+    "description": "File browser: snackbar when nothing inside a folder picked for download could be read. {name} is the folder name, e.g. logs.",
+    "placeholders": {
+      "name": {
+        "type": "String",
+        "example": "logs"
+      }
+    }
+  },
+  "transferDownloadingFolder": "{count, plural, =1{Downloading 1 file to Downloads/{folder}/} other{Downloading {count} files to Downloads/{folder}/}}",
+  "@transferDownloadingFolder": {
+    "description": "File browser: snackbar after a whole folder was queued for download. {count} is the number of files, {folder} the folder name, e.g. logs. \"Downloads\" is the device's Downloads folder: use the name the OS shows for it in your language, also inside a path written as Downloads/…/.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "42"
+      },
+      "folder": {
+        "type": "String",
+        "example": "logs"
+      }
+    }
+  },
+  "transferFolderSkippedLinks": "{count, plural, =1{1 symbolic link will be skipped — following them can loop back into the same folder.} other{{count} symbolic links will be skipped — following them can loop back into the same folder.}}",
+  "@transferFolderSkippedLinks": {
+    "description": "Folder download confirm dialog: note that symbolic links inside the folder are left out, and why. {count} is how many.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "3"
+      }
+    }
+  },
+  "transferFolderUnreadableFolders": "{count, plural, =1{1 folder could not be read and will be left out.} other{{count} folders could not be read and will be left out.}}",
+  "@transferFolderUnreadableFolders": {
+    "description": "Folder download confirm dialog: note about subfolders the server would not let the app read. {count} is how many.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "2"
+      }
+    }
+  },
+  "transferFolderTruncated": "{count, plural, other{This folder is larger than one download can cover; only the first {count} files are included.}}",
+  "@transferFolderTruncated": {
+    "description": "Folder download confirm dialog: note when the folder has more files (or deeper subfolders) than one download takes. {count} is how many files are included, usually 5000.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "5000"
+      }
+    }
+  },
+  "transferFolderConfirmTitle": "Download {name}?",
+  "@transferFolderConfirmTitle": {
+    "description": "Folder download confirm dialog: title. {name} is the folder name, e.g. logs.",
+    "placeholders": {
+      "name": {
+        "type": "String",
+        "example": "logs"
+      }
+    }
+  },
+  "transferFolderConfirmBody": "{count, plural, =1{1 file, {size}, into Downloads/{folder}/ — subfolders and all.} other{{count} files, {size}, into Downloads/{folder}/ — subfolders and all.}}",
+  "@transferFolderConfirmBody": {
+    "description": "Folder download confirm dialog: what is about to be downloaded. {count} is the number of files, {size} their total size already formatted (e.g. 18 MB), {folder} the folder name. \"Downloads\" is the device's Downloads folder: use the name the OS shows for it in your language, also inside a path written as Downloads/…/.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "42"
+      },
+      "size": {
+        "type": "String",
+        "example": "18 MB"
+      },
+      "folder": {
+        "type": "String",
+        "example": "logs"
+      }
+    }
+  },
+  "filesDownload": "Download",
+  "@filesDownload": {
+    "description": "File browser: the Download action — button in the folder download confirm dialog, row in a file's action sheet, and the button (or its tooltip) in the selection bar."
+  },
+  "filesCopiedPath": "Copied {path}",
+  "@filesCopiedPath": {
+    "description": "File browser: snackbar after the full remote path of an entry was copied to the clipboard. {path} is a remote path, e.g. /var/log/syslog.",
+    "placeholders": {
+      "path": {
+        "type": "String",
+        "example": "/var/log/syslog"
+      }
+    }
+  },
+  "filesSnackDeletedName": "Deleted {name}",
+  "@filesSnackDeletedName": {
+    "description": "File browser: snackbar after one file or folder was deleted. {name} is its name, e.g. old.log.",
+    "placeholders": {
+      "name": {
+        "type": "String",
+        "example": "old.log"
+      }
+    }
+  },
+  "filesSnackDeletedCount": "{count, plural, =1{Deleted 1 item} other{Deleted {count} items}}",
+  "@filesSnackDeletedCount": {
+    "description": "File browser: snackbar after several selected entries were deleted. {count} is how many.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "6"
+      }
+    }
+  },
+  "filesSnackDeleteFailures": "{count, plural, =1{{failed} of 1 item could not be deleted. {detail}} other{{failed} of {count} items could not be deleted. {detail}}}",
+  "@filesSnackDeleteFailures": {
+    "description": "File browser: error snackbar when some of several selected entries could not be deleted. {count} is how many were selected, {failed} how many failed, {detail} the server's reason for the first failure (shown as is, not translated).",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "6"
+      },
+      "failed": {
+        "type": "int",
+        "example": "2"
+      },
+      "detail": {
+        "type": "String",
+        "example": "Permission denied."
+      }
+    }
+  },
+  "filesDeleteTitleMany": "{count, plural, =1{Delete 1 item?} other{Delete {count} items?}}",
+  "@filesDeleteTitleMany": {
+    "description": "Delete confirm dialog: title when several selected entries are deleted. {count} is how many.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "3"
+      }
+    }
+  },
+  "filesDeleteBodyManyFolders": "Folders go with everything inside them. This cannot be undone.",
+  "@filesDeleteBodyManyFolders": {
+    "description": "Delete confirm dialog: body when the selection includes a folder."
+  },
+  "filesDeleteBodyMany": "This cannot be undone.",
+  "@filesDeleteBodyMany": {
+    "description": "Delete confirm dialog: body when several files (no folders) are deleted."
+  },
+  "filesDeleteFolderTitle": "Delete folder \"{name}\"?",
+  "@filesDeleteFolderTitle": {
+    "description": "Delete confirm dialog: title for one folder. {name} is the folder name, e.g. cache.",
+    "placeholders": {
+      "name": {
+        "type": "String",
+        "example": "cache"
+      }
+    }
+  },
+  "filesDeleteFolderBody": "Everything inside it is deleted too — every file and folder, all the way down. This cannot be undone.",
+  "@filesDeleteFolderBody": {
+    "description": "Delete confirm dialog: body for one folder."
+  },
+  "filesDeleteLinkTitle": "Delete link \"{name}\"?",
+  "@filesDeleteLinkTitle": {
+    "description": "Delete confirm dialog: title for one symbolic link. {name} is the link name, e.g. current.",
+    "placeholders": {
+      "name": {
+        "type": "String",
+        "example": "current"
+      }
+    }
+  },
+  "filesDeleteLinkToFolderBody": "Only the link is removed. The folder it points to, and everything in it, stays where it is.",
+  "@filesDeleteLinkToFolderBody": {
+    "description": "Delete confirm dialog: body for a symbolic link that points to a folder."
+  },
+  "filesDeleteLinkToFileBody": "Only the link is removed. The file it points to stays where it is.",
+  "@filesDeleteLinkToFileBody": {
+    "description": "Delete confirm dialog: body for a symbolic link that points to a file."
+  },
+  "filesDeleteFileTitle": "Delete \"{name}\"?",
+  "@filesDeleteFileTitle": {
+    "description": "Delete confirm dialog: title for one file. {name} is the file name, e.g. old.log.",
+    "placeholders": {
+      "name": {
+        "type": "String",
+        "example": "old.log"
+      }
+    }
+  },
+  "filesDeleteFileBody": "It is removed from the server. This cannot be undone.",
+  "@filesDeleteFileBody": {
+    "description": "Delete confirm dialog: body for one file."
+  },
+  "filesDeleteMoreNames": "{count, plural, =1{and 1 more} other{and {count} more}}",
+  "@filesDeleteMoreNames": {
+    "description": "Delete confirm dialog: line under the first five names when more entries are selected. {count} is how many are not listed.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "12"
+      }
+    }
+  },
+  "filesRenameTitle": "Rename",
+  "@filesRenameTitle": {
+    "description": "Rename dialog: title."
+  },
+  "filesRenameButton": "Rename",
+  "@filesRenameButton": {
+    "description": "Rename dialog: the confirm button."
+  },
+  "filesRenameTaken": "\"{name}\" already exists here. Renaming onto it would replace it, so choose another name.",
+  "@filesRenameTaken": {
+    "description": "Rename dialog: error under the name field when the new name is taken in the same folder. {name} is the typed name, e.g. config.yml.",
+    "placeholders": {
+      "name": {
+        "type": "String",
+        "example": "config.yml"
+      }
+    }
+  },
+  "filesSnackRenamed": "Renamed to {name}",
+  "@filesSnackRenamed": {
+    "description": "File browser: snackbar after a rename. {name} is the new name, e.g. config.yml.",
+    "placeholders": {
+      "name": {
+        "type": "String",
+        "example": "config.yml"
+      }
+    }
+  },
+  "filesSnackRenamedHidden": "Renamed to {name} — it is hidden, so turn on Hidden files to see it",
+  "@filesSnackRenamedHidden": {
+    "description": "File browser: snackbar after a rename to a name starting with a dot while hidden files are not shown. {name} is the new name, e.g. .env. The clause after the dash says the new name starts with a dot, so the listing hides it; \"Hidden files\" is the toolbar toggle (filesHiddenFiles) and should match its translation.",
+    "placeholders": {
+      "name": {
+        "type": "String",
+        "example": ".env"
+      }
+    }
+  },
+  "filesNewFolder": "New folder",
+  "@filesNewFolder": {
+    "description": "File browser: the New folder toolbar button's tooltip and the title of its dialog."
+  },
+  "filesNewFolderCreate": "Create",
+  "@filesNewFolderCreate": {
+    "description": "New folder dialog: the confirm button."
+  },
+  "filesNewFolderHint": "Folder name",
+  "@filesNewFolderHint": {
+    "description": "New folder dialog: hint in the empty name field."
+  },
+  "filesNameExistsHere": "\"{name}\" already exists here.",
+  "@filesNameExistsHere": {
+    "description": "New folder and Compress dialogs: error under the name field when that name is already taken in this folder. {name} is the typed name, e.g. backup.",
+    "placeholders": {
+      "name": {
+        "type": "String",
+        "example": "backup"
+      }
+    }
+  },
+  "filesSnackCreatedFolder": "Created folder {name}",
+  "@filesSnackCreatedFolder": {
+    "description": "File browser: snackbar after a folder was created. {name} is its name, e.g. backup.",
+    "placeholders": {
+      "name": {
+        "type": "String",
+        "example": "backup"
+      }
+    }
+  },
+  "filesSnackCreatedFolderHidden": "Created folder {name} — it is hidden, so turn on Hidden files to see it",
+  "@filesSnackCreatedFolderHidden": {
+    "description": "File browser: snackbar after a folder whose name starts with a dot was created while hidden files are not shown. {name} is its name, e.g. .config. The clause after the dash says the new name starts with a dot, so the listing hides it; \"Hidden files\" is the toolbar toggle (filesHiddenFiles) and should match its translation.",
+    "placeholders": {
+      "name": {
+        "type": "String",
+        "example": ".config"
+      }
+    }
+  },
+  "filesPermissionsUnknown": "The server did not say what the permissions of {name} are.",
+  "@filesPermissionsUnknown": {
+    "description": "File browser: error snackbar when the server would not report a file's permissions before the Permissions dialog. {name} is the file name, e.g. deploy.sh.",
+    "placeholders": {
+      "name": {
+        "type": "String",
+        "example": "deploy.sh"
+      }
+    }
+  },
+  "filesPermissionsRefused": "The server would not change the permissions of {name}.",
+  "@filesPermissionsRefused": {
+    "description": "File browser: error snackbar when the server refused a permissions change. {name} is the file name, e.g. deploy.sh.",
+    "placeholders": {
+      "name": {
+        "type": "String",
+        "example": "deploy.sh"
+      }
+    }
+  },
+  "filesSnackPermissionsChanged": "{name} is now {mode}",
+  "@filesSnackPermissionsChanged": {
+    "description": "File browser: snackbar after a permissions change. {name} is the file name, {mode} the new octal mode, e.g. 755 (not translated).",
+    "placeholders": {
+      "name": {
+        "type": "String",
+        "example": "deploy.sh"
+      },
+      "mode": {
+        "type": "String",
+        "example": "755"
+      }
+    }
+  },
+  "filesCompressProgressName": "Compressing {name}",
+  "@filesCompressProgressName": {
+    "description": "File browser: progress line under the toolbar while one entry is packed into an archive on the server; also starts the result message (e.g. \"Compressing logs: done.\"). {name} is the file or folder name.",
+    "placeholders": {
+      "name": {
+        "type": "String",
+        "example": "logs"
+      }
+    }
+  },
+  "filesCompressProgressCount": "{count, plural, =1{Compressing 1 item} other{Compressing {count} items}}",
+  "@filesCompressProgressCount": {
+    "description": "File browser: progress line under the toolbar while several selected entries are packed into one archive on the server; also starts the result message. {count} is how many.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "4"
+      }
+    }
+  },
+  "filesCompressDone": "Made {name}",
+  "@filesCompressDone": {
+    "description": "File browser: snackbar after Compress finished. {name} is the archive's file name, e.g. logs.tar.gz.",
+    "placeholders": {
+      "name": {
+        "type": "String",
+        "example": "logs.tar.gz"
+      }
+    }
+  },
+  "filesCompressDoneHidden": "Made {name} — it is hidden, so turn on Hidden files to see it",
+  "@filesCompressDoneHidden": {
+    "description": "File browser: snackbar after Compress made an archive whose name starts with a dot while hidden files are not shown. {name} is the archive's file name, e.g. .env.zip. The clause after the dash says the new name starts with a dot, so the listing hides it; \"Hidden files\" is the toolbar toggle (filesHiddenFiles) and should match its translation.",
+    "placeholders": {
+      "name": {
+        "type": "String",
+        "example": ".env.zip"
+      }
+    }
+  },
+  "filesExtractNotAFolder": "\"{name}\" is here and is not a folder. Choose another name.",
+  "@filesExtractNotAFolder": {
+    "description": "Extract dialog: error under the folder name field when a file (not a folder) already has that name. {name} is the typed name, e.g. site.",
+    "placeholders": {
+      "name": {
+        "type": "String",
+        "example": "site"
+      }
+    }
+  },
+  "filesExtractProgress": "Extracting {name}",
+  "@filesExtractProgress": {
+    "description": "File browser: progress line under the toolbar while an archive is unpacked on the server; also starts the result message (e.g. \"Extracting site.zip: done.\"). {name} is the archive's file name.",
+    "placeholders": {
+      "name": {
+        "type": "String",
+        "example": "site.zip"
+      }
+    }
+  },
+  "filesExtractDone": "Extracted into {folder}",
+  "@filesExtractDone": {
+    "description": "File browser: snackbar after Extract finished. {folder} is the name of the folder the archive was unpacked into, e.g. site.",
+    "placeholders": {
+      "folder": {
+        "type": "String",
+        "example": "site"
+      }
+    }
+  },
+  "filesExtractOpen": "Open",
+  "@filesExtractOpen": {
+    "description": "File browser: action on the \"Extracted into…\" snackbar that opens the folder."
+  },
+  "filesDuplicateProgress": "Duplicating {name}",
+  "@filesDuplicateProgress": {
+    "description": "File browser: progress line under the toolbar while an entry is copied beside itself on the server; also starts the result message. {name} is the file or folder name.",
+    "placeholders": {
+      "name": {
+        "type": "String",
+        "example": "nginx.conf"
+      }
+    }
+  },
+  "filesDuplicateDone": "Made {name}",
+  "@filesDuplicateDone": {
+    "description": "File browser: snackbar after Duplicate finished. {name} is the copy's name, which the app builds (e.g. \"nginx copy.conf\") and is not translated.",
+    "placeholders": {
+      "name": {
+        "type": "String",
+        "example": "nginx copy.conf"
+      }
+    }
+  },
+  "filesOwnerProgressName": "Changing the owner of {name}",
+  "@filesOwnerProgressName": {
+    "description": "File browser: progress line under the toolbar while chown runs on the server; also starts the result message. {name} is the file or folder name.",
+    "placeholders": {
+      "name": {
+        "type": "String",
+        "example": "www"
+      }
+    }
+  },
+  "filesOwnerProgressCount": "{count, plural, =1{Changing the owner of 1 item} other{Changing the owner of {count} items}}",
+  "@filesOwnerProgressCount": {
+    "description": "File browser: progress line under the toolbar while chown runs on several selected entries; also starts the result message. {count} is how many.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "3"
+      }
+    }
+  },
+  "filesOwnerDoneName": "{name} now belongs to {owner}",
+  "@filesOwnerDoneName": {
+    "description": "File browser: snackbar after Change owner finished. {name} is the file or folder name, {owner} the new owner as user:group or user (not translated), e.g. www-data:www-data.",
+    "placeholders": {
+      "name": {
+        "type": "String",
+        "example": "www"
+      },
+      "owner": {
+        "type": "String",
+        "example": "www-data:www-data"
+      }
+    }
+  },
+  "filesOwnerDoneCount": "{count, plural, =1{1 item now belongs to {owner}} other{{count} items now belong to {owner}}}",
+  "@filesOwnerDoneCount": {
+    "description": "File browser: snackbar after Change owner finished on several entries. {count} is how many, {owner} the new owner as user:group or user (not translated), e.g. www-data:www-data.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "3"
+      },
+      "owner": {
+        "type": "String",
+        "example": "www-data:www-data"
+      }
+    }
+  },
+  "filesSearchHitGone": "{name} is not in {folder} any more.",
+  "@filesSearchHitGone": {
+    "description": "File browser: error snackbar when a file picked from the search results has gone by the time the browser opens its folder. {name} is the file name, {folder} the remote folder path, e.g. /etc/nginx.",
+    "placeholders": {
+      "name": {
+        "type": "String",
+        "example": "nginx.conf"
+      },
+      "folder": {
+        "type": "String",
+        "example": "/etc/nginx"
+      }
+    }
+  },
+  "filesActionEdit": "Edit",
+  "@filesActionEdit": {
+    "description": "File action sheet (long-press or right-click on a file): opens the file in the built-in editor."
+  },
+  "filesActionEditSubtitle": "Opens on the server, saves back in place",
+  "@filesActionEditSubtitle": {
+    "description": "File action sheet: line under Edit."
+  },
+  "filesActionDownloadSubtitle": "Saves to this device's Downloads",
+  "@filesActionDownloadSubtitle": {
+    "description": "File action sheet: line under Download. \"Downloads\" is the device's Downloads folder: use the name the OS shows for it in your language, also inside a path written as Downloads/…/."
+  },
+  "filesActionTail": "Tail file",
+  "@filesActionTail": {
+    "description": "File action sheet: opens a live view that follows new lines appended to the file, like `tail -f`."
+  },
+  "filesActionTailSubtitle": "Follows new lines as they are written",
+  "@filesActionTailSubtitle": {
+    "description": "File action sheet: line under Tail file."
+  },
+  "filesActionDownloadFolder": "Download folder",
+  "@filesActionDownloadFolder": {
+    "description": "Folder action sheet: downloads the folder with everything inside it."
+  },
+  "filesActionDownloadFolderSubtitle": "Everything under it, into Downloads/{name}/",
+  "@filesActionDownloadFolderSubtitle": {
+    "description": "Folder action sheet: line under Download folder. {name} is the folder name, e.g. logs. \"Downloads\" is the device's Downloads folder: use the name the OS shows for it in your language, also inside a path written as Downloads/…/.",
+    "placeholders": {
+      "name": {
+        "type": "String",
+        "example": "logs"
+      }
+    }
+  },
+  "filesActionCopyFolderToServer": "Copy folder to another server…",
+  "@filesActionCopyFolderToServer": {
+    "description": "Folder action sheet: copies the folder straight to another open server."
+  },
+  "filesActionCopyToServer": "Copy to another server…",
+  "@filesActionCopyToServer": {
+    "description": "File action sheet, and the selection bar's send menu: copies straight to another open server."
+  },
+  "filesActionCopyToServerSubtitle": "Straight across, without downloading",
+  "@filesActionCopyToServerSubtitle": {
+    "description": "Action sheet: line under Copy to another server — the files are not saved on this device."
+  },
+  "filesActionMoveFolderToServer": "Move folder to another server…",
+  "@filesActionMoveFolderToServer": {
+    "description": "Folder action sheet: moves the folder straight to another open server."
+  },
+  "filesActionMoveToServer": "Move to another server…",
+  "@filesActionMoveToServer": {
+    "description": "File action sheet, and the selection bar's send menu: moves straight to another open server."
+  },
+  "filesActionMoveFolderToServerSubtitle": "Deletes this folder once every file has been verified over there",
+  "@filesActionMoveFolderToServerSubtitle": {
+    "description": "Folder action sheet: line under Move folder to another server."
+  },
+  "filesActionMoveToServerSubtitle": "Deletes this copy once the other is verified",
+  "@filesActionMoveToServerSubtitle": {
+    "description": "File action sheet: line under Move to another server."
+  },
+  "filesActionRename": "Rename…",
+  "@filesActionRename": {
+    "description": "Action sheet: opens the Rename dialog."
+  },
+  "filesActionPermissions": "Permissions…",
+  "@filesActionPermissions": {
+    "description": "Action sheet: opens the Permissions dialog."
+  },
+  "filesActionPermissionsNow": "Now {mode}",
+  "@filesActionPermissionsNow": {
+    "description": "Action sheet: line under Permissions showing the current mode. {mode} is an octal mode, e.g. 644 (not translated).",
+    "placeholders": {
+      "mode": {
+        "type": "String",
+        "example": "644"
+      }
+    }
+  },
+  "filesExtractAction": "Extract…",
+  "@filesExtractAction": {
+    "description": "Action sheet on an archive: opens the Extract dialog."
+  },
+  "filesExtractActionSubtitle": "Into a folder beside it, on the server",
+  "@filesExtractActionSubtitle": {
+    "description": "Action sheet: line under Extract."
+  },
+  "filesCompressAction": "Compress…",
+  "@filesCompressAction": {
+    "description": "Action sheet and the selection bar's More actions menu: opens the Compress dialog."
+  },
+  "filesCompressActionSubtitleOne": "To {format}, on the server",
+  "@filesCompressActionSubtitleOne": {
+    "description": "Action sheet: line under Compress when the server can make one archive format. {format} is the format name, e.g. tar.gz (not translated).",
+    "placeholders": {
+      "format": {
+        "type": "String",
+        "example": "tar.gz"
+      }
+    }
+  },
+  "filesCompressActionSubtitleTwo": "To {first} or {second}, on the server",
+  "@filesCompressActionSubtitleTwo": {
+    "description": "Action sheet: line under Compress when the server can make both archive formats. {first} and {second} are format names, e.g. tar.gz and zip (not translated).",
+    "placeholders": {
+      "first": {
+        "type": "String",
+        "example": "tar.gz"
+      },
+      "second": {
+        "type": "String",
+        "example": "zip"
+      }
+    }
+  },
+  "filesDuplicateAction": "Duplicate",
+  "@filesDuplicateAction": {
+    "description": "Action sheet and the selection bar's More actions menu: copies the entry beside itself on the server."
+  },
+  "filesDuplicateActionSubtitle": "As \"{name}\"",
+  "@filesDuplicateActionSubtitle": {
+    "description": "Action sheet: line under Duplicate naming the copy. {name} is built by the app (e.g. \"nginx copy.conf\") and is not translated.",
+    "placeholders": {
+      "name": {
+        "type": "String",
+        "example": "nginx copy.conf"
+      }
+    }
+  },
+  "filesOwnerAction": "Change owner…",
+  "@filesOwnerAction": {
+    "description": "Action sheet and the selection bar's More actions menu: opens the Change owner dialog."
+  },
+  "filesActionSelect": "Select",
+  "@filesActionSelect": {
+    "description": "Action sheet: starts multi-select with this entry selected."
+  },
+  "filesActionCopyPath": "Copy path",
+  "@filesActionCopyPath": {
+    "description": "Action sheet: copies the entry's full remote path to the clipboard."
+  },
+  "filesActionDeleteFolder": "Delete folder",
+  "@filesActionDeleteFolder": {
+    "description": "Folder action sheet: deletes the folder (after a confirm dialog)."
+  },
+  "filesActionDeleteFolderSubtitle": "With everything inside it",
+  "@filesActionDeleteFolderSubtitle": {
+    "description": "Folder action sheet: line under Delete folder."
+  },
+  "filesActionDeleteLinkSubtitle": "Removes the link, not what it points to",
+  "@filesActionDeleteLinkSubtitle": {
+    "description": "Symbolic link action sheet: line under Delete."
+  },
+  "filesUploadCountHere": "{count, plural, =1{Upload 1 here} other{Upload {count} here}}",
+  "@filesUploadCountHere": {
+    "description": "File browser: floating upload button when files shared from another app are waiting. {count} is how many files.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "3"
+      }
+    }
+  },
+  "filesUploadHere": "Upload here",
+  "@filesUploadHere": {
+    "description": "File browser: floating upload button, and the button on the shared-files banner; uploads into the folder on screen."
+  },
+  "filesUploadTooltip": "Upload files into {path}",
+  "@filesUploadTooltip": {
+    "description": "File browser: tooltip on the floating upload button. {path} is the remote folder on screen, e.g. /home/pi.",
+    "placeholders": {
+      "path": {
+        "type": "String",
+        "example": "/home/pi"
+      }
+    }
+  },
+  "transferMoveHere": "Move here",
+  "@transferMoveHere": {
+    "description": "Destination folder picker (move to another server): confirm button."
+  },
+  "transferCopyHere": "Copy here",
+  "@transferCopyHere": {
+    "description": "Destination folder picker (copy to another server): confirm button."
+  },
+  "transferMoveNameTo": "Move {name} to…",
+  "@transferMoveNameTo": {
+    "description": "Destination folder picker: subtitle when moving one entry. {name} is its name, e.g. backup.sql.",
+    "placeholders": {
+      "name": {
+        "type": "String",
+        "example": "backup.sql"
+      }
+    }
+  },
+  "transferCopyNameTo": "Copy {name} to…",
+  "@transferCopyNameTo": {
+    "description": "Destination folder picker: subtitle when copying one entry. {name} is its name, e.g. backup.sql.",
+    "placeholders": {
+      "name": {
+        "type": "String",
+        "example": "backup.sql"
+      }
+    }
+  },
+  "transferMoveCountTo": "{count, plural, =1{Move 1 file to…} other{Move {count} files to…}}",
+  "@transferMoveCountTo": {
+    "description": "Destination folder picker: subtitle when moving several entries. {count} is how many.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "5"
+      }
+    }
+  },
+  "transferCopyCountTo": "{count, plural, =1{Copy 1 file to…} other{Copy {count} files to…}}",
+  "@transferCopyCountTo": {
+    "description": "Destination folder picker: subtitle when copying several entries. {count} is how many.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "5"
+      }
+    }
+  },
+  "transferDirectPasswordAuth": "Password-auth destinations cannot be forwarded via agent.",
+  "@transferDirectPasswordAuth": {
+    "description": "Copy/Move to server dialog: reason under the disabled \"Use direct transfer\" checkbox when the destination server signs in with a password, not a key."
+  },
+  "transferRouteTitleMove": "Move to server",
+  "@transferRouteTitleMove": {
+    "description": "Move to server dialog: title."
+  },
+  "transferRouteTitleCopy": "Copy to server",
+  "@transferRouteTitleCopy": {
+    "description": "Copy to server dialog: title."
+  },
+  "transferRouteDestination": "Destination: {host}",
+  "@transferRouteDestination": {
+    "description": "Copy/Move to server dialog: which server the files go to. {host} is the server's name as the user saved it, e.g. web-01.",
+    "placeholders": {
+      "host": {
+        "type": "String",
+        "example": "web-01"
+      }
+    }
+  },
+  "transferRouteUseDirect": "Use direct transfer",
+  "@transferRouteUseDirect": {
+    "description": "Copy/Move to server dialog: checkbox that has the source server send the files straight to the destination."
+  },
+  "transferRouteDirectExplained": "Runs on the source server, straight to the destination: it keeps going if you close the app or lose signal, and is checked and finished when both servers are open again. While it signs in, the source server can use your key for {host} — only choose this if you trust the source server. Falls back to copying through this device if the servers cannot reach each other.",
+  "@transferRouteDirectExplained": {
+    "description": "Copy/Move to server dialog: explanation under \"Use direct transfer\". {host} is the destination server's name, e.g. web-01.",
+    "placeholders": {
+      "host": {
+        "type": "String",
+        "example": "web-01"
+      }
+    }
+  },
+  "transferRouteDirectUnavailable": "Direct transfer is not available for this destination.",
+  "@transferRouteDirectUnavailable": {
+    "description": "Copy/Move to server dialog: line under the disabled \"Use direct transfer\" checkbox when no more specific reason is known."
+  },
+  "transferRouteMove": "Move",
+  "@transferRouteMove": {
+    "description": "Move to server dialog: the confirm button. (The Copy dialog uses the platform's own \"Copy\".)"
+  },
+  "transferRemoteExistsTitle": "Already on the server",
+  "@transferRemoteExistsTitle": {
+    "description": "Upload / server-to-server name-clash dialog: title."
+  },
+  "transferRemoteExistsBody": "\"{name}\" already exists in {directory}.",
+  "@transferRemoteExistsBody": {
+    "description": "Upload name-clash dialog: body. {name} is the file name, {directory} the remote folder, e.g. /home/pi.",
+    "placeholders": {
+      "name": {
+        "type": "String",
+        "example": "notes.txt"
+      },
+      "directory": {
+        "type": "String",
+        "example": "/home/pi"
+      }
+    }
+  },
+  "transferRemoteExistsBodyOnHost": "\"{name}\" already exists in {directory} on {host}.",
+  "@transferRemoteExistsBodyOnHost": {
+    "description": "Server-to-server name-clash dialog: body. {name} is the file name, {directory} the remote folder, {host} the destination server's name, e.g. web-01.",
+    "placeholders": {
+      "name": {
+        "type": "String",
+        "example": "notes.txt"
+      },
+      "directory": {
+        "type": "String",
+        "example": "/home/pi"
+      },
+      "host": {
+        "type": "String",
+        "example": "web-01"
+      }
+    }
+  },
+  "transferSkip": "Skip",
+  "@transferSkip": {
+    "description": "Upload / server-to-server name-clash dialog: button that leaves this file out."
+  },
+  "transferNothingSentLink": "\"{name}\" is a symbolic link. Only files and folders can go straight between servers.",
+  "@transferNothingSentLink": {
+    "description": "Copy/Move to server: snackbar when the only entry picked is a symbolic link. {name} is the link name, e.g. current.",
+    "placeholders": {
+      "name": {
+        "type": "String",
+        "example": "current"
+      }
+    }
+  },
+  "transferNothingSentLinks": "Symbolic links cannot go straight between servers — only files and folders.",
+  "@transferNothingSentLinks": {
+    "description": "Copy/Move to server: snackbar when every entry picked is a symbolic link."
+  },
+  "transferNothingSent": "Nothing sent — every item was skipped.",
+  "@transferNothingSent": {
+    "description": "Copy/Move to server: snackbar when the user skipped every entry in the name-clash dialogs."
+  },
+  "transferMovingName": "Moving {name} to {host}:{directory}",
+  "@transferMovingName": {
+    "description": "Copy/Move to server: snackbar after one entry was queued to move. {name} is its name, {host} the destination server's name, {directory} the remote folder; keep \"{host}:{directory}\" together as written.",
+    "placeholders": {
+      "name": {
+        "type": "String",
+        "example": "backup.sql"
+      },
+      "host": {
+        "type": "String",
+        "example": "web-01"
+      },
+      "directory": {
+        "type": "String",
+        "example": "/srv/backups"
+      }
+    }
+  },
+  "transferCopyingName": "Copying {name} to {host}:{directory}",
+  "@transferCopyingName": {
+    "description": "Copy/Move to server: snackbar after one entry was queued to copy. {name} is its name, {host} the destination server's name, {directory} the remote folder; keep \"{host}:{directory}\" together as written.",
+    "placeholders": {
+      "name": {
+        "type": "String",
+        "example": "backup.sql"
+      },
+      "host": {
+        "type": "String",
+        "example": "web-01"
+      },
+      "directory": {
+        "type": "String",
+        "example": "/srv/backups"
+      }
+    }
+  },
+  "transferMovingCount": "{count, plural, =1{Moving 1 item to {host}:{directory}} other{Moving {count} items to {host}:{directory}}}",
+  "@transferMovingCount": {
+    "description": "Copy/Move to server: snackbar after several entries were queued to move. {count} is how many, {host} the destination server's name, {directory} the remote folder; keep \"{host}:{directory}\" together as written.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "4"
+      },
+      "host": {
+        "type": "String",
+        "example": "web-01"
+      },
+      "directory": {
+        "type": "String",
+        "example": "/srv/backups"
+      }
+    }
+  },
+  "transferCopyingCount": "{count, plural, =1{Copying 1 item to {host}:{directory}} other{Copying {count} items to {host}:{directory}}}",
+  "@transferCopyingCount": {
+    "description": "Copy/Move to server: snackbar after several entries were queued to copy. {count} is how many, {host} the destination server's name, {directory} the remote folder; keep \"{host}:{directory}\" together as written.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "4"
+      },
+      "host": {
+        "type": "String",
+        "example": "web-01"
+      },
+      "directory": {
+        "type": "String",
+        "example": "/srv/backups"
+      }
+    }
+  },
+  "transferNoteDirect": "direct",
+  "@transferNoteDirect": {
+    "description": "Copy/Move to server snackbar: short lower-case note appended after \" · \" when the direct (server-to-server) route was chosen, e.g. \"Copying 4 items to web-01:/srv · direct\"."
+  },
+  "transferNoteLinksLeftOut": "{count, plural, =1{1 link left out} other{{count} links left out}}",
+  "@transferNoteLinksLeftOut": {
+    "description": "Copy/Move to server snackbar: short note appended after \" · \" saying how many symbolic links were not sent. {count} is how many.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "2"
+      }
+    }
+  },
+  "transferScanningTitle": "Scanning {name}…",
+  "@transferScanningTitle": {
+    "description": "Folder download: title of the dialog shown while the folder is walked. {name} is the folder name, e.g. logs.",
+    "placeholders": {
+      "name": {
+        "type": "String",
+        "example": "logs"
+      }
+    }
+  },
+  "transferScanningBody": "Counting the files and folders inside.",
+  "@transferScanningBody": {
+    "description": "Folder download scanning dialog: body."
+  },
+  "transferScanningStopping": "Stopping…",
+  "@transferScanningStopping": {
+    "description": "Folder download scanning dialog: the Cancel button's label after it was pressed, while the scan winds down."
+  },
+  "filesPermissionsTitle": "Permissions",
+  "@filesPermissionsTitle": {
+    "description": "Permissions dialog: title."
+  },
+  "filesPermissionsOwner": "Owner",
+  "@filesPermissionsOwner": {
+    "description": "Permissions dialog: row label for the file owner's permissions."
+  },
+  "filesPermissionsGroup": "Group",
+  "@filesPermissionsGroup": {
+    "description": "Permissions dialog: row label for the file group's permissions."
+  },
+  "filesPermissionsOthers": "Others",
+  "@filesPermissionsOthers": {
+    "description": "Permissions dialog: row label for everyone else's permissions."
+  },
+  "filesPermissionsRead": "Read",
+  "@filesPermissionsRead": {
+    "description": "Permissions dialog: column heading for the read permission."
+  },
+  "filesPermissionsWrite": "Write",
+  "@filesPermissionsWrite": {
+    "description": "Permissions dialog: column heading for the write permission."
+  },
+  "filesPermissionsExecute": "Execute",
+  "@filesPermissionsExecute": {
+    "description": "Permissions dialog: column heading for the execute permission."
+  },
+  "filesPermissionsBitSemantics": "{who, select, owner{Owner} group{Group} other{Others}}: {what, select, read{read} write{write} other{execute}}",
+  "@filesPermissionsBitSemantics": {
+    "description": "Permissions dialog: screen-reader label of each checkbox, e.g. \"Owner: read\". Translate only the text inside the braces after owner/group/other and read/write/other; keep those selector words as they are.",
+    "placeholders": {
+      "who": {
+        "type": "String",
+        "example": "owner"
+      },
+      "what": {
+        "type": "String",
+        "example": "read"
+      }
+    }
+  },
+  "filesPermissionsOctal": "Octal",
+  "@filesPermissionsOctal": {
+    "description": "Permissions dialog: label of the field holding the mode as octal digits (e.g. 755)."
+  },
+  "filesPermissionsOctalError": "Three or four digits, each 0 to 7",
+  "@filesPermissionsOctalError": {
+    "description": "Permissions dialog: error under the octal field when it does not hold a valid mode."
+  },
+  "filesPermissionsApply": "Apply",
+  "@filesPermissionsApply": {
+    "description": "Permissions dialog: the confirm button."
+  },
+  "filesSharedOne": "Shared: {name}",
+  "@filesSharedOne": {
+    "description": "File browser: banner when one file shared from another app is waiting to be uploaded. {name} is the file name, e.g. photo.jpg.",
+    "placeholders": {
+      "name": {
+        "type": "String",
+        "example": "photo.jpg"
+      }
+    }
+  },
+  "filesSharedMany": "{count, plural, =1{1 shared file ({size})} other{{count} shared files ({size})}}",
+  "@filesSharedMany": {
+    "description": "File browser: banner when several files shared from another app are waiting to be uploaded. {count} is how many, {size} their total size already formatted, e.g. 4.1 MB.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "3"
+      },
+      "size": {
+        "type": "String",
+        "example": "4.1 MB"
+      }
+    }
+  },
+  "filesSharedHint": "Browse to a folder, then upload into it.",
+  "@filesSharedHint": {
+    "description": "File browser: second line of the shared-files banner."
+  },
+  "filesSharedDismiss": "Dismiss",
+  "@filesSharedDismiss": {
+    "description": "File browser: tooltip of the close button on the shared-files banner; drops the shared files without uploading."
+  },
+  "filesUpOneLevel": "Up one level",
+  "@filesUpOneLevel": {
+    "description": "File browser path bar: tooltip of the button that opens the parent folder."
+  },
+  "filesGoToPathTooltip": "Go to path (Ctrl+L)",
+  "@filesGoToPathTooltip": {
+    "description": "File browser path bar: tooltip of the button that opens the path field. Ctrl+L is the keyboard shortcut and stays as is."
+  },
+  "filesBookmarkRemove": "Remove bookmark for this folder",
+  "@filesBookmarkRemove": {
+    "description": "File browser path bar: tooltip of the filled star on a bookmarked folder."
+  },
+  "filesBookmarkAdd": "Bookmark this folder",
+  "@filesBookmarkAdd": {
+    "description": "File browser path bar: tooltip of the empty star."
+  },
+  "filesBookmarks": "Bookmarks",
+  "@filesBookmarks": {
+    "description": "File browser path bar: tooltip of the button that opens the saved folders list."
+  },
+  "filesGoToPathLabel": "Go to path",
+  "@filesGoToPathLabel": {
+    "description": "File browser path bar: label of the field where a remote path is typed."
+  },
+  "filesGo": "Go",
+  "@filesGo": {
+    "description": "File browser path bar: tooltip of the button that opens the typed path."
+  },
+  "filesCloseJump": "Close (Esc)",
+  "@filesCloseJump": {
+    "description": "File browser path bar: tooltip of the button that closes the path field. Esc is the key name and stays as is."
+  },
+  "filesHiddenShown": "Hidden shown",
+  "@filesHiddenShown": {
+    "description": "File browser toolbar: the hidden-files toggle while hidden files (names starting with a dot) are shown."
+  },
+  "filesHiddenFiles": "Hidden files",
+  "@filesHiddenFiles": {
+    "description": "File browser toolbar: the hidden-files toggle while hidden files are not shown. Referred to by name in the \"it is hidden\" snackbars."
+  },
+  "filesSearchTooltip": "Search on the server",
+  "@filesSearchTooltip": {
+    "description": "File browser toolbar: tooltip of the search button."
+  },
+  "filesUploadFolderTooltip": "Upload a folder here",
+  "@filesUploadFolderTooltip": {
+    "description": "File browser toolbar (desktop): tooltip of the folder upload button."
+  },
+  "filesUploadFileTooltip": "Upload a file here",
+  "@filesUploadFileTooltip": {
+    "description": "File browser toolbar: tooltip of the file upload button."
+  },
+  "filesRefresh": "Refresh",
+  "@filesRefresh": {
+    "description": "File browser toolbar: tooltip of the button that reloads the listing."
+  },
+  "filesClearSelection": "Clear selection",
+  "@filesClearSelection": {
+    "description": "File browser selection bar: tooltip of the button that leaves multi-select."
+  },
+  "filesSelectedCount": "{count, plural, =1{1 selected} other{{count} selected}}",
+  "@filesSelectedCount": {
+    "description": "File browser selection bar: how many entries are selected.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "3"
+      }
+    }
+  },
+  "filesSelectAll": "All",
+  "@filesSelectAll": {
+    "description": "File browser selection bar: button that selects every entry in the folder. Keep it very short."
+  },
+  "filesSendToServer": "Send to another server",
+  "@filesSendToServer": {
+    "description": "File browser selection bar: tooltip of the menu with Copy/Move to another server."
+  },
+  "filesMoreActions": "More actions",
+  "@filesMoreActions": {
+    "description": "File browser selection bar: tooltip of the menu with Compress, Duplicate and Change owner."
+  },
+  "filesDeleteSelected": "Delete selected (Del)",
+  "@filesDeleteSelected": {
+    "description": "File browser selection bar: tooltip of the delete button. Del is the key name and stays as is."
+  },
+  "filesDragCount": "{count, plural, =1{1 file} other{{count} files}}",
+  "@filesDragCount": {
+    "description": "File browser: label on the chip that follows the mouse while several selected entries are dragged onto another session's tab. {count} is how many.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "15"
+      }
+    }
+  },
+  "filesOnlyHidden": "Only hidden files here",
+  "@filesOnlyHidden": {
+    "description": "File browser: empty-folder message when the folder holds only hidden files and they are not shown."
+  },
+  "filesEmptyFolder": "This folder is empty",
+  "@filesEmptyFolder": {
+    "description": "File browser: empty-folder message."
+  },
+  "filesShowHidden": "{count, plural, =1{Show 1 hidden item} other{Show {count} hidden items}}",
+  "@filesShowHidden": {
+    "description": "File browser: button under \"Only hidden files here\" that shows them. {count} is how many.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "4"
+      }
+    }
+  },
+  "editorOpenFailed": "Could not open {name}.",
+  "@editorOpenFailed": {
+    "description": "Remote text editor: error snackbar when a file could not be opened for an unexpected reason. {name} is the file name.",
+    "placeholders": {
+      "name": {
+        "type": "String",
+        "example": "nginx.conf"
+      }
+    }
+  },
+  "editorOpenAnotherNothing": "Nothing else in {directory} to open.",
+  "@editorOpenAnotherNothing": {
+    "description": "Remote text editor: snackbar after More > Open another file… when every file in the current file's folder is already open (or the folder has no other files). {directory} is a remote folder path.",
+    "placeholders": {
+      "directory": {
+        "type": "String",
+        "example": "/etc/nginx"
+      }
+    }
+  },
+  "editorOpenAnotherTitle": "Open another file",
+  "@editorOpenAnotherTitle": {
+    "description": "Remote text editor: title of the bottom sheet listing the other files in the current file's folder; tapping one opens it in a new editor tab. The folder path is shown under it."
+  },
+  "editorSavedSummary": "Saved {name} ({size})",
+  "@editorSavedSummary": {
+    "description": "Remote text editor: snackbar after a file was saved to the server. Notes such as 'CRLF kept' may follow, joined with ' · '. {name} is the file name, {size} the number of bytes written, already formatted (e.g. '1.2 KB').",
+    "placeholders": {
+      "name": {
+        "type": "String",
+        "example": "nginx.conf"
+      },
+      "size": {
+        "type": "String",
+        "example": "1.2 KB"
+      }
+    }
+  },
+  "editorSavedNoteCrlf": "CRLF kept",
+  "@editorSavedNoteCrlf": {
+    "description": "Remote text editor: note appended to the 'Saved …' snackbar (after ' · ') saying the file's Windows line endings were kept. 'CRLF' stays as is."
+  },
+  "editorSavedNoteBom": "BOM kept",
+  "@editorSavedNoteBom": {
+    "description": "Remote text editor: note appended to the 'Saved …' snackbar (after ' · ') saying the file's byte order mark was kept. 'BOM' (byte order mark) stays as is."
+  },
+  "editorSavedNotePermissions": "the server would not restore the original permissions",
+  "@editorSavedNotePermissions": {
+    "description": "Remote text editor: note appended to the 'Saved …' snackbar (after ' · ') when the file was saved but the server refused to put back its original file permissions (mode bits). Starts lower-case in English because it continues the snackbar line."
+  },
+  "editorMixedEndingsTitle": "Mixed line endings",
+  "@editorMixedEndingsTitle": {
+    "description": "Remote text editor: title of the dialog shown before saving a file that uses both Unix (LF) and Windows (CRLF) line endings."
+  },
+  "editorMixedEndingsBody": "\"{name}\" uses both LF (Linux, macOS) and CRLF (Windows) line endings. A save has to write one of them for every line — which should it be?",
+  "@editorMixedEndingsBody": {
+    "description": "Remote text editor: body of the 'Mixed line endings' dialog; the buttons below are 'CRLF (Windows)' and 'LF (Linux)'. 'LF', 'CRLF', 'Linux', 'macOS' and 'Windows' stay as is. {name} is the file name.",
+    "placeholders": {
+      "name": {
+        "type": "String",
+        "example": "deploy.sh"
+      }
+    }
+  },
+  "editorMixedEndingsCrlf": "CRLF (Windows)",
+  "@editorMixedEndingsCrlf": {
+    "description": "Remote text editor: button in the 'Mixed line endings' dialog that saves every line with Windows line endings. 'CRLF' and 'Windows' stay as is."
+  },
+  "editorMixedEndingsLf": "LF (Linux)",
+  "@editorMixedEndingsLf": {
+    "description": "Remote text editor: main button in the 'Mixed line endings' dialog that saves every line with Unix line endings. 'LF' and 'Linux' stay as is."
+  },
+  "editorIndentTitle": "Indentation",
+  "@editorIndentTitle": {
+    "description": "Remote text editor: title of the dialog that picks what Tab and new lines indent with (2, 4 or 8 spaces, or tabs). Opened from the status bar or the More menu."
+  },
+  "editorIndentTabs": "Tabs",
+  "@editorIndentTabs": {
+    "description": "Remote text editor: indentation that uses tab characters. Shown as an option in the Indentation dialog, in the status bar and in the More menu's 'Indentation: …' item."
+  },
+  "editorIndentSpacesOption": "{count, plural, =1{1 space} other{{count} spaces}}",
+  "@editorIndentSpacesOption": {
+    "description": "Remote text editor: an option in the Indentation dialog — indent with this many space characters.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "4"
+      }
+    }
+  },
+  "editorIndentMakefileNote": "Makefile recipes must start with a tab.",
+  "@editorIndentMakefileNote": {
+    "description": "Remote text editor: small note under the options of the Indentation dialog, shown only for Makefiles. 'Makefile' stays as is; a 'recipe' is the indented command block of a make rule."
+  },
+  "editorLossyTitle": "Not valid UTF-8",
+  "@editorLossyTitle": {
+    "description": "Remote text editor: title of the warning shown on the first save of a file that contained bytes that are not valid UTF-8. 'UTF-8' stays as is."
+  },
+  "editorLossyBody": "\"{name}\" contains bytes that are not valid UTF-8. They were replaced with � when it was opened, and saving will write those replacements back — the original bytes cannot be recovered from what is on screen.\n\nSave anyway?",
+  "@editorLossyBody": {
+    "description": "Remote text editor: body of the 'Not valid UTF-8' warning. 'UTF-8' and the replacement character � stay as is; keep the blank line before the closing question. {name} is the file name.",
+    "placeholders": {
+      "name": {
+        "type": "String",
+        "example": "legacy.txt"
+      }
+    }
+  },
+  "editorLossySaveAnyway": "Save anyway",
+  "@editorLossySaveAnyway": {
+    "description": "Remote text editor: confirm button of the 'Not valid UTF-8' warning — saves the file with the replacement characters."
+  },
+  "editorConflictGoneTitle": "File is gone",
+  "@editorConflictGoneTitle": {
+    "description": "Remote text editor: title of the save-conflict dialog when the file was deleted on the server while it was open."
+  },
+  "editorConflictChangedTitle": "Changed on the server",
+  "@editorConflictChangedTitle": {
+    "description": "Remote text editor: title of the save-conflict dialog when the file was changed on the server since it was opened."
+  },
+  "editorConflictGoneNote": "Writing it again would recreate it.",
+  "@editorConflictGoneNote": {
+    "description": "Remote text editor: small note in the 'File is gone' conflict dialog, under the server's explanation."
+  },
+  "editorConflictChangedNote": "Someone — or something — wrote to it while you had it open. Nothing has been written yet.",
+  "@editorConflictChangedNote": {
+    "description": "Remote text editor: small note in the 'Changed on the server' conflict dialog, under the explanation."
+  },
+  "editorConflictSaveAsCopy": "Save as copy",
+  "@editorConflictSaveAsCopy": {
+    "description": "Remote text editor: button in the save-conflict dialog that saves the editor's text under a new file name instead of overwriting."
+  },
+  "editorConflictReloadTheirs": "Reload theirs",
+  "@editorConflictReloadTheirs": {
+    "description": "Remote text editor: button in the 'Changed on the server' dialog that throws away the local edits and loads the server's version of the file."
+  },
+  "editorConflictKeepMine": "Keep mine",
+  "@editorConflictKeepMine": {
+    "description": "Remote text editor: main button in the save-conflict dialog that overwrites the server's file with the editor's text."
+  },
+  "editorReloaded": "Reloaded {name} from the server.",
+  "@editorReloaded": {
+    "description": "Remote text editor: snackbar after a file was reloaded from the server. {name} is the file name.",
+    "placeholders": {
+      "name": {
+        "type": "String",
+        "example": "nginx.conf"
+      }
+    }
+  },
+  "editorSaveAsCopyTitle": "Save as copy",
+  "@editorSaveAsCopyTitle": {
+    "description": "Remote text editor: title of the dialog that asks for the file name of a copy to save the editor's text to."
+  },
+  "editorSaveAsCopySubtitle": "A new file in {directory}",
+  "@editorSaveAsCopySubtitle": {
+    "description": "Remote text editor: line under the 'Save as copy' dialog title saying where the copy goes. {directory} is a remote folder path.",
+    "placeholders": {
+      "directory": {
+        "type": "String",
+        "example": "/etc/nginx"
+      }
+    }
+  },
+  "editorSavedAs": "Saved as {path}",
+  "@editorSavedAs": {
+    "description": "Remote text editor: snackbar after the text was saved as a copy. {path} is the full remote path of the new file.",
+    "placeholders": {
+      "path": {
+        "type": "String",
+        "example": "/etc/nginx/nginx (1).conf"
+      }
+    }
+  },
+  "editorSaveFailedTitle": "Could not save",
+  "@editorSaveFailedTitle": {
+    "description": "Remote text editor: title of the dialog shown when a save failed and the original file on the server is untouched. The server's explanation follows."
+  },
+  "editorSaveLeftCopyTitle": "Save left a copy behind",
+  "@editorSaveLeftCopyTitle": {
+    "description": "Remote text editor: title of the dialog shown when a save failed partway and left a temporary copy of the file on the server. The explanation follows."
+  },
+  "editorFileNameLabel": "File name",
+  "@editorFileNameLabel": {
+    "description": "Remote text editor: label of the text field in the 'Save as copy' dialog."
+  },
+  "editorUnsavedTitle": "{count, plural, =1{Unsaved changes} other{{count} unsaved files}}",
+  "@editorUnsavedTitle": {
+    "description": "Remote text editor: title of the dialog shown when closing a tab or leaving the editor with edits not yet saved to the server. One file: 'Unsaved changes'; several: how many files.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "2"
+      }
+    }
+  },
+  "editorUnsavedBodyOne": "\"{name}\" has changes that are not on the server.",
+  "@editorUnsavedBodyOne": {
+    "description": "Remote text editor: body of the unsaved-changes dialog for one file. {name} is the file name.",
+    "placeholders": {
+      "name": {
+        "type": "String",
+        "example": "nginx.conf"
+      }
+    }
+  },
+  "editorUnsavedBodyMany": "These have changes that are not on the server: {names}.",
+  "@editorUnsavedBodyMany": {
+    "description": "Remote text editor: body of the unsaved-changes dialog for several files. {names} is the list of file names, joined with ', '.",
+    "placeholders": {
+      "names": {
+        "type": "String",
+        "example": "nginx.conf, app.py"
+      }
+    }
+  },
+  "editorUnsavedKeepEditing": "Keep editing",
+  "@editorUnsavedKeepEditing": {
+    "description": "Remote text editor: button in the unsaved-changes dialog that closes the dialog and stays in the editor."
+  },
+  "editorUnsavedDiscard": "Discard",
+  "@editorUnsavedDiscard": {
+    "description": "Remote text editor: button in the unsaved-changes dialog that throws the edits away and closes."
+  },
+  "editorNothingToReplace": "Nothing to replace.",
+  "@editorNothingToReplace": {
+    "description": "Remote text editor: snackbar when Replace or All in the find bar found no match to replace."
+  },
+  "editorReplacedCount": "Replaced {count, plural, =1{1 occurrence} other{{count} occurrences}}.",
+  "@editorReplacedCount": {
+    "description": "Remote text editor: snackbar after 'All' in the find bar replaced every match.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "12"
+      }
+    }
+  },
+  "editorGoToLine": "Go to line",
+  "@editorGoToLine": {
+    "description": "Remote text editor: title of the dialog that jumps to a line number, and the row for that command in the Keyboard shortcuts sheet."
+  },
+  "editorGoToLineField": "Line (1 to {total})",
+  "@editorGoToLineField": {
+    "description": "Remote text editor: label of the number field in the 'Go to line' dialog. {total} is the number of lines in the file.",
+    "placeholders": {
+      "total": {
+        "type": "int",
+        "example": "240"
+      }
+    }
+  },
+  "editorGoToLineGo": "Go",
+  "@editorGoToLineGo": {
+    "description": "Remote text editor: main button of the 'Go to line' dialog — moves the cursor to the line typed."
+  },
+  "editorSelectTextFirst": "Select some text first.",
+  "@editorSelectTextFirst": {
+    "description": "Remote text editor: snackbar when Edit > Cut or Copy is chosen with nothing selected."
+  },
+  "editorClipboardEmpty": "There is nothing on the clipboard.",
+  "@editorClipboardEmpty": {
+    "description": "Remote text editor: snackbar when Edit > Paste is chosen and the clipboard holds no text."
+  },
+  "editorActionFind": "Find",
+  "@editorActionFind": {
+    "description": "Remote text editor: row in the Keyboard shortcuts sheet for opening the find bar (the shortcut is shown beside it)."
+  },
+  "editorActionReplace": "Replace",
+  "@editorActionReplace": {
+    "description": "Remote text editor: row in the Keyboard shortcuts sheet for opening find and replace (the shortcut is shown beside it)."
+  },
+  "editorShortcutCloseFind": "Close the find bar",
+  "@editorShortcutCloseFind": {
+    "description": "Remote text editor: row in the Keyboard shortcuts sheet; the key shown beside it is Esc."
+  },
+  "editorActionSelectAll": "Select all",
+  "@editorActionSelectAll": {
+    "description": "Remote text editor: item in the Edit menu and row in the Keyboard shortcuts sheet — selects the whole file."
+  },
+  "editorActionCut": "Cut",
+  "@editorActionCut": {
+    "description": "Remote text editor: item in the Edit menu and row in the Keyboard shortcuts sheet — cuts the selection to the clipboard."
+  },
+  "editorActionPaste": "Paste",
+  "@editorActionPaste": {
+    "description": "Remote text editor: item in the Edit menu and row in the Keyboard shortcuts sheet — pastes the clipboard."
+  },
+  "editorActionUndo": "Undo",
+  "@editorActionUndo": {
+    "description": "Remote text editor: item in the Edit menu, row in the Keyboard shortcuts sheet, and tooltip of the undo button on the extra-keys row above the on-screen keyboard."
+  },
+  "editorActionRedo": "Redo",
+  "@editorActionRedo": {
+    "description": "Remote text editor: item in the Edit menu, row in the Keyboard shortcuts sheet, and tooltip of the redo button on the extra-keys row above the on-screen keyboard."
+  },
+  "editorShortcutIndent": "Indent / outdent",
+  "@editorShortcutIndent": {
+    "description": "Remote text editor: row in the Keyboard shortcuts sheet; the keys beside it are 'Tab / Shift+Tab'. Outdent = remove one level of indentation."
+  },
+  "editorShortcutIndentLine": "Indent / outdent line",
+  "@editorShortcutIndentLine": {
+    "description": "Remote text editor: row in the Keyboard shortcuts sheet; the keys beside it are 'Ctrl+] / Ctrl+['. Indents or outdents the current line."
+  },
+  "editorShortcutComment": "Comment line",
+  "@editorShortcutComment": {
+    "description": "Remote text editor: row in the Keyboard shortcuts sheet — turns the current line into a code comment, or back."
+  },
+  "editorShortcutMoveLine": "Move line",
+  "@editorShortcutMoveLine": {
+    "description": "Remote text editor: row in the Keyboard shortcuts sheet — moves the current line up or down (keys 'Alt+↑ / Alt+↓')."
+  },
+  "editorShortcutDuplicateLine": "Duplicate line",
+  "@editorShortcutDuplicateLine": {
+    "description": "Remote text editor: row in the Keyboard shortcuts sheet — copies the current line below itself."
+  },
+  "editorShortcutZoom": "Zoom in / out",
+  "@editorShortcutZoom": {
+    "description": "Remote text editor: row in the Keyboard shortcuts sheet — makes the editor text larger or smaller."
+  },
+  "editorShortcutsTitle": "Keyboard shortcuts",
+  "@editorShortcutsTitle": {
+    "description": "Remote text editor: title of the sheet listing the editor's keyboard shortcuts, opened from the Edit menu."
+  },
+  "editorTitle": "Editor",
+  "@editorTitle": {
+    "description": "Remote text editor: app bar title while no file is open yet."
+  },
+  "editorFindTooltip": "Find (Ctrl+F)",
+  "@editorFindTooltip": {
+    "description": "Remote text editor: tooltip of the search button in the app bar, which opens the find bar. 'Ctrl+F' stays as is."
+  },
+  "editorSaveTooltip": "Save (Ctrl+S)",
+  "@editorSaveTooltip": {
+    "description": "Remote text editor: tooltip of the save button in the app bar while there are unsaved edits. 'Ctrl+S' stays as is."
+  },
+  "editorNoChangesTooltip": "No changes to save",
+  "@editorNoChangesTooltip": {
+    "description": "Remote text editor: tooltip of the (disabled) save button in the app bar when the file has not been edited."
+  },
+  "editorMenuSoftWrap": "Soft wrap",
+  "@editorMenuSoftWrap": {
+    "description": "Remote text editor: checkbox item in the More menu — wraps long lines at the window edge instead of scrolling sideways."
+  },
+  "editorMenuShowWhitespace": "Show whitespace",
+  "@editorMenuShowWhitespace": {
+    "description": "Remote text editor: checkbox item in the More menu — tints tabs, leading spaces and trailing whitespace so they can be seen. Also named in the mixed-indentation warning (editorMixedIndentWarning); keep the two the same."
+  },
+  "editorMenuIndentation": "Indentation: {style}…",
+  "@editorMenuIndentation": {
+    "description": "Remote text editor: item in the More menu that opens the Indentation dialog. {style} is the current indentation, already translated (e.g. 'Tabs' or 'Spaces: 4').",
+    "placeholders": {
+      "style": {
+        "type": "String",
+        "example": "Spaces: 4"
+      }
+    }
+  },
+  "editorMenuGoToLine": "Go to line…",
+  "@editorMenuGoToLine": {
+    "description": "Remote text editor: item in the More menu that opens the 'Go to line' dialog."
+  },
+  "editorMenuReplace": "Replace…",
+  "@editorMenuReplace": {
+    "description": "Remote text editor: item in the More menu that opens the find bar with its replace row."
+  },
+  "editorMenuOpenAnother": "Open another file…",
+  "@editorMenuOpenAnother": {
+    "description": "Remote text editor: item in the More menu that lists the other files in the same folder to open in a new tab."
+  },
+  "editorMenuReload": "Reload from server",
+  "@editorMenuReload": {
+    "description": "Remote text editor: item in the More menu that reloads the file from the server, discarding unsaved edits."
+  },
+  "editorMenuSaveAsCopy": "Save as copy…",
+  "@editorMenuSaveAsCopy": {
+    "description": "Remote text editor: item in the More menu that saves the text under a new file name."
+  },
+  "editorModePlainText": "Plain text",
+  "@editorModePlainText": {
+    "description": "Remote text editor: the syntax-highlighting choice with no highlighting, listed in the More menu among language names (Python, YAML, …, which stay untranslated) and shown in the status bar."
+  },
+  "editorEditMenuTooltip": "Edit",
+  "@editorEditMenuTooltip": {
+    "description": "Remote text editor: tooltip of the app bar button that opens the Edit menu (select all, cut, copy, paste, undo, redo)."
+  },
+  "editorMenuShortcuts": "Keyboard shortcuts…",
+  "@editorMenuShortcuts": {
+    "description": "Remote text editor: last item in the Edit menu; opens the list of keyboard shortcuts."
+  },
+  "editorNothingOpen": "Nothing open.",
+  "@editorNothingOpen": {
+    "description": "Remote text editor: empty state shown when no file is open."
+  },
+  "editorCloseTab": "Close {name}",
+  "@editorCloseTab": {
+    "description": "Remote text editor: tooltip of the × button on an open file's tab (in the tab strip or the side panel of open files). {name} is the file name.",
+    "placeholders": {
+      "name": {
+        "type": "String",
+        "example": "nginx.conf"
+      }
+    }
+  },
+  "editorInvalidUtf8Banner": "This file is not valid UTF-8. Saving will normalise it.",
+  "@editorInvalidUtf8Banner": {
+    "description": "Remote text editor: warning banner above a file that contained bytes that are not valid UTF-8. 'UTF-8' stays as is."
+  },
+  "editorFindNoMatches": "none",
+  "@editorFindNoMatches": {
+    "description": "Remote text editor: small counter at the end of the find field when the search text matches nothing. Lower-case in English; keep it short."
+  },
+  "editorFindPosition": "{current} of {total}",
+  "@editorFindPosition": {
+    "description": "Remote text editor: small counter at the end of the find field — which match is selected out of how many. Keep it short.",
+    "placeholders": {
+      "current": {
+        "type": "int",
+        "example": "3"
+      },
+      "total": {
+        "type": "int",
+        "example": "12"
+      }
+    }
+  },
+  "editorFindPositionCapped": "{current} of {total}+",
+  "@editorFindPositionCapped": {
+    "description": "Remote text editor: the find field's counter when the search stopped at its limit, so there may be more matches than {total}; the '+' says 'or more'. Keep it short.",
+    "placeholders": {
+      "current": {
+        "type": "int",
+        "example": "3"
+      },
+      "total": {
+        "type": "int",
+        "example": "10000"
+      }
+    }
+  },
+  "editorFindHint": "Find",
+  "@editorFindHint": {
+    "description": "Remote text editor: hint text inside the empty search field of the find bar."
+  },
+  "editorFindMatchCase": "Match case",
+  "@editorFindMatchCase": {
+    "description": "Remote text editor: tooltip of the find bar's 'Aa' toggle — when on, upper and lower case must match."
+  },
+  "editorFindRegex": "Regular expression",
+  "@editorFindRegex": {
+    "description": "Remote text editor: tooltip of the find bar's '.*' toggle — when on, the search text is a regular expression."
+  },
+  "editorFindPrevious": "Previous",
+  "@editorFindPrevious": {
+    "description": "Remote text editor: tooltip of the find bar's up-arrow button — selects the previous match."
+  },
+  "editorFindNext": "Next",
+  "@editorFindNext": {
+    "description": "Remote text editor: tooltip of the find bar's down-arrow button — selects the next match."
+  },
+  "editorReplaceHintRegex": "Replace with (use $1 for a group)",
+  "@editorReplaceHintRegex": {
+    "description": "Remote text editor: hint text in the replace field while 'Regular expression' is on. '$1' stays exactly as is: it is how the replacement refers to the first captured group."
+  },
+  "editorReplaceHint": "Replace with",
+  "@editorReplaceHint": {
+    "description": "Remote text editor: hint text in the empty replace field of the find bar."
+  },
+  "editorReplaceOne": "Replace",
+  "@editorReplaceOne": {
+    "description": "Remote text editor: button beside the replace field — replaces the next match only."
+  },
+  "editorReplaceAll": "All",
+  "@editorReplaceAll": {
+    "description": "Remote text editor: button beside the replace field — replaces every match. Keep it short (it sits next to 'Replace')."
+  },
+  "editorStatusPosition": "Ln {line}, Col {column}",
+  "@editorStatusPosition": {
+    "description": "Remote text editor: cursor position in the status bar at the bottom. 'Ln' = line, 'Col' = column; use the usual short forms in your language. Keep it short.",
+    "placeholders": {
+      "line": {
+        "type": "int",
+        "example": "12"
+      },
+      "column": {
+        "type": "int",
+        "example": "4"
+      }
+    }
+  },
+  "editorMixedIndentWarning": "This file mixes tabs and spaces in its indentation. Turn on Show whitespace to see where.",
+  "@editorMixedIndentWarning": {
+    "description": "Remote text editor: tooltip of the warning icon in the status bar, shown for Python, YAML and Makefiles whose indentation mixes tabs and spaces. 'Show whitespace' is the More menu item (editorMenuShowWhitespace); use the same words."
+  },
+  "editorIndentSpacesLabel": "Spaces: {size}",
+  "@editorIndentSpacesLabel": {
+    "description": "Remote text editor: the current indentation in the status bar (tap to change) and inside 'Indentation: …' in the More menu — indenting with {size} spaces.",
+    "placeholders": {
+      "size": {
+        "type": "int",
+        "example": "4"
+      }
+    }
+  },
+  "editorLineEndingsMixed": "mixed",
+  "@editorLineEndingsMixed": {
+    "description": "Remote text editor: in the status bar, where 'LF' or 'CRLF' is shown for other files — this file has both kinds of line endings. Lower-case in English; keep it short."
+  },
+  "editorStatusWrap": "wrap",
+  "@editorStatusWrap": {
+    "description": "Remote text editor: short marker at the end of the status bar, after ' · ', while Soft wrap is on. Lower-case in English; keep it short."
+  },
+  "editorKeyIndent": "Indent",
+  "@editorKeyIndent": {
+    "description": "Remote text editor: tooltip of the 'Tab' key on the extra-keys row above the on-screen keyboard — indents the line or selection."
+  },
+  "editorKeyOutdent": "Outdent",
+  "@editorKeyOutdent": {
+    "description": "Remote text editor: tooltip of the outdent key on the extra-keys row above the on-screen keyboard — removes one level of indentation."
+  },
+  "editorKeyLeft": "Left",
+  "@editorKeyLeft": {
+    "description": "Remote text editor: tooltip of the left-arrow key on the extra-keys row — moves the cursor one character left."
+  },
+  "editorKeyUp": "Up",
+  "@editorKeyUp": {
+    "description": "Remote text editor: tooltip of the up-arrow key on the extra-keys row — moves the cursor one line up."
+  },
+  "editorKeyDown": "Down",
+  "@editorKeyDown": {
+    "description": "Remote text editor: tooltip of the down-arrow key on the extra-keys row — moves the cursor one line down."
+  },
+  "editorKeyRight": "Right",
+  "@editorKeyRight": {
+    "description": "Remote text editor: tooltip of the right-arrow key on the extra-keys row — moves the cursor one character right."
+  },
+  "editorGutterLabel": "{count, plural, =1{Lines 1–1} other{Lines 1–{count}}}",
+  "@editorGutterLabel": {
+    "description": "Remote text editor: screen-reader label of the line-number column beside the text. {count} is the number of lines in the file; the range '1–{count}' uses an en dash.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "240"
+      }
+    }
+  },
+  "folderPickerSessionFailed": "Could not open a file session on {host}.",
+  "@folderPickerSessionFailed": {
+    "description": "Remote folder picker (choosing a destination folder on a server for a copy/move/upload): error banner when no SFTP file session could be opened on the server. {host} is the host's display name.",
+    "placeholders": {
+      "host": {
+        "type": "String",
+        "example": "web-01"
+      }
+    }
+  },
+  "folderPickerOpenFailed": "Could not open {path}.",
+  "@folderPickerOpenFailed": {
+    "description": "Remote folder picker: error banner when a folder on the server could not be listed. {path} is a remote path and stays as is.",
+    "placeholders": {
+      "path": {
+        "type": "String",
+        "example": "/var/www"
+      }
+    }
+  },
+  "folderPickerDefaultSubtitle": "Choose a folder",
+  "@folderPickerDefaultSubtitle": {
+    "description": "Remote folder picker: small line under the host name in the app bar, shown when the caller gave no description of what is being sent."
+  },
+  "folderPickerHiddenShownTooltip": "Hidden shown",
+  "@folderPickerHiddenShownTooltip": {
+    "description": "Remote folder picker: tooltip of the eye button in the app bar while hidden folders (names starting with a dot) are being shown. Tapping it hides them again."
+  },
+  "folderPickerShowHiddenTooltip": "Show hidden folders",
+  "@folderPickerShowHiddenTooltip": {
+    "description": "Remote folder picker: tooltip of the eye button in the app bar while hidden folders (names starting with a dot) are hidden. Tapping it shows them."
+  },
+  "folderPickerEmpty": "No folders here. The files still land in this one if you choose it.",
+  "@folderPickerEmpty": {
+    "description": "Remote folder picker: empty state when the current folder has no subfolders. Reassures that the current folder itself can still be chosen as the destination."
+  },
+  "folderPickerUpTooltip": "Up one level",
+  "@folderPickerUpTooltip": {
+    "description": "Remote folder picker: tooltip of the arrow button left of the path bar that goes to the parent folder."
+  },
+  "folderPickerHomeTooltip": "Home",
+  "@folderPickerHomeTooltip": {
+    "description": "Remote folder picker: tooltip of the house button right of the path bar that goes back to the user's home folder on the server."
+  },
+  "shareNoCredentials": "No saved credentials for {host}.",
+  "@shareNoCredentials": {
+    "description": "Share target screen (files shared into the app from another Android app; the user picks a server to upload them to): error dialog message when the chosen host has no stored password or key. {host} is the host's display name.",
+    "placeholders": {
+      "host": {
+        "type": "String",
+        "example": "web-01"
+      }
+    }
+  },
+  "shareNoCredentialsDetails": "Edit the host to enter its password or key again.",
+  "@shareNoCredentialsDetails": {
+    "description": "Share target screen: second line of the error dialog when the chosen host has no stored password or key. Points at the 'Edit host' button in the same dialog."
+  },
+  "shareConnectFailed": "Something went wrong while connecting.",
+  "@shareConnectFailed": {
+    "description": "Share target screen: error dialog message when connecting to the chosen host failed for an unexpected reason; the technical details are shown below it."
+  },
+  "shareErrorTitle": "Could not connect",
+  "@shareErrorTitle": {
+    "description": "Share target screen: title of the error dialog shown when connecting to the chosen host failed."
+  },
+  "shareEditHost": "Edit host",
+  "@shareEditHost": {
+    "description": "Share target screen: button in the connection error dialog that opens the host's settings so its password or key can be entered again."
+  },
+  "shareTitle": "Upload to…",
+  "@shareTitle": {
+    "description": "Share target screen: app bar title. The screen lists saved servers to upload the shared files to; keep the trailing ellipsis."
+  },
+  "shareHostAlreadyConnected": "{target}  ·  already connected",
+  "@shareHostAlreadyConnected": {
+    "description": "Share target screen: subtitle of a host in the list when a session to it is already open (the files go to that session). {target} is user@host (and port) and stays as is; keep the ' · ' separator with two spaces on each side.",
+    "placeholders": {
+      "target": {
+        "type": "String",
+        "example": "deploy@web-01.example.com"
+      }
+    }
+  },
+  "shareFilesSummary": "{count, plural, =1{1 file} other{{count} files}}  ·  {size}",
+  "@shareFilesSummary": {
+    "description": "Share target screen: bold first line of the summary above the host list: how many files were shared and their total size. {size} is a pre-formatted size and stays as is; keep the ' · ' separator with two spaces on each side.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "3"
+      },
+      "size": {
+        "type": "String",
+        "example": "4.2 MB"
+      }
+    }
+  },
+  "shareFileNamesMore": "{names} and {count, plural, =1{1 more} other{{count} more}}",
+  "@shareFileNamesMore": {
+    "description": "Share target screen: summary line listing the first three shared file names, when more than three files were shared. {names} is a comma-separated list of file names (stays as is); {count} is how many further files are not named.",
+    "placeholders": {
+      "names": {
+        "type": "String",
+        "example": "photo.jpg, notes.txt, backup.tar.gz"
+      },
+      "count": {
+        "type": "int",
+        "example": "2"
+      }
+    }
+  },
+  "shareHint": "Pick a server, then choose the folder to put them in.",
+  "@shareHint": {
+    "description": "Share target screen: hint under the shared-files summary explaining the two steps (pick a server from the list below, then browse to a folder on it). 'them' are the shared files."
+  },
+  "shareNoHostsTitle": "No saved hosts yet",
+  "@shareNoHostsTitle": {
+    "description": "Share target screen: empty-state heading when the user has not saved any servers."
+  },
+  "shareNoHostsBody": "Add a server in SecureShell Go first — then sharing a file to it takes two taps.",
+  "@shareNoHostsBody": {
+    "description": "Share target screen: empty-state text under 'No saved hosts yet'. 'SecureShell Go' is the app name and stays as is."
+  },
+  "bookmarksRenameTitle": "Bookmark name",
+  "@bookmarksRenameTitle": {
+    "description": "File browser bookmarks sheet: title of the dialog for renaming a saved folder bookmark."
+  },
+  "bookmarksRenameHint": "Leave blank for the path",
+  "@bookmarksRenameHint": {
+    "description": "File browser bookmarks sheet: hint in the text field of the rename dialog. An empty name makes the bookmark show its folder path instead."
+  },
+  "bookmarksTitle": "Bookmarks",
+  "@bookmarksTitle": {
+    "description": "File browser bookmarks sheet: heading of the bottom sheet listing the saved folders on this host."
+  },
+  "bookmarksEmpty": "No bookmarks on this host yet.",
+  "@bookmarksEmpty": {
+    "description": "File browser bookmarks sheet: empty state when no folders on this host have been bookmarked."
+  },
+  "bookmarksThisFolder": "This folder",
+  "@bookmarksThisFolder": {
+    "description": "File browser bookmarks sheet: subtitle of the bookmark for the folder the file browser is showing right now (that row is disabled)."
+  },
+  "bookmarksActionsTooltip": "Bookmark actions",
+  "@bookmarksActionsTooltip": {
+    "description": "File browser bookmarks sheet: tooltip of the three-dot menu button on each bookmark row (offers Rename and Remove)."
+  },
+  "bookmarksRename": "Rename",
+  "@bookmarksRename": {
+    "description": "File browser bookmarks sheet: menu item on a bookmark row that opens the dialog to change the bookmark's name."
+  },
+  "bookmarksRemove": "Remove",
+  "@bookmarksRemove": {
+    "description": "File browser bookmarks sheet: menu item on a bookmark row that deletes the bookmark (the folder itself is not touched)."
+  },
+  "fleetPushTitle": "Push file…",
+  "@fleetPushTitle": {
+    "description": "Fleet push screen (upload the same files to several selected hosts at once): app bar title of the first step, where files, destination and overwrite policy are chosen. Keep the trailing ellipsis."
+  },
+  "fleetPushHostCount": "Pushing to {count, plural, =1{1 host} other{{count} hosts}}",
+  "@fleetPushHostCount": {
+    "description": "Fleet push screen: heading of the first step saying how many hosts were selected; their names follow on the next line.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "3"
+      }
+    }
+  },
+  "fleetPushChooseFiles": "Choose files…",
+  "@fleetPushChooseFiles": {
+    "description": "Fleet push screen: button that opens the device's file picker, shown while no files have been chosen yet."
+  },
+  "fleetPushAddMoreFiles": "Add more files…",
+  "@fleetPushAddMoreFiles": {
+    "description": "Fleet push screen: the same file-picker button once at least one file has been chosen; adds further files to the list."
+  },
+  "fleetPushNoFiles": "No files chosen yet.",
+  "@fleetPushNoFiles": {
+    "description": "Fleet push screen: placeholder under the file-picker button while the list of files to push is empty."
+  },
+  "fleetPushRemoveFileTooltip": "Remove",
+  "@fleetPushRemoveFileTooltip": {
+    "description": "Fleet push screen: tooltip of the X button on a chosen file that takes it off the list (the file on the device is not touched)."
+  },
+  "fleetPushDestinationLabel": "Destination directory",
+  "@fleetPushDestinationLabel": {
+    "description": "Fleet push screen: heading above the text field for the folder on the servers the files are uploaded into."
+  },
+  "fleetPushDestinationHelper": "The same path on every selected host. \"~\" resolves to each host's own home directory.",
+  "@fleetPushDestinationHelper": {
+    "description": "Fleet push screen: helper text under the destination folder field. \"~\" is the shell's home-directory shorthand and stays as is."
+  },
+  "fleetPushPolicyHeading": "If a file already exists",
+  "@fleetPushPolicyHeading": {
+    "description": "Fleet push screen: heading above the radio buttons choosing what happens when a file of the same name is already in the destination folder (overwrite, skip, or fail)."
+  },
+  "fleetPushPolicyOverwrite": "Overwrite",
+  "@fleetPushPolicyOverwrite": {
+    "description": "Fleet push screen: radio option under 'If a file already exists' — replace the existing file on each host. Also shown after 'If a file already exists:' on the confirmation step."
+  },
+  "fleetPushPolicySkipExisting": "Skip existing files",
+  "@fleetPushPolicySkipExisting": {
+    "description": "Fleet push screen: radio option under 'If a file already exists' — leave the existing file alone and mark that file skipped for that host."
+  },
+  "fleetPushPolicyFailOnExisting": "Fail on existing files",
+  "@fleetPushPolicyFailOnExisting": {
+    "description": "Fleet push screen: radio option under 'If a file already exists' — leave the existing file alone and count that file as failed for that host."
+  },
+  "fleetPushNext": "Next",
+  "@fleetPushNext": {
+    "description": "Fleet push screen: button at the bottom of the first step that goes on to the confirmation step."
+  },
+  "fleetPushConfirmTitle": "Confirm push",
+  "@fleetPushConfirmTitle": {
+    "description": "Fleet push screen: app bar title of the confirmation step, before the upload to all hosts starts."
+  },
+  "fleetPushConfirmQuestion": "Push {fileCount, plural, =1{1 file} other{{fileCount} files}} to {hostCount, plural, =1{1 host} other{{hostCount} hosts}} at \"{destination}\"?",
+  "@fleetPushConfirmQuestion": {
+    "description": "Fleet push screen: question heading the confirmation step; the lists of files and hosts follow below it. {destination} is the remote folder path typed by the user and stays as is.",
+    "placeholders": {
+      "fileCount": {
+        "type": "int",
+        "example": "2"
+      },
+      "hostCount": {
+        "type": "int",
+        "example": "5"
+      },
+      "destination": {
+        "type": "String",
+        "example": "/opt/app/config"
+      }
+    }
+  },
+  "fleetPushFilesHeading": "Files",
+  "@fleetPushFilesHeading": {
+    "description": "Fleet push screen, confirmation step: heading above the bulleted list of files that will be uploaded."
+  },
+  "fleetPushHostsHeading": "Hosts",
+  "@fleetPushHostsHeading": {
+    "description": "Fleet push screen, confirmation step: heading above the bulleted list of servers the files will be uploaded to."
+  },
+  "fleetPushPolicyLine": "If a file already exists: {policy}",
+  "@fleetPushPolicyLine": {
+    "description": "Fleet push screen, confirmation step: line restating the chosen overwrite policy. {policy} is the already-translated name of the chosen option.",
+    "placeholders": {
+      "policy": {
+        "type": "String",
+        "example": "Skip existing files"
+      }
+    }
+  },
+  "fleetPushStart": "Push",
+  "@fleetPushStart": {
+    "description": "Fleet push screen, confirmation step: button that starts uploading the files to every selected host (verb)."
+  },
+  "fleetPushUploadFailed": "The upload failed.",
+  "@fleetPushUploadFailed": {
+    "description": "Fleet push results: error shown under a host for a file whose upload through an already-open session failed without a more specific reason."
+  },
+  "fleetPushUploadCancelled": "Cancelled.",
+  "@fleetPushUploadCancelled": {
+    "description": "Fleet push results: error recorded for a file whose upload through an already-open session was cancelled (e.g. from the transfer panel)."
+  },
+  "fleetPushRunningTitle": "Pushing…",
+  "@fleetPushRunningTitle": {
+    "description": "Fleet push results: app bar title while the files are still being uploaded to the hosts."
+  },
+  "fleetPushSummary": "{total, plural, other{{succeeded} of {total} succeeded}}",
+  "@fleetPushSummary": {
+    "description": "Fleet push results: app bar title and heading once the push has finished: how many of the selected hosts received every file. Both are host counts, e.g. '6 of 8 succeeded'.",
+    "placeholders": {
+      "succeeded": {
+        "type": "int",
+        "example": "6"
+      },
+      "total": {
+        "type": "int",
+        "example": "8"
+      }
+    }
+  },
+  "fleetPushRetryFailed": "Retry failed",
+  "@fleetPushRetryFailed": {
+    "description": "Fleet push results: app bar button that runs the push again on only the hosts that failed ('failed' describes the hosts; this is not 'the retry failed')."
+  },
+  "fleetPushDone": "Done",
+  "@fleetPushDone": {
+    "description": "Fleet push results: app bar button that acknowledges a finished push and closes the screen."
+  },
+  "fleetPushFileError": "{name}: {error}",
+  "@fleetPushFileError": {
+    "description": "Fleet push results: red line under a host for one file that failed on it. {name} is the file name; {error} is the reason, already worded elsewhere; both stay as they are.",
+    "placeholders": {
+      "name": {
+        "type": "String",
+        "example": "app.conf"
+      },
+      "error": {
+        "type": "String",
+        "example": "A file already exists at that path."
+      }
+    }
+  },
+  "fleetPushFileFailed": "{name}: failed",
+  "@fleetPushFileFailed": {
+    "description": "Fleet push results: red line under a host for one file that failed on it with no recorded reason. {name} is the file name and stays as is.",
+    "placeholders": {
+      "name": {
+        "type": "String",
+        "example": "app.conf"
+      }
+    }
+  },
+  "fleetPushStatusWaiting": "Waiting…",
+  "@fleetPushStatusWaiting": {
+    "description": "Fleet push results: status line of a host whose upload has not started yet."
+  },
+  "fleetPushStatusProgress": "{total, plural, other{{done} of {total} files}}",
+  "@fleetPushStatusProgress": {
+    "description": "Fleet push results: status line of a host while its upload is running: how many of the files are finished. English deliberately keeps 'files' for every total; translators should use the correct forms for {total}.",
+    "placeholders": {
+      "done": {
+        "type": "int",
+        "example": "1"
+      },
+      "total": {
+        "type": "int",
+        "example": "3"
+      }
+    }
+  },
+  "fleetPushStatusDone": "{count, plural, =1{Done} other{{count} files done}}",
+  "@fleetPushStatusDone": {
+    "description": "Fleet push results: status line of a host that received every file. With a single file it is just 'Done'; otherwise it says how many files.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "3"
+      }
+    }
+  },
+  "fleetPushStatusFailed": "Failed",
+  "@fleetPushStatusFailed": {
+    "description": "Fleet push results: status line of a host where the push failed; the reason is shown below it."
+  },
+  "fleetPushStatusCancelled": "Cancelled",
+  "@fleetPushStatusCancelled": {
+    "description": "Fleet push results: status line of a host whose upload was cancelled before it finished."
+  },
+  "logViewerResume": "Resume",
+  "@logViewerResume": {
+    "description": "Log viewer (live tail of a server log file): toolbar tooltip and the button on the 'Paused' banner that resumes showing new lines as they arrive."
+  },
+  "logViewerPause": "Pause",
+  "@logViewerPause": {
+    "description": "Log viewer: toolbar tooltip of the button that pauses the live view. New lines are held back (not lost) until the user resumes."
+  },
+  "logViewerClearTooltip": "Clear the scrollback",
+  "@logViewerClearTooltip": {
+    "description": "Log viewer: toolbar tooltip of the button that empties the lines collected on screen so far. Nothing is changed on the server."
+  },
+  "logViewerCopyTooltip": "Copy the visible lines",
+  "@logViewerCopyTooltip": {
+    "description": "Log viewer: toolbar tooltip of the button that copies the lines currently shown (after the filter) to the clipboard."
+  },
+  "logViewerJumpToNewest": "Jump to the newest line",
+  "@logViewerJumpToNewest": {
+    "description": "Log viewer: tooltip of the small floating button that scrolls to the bottom of the log and resumes following new lines."
+  },
+  "logViewerWaiting": "Waiting for output…",
+  "@logViewerWaiting": {
+    "description": "Log viewer: shown in the middle of the empty screen while the server has not sent any log line yet."
+  },
+  "logViewerNoMatch": "No lines match “{filter}”.",
+  "@logViewerNoMatch": {
+    "description": "Log viewer: shown when the filter text hides every line collected so far. {filter} is the text the user typed into the filter field.",
+    "placeholders": {
+      "filter": {
+        "type": "String",
+        "example": "ERROR"
+      }
+    }
+  },
+  "logViewerCopied": "{count, plural, =1{Copied 1 line} other{Copied {count} lines}}",
+  "@logViewerCopied": {
+    "description": "Log viewer: snackbar after the visible log lines were copied to the clipboard. {count} is the number of lines copied.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "42"
+      }
+    }
+  },
+  "logViewerFilterHint": "Filter lines…",
+  "@logViewerFilterHint": {
+    "description": "Log viewer: hint inside the empty filter field above the log. Typing shows only the lines that contain the text."
+  },
+  "logViewerLineCount": "{count, plural, =1{1 line} other{{count} lines}}",
+  "@logViewerLineCount": {
+    "description": "Log viewer: small counter at the right end of the filter field while no filter is typed, giving how many log lines are collected. Keep it short.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "250"
+      }
+    }
+  },
+  "logViewerPaused": "Paused",
+  "@logViewerPaused": {
+    "description": "Log viewer: banner text while the live view is paused and no new line has arrived since."
+  },
+  "logViewerPausedNewLines": "{count, plural, =1{Paused — 1 new line} other{Paused — {count} new lines}}",
+  "@logViewerPausedNewLines": {
+    "description": "Log viewer: banner text while the live view is paused, counting the lines that arrived since and are held back until the user resumes.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "12"
+      }
+    }
+  },
+  "logViewerTailTitle": "Tail a file",
+  "@logViewerTailTitle": {
+    "description": "Dialog title: asks for the path of a file on the server to follow live (like the Unix command tail -f), for example a log file."
+  },
+  "logViewerPathLabel": "Path on the server",
+  "@logViewerPathLabel": {
+    "description": "'Tail a file' dialog: label of the field for the full path of the remote file to follow, e.g. /var/log/syslog."
+  },
+  "logViewerTailButton": "Tail",
+  "@logViewerTailButton": {
+    "description": "'Tail a file' dialog: the confirm button that opens the live view of the file (follows new lines as they are written, like tail -f). Use a short verb."
+  },
+  "statsTitle": "Server stats",
+  "@statsTitle": {
+    "description": "Server stats screen: app bar title. The screen shows one server's kernel, uptime, load, memory and disk, refreshed every few seconds while it is open."
+  },
+  "statsRefreshTooltip": "Refresh now",
+  "@statsRefreshTooltip": {
+    "description": "Server stats screen: tooltip of the toolbar button that takes a new reading immediately instead of waiting for the next automatic one."
+  },
+  "statsNoReadings": "No readings yet.",
+  "@statsNoReadings": {
+    "description": "Server stats screen: shown in the middle of the screen when no reading has been taken yet."
+  },
+  "statsStaleSecondsAgo": "{error} Showing the reading from {count, plural, other{{count}s}} ago.",
+  "@statsStaleSecondsAgo": {
+    "description": "Server stats screen: warning banner when the latest refresh failed and the screen still shows the previous reading. {error} is a technical English error message inserted as is, usually a full sentence. {count} is how many seconds old the shown reading is; 's' is the abbreviation for seconds — use your language's short form.",
+    "placeholders": {
+      "error": {
+        "type": "String",
+        "example": "The server did not answer the status commands."
+      },
+      "count": {
+        "type": "int",
+        "example": "20"
+      }
+    }
+  },
+  "statsStaleMinutesAgo": "{error} Showing the reading from {count, plural, other{{count}m}} ago.",
+  "@statsStaleMinutesAgo": {
+    "description": "Server stats screen: warning banner when the latest refresh failed and the screen still shows the previous reading. {error} is a technical English error message inserted as is, usually a full sentence. {count} is how many minutes old the shown reading is; 'm' is the abbreviation for minutes — use your language's short form.",
+    "placeholders": {
+      "error": {
+        "type": "String",
+        "example": "The server did not answer the status commands."
+      },
+      "count": {
+        "type": "int",
+        "example": "5"
+      }
+    }
+  },
+  "statsStaleHoursAgo": "{error} Showing the reading from {count, plural, other{{count}h}} ago.",
+  "@statsStaleHoursAgo": {
+    "description": "Server stats screen: warning banner when the latest refresh failed and the screen still shows the previous reading. {error} is a technical English error message inserted as is, usually a full sentence. {count} is how many hours old the shown reading is; 'h' is the abbreviation for hours — use your language's short form.",
+    "placeholders": {
+      "error": {
+        "type": "String",
+        "example": "The server did not answer the status commands."
+      },
+      "count": {
+        "type": "int",
+        "example": "2"
+      }
+    }
+  },
+  "statsCardSystem": "SYSTEM",
+  "@statsCardSystem": {
+    "description": "Server stats screen: small heading of the card with the server's hostname, kernel, uptime and processor count. Written in capitals; use capitals where your script has them."
+  },
+  "statsHostname": "Hostname",
+  "@statsHostname": {
+    "description": "Server stats screen, SYSTEM card: row label for the server's host name as the server reports it (e.g. web-01). Short label."
+  },
+  "statsKernel": "Kernel",
+  "@statsKernel": {
+    "description": "Server stats screen, SYSTEM card: row label for the operating-system kernel name and version (e.g. Linux 6.8.0-40-generic). Short label."
+  },
+  "statsKernelUnknown": "Could not read the kernel version on this server.",
+  "@statsKernelUnknown": {
+    "description": "Server stats screen, SYSTEM card: shown instead of the Kernel row when the server did not report its kernel version."
+  },
+  "statsUptime": "Uptime",
+  "@statsUptime": {
+    "description": "Server stats screen, SYSTEM card: row label for how long the server has been running since its last boot. Short label."
+  },
+  "statsUptimeUnknown": "Could not read the uptime on this server.",
+  "@statsUptimeUnknown": {
+    "description": "Server stats screen, SYSTEM card: shown instead of the Uptime row when the server did not report how long it has been running."
+  },
+  "statsCpus": "CPUs",
+  "@statsCpus": {
+    "description": "Server stats screen, SYSTEM card: row label for the number of processors (cores) of the server. Short label."
+  },
+  "statsCpusUnknown": "Could not read the processor count on this server.",
+  "@statsCpusUnknown": {
+    "description": "Server stats screen, SYSTEM card: shown instead of the CPUs row when the server did not report how many processors it has."
+  },
+  "statsCardLoad": "LOAD AVERAGE",
+  "@statsCardLoad": {
+    "description": "Server stats screen: small heading of the card with the system load average (the Unix load figures over 1, 5 and 15 minutes). Written in capitals; use capitals where your script has them. Use the usual admin term for 'load average'."
+  },
+  "statsLoadUnknown": "Could not read the load average on this server.",
+  "@statsLoadUnknown": {
+    "description": "Server stats screen, LOAD AVERAGE card: shown instead of the figures when the server did not report its load average."
+  },
+  "statsLoadWindow": "{minutes, plural, other{{minutes} min}}",
+  "@statsLoadWindow": {
+    "description": "Server stats screen, LOAD AVERAGE card: small caption under each load figure naming the time window it averages over (1, 5 or 15 minutes). 'min' is the abbreviation for minutes — use your language's short form.",
+    "placeholders": {
+      "minutes": {
+        "type": "int",
+        "example": "15"
+      }
+    }
+  },
+  "statsLoadHistoryCaption": "One-minute load, this session only",
+  "@statsLoadHistoryCaption": {
+    "description": "Server stats screen, LOAD AVERAGE card: caption under the small line chart. The chart shows the 1-minute load average, collected only while this screen has been open (nothing is recorded in the background)."
+  },
+  "statsCardMemory": "MEMORY",
+  "@statsCardMemory": {
+    "description": "Server stats screen: small heading of the card with the server's RAM usage. Written in capitals; use capitals where your script has them."
+  },
+  "statsMemoryUnknown": "Could not read memory on this server.",
+  "@statsMemoryUnknown": {
+    "description": "Server stats screen, MEMORY card: shown instead of the usage bar when the server did not report its memory usage."
+  },
+  "statsMemoryAvailable": "{size} available",
+  "@statsMemoryAvailable": {
+    "description": "Server stats screen, MEMORY card: small line under the usage bar. {size} is the amount of free memory, already formatted with its unit.",
+    "placeholders": {
+      "size": {
+        "type": "String",
+        "example": "512.0 MB"
+      }
+    }
+  },
+  "statsCardDisk": "DISK",
+  "@statsCardDisk": {
+    "description": "Server stats screen: small heading of the card with the disk space used on the server's main file system. Written in capitals; use capitals where your script has them."
+  },
+  "statsDiskUnknown": "Could not read disk usage on this server.",
+  "@statsDiskUnknown": {
+    "description": "Server stats screen, DISK card: shown instead of the usage bar when the server did not report its disk usage."
+  },
+  "statsDiskAvailable": "{size} available on {mount}",
+  "@statsDiskAvailable": {
+    "description": "Server stats screen, DISK card: small line under the usage bar. {size} is the free space, already formatted with its unit; {mount} is the mount point of the file system (a path, e.g. /), kept as is.",
+    "placeholders": {
+      "size": {
+        "type": "String",
+        "example": "585.9 MB"
+      },
+      "mount": {
+        "type": "String",
+        "example": "/"
+      }
+    }
+  },
+  "statsUsageOfTotal": "of {total}",
+  "@statsUsageOfTotal": {
+    "description": "Server stats screen, MEMORY and DISK cards: shown right after the large 'used' figure, e.g. '400.0 MB' followed by 'of 976.6 MB'. {total} is the total size, already formatted with its unit.",
+    "placeholders": {
+      "total": {
+        "type": "String",
+        "example": "976.6 MB"
+      }
+    }
+  },
+  "statsUsagePercent": "{percent}%",
+  "@statsUsagePercent": {
+    "description": "Server stats screen, MEMORY and DISK cards: the share in use, at the right end above the usage bar. {percent} is a whole number already formatted, e.g. 40. Write it the way your language writes a percentage (e.g. with a no-break space before % where that is the rule).",
+    "placeholders": {
+      "percent": {
+        "type": "String",
+        "example": "40"
+      }
+    }
+  },
+  "statsUptimeDaysHours": "{days, plural, other{{days}d}} {hours, plural, other{{hours}h}}",
+  "@statsUptimeDaysHours": {
+    "description": "Server stats screen, SYSTEM card: the Uptime value in days and hours, e.g. '10d 3h'. 'd' and 'h' are the abbreviations for days and hours — use your language's short forms; the row is narrow.",
+    "placeholders": {
+      "days": {
+        "type": "int",
+        "example": "10"
+      },
+      "hours": {
+        "type": "int",
+        "example": "3"
+      }
+    }
+  },
+  "statsUptimeDays": "{days, plural, other{{days}d}}",
+  "@statsUptimeDays": {
+    "description": "Server stats screen, SYSTEM card: the Uptime value in whole days, e.g. '2d'. 'd' is the abbreviation for days — use your language's short form, the same as in statsUptimeDaysHours.",
+    "placeholders": {
+      "days": {
+        "type": "int",
+        "example": "2"
+      }
+    }
+  },
+  "statsUptimeHoursMinutes": "{hours, plural, other{{hours}h}} {minutes, plural, other{{minutes}m}}",
+  "@statsUptimeHoursMinutes": {
+    "description": "Server stats screen, SYSTEM card: the Uptime value in hours and minutes, e.g. '6h 46m'. 'h' and 'm' are the abbreviations for hours and minutes — use your language's short forms; the row is narrow.",
+    "placeholders": {
+      "hours": {
+        "type": "int",
+        "example": "6"
+      },
+      "minutes": {
+        "type": "int",
+        "example": "46"
+      }
+    }
+  },
+  "statsUptimeHours": "{hours, plural, other{{hours}h}}",
+  "@statsUptimeHours": {
+    "description": "Server stats screen, SYSTEM card: the Uptime value in whole hours, e.g. '6h'. 'h' is the abbreviation for hours — use your language's short form, the same as in statsUptimeHoursMinutes.",
+    "placeholders": {
+      "hours": {
+        "type": "int",
+        "example": "6"
+      }
+    }
+  },
+  "statsUptimeMinutes": "{minutes, plural, other{{minutes}m}}",
+  "@statsUptimeMinutes": {
+    "description": "Server stats screen, SYSTEM card: the Uptime value in minutes, e.g. '45m'. 'm' is the abbreviation for minutes — use your language's short form, the same as in statsUptimeHoursMinutes.",
+    "placeholders": {
+      "minutes": {
+        "type": "int",
+        "example": "45"
+      }
+    }
+  },
+  "statsUptimeUnderMinute": "less than a minute",
+  "@statsUptimeUnderMinute": {
+    "description": "Server stats screen, SYSTEM card: the Uptime value for a server that booted less than a minute ago. Lower-case in English because it is a value next to the 'Uptime' label."
+  },
+  "servicesTitle": "Services",
+  "@servicesTitle": {
+    "description": "Services screen: app bar title. The screen lists the server's systemd services (start/stop/restart) and its running processes, on two tabs."
+  },
+  "servicesTabServices": "Services",
+  "@servicesTabServices": {
+    "description": "Services screen: tab label for the list of systemd services (system daemons such as nginx or cron). Short."
+  },
+  "servicesTabProcesses": "Processes",
+  "@servicesTabProcesses": {
+    "description": "Services screen: tab label for the table of running processes on the server. Short."
+  },
+  "servicesListFailed": "Could not list services: {error}",
+  "@servicesListFailed": {
+    "description": "Services screen, Services tab: shown in the middle of the tab when the list of systemd services could not be read. {error} is technical English text inserted as is.",
+    "placeholders": {
+      "error": {
+        "type": "String",
+        "example": "Connection closed"
+      }
+    }
+  },
+  "servicesConfirmStartTitle": "Start {unit}?",
+  "@servicesConfirmStartTitle": {
+    "description": "Services screen: title of the confirmation dialog before starting a systemd service. {unit} is the service name, kept as is (e.g. nginx).",
+    "placeholders": {
+      "unit": {
+        "type": "String",
+        "example": "nginx"
+      }
+    }
+  },
+  "servicesConfirmStopTitle": "Stop {unit}?",
+  "@servicesConfirmStopTitle": {
+    "description": "Services screen: title of the confirmation dialog before stopping a systemd service. {unit} is the service name, kept as is (e.g. nginx).",
+    "placeholders": {
+      "unit": {
+        "type": "String",
+        "example": "nginx"
+      }
+    }
+  },
+  "servicesConfirmRestartTitle": "Restart {unit}?",
+  "@servicesConfirmRestartTitle": {
+    "description": "Services screen: title of the confirmation dialog before restarting a systemd service. {unit} is the service name, kept as is (e.g. nginx).",
+    "placeholders": {
+      "unit": {
+        "type": "String",
+        "example": "nginx"
+      }
+    }
+  },
+  "servicesConfirmBody": "This runs {command} on {host}.",
+  "@servicesConfirmBody": {
+    "description": "Services screen, service action confirmation dialog: says exactly which command will be run. {command} is the literal shell command (e.g. systemctl stop nginx.service), never translated; {host} is the saved host's name.",
+    "placeholders": {
+      "command": {
+        "type": "String",
+        "example": "systemctl stop nginx.service"
+      },
+      "host": {
+        "type": "String",
+        "example": "web-01"
+      }
+    }
+  },
+  "servicesSudoHint": "It may need sudo. If the server refuses it, run it from the terminal instead — this app never escalates on your behalf.",
+  "@servicesSudoHint": {
+    "description": "Services screen, service action confirmation dialog: hint under the command. 'sudo' stays as is. 'Escalates' means gaining administrator (root) rights: the app never runs sudo or asks for the root password itself."
+  },
+  "servicesActionStart": "Start",
+  "@servicesActionStart": {
+    "description": "Services screen: menu item on a service row and the confirm button of the dialog that starts the systemd service. Short verb."
+  },
+  "servicesActionStop": "Stop",
+  "@servicesActionStop": {
+    "description": "Services screen: menu item on a service row and the confirm button of the dialog that stops the systemd service. Short verb."
+  },
+  "servicesActionRestart": "Restart",
+  "@servicesActionRestart": {
+    "description": "Services screen: menu item on a service row and the confirm button of the dialog that restarts the systemd service. Short verb."
+  },
+  "servicesActionSent": "{unit}: {command} sent.",
+  "@servicesActionSent": {
+    "description": "Services screen: snackbar after the server accepted a service action. {unit} is the service name (e.g. nginx); {command} is the systemctl sub-command that was sent (start, stop or restart), kept in English as is.",
+    "placeholders": {
+      "unit": {
+        "type": "String",
+        "example": "nginx"
+      },
+      "command": {
+        "type": "String",
+        "example": "restart"
+      }
+    }
+  },
+  "servicesStartFailed": "Could not start {unit}: {error}",
+  "@servicesStartFailed": {
+    "description": "Services screen: error snackbar when starting a systemd service failed. {unit} is the service name; {error} is technical English text inserted as is.",
+    "placeholders": {
+      "unit": {
+        "type": "String",
+        "example": "nginx"
+      },
+      "error": {
+        "type": "String",
+        "example": "Access denied"
+      }
+    }
+  },
+  "servicesStopFailed": "Could not stop {unit}: {error}",
+  "@servicesStopFailed": {
+    "description": "Services screen: error snackbar when stopping a systemd service failed. {unit} is the service name; {error} is technical English text inserted as is.",
+    "placeholders": {
+      "unit": {
+        "type": "String",
+        "example": "nginx"
+      },
+      "error": {
+        "type": "String",
+        "example": "Access denied"
+      }
+    }
+  },
+  "servicesRestartFailed": "Could not restart {unit}: {error}",
+  "@servicesRestartFailed": {
+    "description": "Services screen: error snackbar when restarting a systemd service failed. {unit} is the service name; {error} is technical English text inserted as is.",
+    "placeholders": {
+      "unit": {
+        "type": "String",
+        "example": "nginx"
+      },
+      "error": {
+        "type": "String",
+        "example": "Access denied"
+      }
+    }
+  },
+  "servicesNoSystemd": "systemd is not available on this server.",
+  "@servicesNoSystemd": {
+    "description": "Services screen, Services tab: shown in the middle of the tab when the server does not use systemd (normal for some systems, not an error). 'systemd' is a product name: keep it as is and lower-case."
+  },
+  "servicesNoSystemdDetail": "Service management needs systemd. Everything else in this session still works.",
+  "@servicesNoSystemdDetail": {
+    "description": "Services screen, Services tab: smaller line under 'systemd is not available on this server.'. 'systemd' stays as is."
+  },
+  "servicesFilterHint": "Filter services…",
+  "@servicesFilterHint": {
+    "description": "Services screen, Services tab: hint inside the empty search field above the list. Typing shows only the services whose name or description contains the text."
+  },
+  "servicesFilterCount": "{shown} of {total}",
+  "@servicesFilterCount": {
+    "description": "Services screen, both tabs: small counter at the right end of the search field, e.g. '3 of 120' = 3 rows shown out of 120. Keep it short.",
+    "placeholders": {
+      "shown": {
+        "type": "int",
+        "example": "3"
+      },
+      "total": {
+        "type": "int",
+        "example": "120"
+      }
+    }
+  },
+  "servicesNoMatch": "No services match that filter.",
+  "@servicesNoMatch": {
+    "description": "Services screen, Services tab: shown when the search text hides every service."
+  },
+  "servicesActionsTooltip": "Actions for {unit}",
+  "@servicesActionsTooltip": {
+    "description": "Services screen: tooltip of the menu button at the end of a service row (Start, Restart, Stop). {unit} is the service name, e.g. nginx.",
+    "placeholders": {
+      "unit": {
+        "type": "String",
+        "example": "nginx"
+      }
+    }
+  },
+  "servicesProcessListFailed": "Could not list processes: {error}",
+  "@servicesProcessListFailed": {
+    "description": "Services screen, Processes tab: shown in the middle of the tab when the process table could not be read. {error} is technical English text inserted as is.",
+    "placeholders": {
+      "error": {
+        "type": "String",
+        "example": "Connection closed"
+      }
+    }
+  },
+  "servicesKillTitle": "Stop {command}?",
+  "@servicesKillTitle": {
+    "description": "Services screen, Processes tab: title of the confirmation dialog before sending a stop signal to a process. {command} is the process's command name as the server reports it, kept as is (e.g. python3).",
+    "placeholders": {
+      "command": {
+        "type": "String",
+        "example": "python3"
+      }
+    }
+  },
+  "servicesKillBody": "PID {pid}, owned by {user}, on {host}.",
+  "@servicesKillBody": {
+    "description": "Services screen, process stop dialog: identifies the process. 'PID' (process ID) stays as is. {pid} is the process number, {user} the Unix user that owns it (e.g. root), {host} the saved host's name.",
+    "placeholders": {
+      "pid": {
+        "type": "String",
+        "example": "4211"
+      },
+      "user": {
+        "type": "String",
+        "example": "www-data"
+      },
+      "host": {
+        "type": "String",
+        "example": "web-01"
+      }
+    }
+  },
+  "servicesKillExplain": "Terminate sends TERM and lets the process shut down cleanly. Force kill sends KILL, which it cannot catch — unsaved work in it is lost.",
+  "@servicesKillExplain": {
+    "description": "Services screen, process stop dialog: explains the two buttons. 'Terminate' and 'Force kill' must use the same words as the buttons servicesTerminate and servicesForceKill. TERM and KILL are Unix signal names and stay as is."
+  },
+  "servicesKillSudoHint": "It may need sudo. If the server refuses, run it from the terminal instead.",
+  "@servicesKillSudoHint": {
+    "description": "Services screen, process stop dialog: hint that stopping another user's process may need administrator rights. 'sudo' stays as is."
+  },
+  "servicesForceKill": "Force kill (KILL)",
+  "@servicesForceKill": {
+    "description": "Services screen, process stop dialog: button that stops the process immediately with the KILL signal (it cannot clean up). 'KILL' stays as is. Short."
+  },
+  "servicesTerminate": "Terminate",
+  "@servicesTerminate": {
+    "description": "Services screen, process stop dialog: the default button, sends the TERM signal so the process can shut down cleanly. Short verb."
+  },
+  "servicesSignalSent": "Sent {signal} to {pid}.",
+  "@servicesSignalSent": {
+    "description": "Services screen, Processes tab: snackbar after a signal was sent to a process. {signal} is the Unix signal name, TERM or KILL, kept as is; {pid} is the process number.",
+    "placeholders": {
+      "signal": {
+        "type": "String",
+        "example": "TERM"
+      },
+      "pid": {
+        "type": "String",
+        "example": "4211"
+      }
+    }
+  },
+  "servicesSignalFailed": "Could not signal {pid}: {error}",
+  "@servicesSignalFailed": {
+    "description": "Services screen, Processes tab: error snackbar when sending a stop signal to a process failed. {pid} is the process number; {error} is technical English text inserted as is.",
+    "placeholders": {
+      "pid": {
+        "type": "String",
+        "example": "4211"
+      },
+      "error": {
+        "type": "String",
+        "example": "Operation not permitted"
+      }
+    }
+  },
+  "servicesProcessFilterHint": "Filter by name, user or pid…",
+  "@servicesProcessFilterHint": {
+    "description": "Services screen, Processes tab: hint inside the empty search field above the process table. 'pid' means the process ID number; keep it as is or use your language's usual abbreviation."
+  },
+  "servicesNoProcessMatch": "No processes match that filter.",
+  "@servicesNoProcessMatch": {
+    "description": "Services screen, Processes tab: shown when the search text hides every process."
+  },
+  "servicesColumnCommand": "COMMAND",
+  "@servicesColumnCommand": {
+    "description": "Services screen, Processes tab: column header (tap to sort) for the process's command name. Written in capitals like the other headers (PID, CPU); use capitals where your script has them. The column is narrow."
+  },
+  "servicesColumnUser": "USER",
+  "@servicesColumnUser": {
+    "description": "Services screen, Processes tab: column header (tap to sort) for the Unix user that owns the process. Written in capitals; use capitals where your script has them. The column is narrow."
+  },
+  "servicesColumnMemory": "MEM",
+  "@servicesColumnMemory": {
+    "description": "Services screen, Processes tab: column header (tap to sort) for the share of memory (RAM) the process uses, in percent. A 3–4 character abbreviation in capitals; the column is very narrow (about 50 pixels)."
+  },
+  "servicesInitTooltip": "init cannot be stopped from here",
+  "@servicesInitTooltip": {
+    "description": "Services screen, Processes tab: tooltip of the lock icon on the row of process 1 (init, the first process of the system), which the app never offers to stop. 'init' stays as is."
+  },
+  "servicesKillTooltip": "Stop this process…",
+  "@servicesKillTooltip": {
+    "description": "Services screen, Processes tab: tooltip of the button at the end of a process row; opens the dialog to stop the process."
+  },
+  "servicesTryAgain": "Try again",
+  "@servicesTryAgain": {
+    "description": "Services screen, both tabs: button under an error message that reloads the list."
+  },
+  "filesCompressNameEmpty": "Enter a name.",
+  "@filesCompressNameEmpty": {
+    "description": "Compress dialog: error under the archive name field when it is empty."
+  },
+  "filesCompressTitle": "Compress",
+  "@filesCompressTitle": {
+    "description": "Compress dialog: title when one file or folder is being packed into an archive on the server."
+  },
+  "filesCompressTitleCount": "{count, plural, =1{Compress 1 item} other{Compress {count} items}}",
+  "@filesCompressTitleCount": {
+    "description": "Compress dialog: title when several selected entries are packed into one archive. {count} is how many.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "4"
+      }
+    }
+  },
+  "filesCompressMoreNames": "{count, plural, =1{and 1 more} other{and {count} more}}",
+  "@filesCompressMoreNames": {
+    "description": "Compress dialog: line under the first three names when more entries are selected. {count} is how many are not listed.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "5"
+      }
+    }
+  },
+  "filesCompressNameLabel": "Archive name",
+  "@filesCompressNameLabel": {
+    "description": "Compress dialog: label of the field for the archive's name. The ending (.tar.gz or .zip) is shown after the field and is not translated."
+  },
+  "filesCompressHelp": "Made on the server, next to what it packs. It carries on if this app is closed.",
+  "@filesCompressHelp": {
+    "description": "Compress dialog: note under the name field."
+  },
+  "filesCompressButton": "Compress",
+  "@filesCompressButton": {
+    "description": "Compress dialog: the confirm button."
+  },
+  "filesExtractTitle": "Extract",
+  "@filesExtractTitle": {
+    "description": "Extract dialog: title. The dialog unpacks an archive into a folder on the server."
+  },
+  "filesExtractFolderLabel": "Into the folder",
+  "@filesExtractFolderLabel": {
+    "description": "Extract dialog: label of the field naming the folder to unpack into."
+  },
+  "filesExtractExists": "That folder is already here. Extract into it anyway?",
+  "@filesExtractExists": {
+    "description": "Extract dialog: question shown when the folder named already exists."
+  },
+  "filesExtractKeep": "Keep the files already there",
+  "@filesExtractKeep": {
+    "description": "Extract dialog: choice, when extracting into an existing folder, to keep files that are already there rather than overwrite them."
+  },
+  "filesExtractReplace": "Replace them with the archive's",
+  "@filesExtractReplace": {
+    "description": "Extract dialog: choice, when extracting into an existing folder, to overwrite files that are already there with the archive's copies."
+  },
+  "filesExtractHelp": "A new folder beside the archive. Entries that would land outside it are refused.",
+  "@filesExtractHelp": {
+    "description": "Extract dialog: note under the folder field when the folder is new."
+  },
+  "filesExtractIntoButton": "Extract into it",
+  "@filesExtractIntoButton": {
+    "description": "Extract dialog: the confirm button once the user was told the folder already exists."
+  },
+  "filesExtractButton": "Extract",
+  "@filesExtractButton": {
+    "description": "Extract dialog: the confirm button."
+  },
+  "filesOwnerBlank": "Enter an owner or a group.",
+  "@filesOwnerBlank": {
+    "description": "Change owner dialog: error under the Owner field when both fields are empty."
+  },
+  "filesOwnerTitle": "Change owner",
+  "@filesOwnerTitle": {
+    "description": "Change owner dialog: title. The dialog runs chown on the server."
+  },
+  "filesOwnerMoreNames": "{count, plural, =1{and 1 more} other{and {count} more}}",
+  "@filesOwnerMoreNames": {
+    "description": "Change owner dialog: line under the first three names when more entries are selected. {count} is how many are not listed.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "5"
+      }
+    }
+  },
+  "filesOwnerNow": "Now {owner}",
+  "@filesOwnerNow": {
+    "description": "Change owner dialog: the current owner. {owner} is user:group as the server reports it (not translated), e.g. root:root.",
+    "placeholders": {
+      "owner": {
+        "type": "String",
+        "example": "root:root"
+      }
+    }
+  },
+  "filesOwnerOwnerLabel": "Owner",
+  "@filesOwnerOwnerLabel": {
+    "description": "Change owner dialog: label of the field for the new owning user."
+  },
+  "filesOwnerOwnerHint": "user name or number",
+  "@filesOwnerOwnerHint": {
+    "description": "Change owner dialog: hint in the Owner field — a user name or a numeric user ID."
+  },
+  "filesOwnerGroupLabel": "Group",
+  "@filesOwnerGroupLabel": {
+    "description": "Change owner dialog: label of the field for the new owning group."
+  },
+  "filesOwnerGroupHint": "leave blank to keep it",
+  "@filesOwnerGroupHint": {
+    "description": "Change owner dialog: hint in the Group field."
+  },
+  "filesOwnerRecursive": "Everything inside too",
+  "@filesOwnerRecursive": {
+    "description": "Change owner dialog: checkbox (for folders) that changes the owner of everything inside as well."
+  },
+  "filesOwnerHelp": "Giving a file to another user usually needs root; the server says so if it refuses. Links change themselves, never what they point to.",
+  "@filesOwnerHelp": {
+    "description": "Change owner dialog: note under the fields. \"root\" is the Unix superuser account and stays as is."
+  },
+  "filesOwnerButton": "Change",
+  "@filesOwnerButton": {
+    "description": "Change owner dialog: the confirm button."
+  },
+  "filesServerOpStop": "Stop",
+  "@filesServerOpStop": {
+    "description": "File browser: button on the progress line of an operation running on the server (compress, extract, duplicate, change owner); stops it."
+  },
+  "filesServerOpDone": "{what}: done.",
+  "@filesServerOpDone": {
+    "description": "File browser: snackbar when an operation on the server finished. {what} is the operation's own progress line, already translated (e.g. \"Compressing logs\", \"Extracting site.zip\").",
+    "placeholders": {
+      "what": {
+        "type": "String",
+        "example": "Compressing logs"
+      }
+    }
+  },
+  "filesServerOpStopped": "{what}: stopped.",
+  "@filesServerOpStopped": {
+    "description": "File browser: snackbar when the user stopped an operation on the server. {what} is the operation's own progress line, already translated (e.g. \"Compressing logs\", \"Extracting site.zip\").",
+    "placeholders": {
+      "what": {
+        "type": "String",
+        "example": "Compressing logs"
+      }
+    }
+  },
+  "filesServerOpLostTrack": "{what}: lost track of it.",
+  "@filesServerOpLostTrack": {
+    "description": "File browser: snackbar when the app could no longer follow an operation on the server and has no further reason to give. {what} is the operation's own progress line, already translated (e.g. \"Compressing logs\", \"Extracting site.zip\").",
+    "placeholders": {
+      "what": {
+        "type": "String",
+        "example": "Compressing logs"
+      }
+    }
+  },
+  "filesServerOpError": "{what}: {error}",
+  "@filesServerOpError": {
+    "description": "File browser: snackbar when an operation on the server ended with a reason. {error} is that reason — the server tool's own last line (not translated) or one of the app's sentences. {what} is the operation's own progress line, already translated (e.g. \"Compressing logs\", \"Extracting site.zip\").",
+    "placeholders": {
+      "what": {
+        "type": "String",
+        "example": "Compressing logs"
+      },
+      "error": {
+        "type": "String",
+        "example": "The archive's name is taken."
+      }
+    }
+  },
+  "filesServerOpRefused": "{what}: refused.",
+  "@filesServerOpRefused": {
+    "description": "File browser: snackbar when the server refused the operation (a name taken, an unsafe or unreadable archive) without saying more. {what} is the operation's own progress line, already translated (e.g. \"Compressing logs\", \"Extracting site.zip\").",
+    "placeholders": {
+      "what": {
+        "type": "String",
+        "example": "Compressing logs"
+      }
+    }
+  },
+  "filesServerOpNoPermission": "{what}: the server refused — this needs permissions this account does not have.",
+  "@filesServerOpNoPermission": {
+    "description": "File browser: snackbar when an operation on the server failed for lack of permission. {what} is the operation's own progress line, already translated (e.g. \"Compressing logs\", \"Extracting site.zip\").",
+    "placeholders": {
+      "what": {
+        "type": "String",
+        "example": "Compressing logs"
+      }
+    }
+  },
+  "filesServerOpNoPermissionDetail": "{what}: the server refused — this needs permissions this account does not have. ({error})",
+  "@filesServerOpNoPermissionDetail": {
+    "description": "File browser: snackbar when an operation on the server failed for lack of permission, with the server tool's own last line in brackets. {error} is that line (not translated), e.g. \"chown: Operation not permitted\". {what} is the operation's own progress line, already translated (e.g. \"Compressing logs\", \"Extracting site.zip\").",
+    "placeholders": {
+      "what": {
+        "type": "String",
+        "example": "Compressing logs"
+      },
+      "error": {
+        "type": "String",
+        "example": "chown: Operation not permitted"
+      }
+    }
+  },
+  "filesServerOpFailed": "{what} failed.",
+  "@filesServerOpFailed": {
+    "description": "File browser: snackbar when an operation on the server failed with no exit status and no output. {what} is the operation's own progress line, already translated (e.g. \"Compressing logs\", \"Extracting site.zip\").",
+    "placeholders": {
+      "what": {
+        "type": "String",
+        "example": "Compressing logs"
+      }
+    }
+  },
+  "filesServerOpFailedDetail": "{what} failed: {error}",
+  "@filesServerOpFailedDetail": {
+    "description": "File browser: snackbar when an operation on the server failed, with the last line it printed. {error} is that line (not translated). {what} is the operation's own progress line, already translated (e.g. \"Compressing logs\", \"Extracting site.zip\").",
+    "placeholders": {
+      "what": {
+        "type": "String",
+        "example": "Compressing logs"
+      },
+      "error": {
+        "type": "String",
+        "example": "tar: write error"
+      }
+    }
+  },
+  "filesServerOpFailedCode": "{what} failed (exit {code}).",
+  "@filesServerOpFailedCode": {
+    "description": "File browser: snackbar when an operation on the server failed with an exit status and no output. {code} is the exit status number, e.g. 2; \"exit\" refers to that status and may be translated. {what} is the operation's own progress line, already translated (e.g. \"Compressing logs\", \"Extracting site.zip\").",
+    "placeholders": {
+      "what": {
+        "type": "String",
+        "example": "Compressing logs"
+      },
+      "code": {
+        "type": "String",
+        "example": "2"
+      }
+    }
+  },
+  "filesServerOpFailedCodeDetail": "{what} failed (exit {code}): {error}",
+  "@filesServerOpFailedCodeDetail": {
+    "description": "File browser: snackbar when an operation on the server failed with an exit status and output. {code} is the exit status number, e.g. 2; {error} the last line printed (not translated). {what} is the operation's own progress line, already translated (e.g. \"Compressing logs\", \"Extracting site.zip\").",
+    "placeholders": {
+      "what": {
+        "type": "String",
+        "example": "Compressing logs"
+      },
+      "code": {
+        "type": "String",
+        "example": "2"
+      },
+      "error": {
+        "type": "String",
+        "example": "tar: write error"
+      }
+    }
+  },
+  "filesServerOpCouldNotStart": "The server could not start it.",
+  "@filesServerOpCouldNotStart": {
+    "description": "File browser: reason shown after \"{what}: \" when the server could not start an operation (compress, extract, duplicate, change owner)."
+  },
+  "filesServerOpLostTouch": "Lost touch with the server. It carries on there by itself.",
+  "@filesServerOpLostTouch": {
+    "description": "File browser: reason shown after \"{what}: \" when the connection dropped for too long while an operation ran on the server; it keeps running there."
+  },
+  "filesServerOpGone": "It stopped on the server without finishing — the server may have restarted.",
+  "@filesServerOpGone": {
+    "description": "File browser: reason shown after \"{what}: \" when an operation vanished on the server before it finished."
+  },
+  "filesSearchCouldNotStart": "The search could not start: {error}",
+  "@filesSearchCouldNotStart": {
+    "description": "Search on server screen: error line when the search command could not be started. {error} is the technical reason (not translated).",
+    "placeholders": {
+      "error": {
+        "type": "String",
+        "example": "Connection closed"
+      }
+    }
+  },
+  "filesSearchSearching": "{count, plural, =1{Searching… 1 found} other{Searching… {count} found}}",
+  "@filesSearchSearching": {
+    "description": "Search on server screen: status line while the search runs. {count} is how many matches so far.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "12"
+      }
+    }
+  },
+  "filesSearchLimited": "{count, plural, =1{Stopped at 1 — narrow the search for the rest} other{Stopped at {count} — narrow the search for the rest}}",
+  "@filesSearchLimited": {
+    "description": "Search on server screen: status when the search stopped at its limit of results. {count} is that limit, usually 1000.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "1000"
+      }
+    }
+  },
+  "filesSearchStopped": "{count, plural, =1{Stopped · 1 found} other{Stopped · {count} found}}",
+  "@filesSearchStopped": {
+    "description": "Search on server screen: status after the user stopped the search. {count} is how many matches were found until then.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "7"
+      }
+    }
+  },
+  "filesSearchNothingFound": "Nothing found",
+  "@filesSearchNothingFound": {
+    "description": "Search on server screen: status when the search finished with no matches."
+  },
+  "filesSearchFound": "{count, plural, =1{1 found} other{{count} found}}",
+  "@filesSearchFound": {
+    "description": "Search on server screen: status when the search finished. {count} is how many matches.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "2"
+      }
+    }
+  },
+  "filesSearchUnreadable": "{count, plural, =1{1 folder could not be read} other{{count} folders could not be read}}",
+  "@filesSearchUnreadable": {
+    "description": "Search on server screen: note appended to the status after \" · \" when the server would not let the search into some folders. {count} is how many.",
+    "placeholders": {
+      "count": {
+        "type": "int",
+        "example": "3"
+      }
+    }
+  },
+  "filesSearchTitle": "Search on server",
+  "@filesSearchTitle": {
+    "description": "Search on server screen: app bar title."
+  },
+  "filesSearchIn": "In {path}",
+  "@filesSearchIn": {
+    "description": "Search on server screen: line under the title naming the folder the search starts from. {path} is a remote path, e.g. /home/deploy.",
+    "placeholders": {
+      "path": {
+        "type": "String",
+        "example": "/home/deploy"
+      }
+    }
+  },
+  "filesSearchNameLabel": "Name",
+  "@filesSearchNameLabel": {
+    "description": "Search on server screen: label of the field for the file name to look for."
+  },
+  "filesSearchNameHint": "part of a name, or a pattern like *.log",
+  "@filesSearchNameHint": {
+    "description": "Search on server screen: hint in the Name field. \"*.log\" is a file name pattern and stays as is."
+  },
+  "filesSearchContainsLabel": "Containing text (optional)",
+  "@filesSearchContainsLabel": {
+    "description": "Search on server screen: label of the field for text the files must contain."
+  },
+  "filesSearchMatchCase": "Match case",
+  "@filesSearchMatchCase": {
+    "description": "Search on server screen: checkbox that makes the search tell upper and lower case apart."
+  },
+  "filesSearchStop": "Stop",
+  "@filesSearchStop": {
+    "description": "Search on server screen: button that stops a running search."
+  },
+  "filesSearchButton": "Search",
+  "@filesSearchButton": {
+    "description": "Search on server screen: button that starts the search."
   }
 }

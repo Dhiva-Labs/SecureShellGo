@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
+import '../l10n/l10n.dart';
 import '../services/remote_file_ops.dart';
 import '../services/remote_path.dart';
 import '../services/sftp_service.dart';
@@ -73,7 +74,7 @@ class _CompressDialogState extends State<CompressDialog> {
     if (_checking) return;
     final name = _name;
     final problem = _stem.text.trim().isEmpty
-        ? 'Enter a name.'
+        ? context.l10n.filesCompressNameEmpty
         : RemotePath.nameProblem(name);
     if (problem != null) {
       setState(() => _error = problem);
@@ -100,7 +101,11 @@ class _CompressDialogState extends State<CompressDialog> {
     final theme = Theme.of(context);
     final count = widget.itemNames.length;
     return AlertDialog(
-      title: Text(count == 1 ? 'Compress' : 'Compress $count items'),
+      title: Text(
+        count == 1
+            ? context.l10n.filesCompressTitle
+            : context.l10n.filesCompressTitleCount(count),
+      ),
       content: SingleChildScrollView(
         child: Column(
           mainAxisSize: MainAxisSize.min,
@@ -110,7 +115,7 @@ class _CompressDialogState extends State<CompressDialog> {
               Text(name, maxLines: 1, overflow: TextOverflow.ellipsis, style: _mono),
             if (count > 3)
               Text(
-                'and ${count - 3} more',
+                context.l10n.filesCompressMoreNames(count - 3),
                 style: theme.textTheme.bodySmall
                     ?.copyWith(color: theme.colorScheme.onSurfaceVariant),
               ),
@@ -135,7 +140,7 @@ class _CompressDialogState extends State<CompressDialog> {
               autocorrect: false,
               enableSuggestions: false,
               decoration: InputDecoration(
-                labelText: 'Archive name',
+                labelText: context.l10n.filesCompressNameLabel,
                 suffixText: _format.extension,
                 errorText: _error,
                 errorMaxLines: 4,
@@ -147,8 +152,7 @@ class _CompressDialogState extends State<CompressDialog> {
             ),
             const SizedBox(height: 8),
             Text(
-              'Made on the server, next to what it packs. It carries on if '
-              'this app is closed.',
+              context.l10n.filesCompressHelp,
               style: theme.textTheme.bodySmall
                   ?.copyWith(color: theme.colorScheme.onSurfaceVariant),
             ),
@@ -158,11 +162,11 @@ class _CompressDialogState extends State<CompressDialog> {
       actions: [
         TextButton(
           onPressed: () => Navigator.of(context).pop(),
-          child: const Text('Cancel'),
+          child: Text(MaterialLocalizations.of(context).cancelButtonLabel),
         ),
         FilledButton(
           onPressed: _checking ? null : () => unawaited(_submit()),
-          child: const Text('Compress'),
+          child: Text(context.l10n.filesCompressButton),
         ),
       ],
     );
@@ -253,7 +257,7 @@ class _ExtractDialogState extends State<ExtractDialog> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     return AlertDialog(
-      title: const Text('Extract'),
+      title: Text(context.l10n.filesExtractTitle),
       content: SingleChildScrollView(
         child: Column(
           mainAxisSize: MainAxisSize.min,
@@ -268,7 +272,7 @@ class _ExtractDialogState extends State<ExtractDialog> {
               autocorrect: false,
               enableSuggestions: false,
               decoration: InputDecoration(
-                labelText: 'Into the folder',
+                labelText: context.l10n.filesExtractFolderLabel,
                 errorText: _error,
                 errorMaxLines: 4,
               ),
@@ -281,7 +285,7 @@ class _ExtractDialogState extends State<ExtractDialog> {
             if (_exists) ...[
               const SizedBox(height: 12),
               Text(
-                'That folder is already here. Extract into it anyway?',
+                context.l10n.filesExtractExists,
                 style: theme.textTheme.bodyMedium,
               ),
               RadioGroup<ExtractMode>(
@@ -289,19 +293,19 @@ class _ExtractDialogState extends State<ExtractDialog> {
                 onChanged: (mode) {
                   if (mode != null) setState(() => _merge = mode);
                 },
-                child: const Column(
+                child: Column(
                   children: [
                     RadioListTile<ExtractMode>(
                       value: ExtractMode.keepExisting,
                       dense: true,
                       contentPadding: EdgeInsets.zero,
-                      title: Text('Keep the files already there'),
+                      title: Text(context.l10n.filesExtractKeep),
                     ),
                     RadioListTile<ExtractMode>(
                       value: ExtractMode.replaceExisting,
                       dense: true,
                       contentPadding: EdgeInsets.zero,
-                      title: Text('Replace them with the archive\'s'),
+                      title: Text(context.l10n.filesExtractReplace),
                     ),
                   ],
                 ),
@@ -309,8 +313,7 @@ class _ExtractDialogState extends State<ExtractDialog> {
             ] else ...[
               const SizedBox(height: 8),
               Text(
-                'A new folder beside the archive. Entries that would land '
-                'outside it are refused.',
+                context.l10n.filesExtractHelp,
                 style: theme.textTheme.bodySmall
                     ?.copyWith(color: theme.colorScheme.onSurfaceVariant),
               ),
@@ -321,11 +324,15 @@ class _ExtractDialogState extends State<ExtractDialog> {
       actions: [
         TextButton(
           onPressed: () => Navigator.of(context).pop(),
-          child: const Text('Cancel'),
+          child: Text(MaterialLocalizations.of(context).cancelButtonLabel),
         ),
         FilledButton(
           onPressed: _checking ? null : () => unawaited(_submit()),
-          child: Text(_exists ? 'Extract into it' : 'Extract'),
+          child: Text(
+            _exists
+                ? context.l10n.filesExtractIntoButton
+                : context.l10n.filesExtractButton,
+          ),
         ),
       ],
     );
@@ -385,7 +392,8 @@ class _ChangeOwnerDialogState extends State<ChangeOwnerDialog> {
     final groupError = RemoteFileCommands.ownerProblem(_group.text);
     final blank = _owner.text.trim().isEmpty && _group.text.trim().isEmpty;
     setState(() {
-      _ownerError = ownerError ?? (blank ? 'Enter an owner or a group.' : null);
+      _ownerError =
+          ownerError ?? (blank ? context.l10n.filesOwnerBlank : null);
       _groupError = groupError;
     });
     if (_ownerError != null || _groupError != null) return;
@@ -404,7 +412,7 @@ class _ChangeOwnerDialogState extends State<ChangeOwnerDialog> {
         ? null
         : '${widget.currentOwner}:${widget.currentGroup ?? '?'}';
     return AlertDialog(
-      title: const Text('Change owner'),
+      title: Text(context.l10n.filesOwnerTitle),
       content: SingleChildScrollView(
         child: Column(
           mainAxisSize: MainAxisSize.min,
@@ -413,10 +421,16 @@ class _ChangeOwnerDialogState extends State<ChangeOwnerDialog> {
             for (final name in widget.itemNames.take(3))
               Text(name, maxLines: 1, overflow: TextOverflow.ellipsis, style: _mono),
             if (count > 3)
-              Text('and ${count - 3} more', style: theme.textTheme.bodySmall),
+              Text(
+                context.l10n.filesOwnerMoreNames(count - 3),
+                style: theme.textTheme.bodySmall,
+              ),
             if (now != null) ...[
               const SizedBox(height: 4),
-              Text('Now $now', style: theme.textTheme.bodySmall),
+              Text(
+                context.l10n.filesOwnerNow(now),
+                style: theme.textTheme.bodySmall,
+              ),
             ],
             const SizedBox(height: 12),
             TextField(
@@ -425,8 +439,8 @@ class _ChangeOwnerDialogState extends State<ChangeOwnerDialog> {
               autocorrect: false,
               enableSuggestions: false,
               decoration: InputDecoration(
-                labelText: 'Owner',
-                hintText: 'user name or number',
+                labelText: context.l10n.filesOwnerOwnerLabel,
+                hintText: context.l10n.filesOwnerOwnerHint,
                 errorText: _ownerError,
                 errorMaxLines: 3,
               ),
@@ -438,8 +452,8 @@ class _ChangeOwnerDialogState extends State<ChangeOwnerDialog> {
               autocorrect: false,
               enableSuggestions: false,
               decoration: InputDecoration(
-                labelText: 'Group',
-                hintText: 'leave blank to keep it',
+                labelText: context.l10n.filesOwnerGroupLabel,
+                hintText: context.l10n.filesOwnerGroupHint,
                 errorText: _groupError,
                 errorMaxLines: 3,
               ),
@@ -451,13 +465,11 @@ class _ChangeOwnerDialogState extends State<ChangeOwnerDialog> {
                 onChanged: (on) => setState(() => _recursive = on ?? false),
                 contentPadding: EdgeInsets.zero,
                 controlAffinity: ListTileControlAffinity.leading,
-                title: const Text('Everything inside too'),
+                title: Text(context.l10n.filesOwnerRecursive),
               ),
             const SizedBox(height: 4),
             Text(
-              'Giving a file to another user usually needs root; the server '
-              'says so if it refuses. Links change themselves, never what '
-              'they point to.',
+              context.l10n.filesOwnerHelp,
               style: theme.textTheme.bodySmall
                   ?.copyWith(color: theme.colorScheme.onSurfaceVariant),
             ),
@@ -467,9 +479,12 @@ class _ChangeOwnerDialogState extends State<ChangeOwnerDialog> {
       actions: [
         TextButton(
           onPressed: () => Navigator.of(context).pop(),
-          child: const Text('Cancel'),
+          child: Text(MaterialLocalizations.of(context).cancelButtonLabel),
         ),
-        FilledButton(onPressed: _submit, child: const Text('Change')),
+        FilledButton(
+          onPressed: _submit,
+          child: Text(context.l10n.filesOwnerButton),
+        ),
       ],
     );
   }
@@ -517,7 +532,10 @@ class ServerOpsStrip extends StatelessWidget {
                       style: theme.textTheme.bodySmall,
                     ),
                   ),
-                  TextButton(onPressed: op.onStop, child: const Text('Stop')),
+                  TextButton(
+                    onPressed: op.onStop,
+                    child: Text(context.l10n.filesServerOpStop),
+                  ),
                   const SizedBox(width: 4),
                 ],
               ),
@@ -529,14 +547,25 @@ class ServerOpsStrip extends StatelessWidget {
 }
 
 /// A sentence for how a server-side operation ended, in the user's terms.
-String describeServerOp(ServerOpOutcome outcome, String what) {
+///
+/// [what] is the operation's own line from the strip, already in the
+/// reader's language ("Compressing logs"). What the server's tools printed
+/// is shown as they printed it.
+String describeServerOp(
+  AppLocalizations l10n,
+  ServerOpOutcome outcome,
+  String what,
+) {
   switch (outcome.state) {
     case ServerOpState.succeeded:
-      return '$what: done.';
+      return l10n.filesServerOpDone(what);
     case ServerOpState.cancelled:
-      return '$what: stopped.';
+      return l10n.filesServerOpStopped(what);
     case ServerOpState.lost:
-      return '$what: ${outcome.message ?? 'lost track of it.'}';
+      final why = outcome.message;
+      return why == null
+          ? l10n.filesServerOpLostTrack(what)
+          : l10n.filesServerOpError(what, _serverOpMessage(l10n, why));
     case ServerOpState.failed:
       break;
   }
@@ -546,14 +575,48 @@ String describeServerOp(ServerOpOutcome outcome, String what) {
   if (outcome.exitCode == RemoteOpExit.exists ||
       outcome.exitCode == RemoteOpExit.unsafeArchive ||
       outcome.exitCode == RemoteOpExit.unreadableArchive) {
-    return '$what: ${lastLine.isEmpty ? 'refused.' : lastLine}';
+    return lastLine.isEmpty
+        ? l10n.filesServerOpRefused(what)
+        : l10n.filesServerOpError(what, lastLine);
   }
   if (lower.contains('permission denied') ||
       lower.contains('operation not permitted')) {
-    return '$what: the server refused — this needs permissions this account '
-        'does not have.${lastLine.isEmpty ? '' : ' ($lastLine)'}';
+    return lastLine.isEmpty
+        ? l10n.filesServerOpNoPermission(what)
+        : l10n.filesServerOpNoPermissionDetail(what, lastLine);
   }
-  if (outcome.message != null) return '$what: ${outcome.message}';
-  final code = outcome.exitCode == null ? '' : ' (exit ${outcome.exitCode})';
-  return '$what failed$code${lastLine.isEmpty ? '.' : ': $lastLine'}';
+  final message = outcome.message;
+  if (message != null) {
+    return l10n.filesServerOpError(what, _serverOpMessage(l10n, message));
+  }
+  final code = outcome.exitCode;
+  if (code == null) {
+    return lastLine.isEmpty
+        ? l10n.filesServerOpFailed(what)
+        : l10n.filesServerOpFailedDetail(what, lastLine);
+  }
+  return lastLine.isEmpty
+      ? l10n.filesServerOpFailedCode(what, '$code')
+      : l10n.filesServerOpFailedCodeDetail(what, '$code', lastLine);
+}
+
+/// The fixed sentences [ServerOperation.run] gives an operation it could not
+/// start or lost, in the reader's language.
+///
+/// Matched on their English, which lives in `remote_file_ops.dart`: anything
+/// else — an SSH error, or one of these reworded there since — is shown as
+/// it came, which is never worse than before.
+String _serverOpMessage(AppLocalizations l10n, String message) {
+  if (message == 'The server could not start it.') {
+    return l10n.filesServerOpCouldNotStart;
+  }
+  if (message == 'Lost touch with the server. It carries on there by '
+      'itself.') {
+    return l10n.filesServerOpLostTouch;
+  }
+  if (message == 'It stopped on the server without finishing — the server '
+      'may have restarted.') {
+    return l10n.filesServerOpGone;
+  }
+  return message;
 }

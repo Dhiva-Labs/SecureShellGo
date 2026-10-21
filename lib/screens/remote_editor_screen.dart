@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:xterm/xterm.dart';
 
+import '../l10n/l10n.dart';
 import '../models/app_settings.dart';
 import '../models/remote_entry.dart';
 import '../services/editor_document.dart';
@@ -265,7 +266,10 @@ class _RemoteEditorScreenState extends State<RemoteEditorScreen> {
       if (mounted) _snack(e.message, isError: true);
     } catch (e) {
       if (mounted) {
-        _snack('Could not open ${RemotePath.basename(path)}.', isError: true);
+        _snack(
+          context.l10n.editorOpenFailed(RemotePath.basename(path)),
+          isError: true,
+        );
       }
     }
   }
@@ -313,7 +317,7 @@ class _RemoteEditorScreenState extends State<RemoteEditorScreen> {
         .toList(growable: false);
 
     if (candidates.isEmpty) {
-      _snack('Nothing else in $directory to open.');
+      _snack(context.l10n.editorOpenAnotherNothing(directory));
       return;
     }
 
@@ -326,7 +330,7 @@ class _RemoteEditorScreenState extends State<RemoteEditorScreen> {
           mainAxisSize: MainAxisSize.min,
           children: [
             ListTile(
-              title: const Text('Open another file'),
+              title: Text(context.l10n.editorOpenAnotherTitle),
               subtitle: Text(directory),
             ),
             const Divider(height: 1),
@@ -424,14 +428,16 @@ class _RemoteEditorScreenState extends State<RemoteEditorScreen> {
   }
 
   String _savedMessage(_EditorTab tab, SaveOutcome outcome) {
+    final l10n = context.l10n;
     final notes = <String>[
-      if (tab.lineEndings == LineEndingStyle.crlf) 'CRLF kept',
-      if (tab.hasBom) 'BOM kept',
-      if (outcome.permissionsLost)
-        'the server would not restore the original permissions',
+      if (tab.lineEndings == LineEndingStyle.crlf) l10n.editorSavedNoteCrlf,
+      if (tab.hasBom) l10n.editorSavedNoteBom,
+      if (outcome.permissionsLost) l10n.editorSavedNotePermissions,
     ];
-    final head = 'Saved ${tab.name} '
-        '(${RemotePath.formatBytes(outcome.bytesWritten)})';
+    final head = l10n.editorSavedSummary(
+      tab.name,
+      RemotePath.formatBytes(outcome.bytesWritten),
+    );
     return notes.isEmpty ? head : '$head · ${notes.join(' · ')}';
   }
 
@@ -439,25 +445,23 @@ class _RemoteEditorScreenState extends State<RemoteEditorScreen> {
     return showDialog<LineEndingStyle>(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('Mixed line endings'),
+        title: Text(context.l10n.editorMixedEndingsTitle),
         content: Text(
-          '"${tab.name}" uses both LF (Linux, macOS) and CRLF (Windows) line '
-          'endings. A save has to write one of them for every line — which '
-          'should it be?',
+          context.l10n.editorMixedEndingsBody(tab.name),
           style: const TextStyle(height: 1.35),
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.of(context).pop(),
-            child: const Text('Cancel'),
+            child: Text(MaterialLocalizations.of(context).cancelButtonLabel),
           ),
           TextButton(
             onPressed: () => Navigator.of(context).pop(LineEndingStyle.crlf),
-            child: const Text('CRLF (Windows)'),
+            child: Text(context.l10n.editorMixedEndingsCrlf),
           ),
           FilledButton(
             onPressed: () => Navigator.of(context).pop(LineEndingStyle.lf),
-            child: const Text('LF (Linux)'),
+            child: Text(context.l10n.editorMixedEndingsLf),
           ),
         ],
       ),
@@ -478,7 +482,7 @@ class _RemoteEditorScreenState extends State<RemoteEditorScreen> {
     final picked = await showDialog<IndentStyle>(
       context: context,
       builder: (context) => SimpleDialog(
-        title: const Text('Indentation'),
+        title: Text(context.l10n.editorIndentTitle),
         children: [
           for (final option in options)
             SimpleDialogOption(
@@ -494,16 +498,20 @@ class _RemoteEditorScreenState extends State<RemoteEditorScreen> {
                     size: 18,
                   ),
                   const SizedBox(width: 12),
-                  Text(option.useTabs ? 'Tabs' : '${option.size} spaces'),
+                  Text(
+                    option.useTabs
+                        ? context.l10n.editorIndentTabs
+                        : context.l10n.editorIndentSpacesOption(option.size),
+                  ),
                 ],
               ),
             ),
           if (tab.language.requiresTabs)
-            const Padding(
-              padding: EdgeInsets.fromLTRB(24, 8, 24, 0),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(24, 8, 24, 0),
               child: Text(
-                'Makefile recipes must start with a tab.',
-                style: TextStyle(fontSize: 12),
+                context.l10n.editorIndentMakefileNote,
+                style: const TextStyle(fontSize: 12),
               ),
             ),
         ],
@@ -519,22 +527,19 @@ class _RemoteEditorScreenState extends State<RemoteEditorScreen> {
     return showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('Not valid UTF-8'),
+        title: Text(context.l10n.editorLossyTitle),
         content: Text(
-          '"${tab.name}" contains bytes that are not valid UTF-8. They were '
-          'replaced with \u{FFFD} when it was opened, and saving will write '
-          'those replacements back — the original bytes cannot be recovered '
-          'from what is on screen.\n\nSave anyway?',
+          context.l10n.editorLossyBody(tab.name),
           style: const TextStyle(height: 1.35),
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.of(context).pop(false),
-            child: const Text('Cancel'),
+            child: Text(MaterialLocalizations.of(context).cancelButtonLabel),
           ),
           FilledButton(
             onPressed: () => Navigator.of(context).pop(true),
-            child: const Text('Save anyway'),
+            child: Text(context.l10n.editorLossySaveAnyway),
           ),
         ],
       ),
@@ -550,8 +555,8 @@ class _RemoteEditorScreenState extends State<RemoteEditorScreen> {
       builder: (context) => AlertDialog(
         title: Text(
           conflict.reason == SaveConflictReason.vanished
-              ? 'File is gone'
-              : 'Changed on the server',
+              ? context.l10n.editorConflictGoneTitle
+              : context.l10n.editorConflictChangedTitle,
         ),
         content: Column(
           mainAxisSize: MainAxisSize.min,
@@ -561,9 +566,8 @@ class _RemoteEditorScreenState extends State<RemoteEditorScreen> {
             const SizedBox(height: 10),
             Text(
               conflict.reason == SaveConflictReason.vanished
-                  ? 'Writing it again would recreate it.'
-                  : 'Someone — or something — wrote to it while you had it '
-                      'open. Nothing has been written yet.',
+                  ? context.l10n.editorConflictGoneNote
+                  : context.l10n.editorConflictChangedNote,
               style: TextStyle(
                 fontSize: 12.5,
                 height: 1.3,
@@ -576,18 +580,18 @@ class _RemoteEditorScreenState extends State<RemoteEditorScreen> {
           TextButton(
             onPressed: () =>
                 Navigator.of(context).pop(_ConflictChoice.saveAsCopy),
-            child: const Text('Save as copy'),
+            child: Text(context.l10n.editorConflictSaveAsCopy),
           ),
           if (conflict.reason != SaveConflictReason.vanished)
             TextButton(
               onPressed: () =>
                   Navigator.of(context).pop(_ConflictChoice.reloadTheirs),
-              child: const Text('Reload theirs'),
+              child: Text(context.l10n.editorConflictReloadTheirs),
             ),
           FilledButton(
             onPressed: () =>
                 Navigator.of(context).pop(_ConflictChoice.keepMine),
-            child: const Text('Keep mine'),
+            child: Text(context.l10n.editorConflictKeepMine),
           ),
         ],
       ),
@@ -623,7 +627,7 @@ class _RemoteEditorScreenState extends State<RemoteEditorScreen> {
         tab.fingerprint = opened.fingerprint;
         tab.permissions = opened.permissions;
       });
-      _snack('Reloaded ${tab.name} from the server.');
+      _snack(context.l10n.editorReloaded(tab.name));
     } on EditorOpenRefused catch (e) {
       if (mounted) _snack(e.message, isError: true);
     } on SftpFailure catch (e) {
@@ -635,8 +639,8 @@ class _RemoteEditorScreenState extends State<RemoteEditorScreen> {
     final directory = RemotePath.parent(tab.path);
     final suggested = RemotePath.deduplicate(tab.name, (_) => false);
     final name = await _askForName(
-      title: 'Save as copy',
-      subtitle: 'A new file in $directory',
+      title: context.l10n.editorSaveAsCopyTitle,
+      subtitle: context.l10n.editorSaveAsCopySubtitle(directory),
       initial: suggested,
     );
     if (!mounted || name == null || name.trim().isEmpty) return;
@@ -668,7 +672,7 @@ class _RemoteEditorScreenState extends State<RemoteEditorScreen> {
         tab.mode = modeForFileName(RemotePath.basename(target));
         tab.controller.mode = tab.mode;
       });
-      _snack('Saved as $target');
+      _snack(context.l10n.editorSavedAs(target));
     } on EditorSaveFailure catch (e) {
       if (mounted) await _reportSaveFailure(e);
     } on SftpFailure catch (e) {
@@ -681,13 +685,15 @@ class _RemoteEditorScreenState extends State<RemoteEditorScreen> {
       context: context,
       builder: (context) => AlertDialog(
         title: Text(
-          failure.originalIntact ? 'Could not save' : 'Save left a copy behind',
+          failure.originalIntact
+              ? context.l10n.editorSaveFailedTitle
+              : context.l10n.editorSaveLeftCopyTitle,
         ),
         content: Text(failure.message, style: const TextStyle(height: 1.35)),
         actions: [
           FilledButton(
             onPressed: () => Navigator.of(context).pop(),
-            child: const Text('OK'),
+            child: Text(MaterialLocalizations.of(context).okButtonLabel),
           ),
         ],
       ),
@@ -713,7 +719,9 @@ class _RemoteEditorScreenState extends State<RemoteEditorScreen> {
             TextField(
               controller: controller,
               autofocus: true,
-              decoration: const InputDecoration(labelText: 'File name'),
+              decoration: InputDecoration(
+                labelText: context.l10n.editorFileNameLabel,
+              ),
               onSubmitted: (v) => Navigator.of(context).pop(v),
             ),
           ],
@@ -721,11 +729,11 @@ class _RemoteEditorScreenState extends State<RemoteEditorScreen> {
         actions: [
           TextButton(
             onPressed: () => Navigator.of(context).pop(),
-            child: const Text('Cancel'),
+            child: Text(MaterialLocalizations.of(context).cancelButtonLabel),
           ),
           FilledButton(
             onPressed: () => Navigator.of(context).pop(controller.text),
-            child: const Text('Save'),
+            child: Text(MaterialLocalizations.of(context).saveButtonLabel),
           ),
         ],
       ),
@@ -764,29 +772,25 @@ class _RemoteEditorScreenState extends State<RemoteEditorScreen> {
     return showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        title: Text(
-          dirty.length == 1
-              ? 'Unsaved changes'
-              : '${dirty.length} unsaved files',
-        ),
+        title: Text(context.l10n.editorUnsavedTitle(dirty.length)),
         content: Text(
           dirty.length == 1
-              ? '"$names" has changes that are not on the server.'
-              : 'These have changes that are not on the server: $names.',
+              ? context.l10n.editorUnsavedBodyOne(names)
+              : context.l10n.editorUnsavedBodyMany(names),
           style: const TextStyle(height: 1.35),
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.of(context).pop(),
-            child: const Text('Keep editing'),
+            child: Text(context.l10n.editorUnsavedKeepEditing),
           ),
           TextButton(
             onPressed: () => Navigator.of(context).pop(false),
-            child: const Text('Discard'),
+            child: Text(context.l10n.editorUnsavedDiscard),
           ),
           FilledButton(
             onPressed: () => Navigator.of(context).pop(true),
-            child: const Text('Save'),
+            child: Text(MaterialLocalizations.of(context).saveButtonLabel),
           ),
         ],
       ),
@@ -885,7 +889,7 @@ class _RemoteEditorScreenState extends State<RemoteEditorScreen> {
       from: from,
     );
     if (result.count == 0) {
-      _snack('Nothing to replace.');
+      _snack(context.l10n.editorNothingToReplace);
       return;
     }
     tab.controller.value = TextEditingValue(
@@ -904,7 +908,7 @@ class _RemoteEditorScreenState extends State<RemoteEditorScreen> {
       _lfOnly(_replaceController.text),
     );
     if (result.count == 0) {
-      _snack('Nothing to replace.');
+      _snack(context.l10n.editorNothingToReplace);
       return;
     }
     tab.controller.value = TextEditingValue(
@@ -912,8 +916,7 @@ class _RemoteEditorScreenState extends State<RemoteEditorScreen> {
       selection: TextSelection.collapsed(offset: result.caret),
     );
     _recomputeMatches();
-    _snack('Replaced ${result.count} '
-        'occurrence${result.count == 1 ? '' : 's'}.');
+    _snack(context.l10n.editorReplacedCount(result.count));
   }
 
   Future<void> _goToLine() async {
@@ -924,24 +927,26 @@ class _RemoteEditorScreenState extends State<RemoteEditorScreen> {
     final line = await showDialog<int>(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('Go to line'),
+        title: Text(context.l10n.editorGoToLine),
         content: TextField(
           controller: controller,
           autofocus: true,
           keyboardType: TextInputType.number,
           inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-          decoration: InputDecoration(labelText: 'Line (1 to $total)'),
+          decoration: InputDecoration(
+            labelText: context.l10n.editorGoToLineField(total),
+          ),
           onSubmitted: (v) => Navigator.of(context).pop(int.tryParse(v)),
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.of(context).pop(),
-            child: const Text('Cancel'),
+            child: Text(MaterialLocalizations.of(context).cancelButtonLabel),
           ),
           FilledButton(
             onPressed: () =>
                 Navigator.of(context).pop(int.tryParse(controller.text)),
-            child: const Text('Go'),
+            child: Text(context.l10n.editorGoToLineGo),
           ),
         ],
       ),
@@ -984,7 +989,7 @@ class _RemoteEditorScreenState extends State<RemoteEditorScreen> {
     final text = tab.controller.text;
     final selection = tab.controller.selection;
     if (!selection.isValid || selection.isCollapsed) {
-      _snack('Select some text first.');
+      _snack(context.l10n.editorSelectTextFirst);
       return;
     }
 
@@ -1011,7 +1016,7 @@ class _RemoteEditorScreenState extends State<RemoteEditorScreen> {
     final clip = raw == null ? null : _lfOnly(raw);
     if (!mounted) return;
     if (clip == null || clip.isEmpty) {
-      _snack('There is nothing on the clipboard.');
+      _snack(context.l10n.editorClipboardEmpty);
       return;
     }
 
@@ -1167,30 +1172,32 @@ class _RemoteEditorScreenState extends State<RemoteEditorScreen> {
 
   Future<void> _showShortcuts() {
     final theme = Theme.of(context);
+    final l10n = context.l10n;
+    final material = MaterialLocalizations.of(context);
     final rows = <(String, String)>[
-      ('Save', _chord('S')),
-      ('Find', _chord('F')),
-      ('Replace', _chord('H')),
-      ('Go to line', _chord('G')),
-      ('Close the find bar', 'Esc'),
-      ('Select all', _chord('A')),
-      ('Copy', _chord('C')),
-      ('Cut', _chord('X')),
-      ('Paste', _chord('V')),
-      ('Undo', _chord('Z')),
-      ('Redo', _chord('Z', shift: true)),
-      ('Indent / outdent', 'Tab / Shift+Tab'),
-      ('Indent / outdent line', '${_chord(']')} / ${_chord('[')}'),
-      ('Comment line', _chord('/')),
-      ('Move line', 'Alt+↑ / Alt+↓'),
-      ('Duplicate line', 'Shift+Alt+↓'),
-      ('Zoom in / out', '${_chord('=')} / ${_chord('-')}'),
+      (material.saveButtonLabel, _chord('S')),
+      (l10n.editorActionFind, _chord('F')),
+      (l10n.editorActionReplace, _chord('H')),
+      (l10n.editorGoToLine, _chord('G')),
+      (l10n.editorShortcutCloseFind, 'Esc'),
+      (l10n.editorActionSelectAll, _chord('A')),
+      (material.copyButtonLabel, _chord('C')),
+      (l10n.editorActionCut, _chord('X')),
+      (l10n.editorActionPaste, _chord('V')),
+      (l10n.editorActionUndo, _chord('Z')),
+      (l10n.editorActionRedo, _chord('Z', shift: true)),
+      (l10n.editorShortcutIndent, 'Tab / Shift+Tab'),
+      (l10n.editorShortcutIndentLine, '${_chord(']')} / ${_chord('[')}'),
+      (l10n.editorShortcutComment, _chord('/')),
+      (l10n.editorShortcutMoveLine, 'Alt+↑ / Alt+↓'),
+      (l10n.editorShortcutDuplicateLine, 'Shift+Alt+↓'),
+      (l10n.editorShortcutZoom, '${_chord('=')} / ${_chord('-')}'),
     ];
 
     return showDialog<void>(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('Keyboard shortcuts'),
+        title: Text(context.l10n.editorShortcutsTitle),
         // Scrollable as a floor, not as a feature: eleven rows fit a laptop
         // without moving, and a short window gets a scroll instead of an
         // overflow.
@@ -1238,12 +1245,29 @@ class _RemoteEditorScreenState extends State<RemoteEditorScreen> {
         actions: [
           TextButton(
             onPressed: () => Navigator.of(context).pop(),
-            child: const Text('Close'),
+            child: Text(MaterialLocalizations.of(context).closeButtonLabel),
           ),
         ],
       ),
     );
   }
+
+  /// The indentation's name in the status bar and the More menu.
+  String _indentLabel(IndentStyle style) => style.useTabs
+      ? context.l10n.editorIndentTabs
+      : context.l10n.editorIndentSpacesLabel(style.size);
+
+  /// A syntax mode's name: language names as they are, "Plain text" in the
+  /// user's language.
+  String _modeLabel(SyntaxMode mode) => identical(mode, plainTextMode)
+      ? context.l10n.editorModePlainText
+      : mode.label;
+
+  /// `LF` and `CRLF` as they are; "mixed" in the user's language.
+  String _lineEndingsLabel(LineEndingStyle style) =>
+      style == LineEndingStyle.mixed
+          ? context.l10n.editorLineEndingsMixed
+          : style.label;
 
   void _snack(String message, {bool isError = false}) {
     final theme = Theme.of(context);
@@ -1306,7 +1330,7 @@ class _RemoteEditorScreenState extends State<RemoteEditorScreen> {
           appBar: AppBar(
             leading: IconButton(
               icon: const Icon(Icons.arrow_back),
-              tooltip: 'Back',
+              tooltip: MaterialLocalizations.of(context).backButtonTooltip,
               onPressed: () => unawaited(_handleBack()),
             ),
             title: _title(tab),
@@ -1319,7 +1343,7 @@ class _RemoteEditorScreenState extends State<RemoteEditorScreen> {
   }
 
   Widget _title(_EditorTab? tab) {
-    if (tab == null) return const Text('Editor');
+    if (tab == null) return Text(context.l10n.editorTitle);
     final host = widget.hostLabel;
     final theme = Theme.of(context);
     return Column(
@@ -1368,20 +1392,22 @@ class _RemoteEditorScreenState extends State<RemoteEditorScreen> {
 
   List<Widget> _actions(_EditorTab? tab) {
     if (tab == null) return const [];
+    final l10n = context.l10n;
     return [
       IconButton(
-        tooltip: 'Find (Ctrl+F)',
+        tooltip: l10n.editorFindTooltip,
         icon: const Icon(Icons.search, size: 20),
         onPressed: () => _showFind(replace: false),
       ),
       IconButton(
-        tooltip: tab.isDirty ? 'Save (Ctrl+S)' : 'No changes to save',
+        tooltip:
+            tab.isDirty ? l10n.editorSaveTooltip : l10n.editorNoChangesTooltip,
         icon: const Icon(Icons.save_outlined, size: 20),
         onPressed: tab.isDirty ? () => unawaited(_save()) : null,
       ),
       _editMenu(tab),
       PopupMenuButton<String>(
-        tooltip: 'More',
+        tooltip: MaterialLocalizations.of(context).moreButtonTooltip,
         onSelected: (value) {
           switch (value) {
             case 'wrap':
@@ -1420,7 +1446,7 @@ class _RemoteEditorScreenState extends State<RemoteEditorScreen> {
                   size: 18,
                 ),
                 const SizedBox(width: 10),
-                const Text('Soft wrap'),
+                Text(l10n.editorMenuSoftWrap),
               ],
             ),
           ),
@@ -1435,22 +1461,30 @@ class _RemoteEditorScreenState extends State<RemoteEditorScreen> {
                   size: 18,
                 ),
                 const SizedBox(width: 10),
-                const Text('Show whitespace'),
+                Text(l10n.editorMenuShowWhitespace),
               ],
             ),
           ),
           PopupMenuItem(
             value: 'indent',
-            child: Text('Indentation: ${tab.indentStyle.label}…'),
+            child: Text(
+              l10n.editorMenuIndentation(_indentLabel(tab.indentStyle)),
+            ),
           ),
-          const PopupMenuItem(value: 'goto', child: Text('Go to line…')),
-          const PopupMenuItem(value: 'replace', child: Text('Replace…')),
-          const PopupMenuItem(value: 'open', child: Text('Open another file…')),
-          const PopupMenuItem(
+          PopupMenuItem(value: 'goto', child: Text(l10n.editorMenuGoToLine)),
+          PopupMenuItem(value: 'replace', child: Text(l10n.editorMenuReplace)),
+          PopupMenuItem(
+            value: 'open',
+            child: Text(l10n.editorMenuOpenAnother),
+          ),
+          PopupMenuItem(
             value: 'reload',
-            child: Text('Reload from server'),
+            child: Text(l10n.editorMenuReload),
           ),
-          const PopupMenuItem(value: 'copy', child: Text('Save as copy…')),
+          PopupMenuItem(
+            value: 'copy',
+            child: Text(l10n.editorMenuSaveAsCopy),
+          ),
           const PopupMenuDivider(),
           for (final mode in syntaxModes)
             PopupMenuItem(
@@ -1468,7 +1502,10 @@ class _RemoteEditorScreenState extends State<RemoteEditorScreen> {
                   // wide and "JavaScript / TypeScript" does not fit beside a
                   // radio button in it.
                   Flexible(
-                    child: Text(mode.label, overflow: TextOverflow.ellipsis),
+                    child: Text(
+                      _modeLabel(mode),
+                      overflow: TextOverflow.ellipsis,
+                    ),
                   ),
                 ],
               ),
@@ -1485,7 +1522,7 @@ class _RemoteEditorScreenState extends State<RemoteEditorScreen> {
   /// does not know the chord finds it.
   Widget _editMenu(_EditorTab tab) {
     return PopupMenuButton<String>(
-      tooltip: 'Edit',
+      tooltip: context.l10n.editorEditMenuTooltip,
       icon: const Icon(Icons.edit_outlined, size: 20),
       onSelected: (value) {
         switch (value) {
@@ -1508,32 +1545,55 @@ class _RemoteEditorScreenState extends State<RemoteEditorScreen> {
       // Read when the menu opens, not when the bar was built: the undo stack
       // pushes through a throttle, so an app bar rebuilt on the keystroke
       // still thinks there is nothing to undo half a second later.
-      itemBuilder: (context) => [
-        _editItem('selectAll', 'Select all', Icons.select_all, _chord('A')),
-        _editItem('cut', 'Cut', Icons.content_cut, _chord('X')),
-        _editItem('copy', 'Copy', Icons.content_copy, _chord('C')),
-        _editItem('paste', 'Paste', Icons.content_paste, _chord('V')),
-        const PopupMenuDivider(),
-        _editItem(
-          'undo',
-          'Undo',
-          Icons.undo,
-          _chord('Z'),
-          enabled: tab.undo.value.canUndo,
-        ),
-        _editItem(
-          'redo',
-          'Redo',
-          Icons.redo,
-          _chord('Z', shift: true),
-          enabled: tab.undo.value.canRedo,
-        ),
-        const PopupMenuDivider(),
-        const PopupMenuItem(
-          value: 'shortcuts',
-          child: Text('Keyboard shortcuts…'),
-        ),
-      ],
+      itemBuilder: (context) {
+        final l10n = context.l10n;
+        return [
+          _editItem(
+            'selectAll',
+            l10n.editorActionSelectAll,
+            Icons.select_all,
+            _chord('A'),
+          ),
+          _editItem(
+            'cut',
+            l10n.editorActionCut,
+            Icons.content_cut,
+            _chord('X'),
+          ),
+          _editItem(
+            'copy',
+            MaterialLocalizations.of(context).copyButtonLabel,
+            Icons.content_copy,
+            _chord('C'),
+          ),
+          _editItem(
+            'paste',
+            l10n.editorActionPaste,
+            Icons.content_paste,
+            _chord('V'),
+          ),
+          const PopupMenuDivider(),
+          _editItem(
+            'undo',
+            l10n.editorActionUndo,
+            Icons.undo,
+            _chord('Z'),
+            enabled: tab.undo.value.canUndo,
+          ),
+          _editItem(
+            'redo',
+            l10n.editorActionRedo,
+            Icons.redo,
+            _chord('Z', shift: true),
+            enabled: tab.undo.value.canRedo,
+          ),
+          const PopupMenuDivider(),
+          PopupMenuItem(
+            value: 'shortcuts',
+            child: Text(l10n.editorMenuShortcuts),
+          ),
+        ];
+      },
     );
   }
 
@@ -1573,7 +1633,7 @@ class _RemoteEditorScreenState extends State<RemoteEditorScreen> {
       return const Center(child: CircularProgressIndicator());
     }
     if (tab == null) {
-      return const Center(child: Text('Nothing open.'));
+      return Center(child: Text(context.l10n.editorNothingOpen));
     }
 
     // Wide enough for a list beside the text: open files move from the tab
@@ -1734,7 +1794,7 @@ class _RemoteEditorScreenState extends State<RemoteEditorScreen> {
                       ),
                     IconButton(
                       icon: const Icon(Icons.close, size: 15),
-                      tooltip: 'Close ${t.name}',
+                      tooltip: context.l10n.editorCloseTab(t.name),
                       visualDensity: VisualDensity.compact,
                       onPressed: () => unawaited(_closeTab(i)),
                     ),
@@ -1804,7 +1864,7 @@ class _RemoteEditorScreenState extends State<RemoteEditorScreen> {
                       minWidth: 24,
                       minHeight: 24,
                     ),
-                    tooltip: 'Close ${tab.name}',
+                    tooltip: context.l10n.editorCloseTab(tab.name),
                     onPressed: () => unawaited(_closeTab(i)),
                   ),
                 ],
@@ -1827,10 +1887,10 @@ class _RemoteEditorScreenState extends State<RemoteEditorScreen> {
             Icon(Icons.warning_amber_outlined,
                 size: 18, color: theme.colorScheme.error),
             const SizedBox(width: 10),
-            const Expanded(
+            Expanded(
               child: Text(
-                'This file is not valid UTF-8. Saving will normalise it.',
-                style: TextStyle(fontSize: 12.5, height: 1.3),
+                context.l10n.editorInvalidUtf8Banner,
+                style: const TextStyle(fontSize: 12.5, height: 1.3),
               ),
             ),
           ],
@@ -1842,12 +1902,17 @@ class _RemoteEditorScreenState extends State<RemoteEditorScreen> {
   Widget _findBar(TerminalTheme theme) {
     final compiled = compileQuery(_query);
     final error = compiled.error;
+    final l10n = context.l10n;
     final countLabel = _query.isEmpty
         ? ''
         : _matches.isEmpty
-            ? 'none'
-            : '${_currentMatch + 1} of ${_matches.length}'
-                '${_matches.length >= editorMaxMatches ? '+' : ''}';
+            ? l10n.editorFindNoMatches
+            : _matches.length >= editorMaxMatches
+                ? l10n.editorFindPositionCapped(
+                    _currentMatch + 1,
+                    _matches.length,
+                  )
+                : l10n.editorFindPosition(_currentMatch + 1, _matches.length);
 
     final colorScheme = Theme.of(context).colorScheme;
     return Material(
@@ -1870,7 +1935,7 @@ class _RemoteEditorScreenState extends State<RemoteEditorScreen> {
                     style: const TextStyle(fontSize: 13),
                     decoration: InputDecoration(
                       isDense: true,
-                      hintText: 'Find',
+                      hintText: l10n.editorFindHint,
                       errorText: error,
                       errorStyle: const TextStyle(fontSize: 11),
                       suffixText: countLabel,
@@ -1891,7 +1956,7 @@ class _RemoteEditorScreenState extends State<RemoteEditorScreen> {
                   ),
                 ),
                 _compact(
-                  tooltip: 'Match case',
+                  tooltip: l10n.editorFindMatchCase,
                   selected: _query.caseSensitive,
                   child: const Text('Aa', style: TextStyle(fontSize: 12)),
                   onPressed: () {
@@ -1904,7 +1969,7 @@ class _RemoteEditorScreenState extends State<RemoteEditorScreen> {
                   },
                 ),
                 _compact(
-                  tooltip: 'Regular expression',
+                  tooltip: l10n.editorFindRegex,
                   selected: _query.isRegex,
                   child: const Text('.*', style: TextStyle(fontSize: 12)),
                   onPressed: () {
@@ -1915,17 +1980,17 @@ class _RemoteEditorScreenState extends State<RemoteEditorScreen> {
                   },
                 ),
                 _compact(
-                  tooltip: 'Previous',
+                  tooltip: l10n.editorFindPrevious,
                   child: const Icon(Icons.keyboard_arrow_up, size: 18),
                   onPressed: _matches.isEmpty ? null : () => _stepMatch(-1),
                 ),
                 _compact(
-                  tooltip: 'Next',
+                  tooltip: l10n.editorFindNext,
                   child: const Icon(Icons.keyboard_arrow_down, size: 18),
                   onPressed: _matches.isEmpty ? null : () => _stepMatch(1),
                 ),
                 _compact(
-                  tooltip: 'Close',
+                  tooltip: MaterialLocalizations.of(context).closeButtonLabel,
                   child: const Icon(Icons.close, size: 16),
                   onPressed: _hideFind,
                 ),
@@ -1942,8 +2007,8 @@ class _RemoteEditorScreenState extends State<RemoteEditorScreen> {
                       decoration: InputDecoration(
                         isDense: true,
                         hintText: _query.isRegex
-                            ? r'Replace with (use $1 for a group)'
-                            : 'Replace with',
+                            ? l10n.editorReplaceHintRegex
+                            : l10n.editorReplaceHint,
                         contentPadding: const EdgeInsets.symmetric(
                           horizontal: 10,
                           vertical: 8,
@@ -1956,13 +2021,13 @@ class _RemoteEditorScreenState extends State<RemoteEditorScreen> {
                     onPressed: _matches.isEmpty
                         ? null
                         : () => unawaited(_replaceCurrent()),
-                    child: const Text('Replace'),
+                    child: Text(l10n.editorReplaceOne),
                   ),
                   TextButton(
                     onPressed: _matches.isEmpty
                         ? null
                         : () => unawaited(_replaceEverything()),
-                    child: const Text('All'),
+                    child: Text(l10n.editorReplaceAll),
                   ),
                 ],
               ),
@@ -2010,6 +2075,7 @@ class _RemoteEditorScreenState extends State<RemoteEditorScreen> {
     final mixed = checkIndent && hasMixedIndentation(text);
 
     final colorScheme = Theme.of(context).colorScheme;
+    final l10n = context.l10n;
     final dim = TextStyle(fontSize: 11, color: theme.brightBlack);
     return Material(
       color: colorScheme.surfaceContainerHigh,
@@ -2018,12 +2084,11 @@ class _RemoteEditorScreenState extends State<RemoteEditorScreen> {
         child: Row(
           children: [
             const SizedBox(width: 10),
-            Text('Ln $line, Col $column', style: dim),
+            Text(l10n.editorStatusPosition(line, column), style: dim),
             const Spacer(),
             if (mixed)
               Tooltip(
-                message: 'This file mixes tabs and spaces in its indentation. '
-                    'Turn on Show whitespace to see where.',
+                message: l10n.editorMixedIndentWarning,
                 child: Padding(
                   padding: const EdgeInsets.only(right: 8),
                   child: Icon(
@@ -2037,14 +2102,15 @@ class _RemoteEditorScreenState extends State<RemoteEditorScreen> {
               onTap: () => unawaited(_pickIndent(tab)),
               child: Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 6),
-                child: Text(tab.indentStyle.label, style: dim),
+                child: Text(_indentLabel(tab.indentStyle), style: dim),
               ),
             ),
             Flexible(
               child: Text(
-                '· ${tab.mode.label} · ${tab.lineEndings.label} · '
+                '· ${_modeLabel(tab.mode)} · '
+                '${_lineEndingsLabel(tab.lineEndings)} · '
                 '${tab.hasBom ? 'UTF-8 BOM' : 'UTF-8'}'
-                '${_softWrap ? ' · wrap' : ''}',
+                '${_softWrap ? ' · ${l10n.editorStatusWrap}' : ''}',
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
                 style: dim,
