@@ -200,8 +200,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     if (support == null) {
       explanation = 'Checking whether this device can lock the app…';
     } else if (support == AppLockSupport.noDeviceCredential) {
-      explanation = 'Set a screen lock (PIN, pattern, password or biometric) '
-          'on this device first, then this can be turned on.';
+      explanation = AppLockPlatform.currentSetupHint;
     } else if (!available) {
       explanation = AppLockPlatform.currentReason;
     } else {

@@ -11,6 +11,7 @@ import 'services/backup_service.dart';
 import 'services/bookmark_store.dart';
 import 'services/composite_secure_storage.dart';
 import 'services/credential_store.dart';
+import 'services/diagnostics_log.dart';
 import 'services/fleet_push_run_registry.dart';
 import 'services/host_store.dart';
 import 'services/input_profile.dart';
@@ -29,7 +30,12 @@ import 'theme.dart';
 import 'widgets/app_lock_gate.dart';
 import 'widgets/vault_passphrase_dialog.dart';
 
-void main() {
+// Framework errors, uncaught errors and uncaught async errors go to the
+// on-device diagnostics log, scrubbed of secrets, while its setting is on.
+// See diagnostics_log.dart.
+void main() => DiagnosticsLog.instance.runGuarded(_startApp);
+
+void _startApp() {
   WidgetsFlutterBinding.ensureInitialized();
   SystemChrome.setSystemUIOverlayStyle(
     const SystemUiOverlayStyle(
@@ -123,8 +129,11 @@ class _SecureShellGoAppState extends State<SecureShellGoApp> {
     ),
   );
   late final HostStore _hostStore = HostStore();
-  late final CredentialStore _credentialStore =
-      CredentialStore(backend: _secureStorage);
+  // Watched by the diagnostics log, which learns each saved secret on the
+  // way past so it can keep it out of the log. Values pass through as-is.
+  late final CredentialStore _credentialStore = CredentialStore(
+    backend: DiagnosticsLog.instance.watchCredentialStorage(_secureStorage),
+  );
   late final SettingsStore _settingsStore = SettingsStore();
 
   // The open sessions. Built here, not by a route, because a session has to
@@ -269,6 +278,9 @@ class _SecureShellGoAppState extends State<SecureShellGoApp> {
   /// effect without the settings screen having to know the controller exists.
   StreamSubscription<AppSettings>? _settingsWatch;
 
+  /// Keeps the diagnostics log on or off with its setting.
+  StreamSubscription<AppSettings>? _diagnosticsWatch;
+
   // The encrypted backup/restore feature. Every store it touches is one that
   // already lives here, so this adds no new persistence — only a way to get
   // what is already persisted in and out as one file.
@@ -284,6 +296,7 @@ class _SecureShellGoAppState extends State<SecureShellGoApp> {
     bookmarkStore: BookmarkStore.instance,
     settingsStore: _settingsStore,
     credentialStore: _credentialStore,
+    knownHosts: _knownHosts,
   );
 
   late final TerminalWorkspace _workspace = TerminalWorkspace(
@@ -325,6 +338,7 @@ class _SecureShellGoAppState extends State<SecureShellGoApp> {
       }),
     );
     _settingsWatch = _settingsStore.changes.listen(_appLock.applySettings);
+    _diagnosticsWatch = DiagnosticsLog.instance.follow(_settingsStore);
     _themeWatch = _settingsStore.changes.listen((settings) {
       if (settings.uiStyle == _uiStyle &&
           settings.themeBrightness == _themeBrightness) {
@@ -349,6 +363,7 @@ class _SecureShellGoAppState extends State<SecureShellGoApp> {
     unawaited(_workspace.dispose());
     _fleetPushRegistry.dispose();
     unawaited(_settingsWatch?.cancel());
+    unawaited(_diagnosticsWatch?.cancel());
     unawaited(_themeWatch?.cancel());
     _appLock.dispose();
     _settingsStore.dispose();

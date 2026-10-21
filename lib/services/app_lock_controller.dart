@@ -109,7 +109,9 @@ class AppLockState {
 /// prompt for it rather than answer [AppLockOutcome.unavailable], or every
 /// way of breaking its preferred prompt becomes a way past the gate. Up to
 /// 1.4.4 the Android bridge lacked `USE_BIOMETRIC`, the prompt threw on every
-/// unlock, and the gate opened on a single tap of Unlock.
+/// unlock, and the gate opened on a single tap of Unlock. Windows Hello
+/// ([WindowsHelloAppLock]) keeps the same rule: a prompt that cannot be
+/// raised answers [AppLockOutcome.cancelled] and the gate stays up.
 class AppLockController {
   AppLockController({
     required AppLockAuthenticator authenticator,

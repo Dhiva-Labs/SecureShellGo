@@ -3,6 +3,7 @@ import 'dart:typed_data';
 
 import '../models/app_settings.dart';
 import '../models/host.dart';
+import '../models/known_host.dart';
 import '../models/path_bookmark.dart';
 import '../models/snippet.dart';
 import '../models/tunnel_profile.dart';
@@ -22,12 +23,15 @@ import 'backup_crypto.dart';
 /// and app settings. Optionally, and only on an explicit opt-in, the saved
 /// passwords/keys/passphrases for those hosts.
 ///
-/// Out, on purpose: **known_hosts**. Host-key trust is a decision the user
-/// made on one device about one network path, and copying it to a second
-/// device would silently answer a question that device has never asked. A
-/// restored install re-verifies host keys on first connect, which is exactly
-/// what OpenSSH on a new laptop does. The export UI says so rather than
-/// leaving the omission to be discovered.
+/// **Trusted host keys** only on a second, separate opt-in. Host-key trust is
+/// a decision the user made on one device about one network path, so by
+/// default a restored install re-verifies each server on first connect, the
+/// way OpenSSH on a new laptop does. A user moving to a new phone can choose
+/// to bring the keys along instead. Only the entries travel — host, port,
+/// key type, fingerprint, when it was trusted — never the integrity seal of
+/// the store they came from: on import they are merged into this device's
+/// store, which seals them with this device's own key. See
+/// [BackupService.apply] for the merge rule.
 ///
 /// Also out: anything about live sessions or running tunnels. A backup
 /// describes configuration, not state.
@@ -40,6 +44,8 @@ class BackupPayload {
     required this.settings,
     required this.includesCredentials,
     this.credentials = const <String, SshCredentials>{},
+    this.includesKnownHosts = false,
+    this.knownHosts = const <KnownHostKey>[],
     this.exportedAt,
   });
 
@@ -68,6 +74,13 @@ class BackupPayload {
 
   /// Host id to secrets. Empty unless [includesCredentials].
   final Map<String, SshCredentials> credentials;
+
+  /// Whether the user opted in to including trusted host keys. Explicit for
+  /// the same reason as [includesCredentials].
+  final bool includesKnownHosts;
+
+  /// Empty unless [includesKnownHosts].
+  final List<KnownHostKey> knownHosts;
 
   final DateTime? exportedAt;
 
@@ -105,6 +118,8 @@ class BackupPayload {
         credentials: credentials.length,
         includesCredentials: includesCredentials,
         hostsNeedingCredentials: hostsNeedingCredentials,
+        knownHosts: knownHosts.length,
+        includesKnownHosts: includesKnownHosts,
         exportedAt: exportedAt,
       );
 
@@ -123,6 +138,12 @@ class BackupPayload {
             for (final entry in credentials.entries)
               entry.key: _credentialsToJson(entry.value),
           },
+        // Additive: a build that predates it ignores the key and restores
+        // the rest, which is why this did not need a new payload version.
+        if (includesKnownHosts) ...{
+          'includesKnownHosts': true,
+          'knownHosts': [for (final key in knownHosts) key.toJson()],
+        },
       };
 
   /// UTF-8 JSON, ready to hand to [BackupCrypto.encrypt].
@@ -168,6 +189,7 @@ class BackupPayload {
 
     final includesCredentials =
         decoded['includesCredentials'] as bool? ?? false;
+    final includesKnownHosts = decoded['includesKnownHosts'] == true;
     return BackupPayload(
       hosts: _list(decoded['hosts'], 'hosts', Host.fromJson),
       snippets: _list(decoded['snippets'], 'snippets', Snippet.fromJson),
@@ -183,6 +205,10 @@ class BackupPayload {
       includesCredentials: includesCredentials,
       credentials:
           includesCredentials ? _credentials(decoded['credentials']) : const {},
+      includesKnownHosts: includesKnownHosts,
+      knownHosts: includesKnownHosts
+          ? _list(decoded['knownHosts'], 'trusted host keys', _knownHost)
+          : const <KnownHostKey>[],
       exportedAt: switch (decoded['exportedAt']) {
         final String iso => DateTime.tryParse(iso),
         _ => null,
@@ -218,6 +244,43 @@ class BackupPayload {
       }
     }
     return out;
+  }
+
+  /// One trusted host key, checked field by field. Anything else the entry
+  /// carries — a MAC, a key, a whole sealed store — is ignored: see the
+  /// class doc.
+  static KnownHostKey _knownHost(Map<String, dynamic> json) {
+    final hostname = json['hostname'];
+    final port = json['port'];
+    final keyType = json['keyType'];
+    final fingerprint = json['fingerprint'];
+    final addedAt = json['addedAt'];
+    if (hostname is! String ||
+        hostname.trim().isEmpty ||
+        hostname.length > 255 ||
+        hostname.contains(RegExp(r'[\s|]'))) {
+      throw const FormatException('hostname');
+    }
+    if (port is! int || port < 1 || port > 65535) {
+      throw const FormatException('port');
+    }
+    if (keyType is! String || !RegExp(r'^[A-Za-z0-9@._-]{1,64}$').hasMatch(keyType)) {
+      throw const FormatException('keyType');
+    }
+    if (fingerprint is! String ||
+        !RegExp(r'^SHA256:[A-Za-z0-9+/]{16,64}=*$').hasMatch(fingerprint)) {
+      throw const FormatException('fingerprint');
+    }
+    if (addedAt != null && addedAt is! String) {
+      throw const FormatException('addedAt');
+    }
+    return KnownHostKey.fromJson(<String, dynamic>{
+      'hostname': hostname.trim(),
+      'port': port,
+      'keyType': keyType,
+      'fingerprint': fingerprint,
+      'addedAt': addedAt,
+    });
   }
 
   static Map<String, SshCredentials> _credentials(Object? raw) {
@@ -266,6 +329,8 @@ class BackupContents {
     required this.credentials,
     required this.includesCredentials,
     required this.hostsNeedingCredentials,
+    this.knownHosts = 0,
+    this.includesKnownHosts = false,
     this.exportedAt,
   });
 
@@ -277,6 +342,8 @@ class BackupContents {
   final int credentials;
   final bool includesCredentials;
   final int hostsNeedingCredentials;
+  final int knownHosts;
+  final bool includesKnownHosts;
   final DateTime? exportedAt;
 
   /// True when there is nothing at all to import — worth telling the user

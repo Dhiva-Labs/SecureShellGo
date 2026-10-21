@@ -5,6 +5,7 @@ import 'package:file_selector/file_selector.dart' as file_selector;
 import 'package:flutter/services.dart';
 import 'package:path_provider/path_provider.dart';
 
+import 'atomic_file.dart';
 import 'remote_path.dart';
 import 'windows_shell_open.dart';
 
@@ -326,6 +327,39 @@ abstract class DeviceStorage {
   });
 }
 
+/// Where a file the user chose a place for ended up.
+class SavedDocument {
+  const SavedDocument({required this.displayName, this.location});
+
+  /// The name the file was given. On Android the provider may have changed
+  /// it (`backup (1).ssgbackup`).
+  final String displayName;
+
+  /// A path on desktop, a `content://` URI on Android.
+  final String? location;
+}
+
+/// A [DeviceStorage] that can also ask the user where a file should go —
+/// any folder, an SD card, or a cloud provider (Google Drive, OneDrive,
+/// Dropbox, Nextcloud) that shows up in the system's save UI.
+///
+/// Separate from [DeviceStorage], and checked for with `is`, so the test
+/// fakes that implement [DeviceStorage] need nothing new; a storage without
+/// it just offers Downloads alone.
+///
+/// Meant for small files held in memory, such as a backup — downloads keep
+/// streaming through [DeviceStorage.beginDownload].
+abstract class DocumentSaver {
+  /// Shows the system "save as" UI, starting from [suggestedName], and
+  /// writes [bytes] where the user chose. Null if they backed out. Throws
+  /// [DeviceStorageException] when the file could not be written.
+  Future<SavedDocument?> saveDocument({
+    required String suggestedName,
+    required Uint8List bytes,
+    String? mimeType,
+  });
+}
+
 /// Raised when the platform side refuses. Carries a message fit for a snackbar.
 class DeviceStorageException implements Exception {
   const DeviceStorageException(this.message, {this.details});
@@ -355,7 +389,7 @@ DeviceStorage createDefaultDeviceStorage() {
 /// Talks to `StorageBridge.kt` over a method channel.
 ///
 /// See that file for why this is a hand-rolled channel rather than a plugin.
-class MethodChannelDeviceStorage implements DeviceStorage {
+class MethodChannelDeviceStorage implements DeviceStorage, DocumentSaver {
   const MethodChannelDeviceStorage();
 
   static const MethodChannel channel =
@@ -549,6 +583,44 @@ class MethodChannelDeviceStorage implements DeviceStorage {
       );
     }
   }
+
+  /// The system document UI's `ACTION_CREATE_DOCUMENT`, through
+  /// `DocumentSaver.kt`: any folder on any installed document provider.
+  @override
+  Future<SavedDocument?> saveDocument({
+    required String suggestedName,
+    required Uint8List bytes,
+    String? mimeType,
+  }) async {
+    try {
+      final result = await channel.invokeMapMethod<String, dynamic>(
+        'saveDocument',
+        <String, dynamic>{
+          'fileName': suggestedName,
+          'mimeType': mimeType,
+          'bytes': bytes,
+        },
+      );
+      if (result == null) return null;
+      return SavedDocument(
+        displayName: result['displayName'] as String? ?? suggestedName,
+        location: result['uri'] as String?,
+      );
+    } on PlatformException catch (e) {
+      throw DeviceStorageException(
+        switch (e.code) {
+          'no_picker' => 'No app on this device can save files.',
+          'too_large' => 'That file is too large to save this way.',
+          _ => 'Could not save the file there.',
+        },
+        details: e.message,
+      );
+    } on MissingPluginException {
+      throw const DeviceStorageException(
+        'Choosing where to save is only available on the Android build.',
+      );
+    }
+  }
 }
 
 class _ChannelDownloadWriter implements DownloadWriter {
@@ -629,18 +701,65 @@ class _ChannelDownloadWriter implements DownloadWriter {
 /// to ask, so a same-name collision is decided here with the same
 /// [RemotePath.deduplicate] the Android/MediaStore path already uses, and
 /// reported back the same way: through [SavedDownload.displayName].
-class DesktopDeviceStorage implements DeviceStorage {
+class DesktopDeviceStorage implements DeviceStorage, DocumentSaver {
   /// [downloadsDirectoryResolver] overrides where downloads are written;
   /// tests use a temp directory so they do not need the path_provider
   /// plugin (which needs a platform channel and does not run under plain
   /// `flutter test`) — the same reason `HostStore`/`SettingsStore` take an
   /// injectable `File` instead of resolving one themselves.
+  ///
+  /// [chooseSaveLocation] stands in for the native save dialog the same way.
   DesktopDeviceStorage({
     Future<Directory?> Function()? downloadsDirectoryResolver,
-  }) : _downloadsDirectoryResolver =
-            downloadsDirectoryResolver ?? getDownloadsDirectory;
+    Future<String?> Function(String suggestedName)? chooseSaveLocation,
+  })  : _downloadsDirectoryResolver =
+            downloadsDirectoryResolver ?? getDownloadsDirectory,
+        _chooseSaveLocation = chooseSaveLocation ?? _nativeSaveDialog;
 
   final Future<Directory?> Function() _downloadsDirectoryResolver;
+  final Future<String?> Function(String suggestedName) _chooseSaveLocation;
+
+  /// The native save dialog (GTK, IFileSaveDialog, NSSavePanel). Each asks
+  /// before replacing an existing file, so nothing here asks again.
+  static Future<String?> _nativeSaveDialog(String suggestedName) async {
+    final location = await file_selector.getSaveLocation(
+      suggestedName: suggestedName,
+      confirmButtonText: 'Save',
+      canCreateDirectories: true,
+    );
+    return location?.path;
+  }
+
+  /// Writes beside the chosen path and renames into place, so a failed
+  /// write leaves a file that was already there as it was. A name typed
+  /// without the suggested extension gets it back, since GTK's dialog does
+  /// not add one and a backup without `.ssgbackup` is easy to lose track of.
+  @override
+  Future<SavedDocument?> saveDocument({
+    required String suggestedName,
+    required Uint8List bytes,
+    String? mimeType,
+  }) async {
+    var path = await _chooseSaveLocation(suggestedName);
+    if (path == null || path.isEmpty) return null;
+    final dot = suggestedName.lastIndexOf('.');
+    if (dot > 0) {
+      final extension = suggestedName.substring(dot);
+      if (!_basename(path).contains('.')) path = '$path$extension';
+    }
+    try {
+      await atomicWrite(
+        File(path),
+        (temp) => temp.writeAsBytes(bytes, flush: true),
+      );
+    } on FileSystemException catch (e) {
+      throw DeviceStorageException(
+        'Could not save the file there.',
+        details: e.message,
+      );
+    }
+    return SavedDocument(displayName: _basename(path), location: path);
+  }
 
   @override
   Future<bool> ensurePermission() async => true;
