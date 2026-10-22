@@ -257,57 +257,6 @@ jobs:
       - name: Install dependencies
         run: flutter pub get
 
-      # Four test files are left out on Windows because their tests assume
-      # Linux: POSIX paths and file modes (device_storage_test,
-      # public_key_push_test), the Linux "connection refused" text for a closed
-      # port (ssh_service_test), and a UTF-8 shell (log_tail_test). They fail
-      # on Windows x64 as well as arm64: the suite had only ever run on
-      # Linux, where it passes on x64 and arm64. Every other test file runs.
-      #
-      # The suite takes about five minutes. Some 1.5.0 runs never finished
-      # it: the runner stayed busy past every timeout and was killed at
-      # about 50 minutes, keeping no log, on x64 and arm64 alike. That is
-      # what a process holding the step's output pipe does, and a child
-      # started with redirection still inherits that pipe. So the tests run
-      # through Start-Process without redirection (ShellExecute, which
-      # passes on no handles), cmd sends their output to a file, and after
-      # 12 minutes this prints that log and what is still running, kills
-      # it, and fails, keeping a log that names the test it stopped in.
-      - name: Test
-        timeout-minutes: 20
-        run: |
-          $linuxOnly = 'device_storage_test.dart', 'log_tail_test.dart', 'public_key_push_test.dart', 'ssh_service_test.dart'
-          $tests = Get-ChildItem test -Filter *_test.dart |
-            Where-Object { $linuxOnly -notcontains $_.Name } |
-            ForEach-Object { "test/$($_.Name)" }
-          "$($tests.Count) test files"
-          $out = Join-Path $env:RUNNER_TEMP 'flutter-test.out'
-          $err = Join-Path $env:RUNNER_TEMP 'flutter-test.err'
-          $flutter = (Get-Command flutter).Source
-          $p = Start-Process -FilePath cmd.exe -WindowStyle Hidden -PassThru `
-            -ArgumentList "/d /c call `"$flutter`" test --reporter expanded $($tests -join ' ') > `"$out`" 2> `"$err`" < NUL"
-          $null = $p.Handle  # keeps ExitCode readable once it exits
-          $done = $p.WaitForExit(12 * 60 * 1000)
-          Get-Content $out -ErrorAction SilentlyContinue
-          Get-Content $err -ErrorAction SilentlyContinue
-          $left = Get-CimInstance Win32_Process |
-            Where-Object { $_.ProcessId -ne $PID -and $_.CommandLine -match 'flutter|dart|SecureShellGo|\\Temp\\|ssh|sh\.exe|bash|sleep' } |
-            Select-Object ProcessId, ParentProcessId, Name, CommandLine
-          if ($left) {
-            "Processes running now:"
-            $left | Format-List | Out-String -Width 300
-          }
-          if (-not $done) {
-            "::error::flutter test was still running after 12 minutes; the last test in the log above is where it stopped."
-            taskkill /F /T /PID $p.Id
-            exit 1
-          }
-          if ($p.ExitCode -ne 0) { exit $p.ExitCode }
-          if (-not (Select-String -Path $out -SimpleMatch 'All tests passed!' -Quiet)) {
-            "::error::flutter test exited 0 without reporting that all tests passed."
-            exit 1
-          }
-
       - name: Build Windows release
         run: flutter build windows --release
 
@@ -412,6 +361,62 @@ jobs:
           name: SecureShellGo-windows-${{ matrix.arch }}
           path: SecureShellGo-windows-${{ matrix.arch }}.zip
           if-no-files-found: error
+
+      # Four test files are left out on Windows because their tests assume
+      # Linux: POSIX paths and file modes (device_storage_test,
+      # public_key_push_test), the Linux "connection refused" text for a closed
+      # port (ssh_service_test), and a UTF-8 shell (log_tail_test). They fail
+      # on Windows x64 as well as arm64: the suite had only ever run on
+      # Linux, where it passes on x64 and arm64. Every other test file runs.
+      #
+      # The suite takes about five minutes. Some 1.5.0 runs never finished
+      # it: the runner stayed busy past every timeout and was killed at
+      # about 50 minutes, keeping no log, on x64 and arm64 alike. That is
+      # what a process holding the step's output pipe does, and a child
+      # started with redirection still inherits that pipe. So the tests run
+      # through Start-Process without redirection (ShellExecute, which
+      # passes on no handles), cmd sends their output to a file, and after
+      # 12 minutes this prints that log and what is still running, kills
+      # it, and fails, keeping a log that names the test it stopped in.
+      #
+      # Even that did not always end the step: the runner itself stopped
+      # answering. So the tests run last, after the zip is uploaded, and a
+      # hang or a failure here still fails the job (and so the release
+      # job, which needs this one) without costing the build.
+      - name: Test
+        timeout-minutes: 20
+        run: |
+          $linuxOnly = 'device_storage_test.dart', 'log_tail_test.dart', 'public_key_push_test.dart', 'ssh_service_test.dart'
+          $tests = Get-ChildItem test -Filter *_test.dart |
+            Where-Object { $linuxOnly -notcontains $_.Name } |
+            ForEach-Object { "test/$($_.Name)" }
+          "$($tests.Count) test files"
+          $out = Join-Path $env:RUNNER_TEMP 'flutter-test.out'
+          $err = Join-Path $env:RUNNER_TEMP 'flutter-test.err'
+          $flutter = (Get-Command flutter).Source
+          $p = Start-Process -FilePath cmd.exe -WindowStyle Hidden -PassThru `
+            -ArgumentList "/d /c call `"$flutter`" test --reporter expanded $($tests -join ' ') > `"$out`" 2> `"$err`" < NUL"
+          $null = $p.Handle  # keeps ExitCode readable once it exits
+          $done = $p.WaitForExit(12 * 60 * 1000)
+          Get-Content $out -ErrorAction SilentlyContinue
+          Get-Content $err -ErrorAction SilentlyContinue
+          $left = Get-CimInstance Win32_Process |
+            Where-Object { $_.ProcessId -ne $PID -and $_.CommandLine -match 'flutter|dart|SecureShellGo|\\Temp\\|ssh|sh\.exe|bash|sleep' } |
+            Select-Object ProcessId, ParentProcessId, Name, CommandLine
+          if ($left) {
+            "Processes running now:"
+            $left | Format-List | Out-String -Width 300
+          }
+          if (-not $done) {
+            "::error::flutter test was still running after 12 minutes; the last test in the log above is where it stopped."
+            taskkill /F /T /PID $p.Id
+            exit 1
+          }
+          if ($p.ExitCode -ne 0) { exit $p.ExitCode }
+          if (-not (Select-String -Path $out -SimpleMatch 'All tests passed!' -Quiet)) {
+            "::error::flutter test exited 0 without reporting that all tests passed."
+            exit 1
+          }
 
   build-macos:
     name: Build macOS

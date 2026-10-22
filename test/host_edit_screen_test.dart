@@ -23,6 +23,7 @@ import 'package:secure_shell_go/widgets/error_banner.dart';
 import 'support/certificate_fixture.dart';
 
 import 'support/settle.dart';
+import 'support/temp_dir.dart';
 
 /// A keyring that this install has had working before and that is locked
 /// right now — the one remaining state in which a credential cannot be
@@ -115,7 +116,7 @@ void main() {
 
   tearDown(() async {
     settings.dispose();
-    if (await dir.exists()) await dir.delete(recursive: true);
+    await deleteTempDir(dir);
   });
 
   CompositeSecureStorageBackend backendWith({
