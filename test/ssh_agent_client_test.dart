@@ -341,6 +341,12 @@ void main() {
     });
   });
 
+  // Not on Windows. Serving a Unix-domain socket there took the whole
+  // GitHub-hosted runner off the network within seconds, x64 and arm64
+  // alike: the job ended as "the hosted runner lost communication with the
+  // server", with no log, after every timeout had passed. The app never
+  // opens one on Windows, where the agent is a named pipe, so this group
+  // tests nothing Windows runs.
   group('framing over a real socket', () {
     /// Serves [reply] over a unix socket, optionally split into chunks with a
     /// gap between them, and hands back a connector pointing at it.
@@ -453,7 +459,10 @@ void main() {
             .having((e) => e.kind, 'kind', SshAgentErrorKind.protocol)),
       );
     });
-  });
+  },
+      skip: Platform.isWindows
+          ? 'Unix-domain sockets take a Windows runner down'
+          : null);
 
   group('SshAgentKeyIdentity, the sign-in adapter', () {
     Uint8List signature(String type, [int length = 64]) => Uint8List.fromList(
