@@ -30,22 +30,20 @@ jobs:
       fail-fast: false
       matrix:
         arch: [x64, arm64]
-        rep: [client, backend, framing, absent]
+        rep: [bind, connect, echo, agentlike]
         include:
           - arch: x64
             runner: windows-latest
           - arch: arm64
             runner: windows-11-arm
-          - rep: client
-            files: test/ssh_agent_client_test.dart
-          - rep: backend
-            files: test/ssh_agent_backend_test.dart
-          - rep: framing
-            files: test/ssh_agent_client_test.dart
-            args: --plain-name "framing over a real socket"
-          - rep: absent
-            files: test/ssh_agent_client_test.dart
-            args: --plain-name "absent agent"
+          - rep: bind
+            args: --plain-name "bind only"
+          - rep: connect
+            args: --plain-name "bind and connect, no data"
+          - rep: echo
+            args: --plain-name "bind, connect and exchange bytes, both ends closed"
+          - rep: agentlike
+            args: --plain-name "as the agent test does"
     defaults:
       run:
         shell: pwsh
@@ -53,7 +51,7 @@ jobs:
       ARCH: ${{ matrix.arch }}
       PROBE_LABEL: ${{ matrix.rep }} run ${{ github.run_id }}
       GH_TOKEN: ${{ github.token }}
-      TEST_FILES: ${{ matrix.files }}
+      TEST_FILES: test/zz_afunix_probe_test.dart
       REPEAT: '5'
       SUBSET_FROM: ${{ matrix.subset_from }}
       SUBSET_TO: ${{ matrix.subset_to }}
