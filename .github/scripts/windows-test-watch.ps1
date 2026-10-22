@@ -65,8 +65,12 @@ $os0 = Get-CimInstance Win32_OperatingSystem
 Get-CimInstance Win32_Process | Where-Object { $_.Name -match 'Runner|provjob|sshd|agent' } |
   Select-Object ProcessId, ParentProcessId, Name, CommandLine | Format-Table -AutoSize | Out-String -Width 300
 
+$repeat = [int]$(if ($env:REPEAT) { $env:REPEAT } else { 1 })
+$one = "call `"$flutter`" test $TestArgs --reporter expanded --file-reporter `"json:$json`" $($tests -join ' ')"
+$chain = (1..$repeat | ForEach-Object { $one }) -join ' & '
+"running $repeat time(s): $one"
 $p = Start-Process -FilePath cmd.exe -WindowStyle Hidden -PassThru `
-  -ArgumentList "/d /c call `"$flutter`" test $TestArgs --reporter expanded --file-reporter `"json:$json`" $($tests -join ' ') > `"$out`" 2> `"$err`" < NUL"
+  -ArgumentList "/d /c ($chain) > `"$out`" 2> `"$err`" < NUL"
 $null = $p.Handle  # keeps ExitCode readable once it exits
 
 $start = Get-Date
@@ -94,6 +98,7 @@ function Read-Json {
     $fs = [IO.File]::Open($json, 'Open', 'Read', 'ReadWrite')
   } catch { return }
   try {
+    if ($fs.Length -lt $script:jsonPos) { $script:jsonPos = 0L; $script:running.Clear() }
     if ($fs.Length -le $script:jsonPos) { return }
     $fs.Position = $script:jsonPos
     $buf = New-Object byte[] ($fs.Length - $script:jsonPos)
