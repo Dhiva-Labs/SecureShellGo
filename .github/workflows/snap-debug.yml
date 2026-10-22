@@ -1,0 +1,113 @@
+name: Snap EGL debug (temporary)
+
+on:
+  push:
+    branches: [debug/snap-amd64-egl]
+
+permissions:
+  contents: read
+
+jobs:
+  snap:
+    name: Snap ${{ matrix.arch }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-24.04
+            elf_machine: x86-64
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+            elf_machine: ARM aarch64
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Build the snap
+        uses: snapcore/action-build@v1
+        id: build
+
+      - name: Assert the snap is ${{ matrix.arch }}
+        env:
+          SNAP_FILE: ${{ steps.build.outputs.snap }}
+          ELF_MACHINE: ${{ matrix.elf_machine }}
+        run: |
+          ls -l "$SNAP_FILE"
+          case "$SNAP_FILE" in
+            *_${{ matrix.arch }}.snap) ;;
+            *) echo "::error::unexpected snap file name $SNAP_FILE"; exit 1 ;;
+          esac
+          command -v unsquashfs > /dev/null || sudo apt-get install -y squashfs-tools
+          unsquashfs -q -d "$RUNNER_TEMP/snap" "$SNAP_FILE" meta/snap.yaml secure_shell_go
+          sed -n '/^architectures:/,/^[a-z]/p' "$RUNNER_TEMP/snap/meta/snap.yaml"
+          grep -qx -- '- ${{ matrix.arch }}' "$RUNNER_TEMP/snap/meta/snap.yaml"
+          file "$RUNNER_TEMP/snap/secure_shell_go" | tee /dev/stderr | grep -q "$ELF_MACHINE"
+
+      # The snap is strictly confined, so a bundle that looks right can still
+      # fail to start (missing library, denied access). Install the snap that
+      # was just built and run it under snapd's confinement on the runner's
+      # own architecture. `snap install --dangerous` pulls the gnome-42-2204
+      # content snap and connects the display and graphics plugs by itself.
+      # -ac: a confined snap cannot read xvfb-run's X authority file.
+      # As in the archive smoke run, the native runner shows its window only
+      # after Flutter has drawn the first frame and the Dart code creates the
+      # app's data folder on start-up, so both together prove the AOT
+      # snapshot runs inside the confinement. The data folder lives under the
+      # snap's own home, ~/snap/secureshellgo.
+      - name: Install the snap and run it confined (Xvfb)
+        timeout-minutes: 15
+        env:
+          SNAP_FILE: ${{ steps.build.outputs.snap }}
+        run: |
+          sudo apt-get install -y xvfb xauth xdotool
+          sudo snap install --dangerous "$SNAP_FILE"
+          snap list
+          snap connections secureshellgo
+          cat > "$RUNNER_TEMP/snap-smoke.sh" <<'EOF'
+          log="$RUNNER_TEMP/snap-smoke.log"
+          snap run secureshellgo > "$log" 2>&1 &
+          pid=$!
+          data=""
+          for i in $(seq 1 120); do
+            data="$(find "$HOME/snap/secureshellgo" -type d -name com.dhivalabs.secure_shell_go 2> /dev/null | head -n 1)"
+            if xdotool search --onlyvisible --name '^SecureShell Go$' > /dev/null 2>&1 && [ -n "$data" ]; then
+              echo "window is up and $data exists after ${i}s"
+              sleep 5
+              kill -0 "$pid" || { echo "secureshellgo died after showing its window"; cat "$log"; exit 1; }
+              kill "$pid"
+              cat "$log"
+              exit 0
+            fi
+            kill -0 "$pid" 2> /dev/null || { echo "secureshellgo exited early"; cat "$log"; exit 1; }
+            sleep 1
+          done
+          echo "no window and data folder after 120s (data folder: ${data:-none})"
+          ls -R "$HOME/snap/secureshellgo" 2> /dev/null | head -50
+          cat "$log"
+          kill "$pid" 2> /dev/null
+          exit 1
+          EOF
+          xvfb-run -a -s "-screen 0 1280x800x24 -ac" bash "$RUNNER_TEMP/snap-smoke.sh"
+
+      - name: Which X11 and GL libraries the confined app loads
+        run: |
+          cat > "$RUNNER_TEMP/maps.sh" <<'EOF'
+          snap run secureshellgo > /dev/null 2>&1 &
+          pid=$!
+          sleep 15
+          sudo awk '{print $6}' /proc/$pid/maps | grep -E 'libX11|libgtk-3|libEGL_mesa|gallium|swrast' | sort -u
+          kill "$pid"
+          EOF
+          xvfb-run -a -s "-screen 0 1280x800x24 -ac" bash "$RUNNER_TEMP/maps.sh"
+
+      # Not published from here: the Snap Store upload is done by hand.
+      - name: Upload artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: snap-${{ matrix.arch }}
+          path: ${{ steps.build.outputs.snap }}
+          if-no-files-found: error
+
