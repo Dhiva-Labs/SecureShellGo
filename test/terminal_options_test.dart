@@ -33,6 +33,7 @@ import 'package:secure_shell_go/widgets/terminal_fonts.dart';
 import 'package:xterm/xterm.dart';
 
 import 'support/fake_transport.dart';
+import 'support/temp_dir.dart';
 
 /// A shell the test prints into.
 class PrintingShell implements SSHSession {
@@ -183,7 +184,7 @@ void main() {
   tearDown(() async {
     SessionLogActions.debugDestination = null;
     settings.dispose();
-    if (await dir.exists()) await dir.delete(recursive: true);
+    await deleteTempDir(dir);
   });
 
   Future<void> use(

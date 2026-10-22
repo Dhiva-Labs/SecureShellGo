@@ -615,7 +615,12 @@ void main() {
       log.learnSecret('7731-4402-1189');
       for (var i = 0; i < 50; i++) {
         await Future<void>.delayed(const Duration(milliseconds: 10));
-        if (!(await current().readAsString()).contains('7731')) break;
+        try {
+          if (!(await current().readAsString()).contains('7731')) break;
+        } on FileSystemException {
+          // Windows will not open the file while the rescrub is rewriting
+          // it; try again on the next turn.
+        }
       }
       expect(await current().readAsString(), isNot(contains('7731')));
     });

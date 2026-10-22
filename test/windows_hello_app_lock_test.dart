@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -246,8 +248,13 @@ void main() {
       );
     });
 
-    test('this (non-Windows) test host keeps the Android channel class', () {
-      expect(createDefaultAppLockAuthenticator(), isA<MethodChannelAppLock>());
+    test('the test host gets the class for its own platform', () {
+      expect(
+        createDefaultAppLockAuthenticator(),
+        Platform.isWindows
+            ? isA<WindowsHelloAppLock>()
+            : isA<MethodChannelAppLock>(),
+      );
     });
   });
 }

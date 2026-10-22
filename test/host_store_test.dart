@@ -156,7 +156,7 @@ void main() {
     expect(reloaded.first.label, 'third');
     // No temp debris left beside the store.
     expect(
-      tempDir.listSync().map((e) => e.path.split('/').last),
+      tempDir.listSync().map((e) => e.uri.pathSegments.last),
       ['hosts.json'],
     );
   });

@@ -887,9 +887,11 @@ mv -f './.out.tar.gz.ssg-part-1' './out.tar.gz\'''');
           expect(File('${box.src}/plain copy/plain').existsSync(), isFalse,
               reason: 'copied into the folder that appeared');
         },
+            // A test's own skip replaces its group's, so this must repeat
+            // the group's !_posix rather than say false.
             skip: busybox
                 ? "BusyBox's shell runs its own cp, whatever PATH says"
-                : false);
+                : !_posix);
 
         test('change owner to who it already is, recursively', () async {
           await box.seed();

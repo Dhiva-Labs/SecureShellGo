@@ -10,6 +10,8 @@ import 'package:secure_shell_go/screens/settings_screen.dart';
 import 'package:secure_shell_go/services/known_hosts_service.dart';
 import 'package:secure_shell_go/services/settings_store.dart';
 
+import 'support/temp_dir.dart';
+
 /// The settings added for 1.5 — terminal options, the extra keys row, the
 /// editor's text size and the diagnostics log — each reach the store from
 /// the screen.
@@ -24,7 +26,7 @@ void main() {
 
   tearDown(() async {
     store.dispose();
-    if (await dir.exists()) await dir.delete(recursive: true);
+    await deleteTempDir(dir);
   });
 
   Future<void> pumpSettings(WidgetTester tester) async {
