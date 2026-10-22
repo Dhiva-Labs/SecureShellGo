@@ -612,14 +612,19 @@ void main() {
       );
       await log.setEnabled(true);
       await log.record(StateError('the code was 7731-4402-1189'), null);
+      final written = await current().length();
       log.learnSecret('7731-4402-1189');
-      for (var i = 0; i < 50; i++) {
-        await Future<void>.delayed(const Duration(milliseconds: 10));
+      // Waits for the size to change rather than reading the file: on
+      // Windows a reader holding it open makes the rescrub's rename over it
+      // fail, and a rescrub that fails is not retried, so polling by reading
+      // could keep the secret in the file. Looking at the size does not
+      // stand in the rename's way.
+      for (var i = 0; i < 250; i++) {
+        await Future<void>.delayed(const Duration(milliseconds: 20));
         try {
-          if (!(await current().readAsString()).contains('7731')) break;
+          if (await current().length() != written) break;
         } on FileSystemException {
-          // Windows will not open the file while the rescrub is rewriting
-          // it; try again on the next turn.
+          // Mid-rename; look again on the next turn.
         }
       }
       expect(await current().readAsString(), isNot(contains('7731')));
