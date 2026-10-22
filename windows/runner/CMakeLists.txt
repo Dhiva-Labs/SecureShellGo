@@ -21,6 +21,12 @@ add_executable(${BINARY_NAME} WIN32
 # that need different build settings.
 apply_standard_settings(${BINARY_NAME})
 
+# C++/WinRT (windows_hello.cpp) pulls in <experimental/coroutine> below
+# C++20, which Visual Studio 2026's MSVC refuses outright (error STL1011).
+# At C++20 it takes the standard <coroutine> instead. CMake builds with the
+# highest standard asked for, so this wins over the standard settings' 17.
+target_compile_features(${BINARY_NAME} PRIVATE cxx_std_20)
+
 # Add preprocessor definitions for the build version.
 target_compile_definitions(${BINARY_NAME} PRIVATE "FLUTTER_VERSION=\"${FLUTTER_VERSION}\"")
 target_compile_definitions(${BINARY_NAME} PRIVATE "FLUTTER_VERSION_MAJOR=${FLUTTER_VERSION_MAJOR}")
