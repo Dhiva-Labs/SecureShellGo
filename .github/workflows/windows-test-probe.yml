@@ -1,0 +1,89 @@
+name: Windows test probe
+
+# Throwaway: reproduces the intermittent Windows test-step hang with the
+# machine watched. Lives only on the ci/windows-hang-probe branch.
+on:
+  workflow_dispatch:
+    inputs:
+      test_args:
+        description: extra flutter test arguments
+        default: ''
+      test_files:
+        description: space-separated test files (default all)
+        default: ''
+  push:
+    branches: [ci/windows-hang-probe]
+
+permissions:
+  contents: read
+  checks: write
+
+env:
+  FLUTTER_VERSION: '3.44.6'
+
+jobs:
+  probe:
+    name: Probe ${{ matrix.arch }} ${{ matrix.rep }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [x64, arm64]
+        rep: [a, b, c]
+        include:
+          - arch: x64
+            runner: windows-latest
+          - arch: arm64
+            runner: windows-11-arm
+    defaults:
+      run:
+        shell: pwsh
+    env:
+      ARCH: ${{ matrix.arch }}
+      PROBE_LABEL: ${{ matrix.rep }} run ${{ github.run_id }}
+      GH_TOKEN: ${{ github.token }}
+      TEST_FILES: ${{ inputs.test_files }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Install Flutter ${{ env.FLUTTER_VERSION }}
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $true
+          git clone --depth 1 --branch $env:FLUTTER_VERSION `
+            https://github.com/flutter/flutter.git "$env:RUNNER_TEMP\flutter"
+          Add-Content -Path $env:GITHUB_PATH -Value "$env:RUNNER_TEMP\flutter\bin"
+
+      - name: Configure Flutter
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $true
+          flutter config --no-analytics --enable-windows-desktop
+          flutter --version
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Machine
+        run: |
+          Get-CimInstance Win32_ComputerSystem | Select-Object NumberOfLogicalProcessors, TotalPhysicalMemory | Format-List
+          Get-CimInstance Win32_PageFileUsage | Format-List
+          Get-CimInstance Win32_PageFileSetting | Format-List
+          Get-PSDrive -PSProvider FileSystem | Format-Table -AutoSize
+          Get-Process | Sort-Object PrivateMemorySize64 -Descending | Select-Object -First 15 Name, Id, @{n='PrivMB';e={[int]($_.PrivateMemorySize64/1MB)}}, HandleCount | Format-Table -AutoSize
+
+      - name: Test (watched)
+        timeout-minutes: 35
+        run: ./.github/scripts/windows-test-watch.ps1 -TestArgs '${{ inputs.test_args }}'
+
+      - name: Keep the logs
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: probe-${{ matrix.arch }}-${{ matrix.rep }}
+          path: |
+            ${{ runner.temp }}/flutter-test.out
+            ${{ runner.temp }}/flutter-test.err
+            ${{ runner.temp }}/flutter-test.json
+            ${{ runner.temp }}/watch-timeline.txt
+          if-no-files-found: warn
