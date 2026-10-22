@@ -2,12 +2,12 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
+import '../l10n/l10n.dart';
 import '../services/fleet_push_run_registry.dart';
 import '../services/fleet_push_service.dart';
-import '../services/remote_path.dart';
 import '../services/transfer_hub.dart';
 import '../services/transfer_queue.dart';
-import 'transfer_panel.dart' show iconForDirection;
+import 'transfer_panel.dart' show iconForDirection, transferSubtitle;
 
 /// Rebuilds [builder] whenever [hub]'s merged list changes — the
 /// multi-session equivalent of `TransferQueueBuilder` in
@@ -56,7 +56,7 @@ class TransferHubAction extends StatelessWidget {
             items.any((i) => i.task.status == TransferStatus.failed);
 
         return IconButton(
-          tooltip: 'All transfers',
+          tooltip: context.l10n.transferHubTitle,
           onPressed: onTap,
           icon: Badge(
             isLabelVisible: active > 0 || failed,
@@ -111,7 +111,7 @@ Future<void> showTransferHubSheet(
                   child: Row(
                     children: [
                       Text(
-                        'All transfers',
+                        context.l10n.transferHubTitle,
                         style: Theme.of(context).textTheme.titleMedium,
                       ),
                       const Spacer(),
@@ -123,12 +123,12 @@ Future<void> showTransferHubSheet(
                               hub.cancel(item.sessionId, item.task.id);
                             }
                           },
-                          child: const Text('Cancel all'),
+                          child: Text(context.l10n.transferPanelCancelAll),
                         ),
                       if (anyFinished)
                         TextButton(
                           onPressed: hub.clearCompleted,
-                          child: const Text('Clear'),
+                          child: Text(context.l10n.transferPanelClear),
                         ),
                     ],
                   ),
@@ -139,9 +139,9 @@ Future<void> showTransferHubSheet(
                     onOpen: (service) => onOpenFleetPush(context, service),
                   ),
                 if (items.isEmpty)
-                  const Padding(
-                    padding: EdgeInsets.symmetric(vertical: 32),
-                    child: Text('Nothing transferred yet.'),
+                  Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 32),
+                    child: Text(context.l10n.transferPanelEmpty),
                   )
                 else
                   Flexible(
@@ -219,8 +219,7 @@ class _FleetPushBannerState extends State<_FleetPushBanner> {
 
     final theme = Theme.of(context);
     final label = service.isRunning
-        ? 'Pushing to ${service.totalCount} '
-            'host${service.totalCount == 1 ? '' : 's'}…'
+        ? context.l10n.transferHubPushing(service.totalCount)
         : service.summary;
 
     return Material(
@@ -275,6 +274,7 @@ class _HubTile extends StatelessWidget {
           TransferStatus.completed => Icons.check_circle,
           TransferStatus.failed => Icons.error,
           TransferStatus.cancelled => Icons.cancel,
+          TransferStatus.interrupted => Icons.sync_problem,
           _ => iconForDirection(task.direction),
         },
         color: switch (task.status) {
@@ -303,7 +303,10 @@ class _HubTile extends StatelessWidget {
             style: theme.textTheme.bodySmall
                 ?.copyWith(fontWeight: FontWeight.w600),
           ),
-          Text(_subtitle(task), style: theme.textTheme.bodySmall),
+          Text(
+            transferSubtitle(task, context.l10n),
+            style: theme.textTheme.bodySmall,
+          ),
           if (task.status.isActive) ...[
             const SizedBox(height: 6),
             LinearProgressIndicator(value: task.progress, minHeight: 3),
@@ -311,15 +314,15 @@ class _HubTile extends StatelessWidget {
         ],
       ),
       isThreeLine: true,
-      trailing: _buildAction(),
+      trailing: _buildAction(context),
     );
   }
 
-  Widget? _buildAction() {
+  Widget? _buildAction(BuildContext context) {
     final task = item.task;
     if (task.status.isActive) {
       return IconButton(
-        tooltip: 'Cancel',
+        tooltip: MaterialLocalizations.of(context).cancelButtonLabel,
         icon: const Icon(Icons.close, size: 20),
         onPressed: () => hub.cancel(item.sessionId, task.id),
       );
@@ -330,34 +333,9 @@ class _HubTile extends StatelessWidget {
     if (task.status == TransferStatus.failed) {
       return TextButton(
         onPressed: () => hub.retry(item.sessionId, task.id),
-        child: const Text('Retry'),
+        child: Text(context.l10n.transferPanelRetry),
       );
     }
     return null;
-  }
-
-  static String _subtitle(TransferTask task) {
-    switch (task.status) {
-      case TransferStatus.queued:
-        return task.direction == TransferDirection.serverToServer
-            ? 'Waiting… → ${task.destinationLabel ?? 'another server'}'
-            : 'Waiting…';
-      case TransferStatus.completed:
-        final landed = task.destination ?? 'saved';
-        return task.direction == TransferDirection.serverToServer &&
-                task.moveSource
-            ? '${RemotePath.formatBytes(task.transferredBytes)} · moved to '
-                '$landed'
-            : '${RemotePath.formatBytes(task.transferredBytes)} · $landed';
-      case TransferStatus.cancelled:
-        return 'Cancelled';
-      case TransferStatus.failed:
-        return task.error ?? 'Failed';
-      case TransferStatus.running:
-        final moved = RemotePath.formatBytes(task.transferredBytes);
-        final total = task.totalBytes;
-        if (total == null) return moved;
-        return '$moved of ${RemotePath.formatBytes(total)} · ${task.percent}%';
-    }
   }
 }

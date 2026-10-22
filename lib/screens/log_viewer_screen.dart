@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:xterm/xterm.dart';
 
+import '../l10n/l10n.dart';
 import '../services/log_tail.dart';
 import '../services/remote_exec.dart';
 import '../services/session_controller.dart';
@@ -137,6 +138,7 @@ class _LogViewerScreenState extends State<LogViewerScreen> {
       widget.settingsStore.current.colorScheme,
     );
     final visible = _buffer.visible;
+    final l10n = context.l10n;
 
     return Scaffold(
       backgroundColor: theme.background,
@@ -162,7 +164,8 @@ class _LogViewerScreenState extends State<LogViewerScreen> {
         ),
         actions: [
           IconButton(
-            tooltip: _buffer.isPaused ? 'Resume' : 'Pause',
+            tooltip:
+                _buffer.isPaused ? l10n.logViewerResume : l10n.logViewerPause,
             icon: Icon(_buffer.isPaused ? Icons.play_arrow : Icons.pause),
             color: _buffer.isPaused
                 ? Theme.of(context).colorScheme.primary
@@ -170,14 +173,14 @@ class _LogViewerScreenState extends State<LogViewerScreen> {
             onPressed: _error != null ? null : _togglePause,
           ),
           IconButton(
-            tooltip: 'Clear the scrollback',
+            tooltip: l10n.logViewerClearTooltip,
             icon: const Icon(Icons.clear_all),
             onPressed: _buffer.isEmpty
                 ? null
                 : () => setState(() => _buffer.clear()),
           ),
           IconButton(
-            tooltip: 'Copy the visible lines',
+            tooltip: l10n.logViewerCopyTooltip,
             icon: const Icon(Icons.copy_all_outlined),
             onPressed: visible.isEmpty ? null : () => unawaited(_copy(visible)),
           ),
@@ -204,7 +207,7 @@ class _LogViewerScreenState extends State<LogViewerScreen> {
       floatingActionButton: _follow || _error != null
           ? null
           : FloatingActionButton.small(
-              tooltip: 'Jump to the newest line',
+              tooltip: l10n.logViewerJumpToNewest,
               onPressed: _jumpToBottom,
               child: const Icon(Icons.arrow_downward),
             ),
@@ -239,8 +242,8 @@ class _LogViewerScreenState extends State<LogViewerScreen> {
       return Center(
         child: Text(
           _buffer.isEmpty
-              ? 'Waiting for output…'
-              : 'No lines match “${_buffer.filter}”.',
+              ? context.l10n.logViewerWaiting
+              : context.l10n.logViewerNoMatch(_buffer.filter),
           style: TextStyle(color: theme.brightBlack),
         ),
       );
@@ -266,7 +269,7 @@ class _LogViewerScreenState extends State<LogViewerScreen> {
     );
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('Copied ${lines.length} lines')),
+      SnackBar(content: Text(context.l10n.logViewerCopied(lines.length))),
     );
   }
 }
@@ -327,6 +330,7 @@ class _FilterBar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final filtering = controller.text.trim().isNotEmpty;
+    final l10n = context.l10n;
     return Padding(
       padding: const EdgeInsets.fromLTRB(12, 8, 12, 4),
       child: TextField(
@@ -338,11 +342,12 @@ class _FilterBar extends StatelessWidget {
           prefixIcon: const Icon(Icons.filter_alt_outlined, size: 18),
           prefixIconConstraints:
               const BoxConstraints(minWidth: 38, minHeight: 32),
-          hintText: 'Filter lines…',
+          hintText: l10n.logViewerFilterHint,
           hintStyle: const TextStyle(fontSize: 13),
           // The counter doubles as the reassurance that a filter hiding
           // everything has not lost anything.
-          suffixText: filtering ? '$matched / $total' : '$total lines',
+          suffixText:
+              filtering ? '$matched / $total' : l10n.logViewerLineCount(total),
           suffixStyle: TextStyle(
             fontSize: 11.5,
             color: Theme.of(context).colorScheme.onSurfaceVariant,
@@ -364,6 +369,7 @@ class _PausedBanner extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final l10n = context.l10n;
     return Container(
       width: double.infinity,
       color: theme.colorScheme.primary.withValues(alpha: 0.15),
@@ -375,14 +381,15 @@ class _PausedBanner extends StatelessWidget {
           Expanded(
             child: Text(
               pending == 0
-                  ? 'Paused'
-                  : pending == 1
-                      ? 'Paused — 1 new line'
-                      : 'Paused — $pending new lines',
+                  ? l10n.logViewerPaused
+                  : l10n.logViewerPausedNewLines(pending),
               style: const TextStyle(fontSize: 12.5),
             ),
           ),
-          TextButton(onPressed: onResume, child: const Text('Resume')),
+          TextButton(
+            onPressed: onResume,
+            child: Text(l10n.logViewerResume),
+          ),
         ],
       ),
     );
@@ -402,12 +409,12 @@ Future<void> promptAndTailFile(
   final path = await showDialog<String>(
     context: context,
     builder: (context) => AlertDialog(
-      title: const Text('Tail a file'),
+      title: Text(context.l10n.logViewerTailTitle),
       content: TextField(
         controller: controller,
         autofocus: true,
-        decoration: const InputDecoration(
-          labelText: 'Path on the server',
+        decoration: InputDecoration(
+          labelText: context.l10n.logViewerPathLabel,
           hintText: '/var/log/syslog',
         ),
         onSubmitted: (value) => Navigator.of(context).pop(value.trim()),
@@ -415,12 +422,12 @@ Future<void> promptAndTailFile(
       actions: [
         TextButton(
           onPressed: () => Navigator.of(context).pop(),
-          child: const Text('Cancel'),
+          child: Text(MaterialLocalizations.of(context).cancelButtonLabel),
         ),
         FilledButton(
           onPressed: () =>
               Navigator.of(context).pop(controller.text.trim()),
-          child: const Text('Tail'),
+          child: Text(context.l10n.logViewerTailButton),
         ),
       ],
     ),

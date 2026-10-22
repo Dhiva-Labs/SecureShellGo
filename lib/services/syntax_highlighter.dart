@@ -1667,6 +1667,153 @@ const SyntaxMode _sqlMode = _CLikeMode(
   },
 );
 
+const SyntaxMode _cMode = _CLikeMode(
+  id: 'c',
+  label: 'C / C++',
+  lineComment: '//',
+  blockComments: true,
+  stringPrefixes: {'L', 'u', 'U', 'u8', 'R'},
+  keywords: {
+    'alignas', 'alignof', 'auto', 'break', 'case', 'catch', 'class', 'const',
+    'constexpr', 'continue', 'default', 'delete', 'do', 'else', 'enum',
+    'explicit', 'extern', 'for', 'friend', 'goto', 'if', 'inline',
+    'namespace', 'new', 'noexcept', 'operator', 'private', 'protected',
+    'public', 'register', 'return', 'sizeof', 'static', 'static_assert',
+    'struct', 'switch', 'template', 'this', 'throw', 'try', 'typedef',
+    'typename', 'union', 'using', 'virtual', 'volatile', 'while',
+  },
+  builtins: {
+    'bool', 'char', 'double', 'false', 'float', 'int', 'long', 'NULL',
+    'nullptr', 'short', 'signed', 'size_t', 'std', 'string', 'true',
+    'uint8_t', 'uint16_t', 'uint32_t', 'uint64_t', 'int8_t', 'int16_t',
+    'int32_t', 'int64_t', 'unsigned', 'vector', 'void',
+  },
+);
+
+const SyntaxMode _goMode = _CLikeMode(
+  id: 'go',
+  label: 'Go',
+  lineComment: '//',
+  blockComments: true,
+  // Go's raw strings are backticks; the template scanner reads them right.
+  templates: true,
+  keywords: {
+    'break', 'case', 'chan', 'const', 'continue', 'default', 'defer', 'else',
+    'fallthrough', 'for', 'func', 'go', 'goto', 'if', 'import', 'interface',
+    'map', 'package', 'range', 'return', 'select', 'struct', 'switch',
+    'type', 'var',
+  },
+  builtins: {
+    'any', 'append', 'bool', 'byte', 'cap', 'close', 'complex128', 'copy',
+    'delete', 'error', 'false', 'float32', 'float64', 'int', 'int16',
+    'int32', 'int64', 'int8', 'iota', 'len', 'make', 'new', 'nil', 'panic',
+    'print', 'println', 'recover', 'rune', 'string', 'true', 'uint',
+    'uint16', 'uint32', 'uint64', 'uint8', 'uintptr',
+  },
+);
+
+const SyntaxMode _rustMode = _CLikeMode(
+  id: 'rust',
+  label: 'Rust',
+  lineComment: '//',
+  blockComments: true,
+  capitalIsBuiltin: true,
+  stringPrefixes: {'b', 'r', 'br'},
+  keywords: {
+    'as', 'async', 'await', 'break', 'const', 'continue', 'crate', 'dyn',
+    'else', 'enum', 'extern', 'fn', 'for', 'if', 'impl', 'in', 'let',
+    'loop', 'match', 'mod', 'move', 'mut', 'pub', 'ref', 'return', 'self',
+    'Self', 'static', 'struct', 'super', 'trait', 'type', 'unsafe', 'use',
+    'where', 'while',
+  },
+  builtins: {
+    'bool', 'char', 'f32', 'f64', 'false', 'i128', 'i16', 'i32', 'i64', 'i8',
+    'isize', 'None', 'Ok', 'Err', 'Option', 'Result', 'Some', 'str',
+    'String', 'true', 'u128', 'u16', 'u32', 'u64', 'u8', 'usize', 'Vec',
+  },
+);
+
+const SyntaxMode _javaMode = _CLikeMode(
+  id: 'java',
+  label: 'Java',
+  lineComment: '//',
+  blockComments: true,
+  annotations: true,
+  capitalIsBuiltin: true,
+  tripleQuotes: true,
+  keywords: {
+    'abstract', 'assert', 'break', 'case', 'catch', 'class', 'continue',
+    'default', 'do', 'else', 'enum', 'extends', 'final', 'finally', 'for',
+    'if', 'implements', 'import', 'instanceof', 'interface', 'native', 'new',
+    'package', 'permits', 'private', 'protected', 'public', 'record',
+    'return', 'sealed', 'static', 'super', 'switch', 'synchronized', 'this',
+    'throw', 'throws', 'transient', 'try', 'var', 'volatile', 'while',
+    'yield',
+  },
+  builtins: {
+    'boolean', 'byte', 'char', 'double', 'false', 'float', 'int', 'long',
+    'null', 'short', 'true', 'void',
+  },
+);
+
+const SyntaxMode _kotlinMode = _CLikeMode(
+  id: 'kotlin',
+  label: 'Kotlin',
+  lineComment: '//',
+  blockComments: true,
+  annotations: true,
+  capitalIsBuiltin: true,
+  tripleQuotes: true,
+  keywords: {
+    'abstract', 'as', 'break', 'by', 'catch', 'class', 'companion', 'const',
+    'constructor', 'continue', 'data', 'do', 'else', 'enum', 'external',
+    'final', 'finally', 'for', 'fun', 'get', 'if', 'import', 'in', 'init',
+    'inline', 'interface', 'internal', 'is', 'lateinit', 'object', 'open',
+    'operator', 'out', 'override', 'package', 'private', 'protected',
+    'public', 'return', 'sealed', 'set', 'super', 'suspend', 'this', 'throw',
+    'try', 'typealias', 'val', 'var', 'vararg', 'when', 'where', 'while',
+  },
+  builtins: {'false', 'null', 'true', 'Unit', 'it'},
+);
+
+const SyntaxMode _rubyMode = _CLikeMode(
+  id: 'ruby',
+  label: 'Ruby',
+  lineComment: '#',
+  keywords: {
+    'alias', 'and', 'begin', 'break', 'case', 'class', 'def', 'defined?',
+    'do', 'else', 'elsif', 'end', 'ensure', 'for', 'if', 'in', 'module',
+    'next', 'not', 'or', 'redo', 'require', 'rescue', 'retry', 'return',
+    'self', 'super', 'then', 'unless', 'until', 'when', 'while', 'yield',
+  },
+  builtins: {
+    'attr_accessor', 'attr_reader', 'attr_writer', 'false', 'nil', 'puts',
+    'raise', 'true',
+  },
+);
+
+const SyntaxMode _phpMode = _CLikeMode(
+  id: 'php',
+  label: 'PHP',
+  lineComment: '//',
+  altLineComment: '#',
+  blockComments: true,
+  caseInsensitive: true,
+  keywords: {
+    'abstract', 'as', 'break', 'case', 'catch', 'class', 'clone', 'const',
+    'continue', 'declare', 'default', 'do', 'echo', 'else', 'elseif',
+    'enum', 'extends', 'final', 'finally', 'fn', 'for', 'foreach',
+    'function', 'global', 'if', 'implements', 'include', 'include_once',
+    'instanceof', 'interface', 'match', 'namespace', 'new', 'private',
+    'protected', 'public', 'readonly', 'require', 'require_once', 'return',
+    'static', 'switch', 'throw', 'trait', 'try', 'use', 'while', 'yield',
+  },
+  builtins: {
+    'array', 'bool', 'false', 'float', 'int', 'isset', 'mixed', 'null',
+    'string', 'true', 'unset', 'void',
+  },
+);
+
 /// Every mode the override menu offers, in the order it shows them.
 const List<SyntaxMode> syntaxModes = <SyntaxMode>[
   plainTextMode,
@@ -1676,6 +1823,13 @@ const List<SyntaxMode> syntaxModes = <SyntaxMode>[
   _dartMode,
   _pythonMode,
   _javaScriptMode,
+  _cMode,
+  _goMode,
+  _rustMode,
+  _javaMode,
+  _kotlinMode,
+  _rubyMode,
+  _phpMode,
   _HtmlMode(),
   _CssMode(),
   _MarkdownMode(),
@@ -1714,6 +1868,9 @@ const Map<String, String> _modeByName = {
   'fstab': 'nginx',
   'hosts': 'nginx',
   'readme': 'markdown',
+  'gemfile': 'ruby',
+  'rakefile': 'ruby',
+  'vagrantfile': 'ruby',
   'pubspec.lock': 'yaml',
   'cmakelists.txt': 'plain',
 };
@@ -1736,6 +1893,14 @@ const Map<String, String> _modeByExtension = {
   '.mount': 'ini', '.desktop': 'ini', '.gitconfig': 'ini',
   '.editorconfig': 'ini',
   '.sql': 'sql', '.psql': 'sql', '.ddl': 'sql',
+  '.c': 'c', '.h': 'c', '.cc': 'c', '.cpp': 'c', '.cxx': 'c', '.hpp': 'c',
+  '.hh': 'c', '.ino': 'c',
+  '.go': 'go',
+  '.rs': 'rust',
+  '.java': 'java',
+  '.kt': 'kotlin', '.kts': 'kotlin',
+  '.rb': 'ruby', '.rake': 'ruby', '.gemspec': 'ruby',
+  '.php': 'php', '.phtml': 'php',
   '.conf': 'nginx', '.nginx': 'nginx', '.htaccess': 'nginx',
 };
 

@@ -1,8 +1,11 @@
 import 'dart:async';
 
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:intl/intl.dart' show DateFormat;
 
+import '../l10n/l10n.dart';
 import '../models/host.dart';
 import '../models/path_bookmark.dart';
 import '../models/remote_entry.dart';
@@ -10,8 +13,13 @@ import '../services/bookmark_store.dart';
 import '../services/device_storage.dart';
 import '../services/download_plan.dart';
 import '../services/editor_document.dart';
+import '../services/input_profile.dart';
+import '../services/remote_exec.dart';
+import '../services/remote_entry_actions.dart';
+import '../services/remote_file_ops.dart';
 import '../services/remote_path.dart';
 import '../services/remote_transfer_plan.dart';
+import '../services/server_side_job.dart';
 import '../services/session_controller.dart';
 import '../services/session_manager.dart';
 import '../services/settings_store.dart';
@@ -20,10 +28,12 @@ import '../services/transfer_queue.dart';
 import '../services/upload_plan.dart';
 import '../theme.dart';
 import '../widgets/bookmark_sheet.dart';
+import '../widgets/remote_file_ops_dialogs.dart';
 import '../widgets/transfer_panel.dart';
 import 'log_viewer_screen.dart';
 import 'remote_directory_picker.dart';
 import 'remote_editor_screen.dart';
+import 'remote_search_screen.dart';
 
 /// What to do when a download would land on an existing file name.
 enum _CollisionChoice { keepBoth, overwrite, cancel }
@@ -143,6 +153,22 @@ class _FileBrowserPaneState extends State<FileBrowserPane>
   /// Transfers already counted, so each finishing is noticed exactly once.
   final Set<String> _refreshedFor = {};
 
+  /// Deletes, renames, new folders and permission changes still waiting on
+  /// the server, for the progress line under the toolbar. A count, not a
+  /// flag, because a rename can start while a big folder is still being
+  /// deleted, and the line must stay up until both are done.
+  int _operationsInFlight = 0;
+
+  /// What the server can do for the actions that run there — compress,
+  /// extract, search, duplicate, change owner. Nothing until the probe in
+  /// [initState] has answered.
+  RemoteToolkit _toolkit = RemoteToolkit.none;
+  Future<RemoteToolkit>? _toolkitProbe;
+
+  /// Those actions while they run on the server, for the strip under the
+  /// toolbar.
+  final List<ServerOpEntry> _serverOps = [];
+
   /// Set when a transfer changed the directory on screen, cleared by the
   /// refresh it triggers once the queue is quiet.
   bool _uploadLanded = false;
@@ -192,6 +218,7 @@ class _FileBrowserPaneState extends State<FileBrowserPane>
     _arrivals = widget.session.arrivals.listen(_handleArrival);
     unawaited(_openHome());
     unawaited(_reloadBookmarks());
+    unawaited(_tools());
   }
 
   @override
@@ -272,7 +299,7 @@ class _FileBrowserPaneState extends State<FileBrowserPane>
       setState(() {
         _loading = false;
         _failure = SftpFailure(
-          'Could not start a file session.',
+          context.l10n.filesErrorStartSession,
           details: e.toString(),
         );
       });
@@ -311,7 +338,10 @@ class _FileBrowserPaneState extends State<FileBrowserPane>
       if (!mounted) return;
       setState(() {
         _loading = false;
-        _failure = SftpFailure('Could not open $path.', details: e.toString());
+        _failure = SftpFailure(
+          context.l10n.filesErrorOpenPath(path),
+          details: e.toString(),
+        );
       });
     }
   }
@@ -450,7 +480,7 @@ class _FileBrowserPaneState extends State<FileBrowserPane>
       if (!mounted) return;
       setState(() {
         _jumpBusy = false;
-        _jumpError = 'Could not open $typed.';
+        _jumpError = context.l10n.filesErrorOpenPath(typed);
       });
     }
   }
@@ -458,12 +488,16 @@ class _FileBrowserPaneState extends State<FileBrowserPane>
   /// The two or three places config files actually live, one tap each.
   ///
   /// Only ever on screen while the location bar is open, so the ordinary path
-  /// bar keeps the width it had.
-  static const List<({String label, String path})> _quickDestinations = [
-    (label: '/etc', path: '/etc'),
-    (label: '/var/log', path: '/var/log'),
-    (label: 'Home', path: '~'),
-  ];
+  /// bar keeps the width it had. The paths are their own labels; only the
+  /// home directory's is a word, and so translated.
+  static List<({String label, String path})> _quickDestinations(
+    AppLocalizations l10n,
+  ) =>
+      [
+        (label: '/etc', path: '/etc'),
+        (label: '/var/log', path: '/var/log'),
+        (label: l10n.filesJumpHome, path: '~'),
+      ];
 
   // ------------------------------------------------------------- bookmarks
 
@@ -539,10 +573,7 @@ class _FileBrowserPaneState extends State<FileBrowserPane>
     final permitted = await widget.session.ensureDownloadPermission();
     if (!mounted) return;
     if (!permitted) {
-      _snack(
-        'Storage permission is needed to save files to Downloads.',
-        isError: true,
-      );
+      _snack(context.l10n.transferStoragePermission, isError: true);
       return;
     }
 
@@ -585,8 +616,8 @@ class _FileBrowserPaneState extends State<FileBrowserPane>
     if (!mounted) return;
     _snack(
       entries.length == 1
-          ? 'Downloading ${entries.first.name}'
-          : 'Queued ${entries.length} downloads',
+          ? context.l10n.transferDownloadingName(entries.first.name)
+          : context.l10n.transferQueuedDownloads(entries.length),
     );
   }
 
@@ -600,13 +631,13 @@ class _FileBrowserPaneState extends State<FileBrowserPane>
       context: context,
       builder: (context) => StatefulBuilder(
         builder: (context, setDialogState) => AlertDialog(
-          title: const Text('File already exists'),
+          title: Text(context.l10n.transferDownloadExistsTitle),
           content: Column(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(
-                'Downloads already contains "$fileName".',
+                context.l10n.transferDownloadExistsBody(fileName),
                 style: const TextStyle(height: 1.35),
               ),
               if (offerApplyToAll)
@@ -616,9 +647,9 @@ class _FileBrowserPaneState extends State<FileBrowserPane>
                       setDialogState(() => applyToAll = v ?? false),
                   contentPadding: EdgeInsets.zero,
                   controlAffinity: ListTileControlAffinity.leading,
-                  title: const Text(
-                    'Do this for the rest of this batch',
-                    style: TextStyle(fontSize: 13),
+                  title: Text(
+                    context.l10n.transferApplyToRest,
+                    style: const TextStyle(fontSize: 13),
                   ),
                 ),
             ],
@@ -627,17 +658,17 @@ class _FileBrowserPaneState extends State<FileBrowserPane>
             TextButton(
               onPressed: () =>
                   Navigator.of(context).pop(_CollisionChoice.cancel),
-              child: const Text('Cancel'),
+              child: Text(MaterialLocalizations.of(context).cancelButtonLabel),
             ),
             TextButton(
               onPressed: () =>
                   Navigator.of(context).pop(_CollisionChoice.overwrite),
-              child: const Text('Replace'),
+              child: Text(context.l10n.transferReplace),
             ),
             FilledButton(
               onPressed: () =>
                   Navigator.of(context).pop(_CollisionChoice.keepBoth),
-              child: const Text('Keep both'),
+              child: Text(context.l10n.transferKeepBoth),
             ),
           ],
         ),
@@ -690,7 +721,7 @@ class _FileBrowserPaneState extends State<FileBrowserPane>
     if (!mounted) return;
 
     if (tree.isEmpty) {
-      _snack('${picked.name} is empty — nothing to upload.');
+      _snack(context.l10n.transferFolderEmpty(picked.name));
       return;
     }
 
@@ -724,7 +755,7 @@ class _FileBrowserPaneState extends State<FileBrowserPane>
             (candidate) => existing.contains(candidate),
           );
         case UploadCollisionAction.skip:
-          _snack('Skipped ${picked.name}.');
+          _snack(context.l10n.transferSkippedName(picked.name));
           return;
       }
     }
@@ -738,10 +769,12 @@ class _FileBrowserPaneState extends State<FileBrowserPane>
       totalBytes: tree.totalBytes,
     );
     _snack(
-      'Uploading ${picked.name} '
-      '(${tree.fileCount} file${tree.fileCount == 1 ? '' : 's'}, '
-      '${RemotePath.formatBytes(tree.totalBytes)}) '
-      'to $directory/$landingName',
+      context.l10n.transferUploadingFolder(
+        tree.fileCount,
+        picked.name,
+        RemotePath.formatBytes(tree.totalBytes),
+        '$directory/$landingName',
+      ),
     );
   }
 
@@ -777,7 +810,7 @@ class _FileBrowserPaneState extends State<FileBrowserPane>
       if (!mounted || plan.cancelled) return;
 
       if (plan.uploads.isEmpty) {
-        _snack('Nothing uploaded — every file was skipped.');
+        _snack(context.l10n.transferNothingUploaded);
         return;
       }
       for (final upload in plan.uploads) {
@@ -794,12 +827,16 @@ class _FileBrowserPaneState extends State<FileBrowserPane>
   }
 
   String _uploadQueuedMessage(UploadPlan plan, String directory) {
+    final l10n = context.l10n;
     final count = plan.uploads.length;
     final head = count == 1
-        ? 'Uploading ${plan.uploads.single.remoteName} to $directory'
-        : 'Uploading $count files to $directory';
+        ? l10n.transferUploadingName(
+            plan.uploads.single.remoteName,
+            directory,
+          )
+        : l10n.transferUploadingCount(count, directory);
     if (plan.skipped.isEmpty) return head;
-    return '$head · ${plan.skipped.length} skipped';
+    return '$head · ${l10n.transferNoteSkipped(plan.skipped.length)}';
   }
 
   Future<UploadCollisionResponse?> _askAboutRemoteCollision(
@@ -847,10 +884,7 @@ class _FileBrowserPaneState extends State<FileBrowserPane>
     if (entries.isEmpty) return;
     final destinations = _destinations;
     if (destinations.isEmpty) {
-      _snack(
-        'Open a second server in another session first — then files can go '
-        'straight from one to the other.',
-      );
+      _snack(context.l10n.transferNeedSecondServer);
       return;
     }
 
@@ -892,9 +926,12 @@ class _FileBrowserPaneState extends State<FileBrowserPane>
           shrinkWrap: true,
           children: [
             ListTile(
-              title:
-                  Text(move ? 'Move to which server?' : 'Copy to which server?'),
-              subtitle: const Text('The files never touch this device'),
+              title: Text(
+                move
+                    ? context.l10n.transferPickServerMove
+                    : context.l10n.transferPickServerCopy,
+              ),
+              subtitle: Text(context.l10n.transferPickServerSubtitle),
             ),
             const Divider(height: 1),
             for (final destination in destinations)
@@ -924,10 +961,7 @@ class _FileBrowserPaneState extends State<FileBrowserPane>
     final permitted = await widget.session.ensureDownloadPermission();
     if (!mounted) return;
     if (!permitted) {
-      _snack(
-        'Storage permission is needed to save files to Downloads.',
-        isError: true,
-      );
+      _snack(context.l10n.transferStoragePermission, isError: true);
       return;
     }
 
@@ -956,7 +990,7 @@ class _FileBrowserPaneState extends State<FileBrowserPane>
       _snack(
         failure is SftpFailure
             ? failure.message
-            : 'Could not read ${directory.name} from the server.',
+            : context.l10n.transferFolderReadFailed(directory.name),
         isError: true,
       );
       return;
@@ -966,8 +1000,8 @@ class _FileBrowserPaneState extends State<FileBrowserPane>
     if (plan.isEmpty) {
       _snack(
         plan.unreadable.isEmpty
-            ? 'There are no files in ${directory.name}.'
-            : 'Nothing in ${directory.name} could be read.',
+            ? context.l10n.transferFolderNoFiles(directory.name)
+            : context.l10n.transferFolderUnreadable(directory.name),
       );
       return;
     }
@@ -979,8 +1013,7 @@ class _FileBrowserPaneState extends State<FileBrowserPane>
       widget.session.queuePlannedDownload(file);
     }
     _snack(
-      'Downloading ${plan.fileCount} file'
-      '${plan.fileCount == 1 ? '' : 's'} to Downloads/${plan.rootName}/',
+      context.l10n.transferDownloadingFolder(plan.fileCount, plan.rootName),
     );
   }
 
@@ -988,32 +1021,29 @@ class _FileBrowserPaneState extends State<FileBrowserPane>
     String name,
     DirectoryDownloadPlan plan,
   ) {
+    final l10n = context.l10n;
     final notes = <String>[
       if (plan.skippedLinks > 0)
-        '${plan.skippedLinks} symbolic link'
-            '${plan.skippedLinks == 1 ? '' : 's'} will be skipped — following '
-            'them can loop back into the same folder.',
+        l10n.transferFolderSkippedLinks(plan.skippedLinks),
       if (plan.unreadable.isNotEmpty)
-        '${plan.unreadable.length} folder'
-            '${plan.unreadable.length == 1 ? '' : 's'} could not be read and '
-            'will be left out.',
-      if (plan.truncated)
-        'This folder is larger than one download can cover; only the first '
-            '${plan.fileCount} files are included.',
+        l10n.transferFolderUnreadableFolders(plan.unreadable.length),
+      if (plan.truncated) l10n.transferFolderTruncated(plan.fileCount),
     ];
 
     return showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        title: Text('Download $name?'),
+        title: Text(context.l10n.transferFolderConfirmTitle(name)),
         content: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
-              '${plan.fileCount} file${plan.fileCount == 1 ? '' : 's'}, '
-              '${RemotePath.formatBytes(plan.totalBytes)}, into '
-              'Downloads/${plan.rootName}/ — subfolders and all.',
+              context.l10n.transferFolderConfirmBody(
+                plan.fileCount,
+                RemotePath.formatBytes(plan.totalBytes),
+                plan.rootName,
+              ),
               style: const TextStyle(height: 1.35),
             ),
             for (final note in notes) ...[
@@ -1032,11 +1062,11 @@ class _FileBrowserPaneState extends State<FileBrowserPane>
         actions: [
           TextButton(
             onPressed: () => Navigator.of(context).pop(false),
-            child: const Text('Cancel'),
+            child: Text(MaterialLocalizations.of(context).cancelButtonLabel),
           ),
           FilledButton(
             onPressed: () => Navigator.of(context).pop(true),
-            child: const Text('Download'),
+            child: Text(context.l10n.filesDownload),
           ),
         ],
       ),
@@ -1097,8 +1127,677 @@ class _FileBrowserPaneState extends State<FileBrowserPane>
   /// the terminal pane next door.
   Future<void> _copyPath(RemoteEntry entry) async {
     await Clipboard.setData(ClipboardData(text: entry.path));
-    if (mounted) _snack('Copied ${entry.path}');
+    if (mounted) _snack(context.l10n.filesCopiedPath(entry.path));
   }
+
+  // -------------------------------------------------------- file operations
+
+  /// Runs [operation] with the progress line showing.
+  ///
+  /// A recursive delete is one round trip per file, which over a phone's
+  /// connection can take long enough that a listing that has not changed yet
+  /// looks like a delete that did nothing.
+  Future<T> _whileWorking<T>(Future<T> Function() operation) async {
+    setState(() => _operationsInFlight++);
+    try {
+      return await operation();
+    } finally {
+      _operationsInFlight--;
+      if (mounted) setState(() {});
+    }
+  }
+
+  /// Whether the listing is about to hide [name], so the snackbar for a new
+  /// `.env` can say so rather than look like a create that failed.
+  bool _hiddenByFilter(String name) => name.startsWith('.') && !_showHidden;
+
+  /// Asks, then deletes [entries] from the server and redraws the listing.
+  ///
+  /// One at a time and to the end: a refusal on one entry is no reason to
+  /// keep the rest, which the user has already confirmed. What could not be
+  /// deleted is said afterwards, in the server's words.
+  Future<void> _delete(List<RemoteEntry> entries) async {
+    if (entries.isEmpty) return;
+    final confirmed = await _confirmDelete(entries);
+    if (!mounted || confirmed != true) return;
+
+    final RemoteFileSystem sftp;
+    try {
+      sftp = await _client();
+    } on SftpFailure catch (e) {
+      if (mounted) _snack(e.message, isError: true);
+      return;
+    }
+    if (!mounted) return;
+
+    final failures = <SftpFailure>[];
+    await _whileWorking(() async {
+      for (final entry in entries) {
+        final failure = await deleteRemoteEntry(sftp, entry);
+        if (failure != null) failures.add(failure);
+      }
+    });
+    if (!mounted) return;
+    // Cleared here as well as by the refresh, which keeps the selection if
+    // the listing fails — and a selection of paths that are gone would offer
+    // to download them.
+    _clearSelection();
+    await _refresh();
+    if (!mounted) return;
+
+    final l10n = context.l10n;
+    if (failures.isEmpty) {
+      _snack(
+        entries.length == 1
+            ? l10n.filesSnackDeletedName(entries.single.name)
+            : l10n.filesSnackDeletedCount(entries.length),
+      );
+    } else if (entries.length == 1) {
+      _snack(failures.single.message, isError: true);
+    } else {
+      _snack(
+        l10n.filesSnackDeleteFailures(
+          entries.length,
+          failures.length,
+          failures.first.message,
+        ),
+        isError: true,
+      );
+    }
+  }
+
+  Future<void> _deleteSelected() => _delete(
+        _visible
+            .where((e) => _selected.contains(e.path))
+            .toList(growable: false),
+      );
+
+  /// Names what is about to go, and says plainly when that is more than the
+  /// row that was tapped — a folder takes everything under it with it — or
+  /// less: a link goes on its own, and what it points to stays.
+  Future<bool?> _confirmDelete(List<RemoteEntry> entries) {
+    final single = entries.length == 1 ? entries.single : null;
+    final String title;
+    final String body;
+    final l10n = context.l10n;
+    if (single == null) {
+      title = l10n.filesDeleteTitleMany(entries.length);
+      body = entries.any((e) => e.kind == RemoteEntryKind.directory)
+          ? l10n.filesDeleteBodyManyFolders
+          : l10n.filesDeleteBodyMany;
+    } else if (single.kind == RemoteEntryKind.directory) {
+      title = l10n.filesDeleteFolderTitle(single.name);
+      body = l10n.filesDeleteFolderBody;
+    } else if (single.kind == RemoteEntryKind.symlink) {
+      title = l10n.filesDeleteLinkTitle(single.name);
+      body = single.isNavigable
+          ? l10n.filesDeleteLinkToFolderBody
+          : l10n.filesDeleteLinkToFileBody;
+    } else {
+      title = l10n.filesDeleteFileTitle(single.name);
+      body = l10n.filesDeleteFileBody;
+    }
+
+    // Enough names to recognise the batch by, without a dialog that grows
+    // off the screen when the selection is a whole folder's worth.
+    const listed = 5;
+    final names = single == null
+        ? [for (final entry in entries.take(listed)) entry.name]
+        : const <String>[];
+    final unlisted = entries.length - names.length;
+
+    return showDialog<bool>(
+      context: context,
+      builder: (context) {
+        final theme = Theme.of(context);
+        return AlertDialog(
+          title: Text(title),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              for (final name in names)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 4),
+                  child: Text(
+                    name,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      fontFamily: AppTheme.monoFontFamily,
+                      fontFamilyFallback: AppTheme.monoFontFamilyFallback,
+                      fontSize: 13,
+                    ),
+                  ),
+                ),
+              if (single == null && unlisted > 0)
+                Text(
+                  context.l10n.filesDeleteMoreNames(unlisted),
+                  style: TextStyle(
+                    fontSize: 13,
+                    color: theme.colorScheme.onSurfaceVariant,
+                  ),
+                ),
+              if (names.isNotEmpty) const SizedBox(height: 8),
+              Text(body, style: const TextStyle(height: 1.35)),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(false),
+              child: Text(MaterialLocalizations.of(context).cancelButtonLabel),
+            ),
+            FilledButton(
+              style: FilledButton.styleFrom(
+                backgroundColor: theme.colorScheme.error,
+              ),
+              onPressed: () => Navigator.of(context).pop(true),
+              child: Text(
+                MaterialLocalizations.of(context).deleteButtonTooltip,
+              ),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  /// Renames [entry] where it stands. The dialog refuses a name that is
+  /// taken before the server is asked — see [remoteNameTaken] for why the
+  /// server cannot be left to refuse it.
+  Future<void> _rename(RemoteEntry entry) async {
+    final l10n = context.l10n;
+    final RemoteFileSystem sftp;
+    try {
+      sftp = await _client();
+    } on SftpFailure catch (e) {
+      if (mounted) _snack(e.message, isError: true);
+      return;
+    }
+    if (!mounted) return;
+
+    final directory = RemotePath.parent(entry.path);
+    final name = await showDialog<String>(
+      context: context,
+      builder: (context) => _NameDialog(
+        title: l10n.filesRenameTitle,
+        confirmLabel: l10n.filesRenameButton,
+        initial: entry.name,
+        // A file keeps its extension unless the user means to change it,
+        // the way every desktop file manager starts a rename.
+        selectStem: !entry.isNavigable,
+        check: (name) async {
+          if (name == entry.name) return null;
+          final taken = await remoteNameTaken(
+            sftp,
+            directory,
+            name,
+            renaming: entry.name,
+          );
+          return taken ? l10n.filesRenameTaken(name) : null;
+        },
+      ),
+    );
+    if (!mounted || name == null || name == entry.name) return;
+
+    try {
+      await _whileWorking(
+        () => sftp.rename(entry.path, RemotePath.join(directory, name)),
+      );
+    } on SftpFailure catch (e) {
+      if (mounted) _snack(e.message, isError: true);
+      return;
+    }
+    if (!mounted) return;
+    await _refresh();
+    if (!mounted) return;
+    _snack(
+      _hiddenByFilter(name)
+          ? l10n.filesSnackRenamedHidden(name)
+          : l10n.filesSnackRenamed(name),
+    );
+  }
+
+  /// F2 with exactly one row selected.
+  void _renameSelected() {
+    final chosen = _visible.where((e) => _selected.contains(e.path));
+    if (chosen.length == 1) unawaited(_rename(chosen.single));
+  }
+
+  /// Makes a folder in the directory on screen.
+  Future<void> _createFolder() async {
+    final l10n = context.l10n;
+    // Captured now, like an upload's destination: the folder goes where the
+    // user was looking when they asked for it.
+    final directory = _path;
+    final RemoteFileSystem sftp;
+    try {
+      sftp = await _client();
+    } on SftpFailure catch (e) {
+      if (mounted) _snack(e.message, isError: true);
+      return;
+    }
+    if (!mounted) return;
+
+    final name = await showDialog<String>(
+      context: context,
+      builder: (context) => _NameDialog(
+        title: l10n.filesNewFolder,
+        confirmLabel: l10n.filesNewFolderCreate,
+        hint: l10n.filesNewFolderHint,
+        check: (name) async => await remoteNameTaken(sftp, directory, name)
+            ? l10n.filesNameExistsHere(name)
+            : null,
+      ),
+    );
+    if (!mounted || name == null) return;
+
+    try {
+      await _whileWorking(() => sftp.mkdir(RemotePath.join(directory, name)));
+    } on SftpFailure catch (e) {
+      if (mounted) _snack(e.message, isError: true);
+      return;
+    }
+    if (!mounted) return;
+    await _refresh();
+    if (!mounted) return;
+    _snack(
+      _hiddenByFilter(name)
+          ? l10n.filesSnackCreatedFolderHidden(name)
+          : l10n.filesSnackCreatedFolder(name),
+    );
+  }
+
+  /// Whether the Permissions row belongs on [entry]'s sheet: the server
+  /// reported a mode in the listing, and the filesystem can change one.
+  ///
+  /// Files and folders only. A server's chmod follows a symlink, so offering
+  /// it on a link would show and change the permissions of whatever the link
+  /// points to, under the link's name.
+  bool _canChangePermissions(RemoteEntry entry) =>
+      _sftp is RemoteFileMetadata &&
+      entry.permissions != null &&
+      (entry.kind == RemoteEntryKind.file ||
+          entry.kind == RemoteEntryKind.directory);
+
+  /// Shows [entry]'s mode, fresh from the server, and applies a new one.
+  Future<void> _editPermissions(RemoteEntry entry) async {
+    final RemoteFileSystem sftp;
+    try {
+      sftp = await _client();
+    } on SftpFailure catch (e) {
+      if (mounted) _snack(e.message, isError: true);
+      return;
+    }
+    if (sftp is! RemoteFileMetadata) return;
+    final metadata = sftp as RemoteFileMetadata;
+
+    // Asked again rather than read off the row: the listing can be minutes
+    // old, and the dialog is about to offer to write this value back.
+    final current = (await metadata.statFile(entry.path))?.permissions;
+    if (!mounted) return;
+    if (current == null) {
+      _snack(
+        context.l10n.filesPermissionsUnknown(entry.name),
+        isError: true,
+      );
+      return;
+    }
+
+    final chosen = await showDialog<int>(
+      context: context,
+      builder: (context) => _PermissionsDialog(name: entry.name, mode: current),
+    );
+    if (!mounted || chosen == null || chosen == current) return;
+
+    final applied =
+        await _whileWorking(() => metadata.setPermissions(entry.path, chosen));
+    if (!mounted) return;
+    if (!applied) {
+      _snack(
+        context.l10n.filesPermissionsRefused(entry.name),
+        isError: true,
+      );
+      return;
+    }
+    await _refresh();
+    if (!mounted) return;
+    _snack(
+      context.l10n.filesSnackPermissionsChanged(
+        entry.name,
+        _octalMode(chosen),
+      ),
+    );
+  }
+
+  // ------------------------------------------------- server-side operations
+
+  /// Asks the server, once, what it can do; see [RemoteToolkit]. Until it
+  /// answers the actions that need it are simply not offered. A probe that
+  /// met a dropped link learnt nothing, so it is asked again next time.
+  Future<RemoteToolkit> _tools() => _toolkitProbe ??= () async {
+        final transport = widget.session.connection;
+        final kit = await RemoteToolkit.probe(transport);
+        if (kit.tools.isEmpty && transport.isClosed) _toolkitProbe = null;
+        if (mounted) setState(() => _toolkit = kit);
+        return kit;
+      }();
+
+  /// Runs [script] as a job on the server, with a line under the toolbar
+  /// that can stop it, and says how it went.
+  Future<ServerOpOutcome> _runServerOp(
+    String label,
+    String script, {
+    String? afterCancel,
+  }) async {
+    final op = ServerOperation(
+      transport: () => widget.session.connection,
+      script: script,
+      afterCancel: afterCancel,
+    );
+    final entry = ServerOpEntry(label: label, onStop: op.cancel);
+    setState(() => _serverOps.add(entry));
+    try {
+      return await op.run();
+    } finally {
+      if (mounted) setState(() => _serverOps.remove(entry));
+    }
+  }
+
+  /// Refreshes if the folder on screen is the one that changed, then says
+  /// how [outcome] went.
+  Future<void> _reportServerOp(
+    ServerOpOutcome outcome,
+    String what, {
+    required String directory,
+    String? success,
+    SnackBarAction? action,
+  }) async {
+    if (!mounted) return;
+    if (outcome.state != ServerOpState.failed && _path == directory) {
+      await _refresh();
+    }
+    if (!mounted) return;
+    if (outcome.succeeded && success != null) {
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text(success), action: action));
+      return;
+    }
+    _snack(
+      describeServerOp(context.l10n, outcome, what),
+      isError: outcome.state == ServerOpState.failed ||
+          outcome.state == ServerOpState.lost,
+    );
+  }
+
+  /// Packs [entries] (all in the folder on screen) into one archive beside
+  /// them.
+  Future<void> _compress(List<RemoteEntry> entries) async {
+    if (entries.isEmpty) return;
+    final l10n = context.l10n;
+    final kit = await _tools();
+    final formats = kit.compressFormats;
+    if (!mounted || formats.isEmpty) return;
+    final directory = RemotePath.parent(entries.first.path);
+    final RemoteFileSystem sftp;
+    try {
+      sftp = await _client();
+    } on SftpFailure catch (e) {
+      if (mounted) _snack(e.message, isError: true);
+      return;
+    }
+    if (!mounted) return;
+    final folderName = RemotePath.basename(directory);
+    final stem = entries.length == 1
+        ? (entries.single.isNavigable
+            ? entries.single.name
+            : ArchiveKind.stem(entries.single.name))
+        : (folderName == RemotePath.root ? 'archive' : folderName);
+    final choice = await showDialog<CompressChoice>(
+      context: context,
+      builder: (context) => CompressDialog(
+        itemNames: [for (final e in entries) e.name],
+        suggestedStem: stem,
+        formats: formats,
+        check: (name) async => await remoteNameTaken(sftp, directory, name)
+            ? l10n.filesNameExistsHere(name)
+            : null,
+      ),
+    );
+    if (!mounted || choice == null) return;
+
+    // Kept well under the 255-byte name limit whatever the archive's name.
+    final head = choice.name.length > 100
+        ? choice.name.substring(0, 100)
+        : choice.name;
+    final part = '.$head.ssg-part-${ServerSideJob.newId().substring(0, 8)}';
+    final what = entries.length == 1
+        ? l10n.filesCompressProgressName(entries.single.name)
+        : l10n.filesCompressProgressCount(entries.length);
+    _clearSelection();
+    final outcome = await _runServerOp(
+      what,
+      RemoteFileCommands.compress(
+        directory: directory,
+        names: [for (final e in entries) e.name],
+        archiveName: choice.name,
+        partName: part,
+        format: choice.format,
+        tools: kit,
+      ),
+      afterCancel:
+          RemoteFileCommands.removeFile(RemotePath.join(directory, part)),
+    );
+    await _reportServerOp(
+      outcome,
+      what,
+      directory: directory,
+      success: _hiddenByFilter(choice.name)
+          ? l10n.filesCompressDoneHidden(choice.name)
+          : l10n.filesCompressDone(choice.name),
+    );
+  }
+
+  /// Unpacks [entry] into a folder beside it — a new one, unless the user
+  /// chooses to go into one that is already there.
+  Future<void> _extract(RemoteEntry entry) async {
+    final l10n = context.l10n;
+    final kind = ArchiveKind.of(entry.name);
+    if (kind == null) return;
+    final kit = await _tools();
+    if (!mounted || !kit.canExtract(kind)) return;
+    final directory = RemotePath.parent(entry.path);
+    final RemoteFileSystem sftp;
+    try {
+      sftp = await _client();
+    } on SftpFailure catch (e) {
+      if (mounted) _snack(e.message, isError: true);
+      return;
+    }
+    if (!mounted) return;
+    final choice = await showDialog<ExtractChoice>(
+      context: context,
+      builder: (context) => ExtractDialog(
+        archiveName: entry.name,
+        suggestedFolder: ArchiveKind.stem(entry.name),
+        folderExists: (name) async {
+          if (!await remoteNameTaken(sftp, directory, name)) return false;
+          final entries = await sftp.list(directory);
+          final there = entries.where((e) => e.name == name).firstOrNull;
+          if (there == null || there.kind == RemoteEntryKind.directory) {
+            return true;
+          }
+          return l10n.filesExtractNotAFolder(name);
+        },
+      ),
+    );
+    if (!mounted || choice == null) return;
+
+    final target = RemotePath.join(directory, choice.folder);
+    final what = l10n.filesExtractProgress(entry.name);
+    final outcome = await _runServerOp(
+      what,
+      RemoteFileCommands.extract(
+        archivePath: entry.path,
+        kind: kind,
+        destination: target,
+        mode: choice.mode,
+        tools: kit,
+      ),
+    );
+    await _reportServerOp(
+      outcome,
+      what,
+      directory: directory,
+      success: l10n.filesExtractDone(choice.folder),
+      action: SnackBarAction(
+        label: l10n.filesExtractOpen,
+        onPressed: () => unawaited(_navigate(target)),
+      ),
+    );
+  }
+
+  /// Copies each of [entries] beside itself, as "name copy".
+  Future<void> _duplicate(List<RemoteEntry> entries) async {
+    if (entries.isEmpty) return;
+    final l10n = context.l10n;
+    final kit = await _tools();
+    if (!mounted || !kit.canDuplicate) return;
+    final RemoteFileSystem sftp;
+    try {
+      sftp = await _client();
+    } on SftpFailure catch (e) {
+      if (mounted) _snack(e.message, isError: true);
+      return;
+    }
+    _clearSelection();
+    for (final entry in entries) {
+      if (!mounted) return;
+      final directory = RemotePath.parent(entry.path);
+      final Set<String> taken;
+      try {
+        taken = {for (final e in await sftp.list(directory)) e.name};
+      } on SftpFailure catch (e) {
+        if (mounted) _snack(e.message, isError: true);
+        return;
+      }
+      final name = RemoteFileCommands.copyName(
+        entry.name,
+        taken.contains,
+        isDirectory: entry.kind == RemoteEntryKind.directory,
+      );
+      final what = l10n.filesDuplicateProgress(entry.name);
+      final outcome = await _runServerOp(
+        what,
+        RemoteFileCommands.duplicate(
+          source: entry.path,
+          destination: RemotePath.join(directory, name),
+          tools: kit,
+        ),
+      );
+      await _reportServerOp(
+        outcome,
+        what,
+        directory: directory,
+        success: l10n.filesDuplicateDone(name),
+      );
+      if (!outcome.succeeded) return;
+    }
+  }
+
+  /// `chown` on [entries], through a form that shows whose they are now.
+  Future<void> _changeOwner(List<RemoteEntry> entries) async {
+    if (entries.isEmpty) return;
+    final l10n = context.l10n;
+    final kit = await _tools();
+    if (!mounted || !kit.canChangeOwner) return;
+    ({String owner, String group})? current;
+    if (entries.length == 1) {
+      try {
+        final result = await RemoteExec.run(
+          widget.session.connection,
+          RemoteFileCommands.ownerOf(entries.single.path),
+        );
+        if (result.succeeded) {
+          current = RemoteFileCommands.parseOwner(result.stdout);
+        }
+      } catch (_) {
+        // The form works without it.
+      }
+    }
+    if (!mounted) return;
+    final choice = await showDialog<OwnerChoice>(
+      context: context,
+      builder: (context) => ChangeOwnerDialog(
+        itemNames: [for (final e in entries) e.name],
+        anyFolder: entries.any((e) => e.kind == RemoteEntryKind.directory),
+        currentOwner: current?.owner,
+        currentGroup: current?.group,
+      ),
+    );
+    if (!mounted || choice == null) return;
+    final directory = RemotePath.parent(entries.first.path);
+    final spec = RemoteFileCommands.ownerSpec(choice.owner, choice.group)!;
+    final what = entries.length == 1
+        ? l10n.filesOwnerProgressName(entries.single.name)
+        : l10n.filesOwnerProgressCount(entries.length);
+    _clearSelection();
+    final outcome = await _runServerOp(
+      what,
+      RemoteFileCommands.changeOwner(
+        paths: [for (final e in entries) e.path],
+        owner: choice.owner,
+        group: choice.group,
+        recursive: choice.recursive,
+      ),
+    );
+    await _reportServerOp(
+      outcome,
+      what,
+      directory: directory,
+      success: entries.length == 1
+          ? l10n.filesOwnerDoneName(entries.single.name, spec)
+          : l10n.filesOwnerDoneCount(entries.length, spec),
+    );
+  }
+
+  /// Searches the server from the folder on screen, and opens what was
+  /// picked: a folder by going into it, a file by going to its folder and
+  /// offering its actions.
+  Future<void> _openSearch() async {
+    final kit = await _tools();
+    if (!mounted || !kit.canSearch) return;
+    final hit = await Navigator.of(context).push<RemoteSearchHit>(
+      MaterialPageRoute(
+        builder: (_) => RemoteSearchScreen(
+          transport: () => widget.session.connection,
+          directory: _path,
+          toolkit: kit,
+        ),
+      ),
+    );
+    if (!mounted || hit == null) return;
+    if (hit.isDirectory) {
+      await _navigate(hit.path);
+      return;
+    }
+    await _navigate(hit.folder);
+    if (!mounted) return;
+    final entry = _entries.where((e) => e.path == hit.path).firstOrNull;
+    if (entry == null) {
+      _snack(
+        context.l10n.filesSearchHitGone(hit.name, hit.folder),
+        isError: true,
+      );
+      return;
+    }
+    if (entry.isHidden && !_showHidden) setState(() => _showHidden = true);
+    await _showEntryActions(entry);
+  }
+
+  List<RemoteEntry> get _selectedEntries => _visible
+      .where((e) => _selected.contains(e.path))
+      .toList(growable: false);
 
   void _snack(String message, {bool isError = false}) {
     final theme = Theme.of(context);
@@ -1126,20 +1825,46 @@ class _FileBrowserPaneState extends State<FileBrowserPane>
             entry.kind == RemoteEntryKind.directory) &&
         _destinations.isNotEmpty;
     final isFolder = entry.kind == RemoteEntryKind.directory;
+    final canChmod = _canChangePermissions(entry);
+    // The server-side rows, only for what this server's tools can do.
+    final kit = _toolkit;
+    if (kit.tools.isEmpty) unawaited(_tools());
+    final archive = entry.isDownloadable ? ArchiveKind.of(entry.name) : null;
+    final canExtract = archive != null && kit.canExtract(archive);
+    final real = entry.kind != RemoteEntryKind.other;
+    final canCompress = real && kit.compressFormats.isNotEmpty;
+    final canDuplicate = real && kit.canDuplicate;
+    final canChown = real && kit.canChangeOwner;
+    final keyboard = InputProfile.of(context).keyboard;
     final theme = Theme.of(context);
+
+    // The keys behind the rows that have one, where there is a hardware
+    // keyboard to press them on.
+    Widget? shortcut(String keys) => keyboard
+        ? Text(
+            keys,
+            style: theme.textTheme.bodySmall?.copyWith(
+              color: theme.colorScheme.onSurfaceVariant,
+            ),
+          )
+        : null;
 
     await showModalBottomSheet<void>(
       context: context,
       backgroundColor: theme.colorScheme.surfaceContainerHigh,
+      // Scrolls, like the destination picker: a file next to another open
+      // server has ten rows here, more than the default 9/16-height sheet
+      // holds on a phone, and a Column would overflow and hide Delete.
+      isScrollControlled: true,
       builder: (context) => SafeArea(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
+        child: ListView(
+          shrinkWrap: true,
           children: [
             ListTile(
               title: Text(entry.name, maxLines: 2, overflow: TextOverflow.ellipsis),
               subtitle: Text(
                 '${RemotePath.formatBytes(entry.size)} · '
-                '${_formatTime(entry.modified)}',
+                '${_formatTime(entry.modified, _localeOf(context))}',
               ),
             ),
             const Divider(height: 1),
@@ -1147,8 +1872,8 @@ class _FileBrowserPaneState extends State<FileBrowserPane>
               ListTile(
                 leading: Icon(Icons.edit_note,
                     color: theme.colorScheme.primary),
-                title: const Text('Edit'),
-                subtitle: const Text('Opens on the server, saves back in place'),
+                title: Text(context.l10n.filesActionEdit),
+                subtitle: Text(context.l10n.filesActionEditSubtitle),
                 onTap: () {
                   Navigator.of(context).pop();
                   unawaited(_edit(entry));
@@ -1157,8 +1882,8 @@ class _FileBrowserPaneState extends State<FileBrowserPane>
             if (entry.isDownloadable)
               ListTile(
                 leading: const Icon(Icons.download),
-                title: const Text('Download'),
-                subtitle: const Text('Saves to this device\'s Downloads'),
+                title: Text(context.l10n.filesDownload),
+                subtitle: Text(context.l10n.filesActionDownloadSubtitle),
                 onTap: () {
                   Navigator.of(context).pop();
                   unawaited(_download([entry]));
@@ -1171,8 +1896,8 @@ class _FileBrowserPaneState extends State<FileBrowserPane>
             if (entry.isDownloadable)
               ListTile(
                 leading: const Icon(Icons.subject),
-                title: const Text('Tail file'),
-                subtitle: const Text('Follows new lines as they are written'),
+                title: Text(context.l10n.filesActionTail),
+                subtitle: Text(context.l10n.filesActionTailSubtitle),
                 onTap: () {
                   Navigator.of(context).pop();
                   unawaited(_tail(entry));
@@ -1181,9 +1906,9 @@ class _FileBrowserPaneState extends State<FileBrowserPane>
             if (entry.isNavigable)
               ListTile(
                 leading: const Icon(Icons.download_for_offline_outlined),
-                title: const Text('Download folder'),
+                title: Text(context.l10n.filesActionDownloadFolder),
                 subtitle: Text(
-                  'Everything under it, into Downloads/${entry.name}/',
+                  context.l10n.filesActionDownloadFolderSubtitle(entry.name),
                 ),
                 onTap: () {
                   Navigator.of(context).pop();
@@ -1195,10 +1920,10 @@ class _FileBrowserPaneState extends State<FileBrowserPane>
                 leading: const Icon(Icons.drive_file_move_outlined),
                 title: Text(
                   isFolder
-                      ? 'Copy folder to another server…'
-                      : 'Copy to another server…',
+                      ? context.l10n.filesActionCopyFolderToServer
+                      : context.l10n.filesActionCopyToServer,
                 ),
-                subtitle: const Text('Straight across, without downloading'),
+                subtitle: Text(context.l10n.filesActionCopyToServerSubtitle),
                 onTap: () {
                   Navigator.of(context).pop();
                   unawaited(_sendToServer([entry], move: false));
@@ -1208,14 +1933,13 @@ class _FileBrowserPaneState extends State<FileBrowserPane>
                 leading: const Icon(Icons.drive_file_move_rtl_outlined),
                 title: Text(
                   isFolder
-                      ? 'Move folder to another server…'
-                      : 'Move to another server…',
+                      ? context.l10n.filesActionMoveFolderToServer
+                      : context.l10n.filesActionMoveToServer,
                 ),
                 subtitle: Text(
                   isFolder
-                      ? 'Deletes this folder once every file has been '
-                          'verified over there'
-                      : 'Deletes this copy once the other is verified',
+                      ? context.l10n.filesActionMoveFolderToServerSubtitle
+                      : context.l10n.filesActionMoveToServerSubtitle,
                 ),
                 onTap: () {
                   Navigator.of(context).pop();
@@ -1223,10 +1947,90 @@ class _FileBrowserPaneState extends State<FileBrowserPane>
                 },
               ),
             ],
+            ListTile(
+              leading: const Icon(Icons.drive_file_rename_outline),
+              title: Text(context.l10n.filesActionRename),
+              trailing: shortcut('F2'),
+              onTap: () {
+                Navigator.of(context).pop();
+                unawaited(_rename(entry));
+              },
+            ),
+            if (canChmod)
+              ListTile(
+                leading: const Icon(Icons.lock_outline),
+                title: Text(context.l10n.filesActionPermissions),
+                subtitle: Text(
+                  context.l10n.filesActionPermissionsNow(
+                    _octalMode(entry.permissions!),
+                  ),
+                ),
+                onTap: () {
+                  Navigator.of(context).pop();
+                  unawaited(_editPermissions(entry));
+                },
+              ),
+            if (canExtract)
+              ListTile(
+                leading: const Icon(Icons.unarchive_outlined),
+                title: Text(context.l10n.filesExtractAction),
+                subtitle: Text(context.l10n.filesExtractActionSubtitle),
+                onTap: () {
+                  Navigator.of(context).pop();
+                  unawaited(_extract(entry));
+                },
+              ),
+            if (canCompress)
+              ListTile(
+                leading: const Icon(Icons.archive_outlined),
+                title: Text(context.l10n.filesCompressAction),
+                // One format or both: there are only the two.
+                subtitle: Text(
+                  kit.compressFormats.length == 1
+                      ? context.l10n.filesCompressActionSubtitleOne(
+                          kit.compressFormats.single.label,
+                        )
+                      : context.l10n.filesCompressActionSubtitleTwo(
+                          kit.compressFormats.first.label,
+                          kit.compressFormats.last.label,
+                        ),
+                ),
+                onTap: () {
+                  Navigator.of(context).pop();
+                  unawaited(_compress([entry]));
+                },
+              ),
+            if (canDuplicate)
+              ListTile(
+                leading: const Icon(Icons.control_point_duplicate),
+                title: Text(context.l10n.filesDuplicateAction),
+                subtitle: Text(
+                  context.l10n.filesDuplicateActionSubtitle(
+                    RemoteFileCommands.copyName(
+                      entry.name,
+                      (name) => _entries.any((e) => e.name == name),
+                      isDirectory: isFolder,
+                    ),
+                  ),
+                ),
+                onTap: () {
+                  Navigator.of(context).pop();
+                  unawaited(_duplicate([entry]));
+                },
+              ),
+            if (canChown)
+              ListTile(
+                leading: const Icon(Icons.manage_accounts_outlined),
+                title: Text(context.l10n.filesOwnerAction),
+                onTap: () {
+                  Navigator.of(context).pop();
+                  unawaited(_changeOwner([entry]));
+                },
+              ),
             if (entry.isDownloadable)
               ListTile(
                 leading: const Icon(Icons.checklist),
-                title: const Text('Select'),
+                title: Text(context.l10n.filesActionSelect),
                 onTap: () {
                   Navigator.of(context).pop();
                   _toggleSelection(entry);
@@ -1234,11 +2038,33 @@ class _FileBrowserPaneState extends State<FileBrowserPane>
               ),
             ListTile(
               leading: const Icon(Icons.copy_all_outlined),
-              title: const Text('Copy path'),
+              title: Text(context.l10n.filesActionCopyPath),
               subtitle: Text(entry.path, maxLines: 1, overflow: TextOverflow.ellipsis),
               onTap: () {
                 Navigator.of(context).pop();
                 unawaited(_copyPath(entry));
+              },
+            ),
+            // Last, and in the error colour, as on the host list: the one row
+            // here that cannot be taken back.
+            ListTile(
+              leading:
+                  Icon(Icons.delete_outline, color: theme.colorScheme.error),
+              title: Text(
+                isFolder
+                    ? context.l10n.filesActionDeleteFolder
+                    : MaterialLocalizations.of(context).deleteButtonTooltip,
+                style: TextStyle(color: theme.colorScheme.error),
+              ),
+              subtitle: isFolder
+                  ? Text(context.l10n.filesActionDeleteFolderSubtitle)
+                  : entry.kind == RemoteEntryKind.symlink
+                      ? Text(context.l10n.filesActionDeleteLinkSubtitle)
+                      : null,
+              trailing: shortcut('Del'),
+              onTap: () {
+                Navigator.of(context).pop();
+                unawaited(_delete([entry]));
               },
             ),
           ],
@@ -1276,7 +2102,7 @@ class _FileBrowserPaneState extends State<FileBrowserPane>
             jumpError: _jumpError,
             jumpController: _jumpController,
             jumpFocus: _jumpFocus,
-            quickDestinations: _quickDestinations,
+            quickDestinations: _quickDestinations(context.l10n),
             onOpenJump: _openJump,
             onCloseJump: _closeJump,
             onJump: (target) => unawaited(_jumpTo(target)),
@@ -1299,21 +2125,41 @@ class _FileBrowserPaneState extends State<FileBrowserPane>
               onSelectAll: _selectAll,
               onClear: _clearSelection,
               onDownload: () => unawaited(_downloadSelected()),
+              onDelete: () => unawaited(_deleteSelected()),
               onSendToServer: _destinations.isEmpty
                   ? null
                   : (move) => unawaited(_sendSelected(move: move)),
+              more: [
+                if (_toolkit.compressFormats.isNotEmpty)
+                  _BarAction(context.l10n.filesCompressAction,
+                      () => unawaited(_compress(_selectedEntries))),
+                if (_toolkit.canDuplicate)
+                  _BarAction(context.l10n.filesDuplicateAction,
+                      () => unawaited(_duplicate(_selectedEntries))),
+                if (_toolkit.canChangeOwner)
+                  _BarAction(context.l10n.filesOwnerAction,
+                      () => unawaited(_changeOwner(_selectedEntries))),
+              ],
             )
           else
             _BrowserActions(
               showHidden: _showHidden,
               onToggleHidden: () => setState(() => _showHidden = !_showHidden),
               onRefresh: () => unawaited(_refresh()),
+              onNewFolder: () => unawaited(_createFolder()),
               onUpload: () => unawaited(_pickAndUpload()),
               onUploadFolder: _folderPickerAvailable
                   ? () => unawaited(_pickAndUploadFolder())
                   : null,
+              onSearch: _toolkit.canSearch
+                  ? () => unawaited(_openSearch())
+                  : null,
             ),
-          const Divider(height: 1),
+          if (_operationsInFlight > 0)
+            const LinearProgressIndicator(minHeight: 2)
+          else
+            const Divider(height: 1),
+          if (_serverOps.isNotEmpty) ServerOpsStrip(ops: List.of(_serverOps)),
           Expanded(child: _buildBody()),
         ],
       ),
@@ -1331,10 +2177,10 @@ class _FileBrowserPaneState extends State<FileBrowserPane>
               // bar directly above says which one that is.
               label: Text(
                 pending != null
-                    ? 'Upload ${pending.count} here'
-                    : 'Upload here',
+                    ? context.l10n.filesUploadCountHere(pending.count)
+                    : context.l10n.filesUploadHere,
               ),
-              tooltip: 'Upload files into $_path',
+              tooltip: context.l10n.filesUploadTooltip(_path),
             ),
       bottomNavigationBar: TransferSummaryBar(
         queue: widget.session.transfers,
@@ -1349,6 +2195,12 @@ class _FileBrowserPaneState extends State<FileBrowserPane>
     // Escape is only bound while the bar is open. `CallbackShortcuts` reports
     // a key as handled whenever it has a binding for it, and swallowing every
     // Escape in the pane to run a no-op would be a bug waiting to be filed.
+    //
+    // F2 and Delete act on the selection from here; with nothing selected,
+    // each row binds them for itself (see [_buildEntryTile]). Never while the
+    // path field is open: it is inside this pane, and Delete is a key it
+    // needs for its own text.
+    final selectionKeys = _selecting && !_jumping;
     return CallbackShortcuts(
       bindings: <ShortcutActivator, VoidCallback>{
         const SingleActivator(LogicalKeyboardKey.keyL, control: true):
@@ -1356,6 +2208,11 @@ class _FileBrowserPaneState extends State<FileBrowserPane>
         const SingleActivator(LogicalKeyboardKey.keyL, meta: true): _openJump,
         if (_jumping)
           const SingleActivator(LogicalKeyboardKey.escape): _closeJump,
+        if (selectionKeys)
+          const SingleActivator(LogicalKeyboardKey.delete): () =>
+              unawaited(_deleteSelected()),
+        if (selectionKeys && _selected.length == 1)
+          const SingleActivator(LogicalKeyboardKey.f2): _renameSelected,
       },
       child: Focus(
         focusNode: _paneFocus,
@@ -1399,7 +2256,29 @@ class _FileBrowserPaneState extends State<FileBrowserPane>
     return [entry];
   }
 
+  /// One row, answering F2 and Delete for itself while it has the keyboard.
+  ///
+  /// Bound per row because the browser has no "current row" apart from
+  /// keyboard focus — a tap opens, it does not select — so the row the user
+  /// tabbed to is the only unambiguous target. While selecting, the bindings
+  /// go quiet and the keys reach the pane's, which act on the selection. The
+  /// wrapper stays in the tree either way, so entering selection mode does
+  /// not rebuild the row and take its focus away.
   Widget _buildEntryTile(RemoteEntry entry) {
+    return CallbackShortcuts(
+      bindings: <ShortcutActivator, VoidCallback>{
+        if (!_selecting) ...{
+          const SingleActivator(LogicalKeyboardKey.f2): () =>
+              unawaited(_rename(entry)),
+          const SingleActivator(LogicalKeyboardKey.delete): () =>
+              unawaited(_delete([entry])),
+        },
+      },
+      child: _buildEntryRow(entry),
+    );
+  }
+
+  Widget _buildEntryRow(RemoteEntry entry) {
     final tile = _EntryTile(
       entry: entry,
       selected: _selected.contains(entry.path),
@@ -1431,27 +2310,27 @@ class _FileBrowserPaneState extends State<FileBrowserPane>
     );
 
     // Drag-to-tab only offers itself when there is somewhere to drag *to* — no
-    // other open session means no drop target. And on Android the long-press
-    // on a row is what opens the action sheet, which is the only path into
-    // multi-select on a touch device; a LongPressDraggable would swallow that
-    // gesture and leave Android users with no way in. Desktop platforms get
-    // drag; Android/iOS keep the old behaviour, and the same "Copy to another
-    // server…" row on the action sheet still works for them.
-    if (widget.sessionId == null || _destinations.isEmpty) return tile;
-    if (!_isDesktop(context)) return tile;
+    // other open session means no drop target — and only to a mouse or a
+    // trackpad, see [_PointerDraggable]; a finger keeps its long-press for the
+    // action sheet, which has the same "Copy to another server…" row. The
+    // wrapper is there whether or not there is anything to drag, idle when
+    // there is not, so the row's place in the tree never changes under a
+    // gesture.
+    final sessionId = widget.sessionId;
+    final dragEntries = sessionId == null || _destinations.isEmpty
+        ? const <RemoteEntry>[]
+        : _dragEntriesFor(entry);
 
-    final dragEntries = _dragEntriesFor(entry);
-    if (dragEntries.isEmpty) return tile;
-
-    final payload = TabDropPayload(
-      sourceSessionId: widget.sessionId!,
-      entries: dragEntries,
-      sourceDirectory: _path,
-    );
-    return LongPressDraggable<TabDropPayload>(
-      data: payload,
-      hapticFeedbackOnStart: true,
-      // A single row keeps its height under the finger; a wider ghost during
+    return _PointerDraggable<TabDropPayload>(
+      data: dragEntries.isEmpty
+          ? null
+          : TabDropPayload(
+              sourceSessionId: sessionId!,
+              entries: dragEntries,
+              sourceDirectory: _path,
+            ),
+      maxSimultaneousDrags: dragEntries.isEmpty ? 0 : null,
+      // A single row keeps its height under the pointer; a wider ghost during
       // a multi-select drag would obscure the tab strip the user is aiming at.
       feedback: _DragFeedback(entries: dragEntries),
       // Fade the source row rather than remove it: pulling a row out from
@@ -1473,23 +2352,6 @@ class _FileBrowserPaneState extends State<FileBrowserPane>
   /// until the PM lands it — a menu row that silently does nothing is
   /// worse than none.
   bool get _folderPickerAvailable {
-    switch (Theme.of(context).platform) {
-      case TargetPlatform.linux:
-      case TargetPlatform.macOS:
-      case TargetPlatform.windows:
-        return true;
-      case TargetPlatform.android:
-      case TargetPlatform.iOS:
-      case TargetPlatform.fuchsia:
-        return false;
-    }
-  }
-
-  /// Desktop platforms — Linux, macOS, Windows — where a mouse is the primary
-  /// pointer and long-press-to-drag reads as natural. Kept out of the state
-  /// so the platform check can be swapped in tests via
-  /// [debugDefaultTargetPlatformOverride].
-  static bool _isDesktop(BuildContext context) {
     switch (Theme.of(context).platform) {
       case TargetPlatform.linux:
       case TargetPlatform.macOS:
@@ -1569,13 +2431,14 @@ Future<void> sendEntriesToSession(
 }) async {
   if (entries.isEmpty) return;
   final messenger = ScaffoldMessenger.of(context);
+  final l10n = context.l10n;
 
   // The bytes-bypass-this-device switch lives here rather than on the
   // destination-picker sheet because the eligibility rule needs both
   // ends: a password-auth destination cannot be forwarded via agent
   // (see `direct_remote_copy.dart`), so we grey the switch and note
   // the reason so the user is not left wondering why it is off.
-  final directOffer = _directRouteFor(destination.host);
+  final directOffer = _directRouteFor(destination.host, l10n);
   final chosenRoute = await _pickRoute(
     context,
     target: destination,
@@ -1587,10 +2450,13 @@ Future<void> sendEntriesToSession(
   final directory = await pickRemoteDirectory(
     context,
     session: destination,
-    confirmLabel: move ? 'Move here' : 'Copy here',
-    subtitle: entries.length == 1
-        ? '${move ? 'Move' : 'Copy'} ${entries.single.name} to…'
-        : '${move ? 'Move' : 'Copy'} ${entries.length} files to…',
+    confirmLabel: move ? l10n.transferMoveHere : l10n.transferCopyHere,
+    subtitle: switch ((move, entries.length == 1)) {
+      (true, true) => l10n.transferMoveNameTo(entries.single.name),
+      (false, true) => l10n.transferCopyNameTo(entries.single.name),
+      (true, false) => l10n.transferMoveCountTo(entries.length),
+      (false, false) => l10n.transferCopyCountTo(entries.length),
+    },
   );
   if (directory == null || !context.mounted) return;
 
@@ -1627,7 +2493,7 @@ Future<void> sendEntriesToSession(
   if (plan.isEmpty) {
     final theme = Theme.of(context);
     messenger.showSnackBar(SnackBar(
-      content: Text(_nothingSentMessage(plan)),
+      content: Text(_nothingSentMessage(plan, l10n)),
       backgroundColor:
           plan.unsupported.isNotEmpty ? theme.colorScheme.error : null,
     ));
@@ -1667,7 +2533,14 @@ Future<void> sendEntriesToSession(
   onQueued?.call();
   messenger.showSnackBar(SnackBar(
     content: Text(
-      _sentMessage(plan, destination, directory, move: move, route: chosenRoute),
+      _sentMessage(
+        l10n,
+        plan,
+        destination,
+        directory,
+        move: move,
+        route: chosenRoute,
+      ),
     ),
   ));
 }
@@ -1682,11 +2555,11 @@ void _showErrorSnack(ScaffoldMessengerState messenger, String message) {
 
 /// Whether the direct path is eligible for [destination], and — when it
 /// is not — a short reason to show under the disabled toggle.
-_DirectRouteOffer _directRouteFor(Host destination) {
+_DirectRouteOffer _directRouteFor(Host destination, AppLocalizations l10n) {
   if (destination.authMethod != SshAuthMethod.privateKey) {
-    return const _DirectRouteOffer(
+    return _DirectRouteOffer(
       eligible: false,
-      reason: 'Password-auth destinations cannot be forwarded via agent.',
+      reason: l10n.transferDirectPasswordAuth,
     );
   }
   return const _DirectRouteOffer(eligible: true);
@@ -1702,21 +2575,27 @@ Future<TransferRoute?> _pickRoute(
   required _DirectRouteOffer offer,
   required bool move,
 }) async {
-  // Off until asked for: for the length of the transfer the source server
-  // can sign with the destination's key (see `direct_remote_copy.dart`), the
-  // same trade OpenSSH makes users opt into with ForwardAgent.
-  var useDirect = false;
+  // On whenever it can run. It is the only route that keeps going once the
+  // app is closed, and the forwarded key is now held only while the source's
+  // sftp signs in, not for the length of the transfer (see
+  // `server_side_job.dart`). The caption still says what it exposes, and an
+  // ineligible destination leaves it off and greyed out with the reason.
+  var useDirect = offer.eligible;
   final go = await showDialog<bool>(
     context: context,
     builder: (context) => StatefulBuilder(
       builder: (context, setDialogState) => AlertDialog(
-        title: Text(move ? 'Move to server' : 'Copy to server'),
+        title: Text(
+          move
+              ? context.l10n.transferRouteTitleMove
+              : context.l10n.transferRouteTitleCopy,
+        ),
         content: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
-              'Destination: ${target.host.displayName}',
+              context.l10n.transferRouteDestination(target.host.displayName),
               style: const TextStyle(height: 1.4),
             ),
             const SizedBox(height: 12),
@@ -1727,22 +2606,16 @@ Future<TransferRoute?> _pickRoute(
                   : null,
               contentPadding: EdgeInsets.zero,
               controlAffinity: ListTileControlAffinity.leading,
-              title: const Text(
-                'Use direct transfer',
-                style: TextStyle(fontSize: 14),
+              title: Text(
+                context.l10n.transferRouteUseDirect,
+                style: const TextStyle(fontSize: 14),
               ),
               subtitle: Text(
                 offer.eligible
-                    ? 'Bytes go from source server to destination server '
-                        'on the network between them, bypassing this '
-                        'device. While it runs, the source server can use '
-                        'your key for ${target.host.displayName} — only '
-                        'choose this if you trust the source server. Falls '
-                        'back to the relay path if the servers cannot '
-                        'reach each other.'
+                    ? context.l10n
+                        .transferRouteDirectExplained(target.host.displayName)
                     : offer.reason ??
-                        'Direct transfer is not available for this '
-                            'destination.',
+                        context.l10n.transferRouteDirectUnavailable,
                 style: const TextStyle(fontSize: 12, height: 1.35),
               ),
             ),
@@ -1751,11 +2624,15 @@ Future<TransferRoute?> _pickRoute(
         actions: [
           TextButton(
             onPressed: () => Navigator.of(context).pop(false),
-            child: const Text('Cancel'),
+            child: Text(MaterialLocalizations.of(context).cancelButtonLabel),
           ),
           FilledButton(
             onPressed: () => Navigator.of(context).pop(true),
-            child: Text(move ? 'Move' : 'Copy'),
+            child: Text(
+              move
+                  ? context.l10n.transferRouteMove
+                  : MaterialLocalizations.of(context).copyButtonLabel,
+            ),
           ),
         ],
       ),
@@ -1782,16 +2659,19 @@ Future<UploadCollisionResponse?> askAboutRemoteCollisionDialog(
     context: context,
     builder: (context) => StatefulBuilder(
       builder: (context, setDialogState) => AlertDialog(
-        title: const Text('Already on the server'),
+        title: Text(context.l10n.transferRemoteExistsTitle),
         content: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
               hostLabel == null
-                  ? '"$fileName" already exists in $directory.'
-                  : '"$fileName" already exists in $directory on '
-                      '$hostLabel.',
+                  ? context.l10n.transferRemoteExistsBody(fileName, directory)
+                  : context.l10n.transferRemoteExistsBodyOnHost(
+                      fileName,
+                      directory,
+                      hostLabel,
+                    ),
               style: const TextStyle(height: 1.35),
             ),
             if (offerApplyToAll)
@@ -1801,9 +2681,9 @@ Future<UploadCollisionResponse?> askAboutRemoteCollisionDialog(
                     setDialogState(() => applyToAll = v ?? false),
                 contentPadding: EdgeInsets.zero,
                 controlAffinity: ListTileControlAffinity.leading,
-                title: const Text(
-                  'Do this for the rest of this batch',
-                  style: TextStyle(fontSize: 13),
+                title: Text(
+                  context.l10n.transferApplyToRest,
+                  style: const TextStyle(fontSize: 13),
                 ),
               ),
           ],
@@ -1811,22 +2691,22 @@ Future<UploadCollisionResponse?> askAboutRemoteCollisionDialog(
         actions: [
           TextButton(
             onPressed: () => Navigator.of(context).pop(),
-            child: const Text('Cancel'),
+            child: Text(MaterialLocalizations.of(context).cancelButtonLabel),
           ),
           TextButton(
             onPressed: () =>
                 Navigator.of(context).pop(UploadCollisionAction.skip),
-            child: const Text('Skip'),
+            child: Text(context.l10n.transferSkip),
           ),
           TextButton(
             onPressed: () =>
                 Navigator.of(context).pop(UploadCollisionAction.overwrite),
-            child: const Text('Replace'),
+            child: Text(context.l10n.transferReplace),
           ),
           FilledButton(
             onPressed: () =>
                 Navigator.of(context).pop(UploadCollisionAction.keepBoth),
-            child: const Text('Keep both'),
+            child: Text(context.l10n.transferKeepBoth),
           ),
         ],
       ),
@@ -1838,36 +2718,44 @@ Future<UploadCollisionResponse?> askAboutRemoteCollisionDialog(
   return UploadCollisionResponse(action, applyToAll: applyToAll);
 }
 
-String _nothingSentMessage(RemoteTransferPlan plan) {
+String _nothingSentMessage(RemoteTransferPlan plan, AppLocalizations l10n) {
   if (plan.unsupported.isNotEmpty && plan.entries.isEmpty) {
     return plan.unsupported.length == 1
-        ? '"${plan.unsupported.single}" is a symbolic link. Only files and '
-            'folders can go straight between servers.'
-        : 'Symbolic links cannot go straight between servers — only files '
-            'and folders.';
+        ? l10n.transferNothingSentLink(plan.unsupported.single)
+        : l10n.transferNothingSentLinks;
   }
-  return 'Nothing sent — every item was skipped.';
+  return l10n.transferNothingSent;
 }
 
 String _sentMessage(
+  AppLocalizations l10n,
   RemoteTransferPlan plan,
   ManagedSession target,
   String directory, {
   required bool move,
   required TransferRoute route,
 }) {
-  final verb = move ? 'Moving' : 'Copying';
+  final host = target.host.displayName;
   final count = plan.transfers.length;
-  final head = count == 1
-      ? '$verb ${plan.transfers.single.remoteName} to '
-          '${target.host.displayName}:$directory'
-      : '$verb $count items to ${target.host.displayName}:$directory';
+  final head = switch ((move, count == 1)) {
+    (true, true) => l10n.transferMovingName(
+        plan.transfers.single.remoteName,
+        host,
+        directory,
+      ),
+    (false, true) => l10n.transferCopyingName(
+        plan.transfers.single.remoteName,
+        host,
+        directory,
+      ),
+    (true, false) => l10n.transferMovingCount(count, host, directory),
+    (false, false) => l10n.transferCopyingCount(count, host, directory),
+  };
   final notes = <String>[
-    if (route == TransferRoute.direct) 'direct',
-    if (plan.skipped.isNotEmpty) '${plan.skipped.length} skipped',
+    if (route == TransferRoute.direct) l10n.transferNoteDirect,
+    if (plan.skipped.isNotEmpty) l10n.transferNoteSkipped(plan.skipped.length),
     if (plan.unsupported.isNotEmpty)
-      '${plan.unsupported.length} link'
-          '${plan.unsupported.length == 1 ? '' : 's'} left out',
+      l10n.transferNoteLinksLeftOut(plan.unsupported.length),
   ];
   return notes.isEmpty ? head : '$head · ${notes.join(' · ')}';
 }
@@ -1931,19 +2819,19 @@ class _ScanningDialogState extends State<_ScanningDialog> {
   @override
   Widget build(BuildContext context) {
     return AlertDialog(
-      title: Text('Scanning ${widget.name}…'),
-      content: const Row(
+      title: Text(context.l10n.transferScanningTitle(widget.name)),
+      content: Row(
         children: [
-          SizedBox(
+          const SizedBox(
             width: 20,
             height: 20,
             child: CircularProgressIndicator(strokeWidth: 2),
           ),
-          SizedBox(width: 16),
+          const SizedBox(width: 16),
           Expanded(
             child: Text(
-              'Counting the files and folders inside.',
-              style: TextStyle(fontSize: 13, height: 1.35),
+              context.l10n.transferScanningBody,
+              style: const TextStyle(fontSize: 13, height: 1.35),
             ),
           ),
         ],
@@ -1954,12 +2842,329 @@ class _ScanningDialogState extends State<_ScanningDialog> {
           // more round trip rather than popping on a scan that is still
           // running.
           onPressed: () => setState(() => _cancelled = true),
-          child: Text(_cancelled ? 'Stopping…' : 'Cancel'),
+          child: Text(
+            _cancelled
+                ? context.l10n.transferScanningStopping
+                : MaterialLocalizations.of(context).cancelButtonLabel,
+          ),
         ),
       ],
     );
   }
 }
+
+/// Asks for a file or folder name, for Rename and New folder.
+///
+/// Checked twice, and both answers land under the field so a bad name is
+/// fixed in place rather than by starting over: [RemotePath.nameProblem] for
+/// what no server should be handed, then [check] for what this one already
+/// has — the second is a round trip, so it runs once, on submit.
+class _NameDialog extends StatefulWidget {
+  const _NameDialog({
+    required this.title,
+    required this.confirmLabel,
+    required this.check,
+    this.initial = '',
+    this.selectStem = false,
+    this.hint,
+  });
+
+  final String title;
+  final String confirmLabel;
+
+  /// Null when the name is free to use, or why it is not.
+  final Future<String?> Function(String name) check;
+
+  final String initial;
+
+  /// Select [initial] without its extension, so typing replaces the name
+  /// and keeps the `.conf`.
+  final bool selectStem;
+
+  final String? hint;
+
+  @override
+  State<_NameDialog> createState() => _NameDialogState();
+}
+
+class _NameDialogState extends State<_NameDialog> {
+  late final TextEditingController _controller;
+  String? _error;
+  bool _checking = false;
+
+  @override
+  void initState() {
+    super.initState();
+    final initial = widget.initial;
+    _controller = TextEditingController.fromValue(
+      TextEditingValue(
+        text: initial,
+        selection: TextSelection(
+          baseOffset: 0,
+          extentOffset: widget.selectStem
+              ? RemotePath.stem(initial).length
+              : initial.length,
+        ),
+      ),
+    );
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  Future<void> _submit() async {
+    if (_checking) return;
+    final name = _controller.text;
+    final problem = RemotePath.nameProblem(name);
+    if (problem != null) {
+      setState(() => _error = problem);
+      return;
+    }
+
+    setState(() {
+      _checking = true;
+      _error = null;
+    });
+    String? refusal;
+    try {
+      refusal = await widget.check(name);
+    } on SftpFailure catch (e) {
+      refusal = e.message;
+    }
+    if (!mounted) return;
+    if (refusal != null) {
+      setState(() {
+        _checking = false;
+        _error = refusal;
+      });
+      return;
+    }
+    Navigator.of(context).pop(name);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: Text(widget.title),
+      content: TextField(
+        controller: _controller,
+        autofocus: true,
+        // A file name is not prose, the same as the path field: no
+        // capitalising it and no correcting it into a word.
+        autocorrect: false,
+        enableSuggestions: false,
+        textCapitalization: TextCapitalization.none,
+        decoration: InputDecoration(
+          hintText: widget.hint,
+          errorText: _error,
+          errorMaxLines: 4,
+        ),
+        onChanged: (_) {
+          if (_error != null) setState(() => _error = null);
+        },
+        onSubmitted: (_) => unawaited(_submit()),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: Text(MaterialLocalizations.of(context).cancelButtonLabel),
+        ),
+        FilledButton(
+          onPressed: _checking ? null : () => unawaited(_submit()),
+          child: Text(widget.confirmLabel),
+        ),
+      ],
+    );
+  }
+}
+
+/// A mode as read/write/execute checkboxes and as octal, kept in step.
+///
+/// Both, because each is somebody's natural way in: the grid for "let the
+/// group write to this", the digits for whoever already knows they want 755.
+/// The digits are the whole twelve bits — setuid, setgid and sticky show as
+/// a fourth digit when set — and the grid only ever touches the low nine, so
+/// ticking a box never quietly clears a setuid bit the user cannot see.
+class _PermissionsDialog extends StatefulWidget {
+  const _PermissionsDialog({required this.name, required this.mode});
+
+  final String name;
+
+  /// Permission bits as [RemoteFileStat.permissions] reports them.
+  final int mode;
+
+  @override
+  State<_PermissionsDialog> createState() => _PermissionsDialogState();
+}
+
+class _PermissionsDialogState extends State<_PermissionsDialog> {
+  /// By the names the checkboxes' screen-reader labels select on; the words
+  /// on screen are looked up in [build].
+  static const _classes = [('owner', 6), ('group', 3), ('others', 0)];
+  static const _bits = [('read', 4), ('write', 2), ('execute', 1)];
+
+  late int _mode = widget.mode & 0xFFF;
+  late final TextEditingController _octal =
+      TextEditingController(text: _octalMode(_mode));
+
+  /// False while the digits do not parse. The grid keeps the last mode that
+  /// did, and Apply waits.
+  bool _octalValid = true;
+
+  @override
+  void dispose() {
+    _octal.dispose();
+    super.dispose();
+  }
+
+  void _toggle(int bit, bool on) {
+    final mode = on ? _mode | bit : _mode & ~bit;
+    setState(() {
+      _mode = mode;
+      _octalValid = true;
+    });
+    _octal.text = _octalMode(mode);
+  }
+
+  void _typed(String text) {
+    final mode = _parseOctalMode(text);
+    setState(() {
+      _octalValid = mode != null;
+      if (mode != null) _mode = mode;
+    });
+  }
+
+  void _apply() {
+    if (_octalValid) Navigator.of(context).pop(_mode);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final l10n = context.l10n;
+    String classLabel(String who) => switch (who) {
+          'owner' => l10n.filesPermissionsOwner,
+          'group' => l10n.filesPermissionsGroup,
+          _ => l10n.filesPermissionsOthers,
+        };
+    String bitLabel(String what) => switch (what) {
+          'read' => l10n.filesPermissionsRead,
+          'write' => l10n.filesPermissionsWrite,
+          _ => l10n.filesPermissionsExecute,
+        };
+    const mono = TextStyle(
+      fontFamily: AppTheme.monoFontFamily,
+      fontFamilyFallback: AppTheme.monoFontFamilyFallback,
+      fontSize: 13,
+    );
+
+    return AlertDialog(
+      title: Text(l10n.filesPermissionsTitle),
+      // Scrolls for a phone on its side, where the grid and the field
+      // together are taller than the space a dialog gets.
+      content: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              widget.name,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: mono,
+            ),
+            const SizedBox(height: 8),
+            Table(
+              // Wide enough for a checkbox's full 48 dp target, narrow
+              // enough that the grid fits a 360 dp phone's dialog.
+              defaultColumnWidth: const FixedColumnWidth(52),
+              columnWidths: const {0: IntrinsicColumnWidth()},
+              defaultVerticalAlignment: TableCellVerticalAlignment.middle,
+              children: [
+                TableRow(
+                  children: [
+                    const SizedBox.shrink(),
+                    for (final (what, _) in _bits)
+                      Center(
+                        child: Text(
+                          bitLabel(what),
+                          style: theme.textTheme.bodySmall?.copyWith(
+                            color: theme.colorScheme.onSurfaceVariant,
+                          ),
+                        ),
+                      ),
+                  ],
+                ),
+                for (final (who, shift) in _classes)
+                  TableRow(
+                    children: [
+                      Padding(
+                        padding: const EdgeInsets.only(right: 8),
+                        child: Text(classLabel(who)),
+                      ),
+                      for (final (what, bit) in _bits)
+                        Center(
+                          child: Checkbox(
+                            value: _mode & (bit << shift) != 0,
+                            semanticLabel:
+                                l10n.filesPermissionsBitSemantics(who, what),
+                            onChanged: (on) =>
+                                _toggle(bit << shift, on ?? false),
+                          ),
+                        ),
+                    ],
+                  ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: _octal,
+              keyboardType: TextInputType.number,
+              inputFormatters: [
+                FilteringTextInputFormatter.allow(RegExp('[0-7]')),
+                LengthLimitingTextInputFormatter(4),
+              ],
+              style: mono,
+              decoration: InputDecoration(
+                labelText: l10n.filesPermissionsOctal,
+                errorText:
+                    _octalValid ? null : l10n.filesPermissionsOctalError,
+              ),
+              onChanged: _typed,
+              onSubmitted: (_) => _apply(),
+            ),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: Text(MaterialLocalizations.of(context).cancelButtonLabel),
+        ),
+        FilledButton(
+          onPressed: _octalValid ? _apply : null,
+          child: Text(l10n.filesPermissionsApply),
+        ),
+      ],
+    );
+  }
+}
+
+/// `0644` as `644`, `04755` as `4755`: a fourth digit only when setuid,
+/// setgid or sticky is set, the way `stat -c %a` prints a mode. Takes a
+/// listing's full mode word too — the file-type bits above are dropped.
+String _octalMode(int mode) =>
+    (mode & 0xFFF).toRadixString(8).padLeft(3, '0');
+
+/// The other direction, or null for anything but three or four octal
+/// digits. Fewer is refused rather than padded: `75` is far more likely
+/// half of `755` than a deliberate `075`.
+int? _parseOctalMode(String text) => RegExp(r'^[0-7]{3,4}$').hasMatch(text)
+    ? int.parse(text, radix: 8)
+    : null;
 
 /// The bar that appears when files arrive from another app's Share menu.
 class _SharedFilesBanner extends StatelessWidget {
@@ -1994,9 +3199,12 @@ class _SharedFilesBanner extends StatelessWidget {
                 children: [
                   Text(
                     one
-                        ? 'Shared: ${pending.files.single.name}'
-                        : '${pending.count} shared files '
-                            '(${RemotePath.formatBytes(pending.totalBytes)})',
+                        ? context.l10n
+                            .filesSharedOne(pending.files.single.name)
+                        : context.l10n.filesSharedMany(
+                            pending.count,
+                            RemotePath.formatBytes(pending.totalBytes),
+                          ),
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: const TextStyle(
@@ -2006,7 +3214,7 @@ class _SharedFilesBanner extends StatelessWidget {
                   ),
                   const SizedBox(height: 2),
                   Text(
-                    'Browse to a folder, then upload into it.',
+                    context.l10n.filesSharedHint,
                     style: Theme.of(context).textTheme.bodySmall,
                   ),
                 ],
@@ -2014,10 +3222,10 @@ class _SharedFilesBanner extends StatelessWidget {
             ),
             TextButton(
               onPressed: onUpload,
-              child: const Text('Upload here'),
+              child: Text(context.l10n.filesUploadHere),
             ),
             IconButton(
-              tooltip: 'Dismiss',
+              tooltip: context.l10n.filesSharedDismiss,
               icon: const Icon(Icons.close, size: 18),
               onPressed: onDismiss,
             ),
@@ -2094,14 +3302,14 @@ class _PathBar extends StatelessWidget {
     return Row(
       children: [
         IconButton(
-          tooltip: 'Up one level',
+          tooltip: context.l10n.filesUpOneLevel,
           icon: const Icon(Icons.arrow_upward, size: 20),
           onPressed: path == RemotePath.root ? null : onUp,
         ),
         // Beside the breadcrumbs it edits, and grouped with the other
         // navigation control rather than with the bookmark ones on the right.
         IconButton(
-          tooltip: 'Go to path (Ctrl+L)',
+          tooltip: context.l10n.filesGoToPathTooltip,
           icon: const Icon(Icons.edit_location_alt_outlined, size: 20),
           onPressed: onOpenJump,
         ),
@@ -2112,7 +3320,9 @@ class _PathBar extends StatelessWidget {
             child: Row(
               children: [
                 for (var i = 0; i < crumbs.length; i++) ...[
-                  if (i > 0)
+                  // None between the root and the first folder: the root's
+                  // own crumb is a slash, and a second read "/ / home".
+                  if (i > 1)
                     Text(
                       '/',
                       style: theme.textTheme.bodySmall?.copyWith(
@@ -2150,8 +3360,8 @@ class _PathBar extends StatelessWidget {
         ),
         IconButton(
           tooltip: isBookmarked
-              ? 'Remove bookmark for this folder'
-              : 'Bookmark this folder',
+              ? context.l10n.filesBookmarkRemove
+              : context.l10n.filesBookmarkAdd,
           icon: Icon(
             isBookmarked ? Icons.star : Icons.star_border,
             size: 20,
@@ -2160,7 +3370,7 @@ class _PathBar extends StatelessWidget {
           onPressed: onToggleBookmark,
         ),
         IconButton(
-          tooltip: 'Bookmarks',
+          tooltip: context.l10n.filesBookmarks,
           icon: const Icon(Icons.bookmarks_outlined, size: 20),
           onPressed: onOpenBookmarks,
         ),
@@ -2192,7 +3402,7 @@ class _PathBar extends StatelessWidget {
                   ),
                   decoration: InputDecoration(
                     isDense: true,
-                    labelText: 'Go to path',
+                    labelText: context.l10n.filesGoToPathLabel,
                     hintText: '/etc/nginx/nginx.conf',
                     hintStyle: const TextStyle(fontSize: 12.5),
                     errorText: jumpError,
@@ -2218,12 +3428,12 @@ class _PathBar extends StatelessWidget {
                 )
               else
                 IconButton(
-                  tooltip: 'Go',
+                  tooltip: context.l10n.filesGo,
                   icon: const Icon(Icons.subdirectory_arrow_left, size: 20),
                   onPressed: () => onJump(jumpController.text),
                 ),
               IconButton(
-                tooltip: 'Close (Esc)',
+                tooltip: context.l10n.filesCloseJump,
                 icon: const Icon(Icons.close, size: 18),
                 onPressed: onCloseJump,
               ),
@@ -2271,13 +3481,16 @@ class _BrowserActions extends StatelessWidget {
     required this.showHidden,
     required this.onToggleHidden,
     required this.onRefresh,
+    required this.onNewFolder,
     required this.onUpload,
     this.onUploadFolder,
+    this.onSearch,
   });
 
   final bool showHidden;
   final VoidCallback onToggleHidden;
   final VoidCallback onRefresh;
+  final VoidCallback onNewFolder;
   final VoidCallback onUpload;
 
   /// The folder picker's entry, or null on a platform where no picker is
@@ -2287,6 +3500,9 @@ class _BrowserActions extends StatelessWidget {
   /// files case.
   final VoidCallback? onUploadFolder;
 
+  /// Search on the server from here; null where the server has no `find`.
+  final VoidCallback? onSearch;
+
   @override
   Widget build(BuildContext context) {
     return SizedBox(
@@ -2294,31 +3510,53 @@ class _BrowserActions extends StatelessWidget {
       child: Row(
         children: [
           const SizedBox(width: 4),
-          TextButton.icon(
-            onPressed: onToggleHidden,
-            icon: Icon(
-              showHidden ? Icons.visibility : Icons.visibility_off_outlined,
-              size: 18,
-            ),
-            label: Text(
-              showHidden ? 'Hidden shown' : 'Hidden files',
-              style: const TextStyle(fontSize: 12.5),
+          // Takes the room the icons leave and gives way first, so they
+          // always fit: at 320 dp with large text the label would otherwise
+          // push the row past the edge.
+          Expanded(
+            child: Align(
+              alignment: AlignmentDirectional.centerStart,
+              child: TextButton.icon(
+                onPressed: onToggleHidden,
+                icon: Icon(
+                  showHidden ? Icons.visibility : Icons.visibility_off_outlined,
+                  size: 18,
+                ),
+                label: Text(
+                  showHidden
+                      ? context.l10n.filesHiddenShown
+                      : context.l10n.filesHiddenFiles,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(fontSize: 12.5),
+                ),
+              ),
             ),
           ),
-          const Spacer(),
+          if (onSearch != null)
+            IconButton(
+              tooltip: context.l10n.filesSearchTooltip,
+              icon: const Icon(Icons.manage_search, size: 20),
+              onPressed: onSearch,
+            ),
+          IconButton(
+            tooltip: context.l10n.filesNewFolder,
+            icon: const Icon(Icons.create_new_folder_outlined, size: 20),
+            onPressed: onNewFolder,
+          ),
           if (onUploadFolder != null)
             IconButton(
-              tooltip: 'Upload a folder here',
+              tooltip: context.l10n.filesUploadFolderTooltip,
               icon: const Icon(Icons.drive_folder_upload, size: 20),
               onPressed: onUploadFolder,
             ),
           IconButton(
-            tooltip: 'Upload a file here',
+            tooltip: context.l10n.filesUploadFileTooltip,
             icon: const Icon(Icons.upload_file, size: 20),
             onPressed: onUpload,
           ),
           IconButton(
-            tooltip: 'Refresh',
+            tooltip: context.l10n.filesRefresh,
             icon: const Icon(Icons.refresh, size: 20),
             onPressed: onRefresh,
           ),
@@ -2334,13 +3572,16 @@ class _SelectionBar extends StatelessWidget {
     required this.onSelectAll,
     required this.onClear,
     required this.onDownload,
+    required this.onDelete,
     this.onSendToServer,
+    this.more = const [],
   });
 
   final int count;
   final VoidCallback onSelectAll;
   final VoidCallback onClear;
   final VoidCallback onDownload;
+  final VoidCallback onDelete;
 
   /// Sends the selection to another open session — `true` for a move. Null
   /// when nothing else is connected, which is the only reason the button is
@@ -2348,6 +3589,10 @@ class _SelectionBar extends StatelessWidget {
   /// with no other server is not a state worth explaining in a tooltip on a
   /// bar this narrow.
   final void Function(bool move)? onSendToServer;
+
+  /// The server-side actions this server can do on a selection, behind one
+  /// menu so the bar still fits a phone held upright.
+  final List<_BarAction> more;
 
   @override
   Widget build(BuildContext context) {
@@ -2358,47 +3603,96 @@ class _SelectionBar extends StatelessWidget {
       color: theme.colorScheme.primary.withValues(alpha: 0.12),
       child: SizedBox(
         height: 48,
-        child: Row(
-          children: [
-            IconButton(
-              tooltip: 'Clear selection',
-              icon: const Icon(Icons.close, size: 20),
-              onPressed: onClear,
-            ),
-            Text('$count selected', style: const TextStyle(fontSize: 13)),
-            const Spacer(),
-            TextButton(onPressed: onSelectAll, child: const Text('All')),
-            if (sendTo != null)
-              PopupMenuButton<bool>(
-                tooltip: 'Send to another server',
-                icon: const Icon(Icons.drive_file_move_outlined, size: 20),
-                onSelected: sendTo,
-                itemBuilder: (context) => const [
-                  PopupMenuItem<bool>(
-                    value: false,
-                    child: Text('Copy to another server…'),
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            // Below this width — a phone held upright — the labelled
+            // Download button no longer fits beside Delete and the send
+            // menu, so it keeps only its icon and tooltip. The count gives
+            // way too, last of all: the row must never overflow, because an
+            // overflow here takes the listing under it down with it.
+            final compact = constraints.maxWidth < 440;
+            return Row(
+              children: [
+                IconButton(
+                  tooltip: context.l10n.filesClearSelection,
+                  icon: const Icon(Icons.close, size: 20),
+                  onPressed: onClear,
+                ),
+                Expanded(
+                  child: Text(
+                    context.l10n.filesSelectedCount(count),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(fontSize: 13),
                   ),
-                  PopupMenuItem<bool>(
-                    value: true,
-                    child: Text('Move to another server…'),
+                ),
+                TextButton(
+                  onPressed: onSelectAll,
+                  child: Text(context.l10n.filesSelectAll),
+                ),
+                if (sendTo != null)
+                  PopupMenuButton<bool>(
+                    tooltip: context.l10n.filesSendToServer,
+                    icon: const Icon(Icons.drive_file_move_outlined, size: 20),
+                    onSelected: sendTo,
+                    itemBuilder: (context) => [
+                      PopupMenuItem<bool>(
+                        value: false,
+                        child: Text(context.l10n.filesActionCopyToServer),
+                      ),
+                      PopupMenuItem<bool>(
+                        value: true,
+                        child: Text(context.l10n.filesActionMoveToServer),
+                      ),
+                    ],
                   ),
-                ],
-              ),
-            FilledButton.icon(
-              onPressed: onDownload,
-              icon: const Icon(Icons.download, size: 18),
-              label: const Text('Download'),
-              style: FilledButton.styleFrom(
-                minimumSize: const Size(0, 40),
-                padding: const EdgeInsets.symmetric(horizontal: 14),
-              ),
-            ),
-            const SizedBox(width: 8),
-          ],
+                if (more.isNotEmpty)
+                  PopupMenuButton<int>(
+                    tooltip: context.l10n.filesMoreActions,
+                    icon: const Icon(Icons.more_vert, size: 20),
+                    onSelected: (index) => more[index].onSelected(),
+                    itemBuilder: (context) => [
+                      for (var i = 0; i < more.length; i++)
+                        PopupMenuItem<int>(value: i, child: Text(more[i].label)),
+                    ],
+                  ),
+                IconButton(
+                  tooltip: context.l10n.filesDeleteSelected,
+                  icon: const Icon(Icons.delete_outline, size: 20),
+                  onPressed: onDelete,
+                ),
+                if (compact)
+                  IconButton.filled(
+                    tooltip: context.l10n.filesDownload,
+                    icon: const Icon(Icons.download, size: 20),
+                    onPressed: onDownload,
+                  )
+                else
+                  FilledButton.icon(
+                    onPressed: onDownload,
+                    icon: const Icon(Icons.download, size: 18),
+                    label: Text(context.l10n.filesDownload),
+                    style: FilledButton.styleFrom(
+                      minimumSize: const Size(0, 40),
+                      padding: const EdgeInsets.symmetric(horizontal: 14),
+                    ),
+                  ),
+                const SizedBox(width: 8),
+              ],
+            );
+          },
         ),
       ),
     );
   }
+}
+
+/// One entry in the selection bar's "More actions" menu.
+class _BarAction {
+  const _BarAction(this.label, this.onSelected);
+
+  final String label;
+  final VoidCallback onSelected;
 }
 
 /// The small chip that floats under the cursor while dragging a file (or
@@ -2409,6 +3703,44 @@ class _SelectionBar extends StatelessWidget {
 /// tab strip. Named for the batch when the drag carries a selection, so a
 /// user dragging fifteen files sees "15 files" rather than the name of
 /// whichever one happened to be under the finger.
+/// A row's drag onto another session's tab: a long press, by mouse or
+/// trackpad only.
+///
+/// Under a finger the long-press on a row opens the action sheet, the only
+/// way into multi-select on a touch screen, and a drag recognizer would take
+/// that gesture from it. This one never enters the arena for a touch pointer,
+/// so the choice is made per pointer — a DeX desk drags, a Windows tablet's
+/// finger does not — with nothing in the tree that depends on which was used
+/// last. Swapping a bare row in for the draggable one when a finger came down
+/// disposed the row's tap and long-press recognizers in the middle of the
+/// gesture that caused the swap, and the first tap after a mouse was lost.
+class _PointerDraggable<T extends Object> extends LongPressDraggable<T> {
+  const _PointerDraggable({
+    required super.child,
+    required super.feedback,
+    super.data,
+    super.childWhenDragging,
+    super.maxSimultaneousDrags,
+    super.onDragCompleted,
+  }) : super(hapticFeedbackOnStart: false);
+
+  static const Set<PointerDeviceKind> devices = {
+    PointerDeviceKind.mouse,
+    PointerDeviceKind.trackpad,
+  };
+
+  @override
+  DelayedMultiDragGestureRecognizer createRecognizer(
+    GestureMultiDragStartCallback onStart,
+  ) {
+    return DelayedMultiDragGestureRecognizer(
+      delay: delay,
+      supportedDevices: devices,
+      allowedButtonsFilter: allowedButtonsFilter,
+    )..onStart = onStart;
+  }
+}
+
 class _DragFeedback extends StatelessWidget {
   const _DragFeedback({required this.entries});
 
@@ -2418,7 +3750,7 @@ class _DragFeedback extends StatelessWidget {
   Widget build(BuildContext context) {
     final label = entries.length == 1
         ? entries.single.name
-        : '${entries.length} files';
+        : context.l10n.filesDragCount(entries.length);
     final theme = Theme.of(context);
     return Material(
       // A raised container tone reads as "a card lifted off the list"
@@ -2476,10 +3808,11 @@ class _EntryTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final locale = _localeOf(context);
     final subtitle = entry.kind.isDirectory
-        ? _formatTime(entry.modified)
+        ? _formatTime(entry.modified, locale)
         : '${RemotePath.formatBytes(entry.size)}  ·  '
-            '${_formatTime(entry.modified)}';
+            '${_formatTime(entry.modified, locale)}';
 
     // ListTile has no onSecondaryTap of its own, so wrap it: on desktop
     // right-click opens the same action sheet long-press opens on touch
@@ -2607,16 +3940,15 @@ class _EmptyDirectory extends StatelessWidget {
             const SizedBox(height: 16),
             Text(
               onlyHidden
-                  ? 'Only hidden files here'
-                  : 'This folder is empty',
+                  ? context.l10n.filesOnlyHidden
+                  : context.l10n.filesEmptyFolder,
               style: theme.textTheme.titleMedium,
             ),
             if (onlyHidden) ...[
               const SizedBox(height: 12),
               TextButton(
                 onPressed: onShowHidden,
-                child: Text('Show $hiddenCount hidden item'
-                    '${hiddenCount == 1 ? '' : 's'}'),
+                child: Text(context.l10n.filesShowHidden(hiddenCount)),
               ),
             ],
           ],
@@ -2626,24 +3958,62 @@ class _EmptyDirectory extends StatelessWidget {
   }
 }
 
+/// The language the pane is showing, for [_formatTime].
+Locale _localeOf(BuildContext context) =>
+    Localizations.maybeLocaleOf(context) ?? const Locale('en');
+
 /// `14:32` today, `26 Jul 14:32` this year, `26 Jul 2024` before that — the
 /// same progressive-detail rule `ls -l` uses, and for the same reason: the
 /// year is noise until it is not.
-String _formatTime(DateTime? time) {
+///
+/// Exactly that in English, whatever the device's region. In another
+/// language the same three steps in its own month names and date order,
+/// from intl's date data — which the app's localization delegates load, and
+/// a widget test without them does not, so there it falls back to English.
+String _formatTime(DateTime? time, Locale locale) {
   if (time == null) return '—';
+  final now = DateTime.now();
+  final today =
+      time.year == now.year && time.month == now.month && time.day == now.day;
+
+  final tag = _dateLocale(locale);
+  if (tag != null) {
+    try {
+      if (today) return DateFormat.Hm(tag).format(time);
+      if (time.year == now.year) {
+        return DateFormat.MMMd(tag).add_Hm().format(time);
+      }
+      return DateFormat.yMMMd(tag).format(time);
+    } catch (_) {
+      // Date data missing after all: the English below.
+    }
+  }
+
   const months = [
     'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
     'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
   ];
-  final now = DateTime.now();
   final hh = time.hour.toString().padLeft(2, '0');
   final mm = time.minute.toString().padLeft(2, '0');
 
-  if (time.year == now.year && time.month == now.month && time.day == now.day) {
-    return '$hh:$mm';
-  }
+  if (today) return '$hh:$mm';
   if (time.year == now.year) {
     return '${time.day} ${months[time.month - 1]} $hh:$mm';
   }
   return '${time.day} ${months[time.month - 1]} ${time.year}';
+}
+
+/// The intl locale to write dates in for [locale]: null for English, and for
+/// any language whose date data is not loaded. Asking intl before any data is
+/// loaded throws rather than answering, so that counts as not loaded.
+String? _dateLocale(Locale locale) {
+  if (locale.languageCode == 'en') return null;
+  for (final tag in {locale.toString(), locale.languageCode}) {
+    try {
+      if (DateFormat.localeExists(tag)) return tag;
+    } catch (_) {
+      return null;
+    }
+  }
+  return null;
 }

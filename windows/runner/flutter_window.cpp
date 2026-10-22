@@ -36,6 +36,8 @@ bool FlutterWindow::OnCreate() {
     return false;
   }
   RegisterPlugins(flutter_controller_->engine());
+  windows_hello_ = std::make_unique<WindowsHello>(
+      flutter_controller_->engine()->messenger(), GetHandle());
   SetChildContent(flutter_controller_->view()->GetNativeWindow());
 
   flutter_controller_->engine()->SetNextFrameCallback([&]() {
@@ -51,6 +53,8 @@ bool FlutterWindow::OnCreate() {
 }
 
 void FlutterWindow::OnDestroy() {
+  // Answers any prompt still waiting while the engine can still hear it.
+  windows_hello_ = nullptr;
   if (flutter_controller_) {
     flutter_controller_ = nullptr;
   }
@@ -70,6 +74,11 @@ FlutterWindow::MessageHandler(HWND hwnd, UINT const message,
     if (result) {
       return *result;
     }
+  }
+
+  // Windows Hello answers, posted back from the WinRT thread pool.
+  if (windows_hello_ && windows_hello_->HandleReply(message, wparam, lparam)) {
+    return 0;
   }
 
   switch (message) {

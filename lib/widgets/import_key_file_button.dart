@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../l10n/l10n.dart';
 import '../services/device_storage.dart';
 import '../services/private_key_import.dart';
 
@@ -24,14 +25,14 @@ Future<void> showKeyFileErrorDialog(
         icon: Icon(Icons.error_outline, color: theme.colorScheme.error),
         title: Text(
           fileName == null
-              ? 'Could not import key'
-              : 'Could not import $fileName',
+              ? context.l10n.importKeyErrorTitle
+              : context.l10n.importKeyErrorTitleFile(fileName),
         ),
         content: Text(message, style: const TextStyle(height: 1.35)),
         actions: [
           FilledButton(
             onPressed: () => Navigator.of(context).pop(),
-            child: const Text('OK'),
+            child: Text(MaterialLocalizations.of(context).okButtonLabel),
           ),
         ],
       );
@@ -97,7 +98,9 @@ class _ImportKeyFileButtonState extends State<ImportKeyFileButton> {
           widget.onImported(picked.name, picked.content, result.keyType!);
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
-              content: Text('Imported ${picked.name} — ${result.keyType}'),
+              content: Text(
+                context.l10n.importKeyImported(picked.name, result.keyType!),
+              ),
             ),
           );
           break;
@@ -106,8 +109,10 @@ class _ImportKeyFileButtonState extends State<ImportKeyFileButton> {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
               content: Text(
-                'Imported ${picked.name} — ${result.keyType}, '
-                'passphrase required',
+                context.l10n.importKeyImportedNeedsPassphrase(
+                  picked.name,
+                  result.keyType!,
+                ),
               ),
             ),
           );
@@ -122,7 +127,11 @@ class _ImportKeyFileButtonState extends State<ImportKeyFileButton> {
       await showKeyFileErrorDialog(context, null, e.message);
     } catch (e) {
       if (!mounted) return;
-      await showKeyFileErrorDialog(context, null, 'Could not read that file.');
+      await showKeyFileErrorDialog(
+        context,
+        null,
+        context.l10n.importKeyFileUnreadable,
+      );
     } finally {
       if (mounted) setState(() => _importing = false);
     }
@@ -141,7 +150,9 @@ class _ImportKeyFileButtonState extends State<ImportKeyFileButton> {
                 child: CircularProgressIndicator(strokeWidth: 2),
               )
             : const Icon(Icons.file_open_outlined, size: 18),
-        label: Text(_importing ? 'Importing…' : 'Import key file'),
+        label: Text(
+          _importing ? context.l10n.importKeyImporting : context.l10n.importKeyButton,
+        ),
       ),
     );
   }

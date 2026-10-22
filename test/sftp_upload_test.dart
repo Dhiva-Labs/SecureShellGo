@@ -153,7 +153,12 @@ class _FakeSftpFile implements SftpFile {
   final String _path;
 
   @override
-  Future<void> writeBytes(Uint8List data, {int offset = 0}) async {
+  Future<void> writeBytes(
+    Uint8List data, {
+    int offset = 0,
+    int chunkSize = 0,
+    int maxPendingRequests = 0,
+  }) async {
     final limit = _server.dropWritesAfter;
     final kept = limit == null || offset + data.length <= limit
         ? data

@@ -2,11 +2,16 @@ import 'dart:async';
 
 import '../models/host.dart';
 import 'device_storage.dart';
+import 'network_watch.dart';
 import 'session_controller.dart';
+import 'session_recorder.dart';
+import 'server_side_job.dart';
 import 'session_foreground.dart';
 import 'sftp_service.dart';
 import 'ssh_service.dart';
+import 'transfer_queue.dart';
 
+export 'network_watch.dart' show NetworkWatch;
 export 'session_controller.dart'
     show
         AgentForwardingConnector,
@@ -90,7 +95,14 @@ class SessionManager {
     DestinationCredentialResolver? resolveDestinationCredentials,
     AgentForwardingConnector? connectWithAgentForwarding,
     ReconnectSupport? reconnect,
+    ServerJobStore? serverJobs,
+    NetworkWatch? network,
+    int Function()? scrollbackLines,
   })  : _foreground = foreground ?? SessionForegroundController.instance,
+        // ignore: prefer_initializing_formals
+        _scrollbackLines = scrollbackLines,
+        // ignore: prefer_initializing_formals
+        _network = network,
         // ignore: prefer_initializing_formals
         _createController = createController,
         // ignore: prefer_initializing_formals
@@ -98,7 +110,13 @@ class SessionManager {
         // ignore: prefer_initializing_formals
         _connectWithAgentForwarding = connectWithAgentForwarding,
         // ignore: prefer_initializing_formals
-        _reconnect = reconnect;
+        _reconnect = reconnect,
+        // ignore: prefer_initializing_formals
+        _serverJobs = serverJobs;
+
+  /// Direct copies running as jobs on a source server, remembered across
+  /// app restarts. See [_resumeServerJobs].
+  final ServerJobStore? _serverJobs;
 
   /// Builds the controller for a new session, honouring the injected factory
   /// when there is one.
@@ -128,11 +146,29 @@ class SessionManager {
       resolveDestinationCredentials: resolveDestinationCredentials,
       connectWithAgentForwarding: _connectWithAgentForwarding,
       reconnect: _reconnect,
+      serverJobs: _serverJobs,
+      scrollbackLines: _scrollbackLines?.call() ?? 10000,
     );
   }
 
+  /// Settings > Terminal > Scrollback, read as each session opens: the
+  /// history a session keeps is fixed when its terminal is made. Null keeps
+  /// the default.
+  final int Function()? _scrollbackLines;
+
   final SessionForegroundController _foreground;
   final SessionControllerFactory? _createController;
+
+  /// Network changes, the app coming back on screen, a computer waking up —
+  /// each a moment to check every live link and retry the dropped ones. Null
+  /// in tests, where nothing changes but what the test changes. Listened to
+  /// only while a session is open; see [_syncNetworkWatch].
+  final NetworkWatch? _network;
+  StreamSubscription<NetworkEvent>? _networkEvents;
+
+  /// Which sessions were closed when last looked at, so a drop and a
+  /// reconnect can each be noticed once — see [_noticeTransitions].
+  final Map<String, bool> _wasClosed = {};
 
   /// How a session rebuilds its own transport after an unexpected drop. Null
   /// in tests and anywhere the app has no SSH service and credential store to
@@ -153,6 +189,10 @@ class SessionManager {
 
   final List<ManagedSession> _sessions = [];
   final Map<String, StreamSubscription<void>> _watchers = {};
+
+  /// Each session's log recordings, for the ones that stop by themselves.
+  /// See [_settleLog].
+  final Map<String, StreamSubscription<SessionRecorder>> _logWatchers = {};
   final _changes = StreamController<void>.broadcast();
 
   var _idCounter = 0;
@@ -228,10 +268,33 @@ class SessionManager {
       // where the directory gets picked.
       view: uploads.isEmpty ? initialView : SessionView.files,
     );
+    // The lowest slot no other open tab on this host holds, for the name of
+    // the tmux or screen session its shell lives in. Before the add, so it
+    // does not count itself.
+    final taken = {
+      for (final other in _sessions)
+        if (other.host.id == connection.host.id) other.controller.persistentSlot,
+    };
+    var slot = 1;
+    while (taken.contains(slot)) {
+      slot++;
+    }
+    controller.persistentSlot = slot;
+    controller.onServerJobHandedOff = () => unawaited(_resumeServerJobs());
+
     _sessions.add(entry);
     _activeId = id;
-    _watchers[id] = controller.changes.listen((_) => _notify());
+    _wasClosed[id] = controller.isClosed;
+    _watchers[id] = controller.changes.listen((_) {
+      _noticeTransitions(entry);
+      _notify();
+    });
+    _logWatchers[id] = controller.terminal.recordingChanges.listen((recorder) {
+      final ending = recorder.ending;
+      if (ending != null && !ending.isSettled) unawaited(_settleLog(ending));
+    });
     if (uploads.isNotEmpty) controller.requestUpload(uploads);
+    _syncNetworkWatch();
 
     final label = _foregroundLabel();
     unawaited(_foreground.acquire(label));
@@ -243,7 +306,98 @@ class SessionManager {
     }
 
     _notify();
+    unawaited(_resumeServerJobs());
     return entry;
+  }
+
+  /// Picks up server-side copies started by an earlier run of the app — or
+  /// by a session that has since closed — once both ends are open again.
+  ///
+  /// The bytes never needed the app; what does is the finish. The app checks
+  /// the copy over its own trusted connection to the destination, swaps a
+  /// replaced folder in, and deletes a move's source only after that check.
+  /// So a job waits, original untouched, until its source and destination
+  /// are both open, and is then followed through the source's ordinary
+  /// transfer queue like any other copy.
+  ///
+  /// Never a second follower for a job some session already has — whether
+  /// it is one this picked up, or the transfer that launched the job in the
+  /// first place. Every session opening and every reconnect lands here, and
+  /// a job that is being followed is in the store from its launch on.
+  Future<void> _resumeServerJobs() async {
+    final store = _serverJobs;
+    if (store == null) return;
+    final List<ServerJobRecord> records;
+    try {
+      records = await store.all();
+    } catch (_) {
+      return;
+    }
+    for (final record in records) {
+      if (_sessions
+          .any((s) => s.controller.isFollowingServerJob(record.jobId))) {
+        continue;
+      }
+      final source = liveForHost(record.sourceHostId).firstOrNull;
+      final destination = liveForHost(record.destinationHostId)
+          .where((s) => s.id != source?.id)
+          .firstOrNull;
+      if (source == null || destination == null) continue;
+      source.controller.resumeServerJob(
+        record,
+        destinationSessionId: destination.id,
+      );
+    }
+  }
+
+  /// Acts on a session dropping or coming back, for the *other* sessions.
+  ///
+  /// A session sees to its own transfers; what it cannot see is the
+  /// server-to-server copies other sessions are sending to it. Those are
+  /// interrupted when it drops and go back in their queues when it is back,
+  /// exactly like its own. Coming back is also when a server-side copy left
+  /// running across the drop can be followed again.
+  void _noticeTransitions(ManagedSession entry) {
+    final closed = entry.controller.isClosed;
+    final was = _wasClosed[entry.id];
+    if (was == null || was == closed) return;
+    _wasClosed[entry.id] = closed;
+    bool headedThere(TransferTask task) =>
+        task.direction == TransferDirection.serverToServer &&
+        task.destinationSessionId == entry.id;
+    for (final other in _sessions) {
+      if (other.id == entry.id) continue;
+      if (closed) {
+        other.controller.transfers.interruptWhere(headedThere);
+      } else {
+        other.controller.transfers.resumeInterrupted(test: headedThere);
+      }
+    }
+    if (!closed) unawaited(_resumeServerJobs());
+  }
+
+  void _syncNetworkWatch() {
+    final network = _network;
+    if (network == null) return;
+    if (_sessions.isNotEmpty) {
+      _networkEvents ??= network.events.listen(_onNetworkEvent);
+    } else {
+      unawaited(_networkEvents?.cancel());
+      _networkEvents = null;
+    }
+  }
+
+  void _onNetworkEvent(NetworkEvent event) {
+    if (event == NetworkEvent.resumed) {
+      // Android may have stopped the foreground service while the app was
+      // away (see `SessionForegroundService.onTimeout`); being back on screen
+      // is when it may be started again.
+      unawaited(_foreground.reassert());
+    }
+    if (!event.isComeback) return;
+    for (final session in List.of(_sessions)) {
+      unawaited(session.controller.networkCameBack());
+    }
   }
 
   /// Resolves another session's remote filesystem for a transfer running on
@@ -267,6 +421,14 @@ class SessionManager {
         );
       }
       if (target.isClosed) {
+        // Waits for it, the way a transfer waits for its own session: the
+        // copy goes back in the queue when that session is back. See
+        // [_noticeTransitions].
+        if (target.controller.canReconnect) {
+          throw TransferInterrupted(
+            'Waiting for ${target.host.displayName} to reconnect…',
+          );
+        }
         throw const SftpFailure(
           'The connection to the destination server has dropped. Reconnect to '
           'finish this transfer.',
@@ -313,6 +475,16 @@ class SessionManager {
 
     final entry = _sessions.removeAt(index);
     await _watchers.remove(id)?.cancel();
+    _wasClosed.remove(id);
+    // Copies that were waiting for this session to come back now never will.
+    for (final other in _sessions) {
+      other.controller.transfers.failInterrupted(
+        (task) => task.destinationSessionId == id,
+        reason: 'That destination session has been closed. Open it again to '
+            'finish this transfer.',
+      );
+    }
+    _syncNetworkWatch();
 
     if (_activeId == id) {
       _activeId = _sessions.isEmpty
@@ -327,7 +499,60 @@ class SessionManager {
     unawaited(_foreground.release());
     _syncForegroundLabel();
 
+    await _endLogOnClose(entry);
+    await _logWatchers.remove(id)?.cancel();
     await entry.controller.dispose();
+  }
+
+  /// A log recording that stopped by itself — full, or its file could not
+  /// be written — finished, and saved where that asks nobody.
+  ///
+  /// Here rather than in whatever shows the session, because that may be
+  /// nothing: a session runs on with the sessions screen closed, and a log
+  /// that filled up then must still be closed and kept. Whatever shows the
+  /// session next tells the user ([RecordingTerminal.unannounced]), and
+  /// offers to save a log that has to ask where.
+  static Future<void> _settleLog(SessionLogEnding ending) async {
+    final recorder = ending.recorder;
+    final failed = recorder.stoppedBy == RecordingStop.failed;
+    try {
+      await recorder.finish();
+    } catch (e) {
+      // A file that could not be written does not close cleanly either;
+      // that it could not be written is what the user is told.
+      if (!failed) {
+        ending.settle(error: e);
+        return;
+      }
+    }
+    final saver = recorder.saver;
+    if (failed || saver == null) {
+      ending.settle();
+    } else if (saver.asksWhere) {
+      ending.settle(needsSaving: true);
+    } else {
+      try {
+        ending.settle(savedAs: await saver.save());
+      } catch (e) {
+        ending.settle(error: e);
+      }
+    }
+  }
+
+  /// Finishes the log [entry] is recording, if it is, before the session
+  /// goes, and saves it unless saving asks where. Closing a tab from the
+  /// sessions screen has already stopped and saved it, picker and all; this
+  /// is for the app closing, where there is no one to ask.
+  static Future<void> _endLogOnClose(ManagedSession entry) async {
+    final recorder = entry.controller.terminal.stopRecording();
+    if (recorder == null) return;
+    try {
+      await recorder.finish(footer: sessionLogFooter(DateTime.now()));
+      final saver = recorder.saver;
+      if (saver != null && !saver.asksWhere) await saver.save();
+    } catch (_) {
+      // The session is going, and nothing is left to tell.
+    }
   }
 
   /// Ends every session — the app shutting down, not a user action.

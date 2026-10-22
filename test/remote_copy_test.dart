@@ -1,283 +1,9 @@
-import 'dart:typed_data';
-
 import 'package:flutter_test/flutter_test.dart';
-import 'package:secure_shell_go/models/remote_entry.dart';
 import 'package:secure_shell_go/services/remote_copy.dart';
 import 'package:secure_shell_go/services/sftp_service.dart';
 import 'package:secure_shell_go/services/transfer_queue.dart';
 
-/// A remote filesystem held in memory: paths to byte counts, plus a record of
-/// everything that was done to it.
-///
-/// The seam being exercised is [RemoteFileSystem] itself, which is why a copy
-/// between two servers can be tested at all without either one existing. The
-/// read side deliberately mirrors `SftpService.download`: chunked, cancel
-/// checked *between* chunks, and — the part that matters here — awaiting the
-/// write callback before it produces the next chunk.
-class MemoryFs implements RemoteFileSystem {
-  MemoryFs({this.chunkSize = 64});
-
-  final int chunkSize;
-
-  /// What exists here, by absolute path, with the size the server reports.
-  final Map<String, int> files = {};
-
-  final List<String> removed = [];
-  final List<String> renamed = [];
-  final List<MemoryWriter> writers = [];
-
-  /// Sizes to report instead of the truth, for the cases where a server and
-  /// reality disagree — which is the entire point of verifying before a move.
-  final Map<String, int?> reportedSizes = {};
-
-  /// Thrown out of the next [openWrite].
-  Object? failOpenWrite;
-
-  /// Thrown once this many bytes have been written, to fail a copy in flight.
-  int? failWriteAfter;
-
-  /// Called after each chunk is read, with the running total — how a test
-  /// cancels or mutates the world half way through a copy.
-  void Function(int moved)? onChunkRead;
-
-  /// Shared between the two ends of one copy. Held here rather than counted
-  /// per filesystem because the interesting number spans both: bytes this
-  /// side has read against bytes the *other* side has acknowledged.
-  CopyMeter? meter;
-
-  @override
-  Future<String> home() async => '/home/dev';
-
-  /// Directory paths that exist here. Directory folders are tracked
-  /// separately from files so `list` can return real entries for the
-  /// folder-copy tests, while single-file tests keep working with an empty
-  /// listing they never look at.
-  final Set<String> directories = {};
-
-  @override
-  Future<String> resolve(String path) async => path;
-
-  /// Symlinks here, link path → target. As over SFTP: listing a link lists
-  /// its target and [isDirectory] follows it (`opendir`, `stat`), while the
-  /// link's parent lists it as a symlink (`readdir` attributes are lstat's).
-  final Map<String, String> symlinks = {};
-
-  @override
-  Future<List<RemoteEntry>> list(String path) async {
-    if (throwOnList) {
-      throw SftpFailure('Permission denied.', isPermissionDenied: true);
-    }
-    final linkTarget = symlinks[path];
-    if (linkTarget != null) {
-      return [
-        for (final e in await list(linkTarget))
-          RemoteEntry(
-            name: e.name,
-            path: '$path/${e.name}',
-            kind: e.kind,
-            size: e.size,
-          ),
-      ];
-    }
-    final entries = <RemoteEntry>[];
-    for (final link in symlinks.keys) {
-      if (_parentOf(link) == path) {
-        entries.add(RemoteEntry(
-          name: _basename(link),
-          path: link,
-          kind: RemoteEntryKind.symlink,
-        ));
-      }
-    }
-    for (final dir in directories) {
-      if (_parentOf(dir) == path) {
-        entries.add(RemoteEntry(
-          name: _basename(dir),
-          path: dir,
-          kind: RemoteEntryKind.directory,
-        ));
-      }
-    }
-    for (final entry in files.entries) {
-      if (_parentOf(entry.key) == path) {
-        entries.add(RemoteEntry(
-          name: _basename(entry.key),
-          path: entry.key,
-          kind: RemoteEntryKind.file,
-          size: entry.value,
-        ));
-      }
-    }
-    return entries;
-  }
-
-  /// Toggle to make `list` fail on any call — for the fallback-probe test.
-  var throwOnList = false;
-
-  @override
-  Future<int?> sizeOf(String path) async {
-    if (reportedSizes.containsKey(path)) return reportedSizes[path];
-    return files[path];
-  }
-
-  @override
-  Future<bool> exists(String path) async => files.containsKey(path);
-
-  @override
-  Future<int> download(
-    String remotePath, {
-    required Future<void> Function(Uint8List chunk) write,
-    TransferProgress? onProgress,
-    CancelCheck? isCancelled,
-  }) async {
-    final size = files[remotePath];
-    if (size == null) {
-      throw SftpFailure('"$remotePath" is not there any more.');
-    }
-
-    var moved = 0;
-    while (moved < size) {
-      if (isCancelled?.call() ?? false) break;
-      final chunk = (size - moved).clamp(0, chunkSize);
-      meter?.read(chunk);
-      await write(Uint8List(chunk));
-      moved += chunk;
-      onProgress?.call(moved);
-      onChunkRead?.call(moved);
-    }
-    return moved;
-  }
-
-  @override
-  Future<int> upload(
-    String localPath,
-    String remotePath, {
-    TransferProgress? onProgress,
-    CancelCheck? isCancelled,
-  }) async =>
-      throw UnimplementedError('not part of a server-to-server copy');
-
-  @override
-  Future<RemoteFileWriter> openWrite(String remotePath) async {
-    final failure = failOpenWrite;
-    if (failure != null) throw failure;
-    final writer = MemoryWriter(this, remotePath);
-    writers.add(writer);
-    return writer;
-  }
-
-  @override
-  Future<void> remove(String path) async {
-    removed.add(path);
-    files.remove(path);
-    symlinks.remove(path);
-  }
-
-  @override
-  Future<void> rename(String from, String to) async {
-    renamed.add('$from -> $to');
-    final size = files.remove(from);
-    if (size != null) files[to] = size;
-  }
-
-  @override
-  Future<void> mkdir(String path) async {
-    if (directories.contains(path) || files.containsKey(path)) {
-      throw const SftpFailure('mkdir: already exists');
-    }
-    directories.add(path);
-  }
-
-  @override
-  Future<void> removeDirectory(String path) async {
-    if (!directories.contains(path)) {
-      throw const SftpFailure('rmdir: no such directory');
-    }
-    // Must be empty.
-    final hasChild = files.keys.any((k) => _parentOf(k) == path) ||
-        directories.any((d) => _parentOf(d) == path);
-    if (hasChild) {
-      throw const SftpFailure('rmdir: not empty');
-    }
-    directories.remove(path);
-    removed.add(path);
-  }
-
-  @override
-  Future<bool> isDirectory(String path) async =>
-      directories.contains(symlinks[path] ?? path);
-
-  @override
-  Future<void> close() async {}
-}
-
-String _parentOf(String path) {
-  final index = path.lastIndexOf('/');
-  if (index <= 0) return '/';
-  return path.substring(0, index);
-}
-
-String _basename(String path) {
-  final index = path.lastIndexOf('/');
-  return index < 0 ? path : path.substring(index + 1);
-}
-
-/// A file being written into a [MemoryFs].
-///
-/// Nothing appears under [path] until [close]; [abort] takes it away again.
-class MemoryWriter implements RemoteFileWriter {
-  MemoryWriter(this._fs, this.path);
-
-  final MemoryFs _fs;
-  final String path;
-
-  var written = 0;
-  var closed = false;
-  var aborted = false;
-
-  @override
-  Future<void> add(Uint8List chunk) async {
-    // A real destination acknowledges over the wire; the yield is what lets a
-    // test see whether the read side ran ahead while this was in flight.
-    await Future<void>.delayed(Duration.zero);
-    final limit = _fs.failWriteAfter;
-    if (limit != null && written + chunk.length > limit) {
-      throw const SftpFailure('The destination server refused the write.');
-    }
-    written += chunk.length;
-    _fs.meter?.acknowledge(chunk.length);
-  }
-
-  @override
-  Future<void> close() async {
-    closed = true;
-    _fs.files[path] = written;
-  }
-
-  @override
-  Future<void> abort() async {
-    aborted = true;
-    _fs.files.remove(path);
-  }
-}
-
-/// Counts bytes read out of the source against bytes the destination has
-/// acknowledged, so the gap between the two can be asserted on.
-class CopyMeter {
-  var bytesRead = 0;
-  var bytesAcknowledged = 0;
-
-  /// The high-water mark of bytes read but not yet written through.
-  var maxOutstanding = 0;
-
-  void read(int bytes) {
-    bytesRead += bytes;
-    final outstanding = bytesRead - bytesAcknowledged;
-    if (outstanding > maxOutstanding) maxOutstanding = outstanding;
-  }
-
-  void acknowledge(int bytes) => bytesAcknowledged += bytes;
-}
+import 'memory_fs.dart';
 
 void main() {
   late MemoryFs source;
@@ -682,23 +408,298 @@ void main() {
       // rmdir on a non-empty directory would have thrown in the fake.
     });
 
-    test('an overwrite wipes the destination tree first', () async {
-      seedPmFolder();
-      // A stale tree in the way. `Replace` at the collision prompt licenses
-      // the wipe; without overwrite this would be left alone.
-      destination
-        ..directories.addAll(['/srv/b/pm-folder', '/srv/b/pm-folder/old'])
-        ..files['/srv/b/pm-folder/old/stale.txt'] = 4242;
+    group('replace', () {
+      /// The folder a `Replace` is aimed at: a stale tree that shares one
+      /// name with the incoming one and has its own file and subfolder.
+      const oldTree = {
+        'file:a.txt=4242',
+        'dir:old',
+        'file:old/stale.txt=7',
+      };
 
-      await copyDir(
-        from: '/srv/a/pm-folder',
-        to: '/srv/b/pm-folder',
-        overwrite: true,
-      );
+      void seedOldFolder() {
+        destination
+          ..directories.addAll(['/srv/b/pm-folder', '/srv/b/pm-folder/old'])
+          ..files['/srv/b/pm-folder/a.txt'] = 4242
+          ..files['/srv/b/pm-folder/old/stale.txt'] = 7;
+      }
 
-      expect(destination.files.containsKey('/srv/b/pm-folder/old/stale.txt'),
-          isFalse);
-      expect(destination.files['/srv/b/pm-folder/a.txt'], 100);
+      /// What [seedPmFolder] puts on the source, and so what a replace
+      /// should leave on the destination.
+      const pmTree = {
+        'file:a.txt=100',
+        'file:b.txt=200',
+        'dir:sub',
+        'file:sub/c.txt=300',
+        'dir:sub2',
+      };
+
+      test('yields exactly the new contents, swapped in once all landed',
+          () async {
+        seedPmFolder();
+        seedOldFolder();
+
+        final outcome = await copyDir(
+          from: '/srv/a/pm-folder',
+          to: '/srv/b/pm-folder',
+          overwrite: true,
+        );
+
+        expect(outcome.destinationPath, '/srv/b/pm-folder');
+        expect(outcome.bytesCopied, 600);
+        // Nothing of the old folder survives inside the new one: not the
+        // stale subfolder, and not the old a.txt's size.
+        expect(destination.treeUnder('/srv/b/pm-folder'), pmTree);
+        expect(destination.leftovers, isEmpty);
+        // The old folder was moved aside and the staged one renamed into its
+        // place — the only folder renames, in that order.
+        final swaps =
+            destination.renamed.where((r) => !r.contains('.part ->')).toList();
+        expect(swaps, hasLength(2));
+        expect(
+          swaps[0],
+          matches(RegExp(
+              r'^/srv/b/pm-folder -> /srv/b/\.pm-folder\.ssg-old-\d+$')),
+        );
+        expect(
+          swaps[1],
+          matches(RegExp(
+              r'^/srv/b/\.pm-folder\.ssg-part-\d+ -> /srv/b/pm-folder$')),
+        );
+      });
+
+      test('mid-copy, the folder being replaced is untouched', () async {
+        seedPmFolder();
+        seedOldFolder();
+        final seen = <Set<String>>[];
+        source.onChunkRead =
+            (_) => seen.add(destination.treeUnder('/srv/b/pm-folder'));
+
+        await copyDir(
+          from: '/srv/a/pm-folder',
+          to: '/srv/b/pm-folder',
+          overwrite: true,
+        );
+
+        expect(seen, isNotEmpty);
+        for (final snapshot in seen) {
+          expect(snapshot, oldTree);
+        }
+      });
+
+      test('a failure mid-copy leaves the original folder and no staging '
+          'folder', () async {
+        seedPmFolder();
+        seedOldFolder();
+        // a.txt (100 bytes) lands; b.txt is refused part way through.
+        destination.failWriteAfter = 150;
+
+        await expectLater(
+          copyDir(
+            from: '/srv/a/pm-folder',
+            to: '/srv/b/pm-folder',
+            overwrite: true,
+          ),
+          throwsA(isA<SftpFailure>()),
+        );
+
+        expect(destination.treeUnder('/srv/b/pm-folder'), oldTree);
+        expect(destination.leftovers, isEmpty);
+        expect(destination.directories,
+            {'/srv/b', '/srv/b/pm-folder', '/srv/b/pm-folder/old'});
+      });
+
+      test('a cancel mid-copy leaves the original folder, no staging folder, '
+          'and the whole source of a move', () async {
+        seedPmFolder();
+        seedOldFolder();
+        var cancelled = false;
+        source.onChunkRead = (moved) {
+          // Into the second file: the first has landed in the staging
+          // folder by now, and on a move would already have been deleted
+          // from the source if that were not held back until the swap.
+          if (moved >= 128) cancelled = true;
+        };
+
+        await expectLater(
+          copyDir(
+            from: '/srv/a/pm-folder',
+            to: '/srv/b/pm-folder',
+            overwrite: true,
+            move: true,
+            isCancelled: () => cancelled,
+          ),
+          throwsA(isA<TransferCancelled>()),
+        );
+
+        expect(destination.treeUnder('/srv/b/pm-folder'), oldTree);
+        expect(destination.leftovers, isEmpty);
+        expect(source.treeUnder('/srv/a/pm-folder'), pmTree);
+        expect(source.removed, isEmpty);
+      });
+
+      test('a staged copy that does not count up is not swapped in',
+          () async {
+        seedPmFolder();
+        seedOldFolder();
+        // Every write is acknowledged and every file passes its own size
+        // check, but a.txt is gone from the staging folder by the time the
+        // last file lands — the whole-tree count is what notices.
+        source.onChunkRead = (moved) {
+          if (moved == 300) {
+            destination.files.removeWhere(
+              (path, _) =>
+                  path.contains('.ssg-part-') && path.endsWith('/a.txt'),
+            );
+          }
+        };
+
+        await expectLater(
+          copyDir(
+            from: '/srv/a/pm-folder',
+            to: '/srv/b/pm-folder',
+            overwrite: true,
+            move: true,
+          ),
+          throwsA(isA<RemoteCopyFailure>()),
+        );
+
+        expect(destination.treeUnder('/srv/b/pm-folder'), oldTree);
+        expect(destination.leftovers, isEmpty);
+        expect(source.treeUnder('/srv/a/pm-folder'), pmTree);
+      });
+
+      test('if the new copy cannot take the name, the old folder is put back',
+          () async {
+        seedPmFolder();
+        seedOldFolder();
+        destination.refuseRename = (from, to) =>
+            from.contains('.pm-folder.ssg-part-') && to == '/srv/b/pm-folder';
+
+        await expectLater(
+          copyDir(
+            from: '/srv/a/pm-folder',
+            to: '/srv/b/pm-folder',
+            overwrite: true,
+            move: true,
+          ),
+          throwsA(isA<RemoteCopyFailure>()),
+        );
+
+        expect(destination.treeUnder('/srv/b/pm-folder'), oldTree);
+        expect(destination.leftovers, isEmpty);
+        expect(
+          destination.renamed.last,
+          matches(RegExp(
+              r'^/srv/b/\.pm-folder\.ssg-old-\d+ -> /srv/b/pm-folder$')),
+        );
+        // A move deletes nothing until the swap has happened.
+        expect(source.treeUnder('/srv/a/pm-folder'), pmTree);
+        expect(source.removed, isEmpty);
+      });
+
+      test('if the old folder will not go back either, both are kept and '
+          'named', () async {
+        seedPmFolder();
+        seedOldFolder();
+        destination.refuseRename = (from, to) => to == '/srv/b/pm-folder';
+
+        await expectLater(
+          copyDir(
+            from: '/srv/a/pm-folder',
+            to: '/srv/b/pm-folder',
+            overwrite: true,
+          ),
+          throwsA(isA<RemoteCopyFailure>().having(
+            (e) => e.message,
+            'message',
+            allOf(contains('.pm-folder.ssg-old-'),
+                contains('.pm-folder.ssg-part-')),
+          )),
+        );
+
+        final aside = destination.directories.singleWhere(
+            (d) => RegExp(r'^/srv/b/\.pm-folder\.ssg-old-\d+$').hasMatch(d));
+        final staged = destination.directories.singleWhere(
+            (d) => RegExp(r'^/srv/b/\.pm-folder\.ssg-part-\d+$').hasMatch(d));
+        expect(destination.treeUnder(aside), oldTree);
+        expect(destination.treeUnder(staged), pmTree);
+      });
+
+      test('a move deletes the source once the new folder is in place',
+          () async {
+        seedPmFolder();
+        seedOldFolder();
+
+        final outcome = await copyDir(
+          from: '/srv/a/pm-folder',
+          to: '/srv/b/pm-folder',
+          overwrite: true,
+          move: true,
+        );
+
+        expect(outcome.sourceDeleted, isTrue);
+        expect(source.files, isEmpty);
+        expect(source.directories, isEmpty);
+        expect(destination.treeUnder('/srv/b/pm-folder'), pmTree);
+      });
+
+      test('a move keeps a source file that changed while it was copied',
+          () async {
+        seedPmFolder();
+        seedOldFolder();
+        source.reportedSizes['/srv/a/pm-folder/b.txt'] = 999;
+
+        await expectLater(
+          copyDir(
+            from: '/srv/a/pm-folder',
+            to: '/srv/b/pm-folder',
+            overwrite: true,
+            move: true,
+          ),
+          throwsA(isA<RemoteCopyFailure>()),
+        );
+
+        // The replace itself went through; the move stopped at b.txt.
+        expect(destination.treeUnder('/srv/b/pm-folder'), pmTree);
+        expect(source.files.keys, contains('/srv/a/pm-folder/b.txt'));
+        expect(source.directories, contains('/srv/a/pm-folder'));
+      });
+
+      test('a target that has gone since the prompt is simply filled',
+          () async {
+        seedPmFolder();
+
+        await copyDir(
+          from: '/srv/a/pm-folder',
+          to: '/srv/b/pm-folder',
+          overwrite: true,
+        );
+
+        expect(destination.treeUnder('/srv/b/pm-folder'), pmTree);
+        expect(destination.leftovers, isEmpty);
+      });
+
+      test('a target that is a link is replaced as the link, never walked',
+          () async {
+        seedPmFolder();
+        destination
+          ..directories.addAll(['/var/www', '/var/www/assets'])
+          ..files['/var/www/index.html'] = 10
+          ..symlinks['/srv/b/pm-folder'] = '/var/www';
+
+        await copyDir(
+          from: '/srv/a/pm-folder',
+          to: '/srv/b/pm-folder',
+          overwrite: true,
+        );
+
+        expect(destination.symlinks, isEmpty);
+        expect(destination.treeUnder('/srv/b/pm-folder'), pmTree);
+        expect(destination.treeUnder('/var/www'),
+            {'dir:assets', 'file:index.html=10'});
+        expect(destination.leftovers, isEmpty);
+      });
     });
 
     test('a cancel mid-batch leaves the source alone', () async {

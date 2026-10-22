@@ -26,6 +26,15 @@ typedef ReconnectDelayScheduler = Timer Function(
 /// the service itself so that everything below `services/` stays testable
 /// without a socket, and so the reconnect path cannot quietly acquire the
 /// ability to do anything to a connection *except* open one.
+///
+/// There is deliberately no login-prompt handler in it, for the same reason
+/// the host-key verifier always says no: nobody is watching a reconnect. The
+/// lambda leaves `SshService.connect`'s `answerPrompts` unset, so a saved
+/// password still answers a plain keyboard-interactive password question,
+/// and anything else — a one-time code, a Duo menu — fails the attempt at
+/// once with an [SshAuthenticationException], which stops the schedule. A
+/// prompt nobody can see would otherwise hold the attempt open until the
+/// server's own login timeout, and then be retried, forever.
 typedef ReconnectConnector = Future<SessionTransport> Function({
   required Host host,
   required SshCredentials credentials,
@@ -76,6 +85,10 @@ class ReconnectSupport {
 /// answered "no". The attempt then fails as a host-key failure, which the
 /// policy never retries, and the banner says so. A changed key is never
 /// accepted by this path, automatically or otherwise.
+///
+/// **Login prompts.** Likewise never put in front of anyone — see
+/// [ReconnectConnector]. A host that wants a second factor stops the
+/// schedule on its first attempt, with a message naming what it asked for.
 class SessionReconnector {
   SessionReconnector({
     required this.host,
@@ -83,13 +96,21 @@ class SessionReconnector {
     required Future<void> Function(SessionTransport transport) adopt,
     ReconnectPolicy? policy,
     ReconnectDelayScheduler scheduler = Timer.new,
+    DateTime Function() clock = DateTime.now,
   })  : _policy = policy ?? ReconnectPolicy(),
         // ignore: prefer_initializing_formals
         _support = support,
         // ignore: prefer_initializing_formals
         _adopt = adopt,
         // ignore: prefer_initializing_formals
-        _scheduler = scheduler;
+        _scheduler = scheduler,
+        // ignore: prefer_initializing_formals
+        _clock = clock;
+
+  /// How long a connection this produced has to stay up before its death
+  /// counts as a new drop with a fresh schedule, rather than as the last
+  /// attempt failing late. See [ReconnectPolicy.reopen].
+  static const Duration stableAfter = Duration(seconds: 30);
 
   final Host host;
 
@@ -100,8 +121,21 @@ class SessionReconnector {
   /// the same tab and the same pane.
   final Future<void> Function(SessionTransport transport) _adopt;
 
-  final ReconnectPolicy _policy;
+  /// Not final: a schedule that has finished is replaced by a fresh one when
+  /// there is a new reason to try — see [begin] and [retryNow].
+  ReconnectPolicy _policy;
   final ReconnectDelayScheduler _scheduler;
+  final DateTime Function() _clock;
+
+  /// When the last attempt handed a transport over, for [stableAfter].
+  DateTime? _connectedAt;
+  var _disposed = false;
+
+  /// True while [_adopt] runs. A transport can die before its adoption has
+  /// finished (the shell is opened as part of it), and that death must not
+  /// be lost to the schedule still reading as `connecting`.
+  var _adopting = false;
+  var _droppedWhileAdopting = false;
 
   Timer? _timer;
   final _changes = StreamController<void>.broadcast();
@@ -143,12 +177,59 @@ class SessionReconnector {
   /// between the "reconnecting" banner and the ordinary disconnected one.
   bool get hasGivenUp => _policy.phase == ReconnectPhase.givenUp;
 
+  /// Whether the schedule ran out of time against a network that was not
+  /// there — the one way of giving up that the network coming back can undo.
+  bool get mayRetryOnNetwork => _policy.exhausted;
+
+  /// True while counting down to the next attempt (as opposed to dialling).
+  bool get isWaiting => _policy.phase == ReconnectPhase.waiting;
+
   /// The transport died in a way worth retrying. Idempotent: a second call
   /// while a schedule is already running is ignored, so a session that
   /// notices its own death twice does not end up with two ladders of timers.
+  ///
+  /// A transport this reconnector produced dying later is a new drop and
+  /// gets a new schedule — unless it died within [stableAfter], in which case
+  /// it is the same trouble and the old schedule carries on where it was.
+  /// Once given up, or stopped by the user, only [retryNow] starts again.
   void begin() {
-    if (_policy.isFinished || _policy.isActive) return;
+    if (_disposed) return;
+    if (_adopting) {
+      _droppedWhileAdopting = true;
+      return;
+    }
+    if (_policy.isActive) return;
+    if (_policy.phase == ReconnectPhase.connected) {
+      final connectedAt = _connectedAt;
+      if (connectedAt != null &&
+          _clock().difference(connectedAt) < stableAfter) {
+        _policy.reopen();
+      } else {
+        _policy = _policy.restarted();
+      }
+    } else if (_policy.isFinished) {
+      return;
+    }
     _schedule();
+  }
+
+  /// Tries now rather than at the end of the current wait — the Reconnect
+  /// button, or the network coming back.
+  ///
+  /// A schedule still running keeps its count and its budget, and only skips
+  /// the wait. One that has finished — given up, stopped, or never started
+  /// because the session ended in an orderly way — is replaced by a fresh
+  /// one. Even a refused password gets its one attempt here: someone asked
+  /// for it, and one attempt is not a lockout.
+  void retryNow() {
+    if (_disposed || _adopting) return;
+    if (_policy.phase == ReconnectPhase.connecting) return;
+    _timer?.cancel();
+    _timer = null;
+    if (_policy.isFinished || _policy.phase == ReconnectPhase.idle) {
+      _policy = _policy.restarted();
+    }
+    unawaited(_attempt());
   }
 
   void _schedule() {
@@ -163,8 +244,15 @@ class SessionReconnector {
   }
 
   Future<void> _attempt() async {
-    if (_policy.isFinished) return;
-    _policy.attemptStarted();
+    // The schedule this attempt belongs to, held for the whole attempt.
+    // [retryNow] replaces [_policy] once the old one has finished, and Stop
+    // then Reconnect does exactly that while a dial may still be in flight:
+    // read afresh after each await, the old dial would come back to a
+    // schedule that is running again, adopt its transport under it, and the
+    // new dial would adopt a second one.
+    final policy = _policy;
+    if (policy.isFinished) return;
+    policy.attemptStarted();
     _notify();
 
     // Captured by the verifier below, so a refusal can be told apart from any
@@ -173,9 +261,9 @@ class SessionReconnector {
 
     try {
       final credentials = await _support.loadCredentials(host.id);
-      if (_policy.isFinished) return;
+      if (_isStale(policy)) return;
       if (credentials == null) {
-        _policy.failed(ReconnectFailure.noCredentials);
+        policy.failed(ReconnectFailure.noCredentials);
         _notify();
         return;
       }
@@ -190,42 +278,58 @@ class SessionReconnector {
       );
 
       // Stopped while the handshake was in flight — the user closed the tab,
-      // or pressed Stop. The transport we just authenticated is nobody's, so
-      // it has to be closed here or it stays open until the process ends.
-      if (_policy.isFinished) {
+      // or pressed Stop, and perhaps Reconnect after it. The transport we
+      // just authenticated is nobody's, so it has to be closed here or it
+      // stays open until the process ends.
+      if (_isStale(policy)) {
         transport.close();
         return;
       }
 
-      await _adopt(transport);
-      _policy.succeeded();
+      _connectedAt = _clock();
+      _adopting = true;
+      try {
+        await _adopt(transport);
+      } finally {
+        _adopting = false;
+      }
+      policy.succeeded();
       _notify();
+      if (_droppedWhileAdopting) {
+        _droppedWhileAdopting = false;
+        begin();
+      }
       return;
     } catch (error) {
-      if (_policy.isFinished) return;
+      if (_isStale(policy)) return;
       final prompt = refused;
       if (prompt != null) {
-        _policy.failed(
+        policy.failed(
           ReconnectFailure.hostKey,
           message: _describeHostKeyRefusal(prompt),
         );
       } else if (error is SshAuthenticationException) {
-        _policy.failed(ReconnectFailure.authentication, message: error.message);
+        policy.failed(ReconnectFailure.authentication, message: error.message);
       } else if (error is HostKeyRejectedException) {
-        _policy.failed(ReconnectFailure.hostKey, message: error.message);
+        policy.failed(ReconnectFailure.hostKey, message: error.message);
       } else {
-        _policy.failed(ReconnectFailure.transport);
+        policy.failed(ReconnectFailure.transport);
       }
     }
 
     // Only reached on failure. A retryable one leaves the policy runnable and
     // the ladder continues; anything else has already set its own reason.
-    if (_policy.isFinished) {
+    if (policy.isFinished) {
       _notify();
     } else {
       _schedule();
     }
   }
+
+  /// Whether an attempt started under [policy] no longer speaks for this
+  /// reconnector: its schedule was stopped, or replaced by a newer one.
+  bool _isStale(ReconnectPolicy policy) =>
+      policy.isFinished || !identical(policy, _policy);
 
   String _describeHostKeyRefusal(HostKeyPrompt prompt) {
     switch (prompt.kind) {
@@ -258,6 +362,7 @@ class SessionReconnector {
   }
 
   Future<void> dispose() async {
+    _disposed = true;
     _timer?.cancel();
     _timer = null;
     _policy.stop();

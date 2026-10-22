@@ -1,21 +1,35 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:dartssh2/dartssh2.dart';
 
 import '../models/host.dart';
 import '../models/known_host.dart';
+import 'diagnostics_log.dart';
 import 'host_field_input.dart';
 import 'host_key_policy.dart';
 import 'jump_host_chain.dart';
 import 'known_hosts_service.dart';
+import 'login_prompt.dart';
 import 'ssh_agent_backend.dart';
 import 'ssh_agent_client.dart';
+import 'ssh_certificate.dart';
+import 'ssh_forwarding_client.dart';
+import 'x11_forwarding.dart';
 
 export 'host_key_policy.dart'
     show HostKeyPolicy, HostKeyPrompt, HostKeyPromptKind, HostKeyVerifier;
 export 'jump_host_chain.dart'
     show JumpHostChain, JumpHostChainError, JumpHostChainException;
+export 'login_prompt.dart'
+    show
+        LoginChallenge,
+        LoginPrompt,
+        LoginPromptField,
+        LoginPromptHandler,
+        ServerBanner,
+        ServerBannerHandler;
 export 'ssh_agent_backend.dart'
     show
         CredentialSSHAgent,
@@ -30,6 +44,124 @@ export 'ssh_agent_client.dart'
         SshAgentIdentity;
 
 /// A connection failure with a message that is safe to show to a human.
+/// An [SSHSocket] that remembers when bytes last arrived from the server.
+/// Everything else passes straight through.
+class InboundWatchSocket implements SSHSocket {
+  InboundWatchSocket(this._inner, {DateTime Function()? clock})
+      : _now = clock ?? DateTime.now;
+
+  final SSHSocket _inner;
+  final DateTime Function() _now;
+
+  DateTime? lastInboundAt;
+
+  late final Stream<Uint8List> _stream = _inner.stream.map((data) {
+    lastInboundAt = _now();
+    return data;
+  });
+
+  @override
+  Stream<Uint8List> get stream => _stream;
+
+  @override
+  StreamSink<List<int>> get sink => _inner.sink;
+
+  @override
+  Future<void> get done => _inner.done;
+
+  @override
+  Future<void> close() => _inner.close();
+
+  @override
+  void destroy() => _inner.destroy();
+
+  @override
+  Future<void> flush() => _inner.flush();
+}
+
+/// The algorithms to offer [host]: the SSH library's own defaults — modern
+/// OpenSSH's — with the legacy ones appended *after* them when the host has
+/// [Host.legacyAlgorithms] set, so a server that speaks anything newer still
+/// negotiates that and only one that speaks nothing else falls through to
+/// the old.
+SSHAlgorithms sshAlgorithmsFor(Host host) {
+  const defaults = SSHAlgorithms();
+  if (!host.legacyAlgorithms) return defaults;
+  return SSHAlgorithms(
+    kex: [
+      ...defaults.kex,
+      SSHKexType.dh14Sha1,
+      SSHKexType.dhGexSha1,
+      SSHKexType.dh1Sha1,
+    ],
+    hostkey: [...defaults.hostkey, SSHHostkeyType.rsaSha1],
+    cipher: [
+      ...defaults.cipher,
+      SSHCipherType.aes256cbc,
+      SSHCipherType.aes192cbc,
+      SSHCipherType.aes128cbc,
+    ],
+    mac: [...defaults.mac, SSHMacType.hmacMd5],
+  );
+}
+
+/// Whether [error] is the two sides failing to agree on an algorithm — our
+/// side noticing it (dartssh2 raises a `StateError` naming the kind) or the
+/// server's (`SSH_MSG_DISCONNECT` with reason 3, KEY_EXCHANGE_FAILED, which
+/// is where OpenSSH says "no matching key exchange method found").
+///
+/// Either arrives wrapped: the client reports a transport that closed during
+/// the handshake as [SSHAuthAbortError] with the cause as its `reason`, and
+/// a non-SSH error inside the transport as [SSHInternalError]. Both are
+/// unwrapped here.
+bool isAlgorithmNegotiationFailure(Object error) {
+  Object? current = error;
+  for (var depth = 0; current != null && depth < 4; depth++) {
+    if (current is StateError && current.message.startsWith('No matching')) {
+      return true;
+    }
+    if (current is SSHDisconnectError) {
+      return current.reasonCode == 3 ||
+          current.message.toLowerCase().contains('no matching');
+    }
+    current = switch (current) {
+      SSHAuthAbortError(:final reason) => reason,
+      SSHInternalError(:final error) => error,
+      _ => null,
+    };
+  }
+  return false;
+}
+
+/// What to tell the user when [isAlgorithmNegotiationFailure] — pointing at
+/// the per-host switch, or past it when it is already on.
+String describeNegotiationFailure(Host host) {
+  if (host.legacyAlgorithms) {
+    return '"${host.displayName}" and this app have no encryption method in '
+        'common, even with legacy algorithms allowed. The server may need a '
+        'newer SSH version.';
+  }
+  return '"${host.displayName}" only offers old encryption methods (SHA-1 or '
+      'CBC) that are no longer used by default. If you trust this server — '
+      'an older router or NAS, say — edit the host and turn on "Allow legacy '
+      'algorithms".';
+}
+
+/// Starts [close] without waiting for it, and without letting a failure to
+/// close something that is already gone surface as an uncaught async error.
+///
+/// dartssh2 3.0 made `SSHClient.close()` and `SftpClient.close()` return a
+/// future that ends in closing the socket, which can fail on a socket the
+/// network already tore down. Every caller here closes on the way out of a
+/// failure or a hang-up and has nothing useful to do with that error.
+void closeQuietly(Future<void> Function() close) {
+  try {
+    unawaited(close().catchError((Object _) {}));
+  } catch (_) {
+    // Threw before returning a future: already gone.
+  }
+}
+
 class SshConnectionException implements Exception {
   const SshConnectionException(this.message, {this.details});
 
@@ -158,11 +290,7 @@ class SshJumpLink {
   final SSHSocket socket;
 
   void close() {
-    try {
-      client.close();
-    } catch (_) {
-      // Already gone.
-    }
+    closeQuietly(client.close);
     try {
       socket.destroy();
     } catch (_) {
@@ -191,6 +319,24 @@ abstract class SessionTransport {
     String terminalType,
   });
 
+  /// Runs [command] in place of the login shell, under a PTY of the given
+  /// size — how a persistent session starts its shell inside tmux or screen.
+  ///
+  /// Only [SshConnection] can; a transport that cannot throws
+  /// [UnimplementedError] and the session opens a plain shell instead.
+  Future<SSHSession> startCommandShell(
+    String command, {
+    required int columns,
+    required int rows,
+    String terminalType = 'xterm-256color',
+  }) =>
+      throw UnimplementedError('This transport cannot run a shell command.');
+
+  /// When bytes last arrived from the server, or null when unknown. What
+  /// tells a quiet link that is still alive from one the network dropped —
+  /// see `SessionKeepalive`.
+  DateTime? get lastInboundAt => null;
+
   /// Opens the SFTP subsystem on this same authenticated connection.
   Future<SftpClient> openSftp();
 
@@ -205,9 +351,14 @@ abstract class SessionTransport {
   /// it. OpenSSH grants that request once per connection, so a client born
   /// with a handler runs exactly one exec and then fails every later one.
   ///
-  /// The direct server-to-server copy is the one feature that does need
-  /// forwarding, and it dials a connection of its own for its single exec
-  /// rather than borrowing this one. See `direct_remote_copy.dart` and
+  /// A host with [Host.agentForwarding] on does forward the agent, on its
+  /// shell channel only: its connection is a [ForwardingSSHClient], which
+  /// keeps the request off every exec channel, so this stays repeatable
+  /// there too.
+  ///
+  /// The direct server-to-server copy needs forwarding on an exec, and it
+  /// dials a connection of its own for that single exec rather than
+  /// borrowing this one. See `direct_remote_copy.dart` and
   /// [SessionTransport.agentSlot].
   Future<SSHSession> execute(String command) =>
       throw UnimplementedError('This transport does not support exec.');
@@ -272,6 +423,17 @@ class SshConnection implements SessionTransport {
 
   final SSHSocket socket;
 
+  /// When bytes last arrived from the server, or null before any have.
+  ///
+  /// Anything counts — shell output, an SFTP reply, a keepalive answer — so a
+  /// dead-link check can tell a quiet connection that is still alive from
+  /// one the network has silently dropped.
+  @override
+  DateTime? get lastInboundAt => switch (socket) {
+        InboundWatchSocket(:final lastInboundAt) => lastInboundAt,
+        _ => null,
+      };
+
   /// The agent slot handed to [SSHClient.agentHandler] at construction, or
   /// null on every connection not dialled with `agentForwarding: true` —
   /// which is all of them bar the one a direct transfer opens for its single
@@ -333,12 +495,28 @@ class SshConnection implements SessionTransport {
   }
 
   @override
+  Future<SSHSession> startCommandShell(
+    String command, {
+    required int columns,
+    required int rows,
+    String terminalType = 'xterm-256color',
+  }) {
+    final pty = SSHPtyConfig(
+      type: terminalType,
+      width: columns > 0 ? columns : 80,
+      height: rows > 0 ? rows : 24,
+    );
+    // The terminal, so it forwards what the host asks for, as [startShell]
+    // does; a plain exec would drop that.
+    final client = this.client;
+    return client is ForwardingSSHClient
+        ? client.commandShell(command, pty: pty)
+        : client.execute(command, pty: pty);
+  }
+
+  @override
   void close() {
-    try {
-      client.close();
-    } catch (_) {
-      // Already gone.
-    }
+    closeQuietly(client.close);
     try {
       socket.destroy();
     } catch (_) {
@@ -355,10 +533,32 @@ class SshConnection implements SessionTransport {
 
 /// Establishes SSH connections with OpenSSH-style host key verification.
 class SshService {
-  SshService({required this.knownHosts, this.jumpHosts})
-      : policy = HostKeyPolicy(knownHosts);
+  SshService({
+    required this.knownHosts,
+    this.jumpHosts,
+    SshAgentClient? agent,
+    X11Forwarder? Function()? x11,
+  })  : policy = HostKeyPolicy(knownHosts),
+        agent = agent ?? SshAgentClient(),
+        _x11 = x11 ?? _localX11;
 
   final KnownHostsService knownHosts;
+
+  /// The operating system's SSH agent: what [SshAuthMethod.agent] hosts sign
+  /// in with, and what [Host.agentForwarding] forwards. Replaceable so tests
+  /// can stand in a scripted agent.
+  final SshAgentClient agent;
+
+  /// Forwards [Host.x11Forwarding] windows to this device's X server, or
+  /// null when it has no display. Called per connection, so a `DISPLAY`
+  /// that changes is followed; replaceable so tests can stand in a fake X
+  /// server and cookie.
+  final X11Forwarder? Function() _x11;
+
+  static X11Forwarder? _localX11() {
+    final display = X11Display.fromEnvironment();
+    return display == null ? null : X11Forwarder(display: display);
+  }
 
   /// How a `jumpHostId` is turned into a host record and its credentials.
   /// Null in tests and anywhere jump hosts are not wired; a host that names
@@ -382,6 +582,17 @@ class SshService {
   /// here.
   static const Duration hostKeyDecisionBudget = Duration(minutes: 5);
 
+  /// How long the server gets to come back after a person answers a login
+  /// prompt.
+  ///
+  /// Far longer than [defaultTimeout], because an answer is often the start
+  /// of a wait rather than the end of one: choosing "Duo Push" sends the
+  /// server off to wait for a phone, and it replies only once the person
+  /// has approved the login there. The time a prompt spends on screen is not
+  /// counted at all — see [_LoginDeadline] — so this is only the server's
+  /// share.
+  static const Duration loginReplyBudget = Duration(minutes: 2);
+
   /// Connects, verifies the host key, and authenticates.
   ///
   /// When [host] names a jump host, every hop in the chain is dialled and
@@ -402,13 +613,44 @@ class SshService {
   /// carries a handler can only ever run *one* exec, so this is never right
   /// for a session the user is going to keep working in; see
   /// [SessionTransport.execute].
+  ///
+  /// It is unrelated to [Host.agentForwarding] and [Host.x11Forwarding],
+  /// which this applies by itself to every connection to such a host — on
+  /// the shell channel only, which keeps execs repeatable (see
+  /// [ForwardingSSHClient]). A connection dialled with [agentForwarding]
+  /// never opens a shell, and takes neither.
+  ///
+  /// [answerPrompts] is how a keyboard-interactive question — a one-time
+  /// code, a Duo menu, a password the server will only take this way —
+  /// reaches a person, for the target and for every hop alike; each
+  /// [LoginPrompt] names the host asking. A password host's saved password
+  /// answers the first plain password question by itself, so a server that
+  /// only offers keyboard-interactive needs nobody (see
+  /// [KeyboardInteractiveResponder]). Leave it null when no one is there to
+  /// ask — a reconnect, a background transfer: a question the saved
+  /// credentials cannot answer then fails the connect at once with an
+  /// [SshAuthenticationException] that says what was asked, instead of
+  /// waiting on an answer that will never come.
+  ///
+  /// [onBanner] receives the text a server shows before login, already
+  /// stripped down to plain text, from the target and from every hop.
   Future<SshConnection> connect({
     required Host host,
     required SshCredentials credentials,
     required HostKeyVerifier verifyHostKey,
+    LoginPromptHandler? answerPrompts,
+    ServerBannerHandler? onBanner,
     Duration timeout = defaultTimeout,
     bool agentForwarding = false,
   }) async {
+    // Every connection passes here, with a password or key that may have
+    // been typed for it and never saved — so never seen by the credential
+    // store, which is where the diagnostics log learns the rest.
+    DiagnosticsLog.instance
+      ..learnSecret(credentials.password)
+      ..learnSecret(credentials.passphrase)
+      ..learnSecret(credentials.privateKeyPem);
+
     // Resolved before any socket is opened, so a self-reference or a loop
     // costs nothing and cannot recurse.
     final hops = await _resolveHops(host);
@@ -425,14 +667,25 @@ class SshService {
         hops: hops,
         links: links,
         verifyHostKey: verifyHostKey,
+        answerPrompts: answerPrompts,
+        onBanner: onBanner,
         timeout: timeout,
       );
-      return await _authenticate(
+      return await _login(
         host: host,
         credentials: credentials,
         identities: identities,
         socket: socket,
+        redial: () => hops.isEmpty
+            ? _openDirectSocket(host, timeout)
+            : _openForwardedSocket(
+                through: links.last,
+                to: host,
+                timeout: timeout,
+              ),
         verifyHostKey: verifyHostKey,
+        answerPrompts: answerPrompts,
+        onBanner: onBanner,
         timeout: timeout,
         jumpLinks: List.unmodifiable(links),
         agentForwarding: agentForwarding,
@@ -481,6 +734,8 @@ class SshService {
     required List<Host> hops,
     required List<SshJumpLink> links,
     required HostKeyVerifier verifyHostKey,
+    required LoginPromptHandler? answerPrompts,
+    required ServerBannerHandler? onBanner,
     required Duration timeout,
   }) async {
     if (hops.isEmpty) return _openDirectSocket(target, timeout);
@@ -489,18 +744,19 @@ class SshService {
       final hop = hops[i];
       // The first hop is the only one this device dials itself; every
       // later one is reached through the tunnel built so far.
-      final hopSocket = i == 0
-          ? await _openDirectSocket(hop, timeout, asJumpHost: true)
-          : await _openForwardedSocket(
-              through: links.last,
-              to: hop,
-              timeout: timeout,
-            );
+      final through = i == 0 ? null : links.last;
+      Future<SSHSocket> dial() => through == null
+          ? _openDirectSocket(hop, timeout, asJumpHost: true)
+          : _openForwardedSocket(through: through, to: hop, timeout: timeout);
       links.add(
         await _authenticateHop(
           hop: hop,
-          socket: hopSocket,
+          target: target,
+          socket: await dial(),
+          redial: dial,
           verifyHostKey: verifyHostKey,
+          answerPrompts: answerPrompts,
+          onBanner: onBanner,
           timeout: timeout,
         ),
       );
@@ -590,11 +846,16 @@ class SshService {
   }
 
   /// Authenticates one jump hop, using that hop's own saved credentials and
-  /// its own host key check.
+  /// its own host key check. Its login prompts name it, and [target] as the
+  /// host it is the way to.
   Future<SshJumpLink> _authenticateHop({
     required Host hop,
+    required Host target,
     required SSHSocket socket,
+    required Future<SSHSocket> Function() redial,
     required HostKeyVerifier verifyHostKey,
+    required LoginPromptHandler? answerPrompts,
+    required ServerBannerHandler? onBanner,
     required Duration timeout,
   }) async {
     final resolver = jumpHosts!;
@@ -609,15 +870,19 @@ class SshService {
     }
 
     try {
-      final connection = await _authenticate(
+      final connection = await _login(
         host: hop,
+        jumpHostFor: target,
         credentials: credentials,
         // The hop's socket is already open by now — unavoidable, since the
         // channel it rides on is what proves the previous hop can reach it —
         // so anything unusable here has to take the socket down with it.
         identities: await _prepareIdentitiesOrClose(hop, credentials, socket),
         socket: socket,
+        redial: redial,
         verifyHostKey: verifyHostKey,
+        answerPrompts: answerPrompts,
+        onBanner: onBanner,
         timeout: timeout,
         jumpLinks: const [],
       );
@@ -626,6 +891,10 @@ class SshService {
         client: connection.client,
         socket: connection.socket,
       );
+    } on JumpHostException {
+      // Only a redial (see [_login]) can raise one in here, and it already
+      // names the hop that could not be reached.
+      rethrow;
     } on HostKeyRejectedException catch (e) {
       throw JumpHostException(
         'The host key for the jump host "${hop.displayName}" was not '
@@ -651,22 +920,88 @@ class SshService {
     }
   }
 
+  /// [_authenticate], with one more go when the server turned down the saved
+  /// password and a person is there to type the right one.
+  ///
+  /// The second go needs a fresh socket from [redial]: OpenSSH ends a
+  /// keyboard-interactive exchange with a failure as soon as PAM says no,
+  /// and dartssh2 tries each method once per connection, so there is no
+  /// asking again on the same one. The host key was trusted moments ago, so
+  /// the second handshake matches it silently.
+  Future<SshConnection> _login({
+    required Host host,
+    required SshCredentials credentials,
+    required _Identities identities,
+    required SSHSocket socket,
+    required Future<SSHSocket> Function() redial,
+    required HostKeyVerifier verifyHostKey,
+    required LoginPromptHandler? answerPrompts,
+    required ServerBannerHandler? onBanner,
+    required Duration timeout,
+    required List<SshJumpLink> jumpLinks,
+    Host? jumpHostFor,
+    bool agentForwarding = false,
+  }) async {
+    // A server sends its banner on every connection, and the user should
+    // see it once per connect, not once per socket.
+    final bannersShown = <String>{};
+    void showBanner(String text) {
+      if (!bannersShown.add(text)) return;
+      onBanner?.call(
+        ServerBanner(host: host, jumpHostFor: jumpHostFor, text: text),
+      );
+    }
+
+    Future<SshConnection> attempt(
+      SSHSocket socket, {
+      required bool savedPasswordRejected,
+    }) {
+      return _authenticate(
+        host: host,
+        credentials: credentials,
+        identities: identities,
+        socket: socket,
+        verifyHostKey: verifyHostKey,
+        answerPrompts: answerPrompts,
+        showBanner: showBanner,
+        timeout: timeout,
+        jumpLinks: jumpLinks,
+        jumpHostFor: jumpHostFor,
+        savedPasswordRejected: savedPasswordRejected,
+        agentForwarding: agentForwarding,
+      );
+    }
+
+    try {
+      return await attempt(socket, savedPasswordRejected: false);
+    } on _SavedPasswordRejected {
+      // Cannot recur: with savedPasswordRejected set, the saved password is
+      // never sent, so it cannot be what the server refuses.
+      return attempt(await redial(), savedPasswordRejected: true);
+    }
+  }
+
   /// Runs the SSH handshake and authentication for [host] over an already
   /// open [socket], whichever kind it is.
   Future<SshConnection> _authenticate({
     required Host host,
     required SshCredentials credentials,
-    required List<SSHKeyPair>? identities,
+    required _Identities identities,
     required SSHSocket socket,
     required HostKeyVerifier verifyHostKey,
+    required LoginPromptHandler? answerPrompts,
+    required void Function(String text) showBanner,
     required Duration timeout,
     required List<SshJumpLink> jumpLinks,
+    required Host? jumpHostFor,
+    required bool savedPasswordRejected,
     bool agentForwarding = false,
   }) async {
     // Set by the verify handler so we can distinguish "user said no" from a
     // genuine handshake failure once the client surfaces the error.
     var userRejectedKey = false;
     VerifiedHostKey? verifiedKey;
+    final watched = InboundWatchSocket(socket);
 
     // Null unless the caller asked for forwarding, and the difference is not
     // cosmetic: dartssh2 decides per *client* whether to put an
@@ -683,14 +1018,83 @@ class SshService {
     // out.
     final agentSlot = agentForwarding ? MutableSSHAgentHandler() : null;
 
-    final client = SSHClient(
-      socket,
+    // The host's own forwarding, for its shell: never on a jump hop, which
+    // only carries the connection onward, and never on the transfer's
+    // connection above, which runs one exec and no shell.
+    final forwarding = agentForwarding || jumpHostFor != null
+        ? null
+        : _shellForwarding(host, identities);
+
+    // Completes when the login is over either way, so a prompt still on
+    // screen when the server hangs up can close itself.
+    final loginOver = Completer<void>();
+
+    late final SSHClient client;
+    final deadline = _LoginDeadline(() => closeQuietly(client.close));
+
+    final usesPassword = host.authMethod == SshAuthMethod.password;
+    final responder = KeyboardInteractiveResponder(
+      host: host,
+      jumpHostFor: jumpHostFor,
+      savedPassword: usesPassword ? credentials.password : null,
+      savedPasswordRejected: savedPasswordRejected,
+      withdrawn: loginOver.future,
+      ask: answerPrompts == null
+          ? null
+          : (prompt) async {
+              // The clock stops while a person reads and types, and restarts
+              // with room for whatever their answer sets off on the server.
+              deadline.hold();
+              try {
+                return await answerPrompts(prompt);
+              } finally {
+                deadline.arm(loginReplyBudget);
+              }
+            },
+    );
+
+    // Everything the server said before login, for the error message if the
+    // login then fails.
+    final banners = <String>[];
+
+    client = ForwardingSSHClient(
+      watched,
       username: host.username,
-      identities: identities,
+      identities: [
+        for (final identity in identities.offered ?? const <SSHIdentity>[])
+          // An agent signature can wait on a confirmation or a security
+          // key's touch; that time is the person's, like a prompt's.
+          identity is SshAgentKeyIdentity
+              ? _DeadlineHeldIdentity(identity, deadline, timeout)
+              : identity,
+      ],
       agentHandler: agentSlot,
-      onPasswordRequest: host.authMethod == SshAuthMethod.password
+      forwarding: forwarding,
+      algorithms: sshAlgorithmsFor(host),
+      // Not offered again once the server has refused it — see [_login].
+      onPasswordRequest: usesPassword && !savedPasswordRejected
           ? () => credentials.password
           : null,
+      // Set for every host, key hosts included: `AuthenticationMethods
+      // publickey,keyboard-interactive` accepts the key only as the first
+      // of two factors, and dartssh2 cannot tell that from a refusal, so the
+      // only way to reach the second is to always be ready for it.
+      onUserInfoRequest: (request) => responder.respond(
+        LoginChallenge.fromServer(
+          name: request.name,
+          instruction: request.instruction,
+          prompts: [
+            for (final prompt in request.prompts)
+              (text: prompt.promptText, echo: prompt.echo),
+          ],
+        ),
+      ),
+      onUserauthBanner: (raw) {
+        final text = cleanServerText(raw);
+        if (text.isEmpty) return;
+        banners.add(text);
+        showBanner(text);
+      },
       onVerifyHostKey: (type, fingerprintBytes) async {
         final fingerprint = HostKeyPolicy.decodeFingerprint(fingerprintBytes);
         final accepted = await policy.evaluate(
@@ -705,14 +1109,19 @@ class SshService {
             keyType: KnownHostKey.canonicalKeyType(type),
             fingerprint: fingerprint,
           );
+          // dartssh2 calls the transport ready the moment this returns true
+          // and starts authenticating there, so the login clock starts here.
+          deadline.arm(timeout);
         } else {
           userRejectedKey = true;
         }
         return accepted;
       },
       handshakeTimeout: timeout + hostKeyDecisionBudget,
-      // No human is in the loop during auth, so keep this tight.
-      authTimeout: timeout,
+      // Kept by [deadline] instead: dartssh2's timer runs on while a prompt
+      // is on screen, and would cut off someone reading a code off their
+      // phone.
+      authTimeout: null,
       // dartssh2's own 10 s keep-alive timer is switched off; the session
       // owns the schedule instead, at SessionKeepalive.interval. One owner
       // rather than two, a gentler interval on a phone radio, and — the part
@@ -725,67 +1134,139 @@ class SshService {
     try {
       await client.authenticated;
     } catch (e) {
-      client.close();
+      closeQuietly(client.close);
       socket.destroy();
       if (userRejectedKey) {
         throw const HostKeyRejectedException(
           'Connection cancelled: the server\'s host key was not trusted.',
         );
       }
-      final message = _describeSshError(e, host);
-      // Same message either way — the type is for the reconnect schedule,
-      // which must never retry this. See [SshAuthenticationException].
-      if (e is SSHAuthFailError) {
-        throw SshAuthenticationException(message, details: e.toString());
+      if (e is SSHAuthFailError &&
+          answerPrompts != null &&
+          responder.lastAnswerWasSavedPassword) {
+        throw const _SavedPasswordRejected();
       }
-      throw SshConnectionException(message, details: e.toString());
+      throw _loginFailure(
+        e,
+        host: host,
+        responder: responder,
+        timedOut: deadline.expired,
+        serverText: [...banners, ...responder.notices],
+        certificateNote: identities.certificateNote,
+      );
+    } finally {
+      deadline.finish();
+      if (!loginOver.isCompleted) loginOver.complete();
     }
 
     return SshConnection(
       client: client,
       host: host,
-      socket: socket,
+      socket: watched,
       agentSlot: agentSlot,
       jumpLinks: jumpLinks,
       hostKey: verifiedKey,
     );
   }
 
-  /// Fails an agent-auth host with the most specific reason available.
+  /// The exception a failed login surfaces as.
   ///
-  /// Always throws. The agent is probed first so the common, fixable cases —
-  /// no agent running, agent running but empty — are what the user is told
-  /// about, rather than the deeper limitation below them.
-  Future<Never> _failAgentAuth(Host host) async {
-    if (!SshAgentClient.isSupportedPlatform) {
-      throw SshConnectionException(
-        'No SSH agent found. "${host.displayName}" is set to use the OS SSH '
-        'agent, which this device does not have. Edit the host and choose a '
-        'password or a private key instead.',
+  /// Everything that comes down to the credentials — refused, cancelled, or
+  /// needing a person who is not there — is an [SshAuthenticationException],
+  /// which the reconnect schedule never retries. Anything the server said
+  /// along the way rides in `details`: a denial from a second factor ("Login
+  /// request denied") arrives as exactly that kind of text, and is usually
+  /// the only useful thing about the failure.
+  SshConnectionException _loginFailure(
+    Object error, {
+    required Host host,
+    required KeyboardInteractiveResponder responder,
+    required bool timedOut,
+    required List<String> serverText,
+    String? certificateNote,
+  }) {
+    final details = serverText.isEmpty
+        ? error.toString()
+        : 'The server said:\n${serverText.join('\n\n')}\n\n$error';
+
+    if (timedOut) {
+      return SshConnectionException(
+        'The server stopped responding during login.',
+        details: details,
       );
     }
-
-    try {
-      await SshAgentClient().listIdentities();
-    } on SshAgentException catch (e) {
-      throw SshConnectionException(e.message, details: e.details);
+    // The agent declined to sign — a confirmation turned down, a security
+    // key not touched — or stopped answering. A decision about the
+    // credentials, so not something a reconnect should try again.
+    final agentError = _agentErrorIn(error);
+    if (agentError != null) {
+      return SshAuthenticationException(
+        agentError.message,
+        details: agentError.details ?? details,
+      );
     }
-
-    // The agent is reachable and holding keys, and we still cannot use it:
-    // dartssh2's `SSHKeyPair.sign` is synchronous, so an identity backed by
-    // a socket round-trip cannot satisfy it, and the types its interface
-    // returns are not exported to implement in the first place. Signing is
-    // ready (see `ssh_agent_client.dart`, which is complete and tested) —
-    // the missing piece is entirely on the dartssh2 side.
-    throw SshConnectionException(
-      'The SSH agent is available, but this build cannot yet authenticate '
-      'with it. Use a password or a private key for '
-      '"${host.displayName}".',
+    if (error is! SSHAuthFailError) {
+      return SshConnectionException(
+        _describeSshError(error, host),
+        details: details,
+      );
+    }
+    if (responder.cancelled) {
+      return SshAuthenticationException(
+        'Connection cancelled: the login prompt from "${host.displayName}" '
+        'was not answered.',
+        details: details,
+      );
+    }
+    final unanswered = responder.unansweredPrompt;
+    if (unanswered != null) {
+      final asked = unanswered.label.isEmpty
+          ? 'a question'
+          : '"${_shorten(unanswered.label, 60)}"';
+      return SshAuthenticationException(
+        '"${host.displayName}" asks $asked at login, which needs you to '
+        'answer it, and nobody was asked here. Connect to it from the host '
+        'list to log in.',
+        details: details,
+      );
+    }
+    if (responder.personAnswered) {
+      return SshAuthenticationException(
+        'Authentication failed for "${host.username}". The server did not '
+        'accept the answers to its login prompts.',
+        details: details,
+      );
+    }
+    final note = certificateNote == null
+        ? ''
+        : ' The saved certificate was not offered. $certificateNote';
+    return SshAuthenticationException(
+      '${_describeSshError(error, host)}$note',
+      details: details,
     );
   }
 
+  /// The [SshAgentException] behind a failed login, if that is what it was:
+  /// dartssh2 reports a signer that threw as the transport closing with an
+  /// internal error, so it arrives wrapped.
+  static SshAgentException? _agentErrorIn(Object error) {
+    Object? current = error;
+    for (var depth = 0; current != null && depth < 4; depth++) {
+      if (current is SshAgentException) return current;
+      current = switch (current) {
+        SSHAuthAbortError(:final reason) => reason,
+        SSHInternalError(:final error) => error,
+        _ => null,
+      };
+    }
+    return null;
+  }
+
+  static String _shorten(String text, int max) =>
+      text.length <= max ? text : '${text.substring(0, max - 1)}…';
+
   /// [_prepareIdentities], destroying [socket] if it throws.
-  Future<List<SSHKeyPair>?> _prepareIdentitiesOrClose(
+  Future<_Identities> _prepareIdentitiesOrClose(
     Host host,
     SshCredentials credentials,
     SSHSocket socket,
@@ -801,25 +1282,148 @@ class SshService {
   /// Turns [credentials] into the identities [host] will authenticate with,
   /// failing on anything unusable.
   ///
-  /// Deliberately does no I/O of its own beyond probing the agent, so every
-  /// caller can run it *before* opening a socket — that ordering is what
-  /// keeps "you did not type a password" from arriving as a connection error
-  /// several seconds and several handshakes later.
-  Future<List<SSHKeyPair>?> _prepareIdentities(
+  /// Deliberately does no I/O of its own beyond asking the agent what it
+  /// holds, so every caller can run it *before* opening a socket — that
+  /// ordering is what keeps "you did not type a password" or "the agent has
+  /// no keys" from arriving as a connection error several seconds and
+  /// several handshakes later.
+  Future<_Identities> _prepareIdentities(
     Host host,
     SshCredentials credentials,
   ) async {
     switch (host.authMethod) {
       case SshAuthMethod.agent:
-        await _failAgentAuth(host);
+        return _agentIdentities(host);
       case SshAuthMethod.password:
         if (credentials.password == null || credentials.password!.isEmpty) {
           throw const SshConnectionException('Enter a password to connect.');
         }
-        return null;
+        return const _Identities(null);
       case SshAuthMethod.privateKey:
-        return _parseIdentities(credentials);
+        return _keyIdentities(host, _parseIdentities(credentials));
     }
+  }
+
+  /// The key saved in the app, behind its certificate when the host has
+  /// one that goes with it — offered first, as `ssh` offers a
+  /// `CertificateFile` before the bare key.
+  _Identities _keyIdentities(Host host, List<SSHKeyPair> pairs) {
+    final (certificate, note) = _certificateOf(host);
+    if (certificate == null) return _Identities(pairs, keys: pairs, certificateNote: note);
+    for (final pair in pairs) {
+      if (certificate.certifies(pair.toPublicKey().encode())) {
+        return _Identities(
+          [certificateIdentity(certificate, pair), ...pairs],
+          keys: pairs,
+          certificate: certificate,
+        );
+      }
+    }
+    return _Identities(
+      pairs,
+      keys: pairs,
+      certificateNote:
+          certificate.mismatchWith(pairs.first.toPublicKey().encode()),
+    );
+  }
+
+  /// Every key the OS agent holds, in the agent's order, with the host's
+  /// certificate in front when the agent holds the key it certifies.
+  Future<_Identities> _agentIdentities(Host host) async {
+    if (!SshAgentClient.isSupportedPlatform) {
+      throw SshConnectionException(
+        'No SSH agent found. "${host.displayName}" is set to use the OS SSH '
+        'agent, which this device does not have. Edit the host and choose a '
+        'password or a private key instead.',
+      );
+    }
+
+    final List<SshAgentIdentity> keys;
+    try {
+      keys = await agent.listIdentities();
+    } on SshAgentException catch (e) {
+      throw SshConnectionException(e.message, details: e.details);
+    }
+
+    final offered = <SSHIdentity>[
+      for (final key in keys) SshAgentKeyIdentity(agent, key),
+    ];
+    final (certificate, note) = _certificateOf(host);
+    if (certificate == null) {
+      return _Identities(offered, certificateNote: note);
+    }
+    for (final key in keys) {
+      if (certificate.certifies(key.keyBlob)) {
+        return _Identities([
+          SshAgentKeyIdentity(
+            agent,
+            key,
+            presentedBlob: certificate.blob,
+            presentedType: certificate.type,
+          ),
+          ...offered,
+        ], certificate: certificate);
+      }
+    }
+    return _Identities(
+      offered,
+      certificateNote: 'The SSH agent does not hold the '
+          '${certificate.keyTypeLabel} key it was issued for '
+          '(${certificate.publicKeyFingerprint}). Add that key with ssh-add.',
+    );
+  }
+
+  /// The host's certificate when it can be presented now, or null and why
+  /// not. Expired or not-yet-valid certificates are left out rather than
+  /// failing the connect: the bare key may still be authorized, and if it
+  /// is not, the reason is added to the login failure.
+  (SshCertificate?, String?) _certificateOf(Host host) {
+    final text = host.certificate;
+    if (text == null || text.trim().isEmpty) return (null, null);
+    final SshCertificate certificate;
+    try {
+      certificate = SshCertificate.parse(text);
+    } on SshCertificateException catch (e) {
+      return (null, e.message);
+    }
+    final problem = certificate.validityProblemAt(DateTime.now());
+    if (problem != null) return (null, problem);
+    return (certificate, null);
+  }
+
+  /// What [host]'s shell forwards, or null when it forwards nothing.
+  ShellForwarding? _shellForwarding(Host host, _Identities identities) {
+    SSHAgentHandler? forwardedAgent;
+    if (host.agentForwarding) {
+      forwardedAgent = ForwardedAgent(
+        osAgent: SshAgentClient.isSupportedPlatform ? agent : null,
+        keys: identities.keys,
+        // Shown by `ssh-add -l` on the server, so it says where it came from.
+        comment: 'ssgo:${host.displayName}',
+      );
+    }
+
+    X11Forwarder? x11;
+    final notices = <String>[];
+    // Android has no X server to draw on. The host form says so on the
+    // switch, so a host carried over from a desktop is quietly left alone
+    // here rather than warned about on every connect.
+    if (host.x11Forwarding && X11Forwarder.isSupportedPlatform) {
+      x11 = _x11();
+      if (x11 == null) {
+        notices.add('X11 forwarding is on for this host, but there is no X '
+            'display on this device (DISPLAY is not set), so graphical '
+            'programs cannot open windows here.');
+      }
+    }
+
+    final forwarding = ShellForwarding(
+      agent: forwardedAgent,
+      x11: x11,
+      notices: notices,
+      certificate: identities.certificate,
+    );
+    return forwarding.isEmpty ? null : forwarding;
   }
 
   List<SSHKeyPair> _parseIdentities(SshCredentials credentials) {
@@ -888,6 +1492,22 @@ class SshService {
   }
 
   String _describeSshError(Object error, Host host) {
+    if (isAlgorithmNegotiationFailure(error)) {
+      return describeNegotiationFailure(host);
+    }
+    final disconnect = switch (error) {
+      SSHDisconnectError() => error,
+      SSHAuthAbortError(reason: final SSHDisconnectError reason) => reason,
+      _ => null,
+    };
+    if (disconnect != null) {
+      // 3.3 started passing on what the server said when it hung up, which
+      // is where OpenSSH explains itself. Better than "unexpected".
+      final said = cleanServerText(disconnect.message);
+      return said.isEmpty
+          ? 'The server closed the connection.'
+          : 'The server closed the connection: $said';
+    }
     if (error is SSHAuthFailError) {
       return host.authMethod == SshAuthMethod.password
           ? 'Authentication failed for "${host.username}". '
@@ -916,6 +1536,107 @@ class SshService {
       return describeSocketError(error, host);
     }
     return 'Could not establish an SSH session with ${host.hostname}.';
+  }
+}
+
+/// What [SshService._prepareIdentities] settled on for one host.
+class _Identities {
+  const _Identities(
+    this.offered, {
+    this.keys = const [],
+    this.certificateNote,
+    this.certificate,
+  });
+
+  /// What dartssh2 offers the server, in order; null for none.
+  final List<SSHIdentity>? offered;
+
+  /// The keys saved in the app for this host, which [Host.agentForwarding]
+  /// forwards along with the OS agent's. Empty for agent and password hosts.
+  final List<SSHKeyPair> keys;
+
+  /// Why the host's certificate was left out, for the failure message if
+  /// the login then fails without it.
+  final String? certificateNote;
+
+  /// The certificate offered first, when there is one. Its extensions say
+  /// what the shell may forward; see [ShellForwarding.certificate].
+  final SshCertificate? certificate;
+}
+
+/// An agent identity whose signing stops the login clock: the agent may be
+/// waiting on a person — a confirmation dialog, a security key to touch —
+/// and that wait must not count as the server going quiet.
+class _DeadlineHeldIdentity implements SSHIdentity {
+  _DeadlineHeldIdentity(this._inner, this._deadline, this._timeout);
+
+  final SSHIdentity _inner;
+  final _LoginDeadline _deadline;
+  final Duration _timeout;
+
+  @override
+  String get type => _inner.type;
+
+  @override
+  String? get comment => _inner.comment;
+
+  @override
+  bool get shouldProbe => _inner.shouldProbe;
+
+  @override
+  SSHHostKey toPublicKey() => _inner.toPublicKey();
+
+  @override
+  Future<SSHSignature> sign(Uint8List data) async {
+    _deadline.hold();
+    try {
+      return await _inner.sign(data);
+    } finally {
+      _deadline.arm(_timeout);
+    }
+  }
+}
+
+/// Thrown by [SshService._authenticate] when the server refused the saved
+/// password inside keyboard-interactive and a person is on hand to type the
+/// right one. Never escapes [SshService._login], which redials and asks.
+class _SavedPasswordRejected implements Exception {
+  const _SavedPasswordRejected();
+}
+
+/// The authentication timeout, kept by [SshService] rather than handed to
+/// dartssh2, because it has to stop while a person is answering a login
+/// prompt and dartssh2's runs on regardless.
+class _LoginDeadline {
+  _LoginDeadline(this._onExpired);
+
+  final void Function() _onExpired;
+  Timer? _timer;
+  var _finished = false;
+
+  /// Whether the clock ran out, as opposed to the login ending some other
+  /// way.
+  bool get expired => _expired;
+  var _expired = false;
+
+  /// Starts the clock afresh with [budget] to go.
+  void arm(Duration budget) {
+    if (_finished) return;
+    _timer?.cancel();
+    _timer = Timer(budget, () {
+      _finished = true;
+      _expired = true;
+      _onExpired();
+    });
+  }
+
+  /// Stops the clock until the next [arm]: a person is answering.
+  void hold() => _timer?.cancel();
+
+  /// The login is over, and nothing restarts the clock.
+  void finish() {
+    _finished = true;
+    _timer?.cancel();
   }
 }
 

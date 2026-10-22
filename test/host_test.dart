@@ -200,4 +200,99 @@ void main() {
       expect(storeless, [SshAuthMethod.agent]);
     });
   });
+
+  group('the 1.5 per-host options', () {
+    const all = Host(
+      id: 'opts',
+      label: 'Build box',
+      hostname: 'build.example.com',
+      port: 22,
+      username: 'ci',
+      authMethod: SshAuthMethod.agent,
+      agentForwarding: true,
+      x11Forwarding: true,
+      persistentSession: PersistentSession.tmux,
+      certificate: 'ssh-ed25519-cert-v01@openssh.com AAAAC3 ci@build',
+      transport: HostTransport.mosh,
+    );
+
+    test('a host using none of them saves exactly as before they existed',
+        () {
+      expect(
+        host.toJson().keys,
+        isNot(anyOf(
+          contains('agentForwarding'),
+          contains('x11Forwarding'),
+          contains('persistentSession'),
+          contains('certificate'),
+          contains('transport'),
+        )),
+      );
+    });
+
+    test('a host saved before 1.5 reads as all off, plain SSH', () {
+      final restored = Host.fromJson(const {
+        'id': 'old',
+        'hostname': 'old.example.com',
+        'username': 'root',
+        'authMethod': 'password',
+      });
+      expect(restored.agentForwarding, isFalse);
+      expect(restored.x11Forwarding, isFalse);
+      expect(restored.persistentSession, PersistentSession.off);
+      expect(restored.certificate, isNull);
+      expect(restored.transport, HostTransport.ssh);
+    });
+
+    test('every option round-trips through JSON', () {
+      final restored = Host.fromJson(all.toJson());
+      expect(restored.agentForwarding, isTrue);
+      expect(restored.x11Forwarding, isTrue);
+      expect(restored.persistentSession, PersistentSession.tmux);
+      expect(restored.certificate, all.certificate);
+      expect(restored.transport, HostTransport.mosh);
+      for (final p in PersistentSession.values) {
+        expect(
+          Host.fromJson(all.copyWith(persistentSession: p).toJson())
+              .persistentSession,
+          p,
+        );
+      }
+    });
+
+    test('unknown or blank stored values fall back to the defaults', () {
+      final restored = Host.fromJson({
+        ...all.toJson(),
+        'persistentSession': 'zellij',
+        'transport': 'quic',
+        'certificate': '  ',
+      });
+      expect(restored.persistentSession, PersistentSession.off);
+      expect(restored.transport, HostTransport.ssh);
+      expect(restored.certificate, isNull);
+    });
+
+    test('survive every helper that rebuilds a host field by field', () {
+      for (final rebuilt in [
+        all.withGroup('Other'),
+        all.withJumpHost('jump'),
+        all.withCertificate(all.certificate),
+        all.copyWith(label: 'Renamed'),
+      ]) {
+        expect(rebuilt.agentForwarding, isTrue);
+        expect(rebuilt.x11Forwarding, isTrue);
+        expect(rebuilt.persistentSession, PersistentSession.tmux);
+        expect(rebuilt.certificate, all.certificate);
+        expect(rebuilt.transport, HostTransport.mosh);
+        expect(rebuilt.legacyAlgorithms, all.legacyAlgorithms);
+      }
+    });
+
+    test('withCertificate(null) removes it, which copyWith cannot do', () {
+      expect(all.copyWith(certificate: null).certificate, all.certificate);
+      final cleared = all.withCertificate(null);
+      expect(cleared.certificate, isNull);
+      expect(cleared.toJson().containsKey('certificate'), isFalse);
+    });
+  });
 }

@@ -1,5 +1,8 @@
 import 'package:flutter/material.dart';
 
+import '../l10n/l10n.dart';
+import '../services/diagnostics_log.dart';
+
 /// Asks for the passphrase of an existing credential vault, or null if the
 /// user backed out.
 ///
@@ -38,41 +41,47 @@ class _UnlockVaultDialogState extends State<_UnlockVaultDialog> {
     super.dispose();
   }
 
+  /// Closes with [value], which the diagnostics log learns first: a failed
+  /// unlock can end up in an error message.
+  void _submit(String value) {
+    DiagnosticsLog.instance.learnSecret(value);
+    Navigator.of(context).pop(value);
+  }
+
   @override
   Widget build(BuildContext context) {
+    final l10n = context.l10n;
     return AlertDialog(
-      title: const Text('Unlock saved credentials'),
-      content: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Text(
-            'Enter the app passphrase protecting your saved passwords and '
-            'keys.',
-            style: TextStyle(height: 1.35),
-          ),
-          const SizedBox(height: 14),
-          TextField(
-            controller: _passphrase,
-            obscureText: true,
-            autofocus: true,
-            onSubmitted: (value) => Navigator.of(context).pop(value),
-            decoration: InputDecoration(
-              labelText: 'App passphrase',
-              errorText: widget.error,
-              errorMaxLines: 2,
+      title: Text(l10n.vaultUnlockTitle),
+      content: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(l10n.vaultUnlockBody, style: const TextStyle(height: 1.35)),
+            const SizedBox(height: 14),
+            TextField(
+              controller: _passphrase,
+              obscureText: true,
+              autofocus: true,
+              onSubmitted: _submit,
+              decoration: InputDecoration(
+                labelText: l10n.vaultUnlockPassphraseLabel,
+                errorText: widget.error,
+                errorMaxLines: 2,
+              ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
       actions: [
         TextButton(
           onPressed: () => Navigator.of(context).pop(),
-          child: const Text('Cancel'),
+          child: Text(MaterialLocalizations.of(context).cancelButtonLabel),
         ),
         FilledButton(
-          onPressed: () => Navigator.of(context).pop(_passphrase.text),
-          child: const Text('Unlock'),
+          onPressed: () => _submit(_passphrase.text),
+          child: Text(l10n.vaultUnlockButton),
         ),
       ],
     );

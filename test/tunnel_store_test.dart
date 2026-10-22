@@ -162,7 +162,7 @@ void main() {
       final binding = broken.bindings.single;
       expect(binding.profile.id, 'orphan');
       expect(binding.host, isNull);
-      expect(binding.brokenMessage, contains('has been deleted'));
+      expect(binding.isBroken, isTrue);
     });
 
     test('broken tunnels are collected last, whatever order they were in', () {
@@ -178,14 +178,13 @@ void main() {
       expect(groups.last.isBroken, isTrue);
     });
 
-    test('a healthy binding has no broken message to show', () {
+    test('a healthy binding is not broken', () {
       final binding = groupTunnelsByHost(
         [profile(id: 'a')],
         [host()],
       ).single.bindings.single;
 
       expect(binding.isBroken, isFalse);
-      expect(binding.brokenMessage, isNull);
       expect(binding.hostLabel, 'Bastion');
     });
 

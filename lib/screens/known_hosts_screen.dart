@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../l10n/l10n.dart';
 import '../models/known_host.dart';
 import '../services/known_hosts_service.dart';
 import '../theme.dart';
@@ -39,23 +40,25 @@ class _KnownHostsScreenState extends State<KnownHostsScreen> {
   Future<void> _forget(KnownHostKey key) async {
     final confirmed = await showDialog<bool>(
       context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Forget this host key?'),
-        content: Text(
-          'The next connection to ${key.hostname}:${key.port} will be '
-          'treated as first-use again and ask you to verify its key.',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(false),
-            child: const Text('Cancel'),
+      builder: (context) {
+        final l10n = context.l10n;
+        return AlertDialog(
+          title: Text(l10n.knownHostsForgetTitle),
+          content: Text(
+            l10n.knownHostsForgetBody('${key.hostname}:${key.port}'),
           ),
-          FilledButton(
-            onPressed: () => Navigator.of(context).pop(true),
-            child: const Text('Forget'),
-          ),
-        ],
-      ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(false),
+              child: Text(MaterialLocalizations.of(context).cancelButtonLabel),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(context).pop(true),
+              child: Text(l10n.knownHostsForget),
+            ),
+          ],
+        );
+      },
     );
 
     if (confirmed != true) return;
@@ -71,14 +74,15 @@ class _KnownHostsScreenState extends State<KnownHostsScreen> {
     await Clipboard.setData(ClipboardData(text: key.fingerprint));
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Fingerprint copied')),
+      SnackBar(content: Text(context.l10n.knownHostsFingerprintCopied)),
     );
   }
 
   @override
   Widget build(BuildContext context) {
+    final l10n = context.l10n;
     return Scaffold(
-      appBar: AppBar(title: const Text('Known hosts')),
+      appBar: AppBar(title: Text(l10n.knownHostsTitle)),
       body: FutureBuilder<List<KnownHostKey>>(
         future: _future,
         builder: (context, snapshot) {
@@ -117,13 +121,13 @@ class _KnownHostsScreenState extends State<KnownHostsScreen> {
                   ),
                   subtitle: _KnownHostSubtitle(
                     hostKey: key,
-                    addedLabel: _formatDate(key.addedAt),
+                    addedLabel: l10n.knownHostsAdded(_formatDate(key.addedAt)),
                     onCopyFingerprint: () =>
                         unawaited(_copyFingerprint(key)),
                   ),
                   isThreeLine: true,
                   trailing: IconButton(
-                    tooltip: 'Forget',
+                    tooltip: l10n.knownHostsForget,
                     icon: const Icon(Icons.delete_outline),
                     onPressed: () => _forget(key),
                   ),
@@ -187,7 +191,7 @@ class _KnownHostSubtitle extends StatelessWidget {
               ),
             ),
           ),
-          Text('Added $addedLabel', style: mutedStyle),
+          Text(addedLabel, style: mutedStyle),
         ],
       ),
     );
@@ -198,6 +202,7 @@ class _EmptyKnownHosts extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final l10n = context.l10n;
     return Center(
       child: Padding(
         padding: const EdgeInsets.all(32),
@@ -211,13 +216,13 @@ class _EmptyKnownHosts extends StatelessWidget {
             ),
             const SizedBox(height: 16),
             Text(
-              'No trusted host keys yet',
+              l10n.knownHostsEmptyTitle,
+              textAlign: TextAlign.center,
               style: theme.textTheme.titleMedium,
             ),
             const SizedBox(height: 8),
             Text(
-              'Keys are added automatically the first time you connect to a '
-              'new server and accept its fingerprint.',
+              l10n.knownHostsEmptyBody,
               textAlign: TextAlign.center,
               style: theme.textTheme.bodySmall,
             ),

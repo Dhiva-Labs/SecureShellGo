@@ -16,7 +16,7 @@ publish_to: 'none' # Remove this line if you wish to publish to pub.dev
 # https://developer.apple.com/library/archive/documentation/General/Reference/InfoPlistKeyReference/Articles/CoreFoundationKeys.html
 # In Windows, build-name is used as the major, minor, and patch parts
 # of the product and file versions while build-number is used as the build suffix.
-version: 1.4.5+12
+version: 1.5.0+13
 
 environment:
   sdk: ^3.12.2
@@ -30,11 +30,15 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
+  # Translations (lib/l10n, l10n.yaml). intl is pinned by the SDK.
+  flutter_localizations:
+    sdk: flutter
+  intl: any
 
   # The following adds the Cupertino Icons font to your application.
   # Use with the CupertinoIcons class for iOS style icons.
   cupertino_icons: ^1.0.8
-  dartssh2: ^2.22.3
+  dartssh2: ^4.1.0
   xterm: ^4.0.0
   flutter_secure_storage: ^10.3.1
   path_provider: ^2.1.6
@@ -56,6 +60,9 @@ dependencies:
   # (GTK, IFileDialog, NSOpenPanel) would cost far more native code than this
   # one Flutter-team-maintained dependency.
   file_selector: ^1.1.0
+  # Opens a web address tapped in the terminal in the browser. Only
+  # http/https ever reach it; see services/terminal_links.dart.
+  url_launcher: ^6.3.3
   # UTF-16 strings for the one Win32 call the app makes itself, ShellExecuteW
   # (windows_shell_open.dart). Already in the tree through path_provider and
   # file_selector; declared because the app now uses it directly.
@@ -71,17 +78,32 @@ dev_dependencies:
   # package. See that file for information about deactivating specific lint
   # rules and activating additional ones.
   flutter_lints: ^6.0.0
+  msix: ^3.18.0
 
 # For information on the generic Dart part of this file, see the
 # following page: https://dart.dev/tools/pub/pubspec
 
 # The following section is specific to Flutter packages.
 flutter:
+  # Generates AppLocalizations from lib/l10n/*.arb on every pub get and build.
+  generate: true
 
   # The following line ensures that the Material Icons font is
   # included with your application, so that you can use the icons in
   # the material Icons class.
   uses-material-design: true
+
+  # The terminal's bundled typeface (Settings > Terminal > Font), under the
+  # SIL Open Font License 1.1; the licence ships beside it and is shown on
+  # the licences page — see widgets/terminal_fonts.dart.
+  assets:
+    - assets/fonts/JetBrainsMono-OFL.txt
+  fonts:
+    - family: JetBrains Mono
+      fonts:
+        - asset: assets/fonts/JetBrainsMono-Regular.ttf
+        - asset: assets/fonts/JetBrainsMono-Bold.ttf
+          weight: 700
 
   # To add assets to your application, add an assets section, like this:
   # assets:
@@ -113,3 +135,17 @@ flutter:
   #
   # For details regarding fonts from package dependencies,
   # see https://flutter.dev/to/font-from-package
+
+# Microsoft Store packaging: build on Windows with `dart run msix:create`.
+# identity_name and publisher come from Partner Center (Product identity) and
+# must replace the placeholders before the first submission. `store: true`
+# leaves signing to the Store.
+msix_config:
+  display_name: SecureShell Go
+  publisher_display_name: Dhiva Labs
+  identity_name: REPLACE.WithPartnerCenterIdentityName
+  publisher: CN=REPLACE-WITH-PARTNER-CENTER-PUBLISHER-ID
+  msix_version: 1.5.0.0
+  logo_path: store/graphics/icon-512.png
+  capabilities: internetClient,privateNetworkClientServer
+  store: true

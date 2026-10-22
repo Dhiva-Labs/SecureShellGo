@@ -1,3 +1,24 @@
+secureshellgo (1.5.0~noble1) noble; urgency=medium
+
+  * A major update; the full list is in CHANGELOG.md.
+  * The remote editor edits code like an IDE: detected indentation, Tab and
+    auto-indent, comment and line shortcuts, per-file undo, and saves that
+    never change bytes nobody edited.
+  * Mosh, built in, for a terminal that survives roaming and sleep.
+  * Sign in with ssh-agent (security keys included) and OpenSSH
+    certificates; per-host agent and X11 forwarding.
+  * A terminal that never dies: dead links are noticed and reconnected,
+    transfers resume, and tmux or screen can keep the shell on the server.
+  * Find in the terminal, clickable links, session logs, cursor, bell, font
+    and scrollback settings.
+  * Commands on many servers at once; compress, extract, search, duplicate
+    and change owner in the file browser.
+  * Translated into Simplified Chinese, Japanese, Brazilian Portuguese,
+    Spanish, Russian, German, Korean and French.
+  * Security fixes and hardening throughout; see CHANGELOG.md.
+
+ -- Dhiva Labs <dhivakar1010@gmail.com>  Thu, 22 Oct 2026 12:00:00 +0530
+
 secureshellgo (1.4.4~noble1) noble; urgency=medium
 
   * Ctrl+L opens a location bar in the file browser: type or paste a path

@@ -66,6 +66,57 @@ enum HostColorLabel {
   }
 }
 
+/// What keeps a shell running on the server when the connection to it drops,
+/// so a reconnect lands back in the same shell — scrollback, running job and
+/// all — rather than a fresh login.
+///
+/// Off unless chosen, per host: it leaves a tmux or screen session running on
+/// the server after the app has gone, which is a decision about that server.
+/// Persisted as [name], same reasoning as [SshAuthMethod].
+enum PersistentSession {
+  off,
+  tmux,
+  screen;
+
+  String get label => switch (this) {
+        PersistentSession.off => 'Off',
+        PersistentSession.tmux => 'tmux',
+        PersistentSession.screen => 'GNU screen',
+      };
+
+  /// Unrecognised or absent reads as [off]: a host saved before this existed
+  /// keeps the plain shell it always had.
+  static PersistentSession fromName(String? name) =>
+      PersistentSession.values.firstWhere(
+        (p) => p.name == name,
+        orElse: () => PersistentSession.off,
+      );
+}
+
+/// How the terminal's keystrokes and screen travel to and from the host.
+///
+/// Only the shell changes with this. Sign-in, files, tunnels and every
+/// command the app runs go over SSH either way — Mosh itself starts over SSH.
+enum HostTransport {
+  ssh,
+
+  /// Mosh's UDP protocol, which survives roaming between networks and long
+  /// sleeps that an SSH connection does not. Needs `mosh-server` installed
+  /// on the host.
+  mosh;
+
+  String get label => switch (this) {
+        HostTransport.ssh => 'SSH',
+        HostTransport.mosh => 'Mosh',
+      };
+
+  /// Unrecognised or absent reads as [ssh], what every host used before.
+  static HostTransport fromName(String? name) => HostTransport.values.firstWhere(
+        (t) => t.name == name,
+        orElse: () => HostTransport.ssh,
+      );
+}
+
 /// A remote machine the user connects to.
 ///
 /// This is the persistable half of a connection: it deliberately contains no
@@ -84,6 +135,12 @@ class Host {
     this.colorLabel,
     this.startupCommand,
     this.jumpHostId,
+    this.legacyAlgorithms = false,
+    this.agentForwarding = false,
+    this.x11Forwarding = false,
+    this.persistentSession = PersistentSession.off,
+    this.certificate,
+    this.transport = HostTransport.ssh,
   });
 
   final String id;
@@ -125,6 +182,46 @@ class Host {
   /// rejected with a specific message, in `jump_host_chain.dart`.
   final String? jumpHostId;
 
+  /// Whether to also offer the old algorithms this host may need: SHA-1 key
+  /// exchange and `ssh-rsa` host-key signatures, and CBC ciphers.
+  ///
+  /// Off by default and per host, never global. The SSH library stopped
+  /// proposing these in 4.0, as OpenSSH did, because SHA-1 signatures are
+  /// open to collisions and CBC to plaintext recovery (CVE-2008-5161). An old
+  /// router or NAS that speaks nothing newer then fails to connect, and the
+  /// error says to turn this on for that one host, so the weakening is a
+  /// decision about a server the user knows rather than something every
+  /// connection quietly falls back to.
+  final bool legacyAlgorithms;
+
+  /// Whether the session's connection forwards this device's SSH agent, so
+  /// `git pull` or `ssh` run in the shell can sign with keys that never
+  /// leave this device.
+  ///
+  /// Off by default, per host: for as long as the session lasts, anyone with
+  /// root on the server can ask the forwarded agent to sign. Separate from
+  /// the one-exec forwarding a direct server-to-server copy sets up for
+  /// itself (see `SessionTransport.agentSlot`), which this does not affect.
+  final bool agentForwarding;
+
+  /// Whether graphical programs started in the shell open their windows on
+  /// this device. Off by default; it needs an X server here to draw them.
+  final bool x11Forwarding;
+
+  /// See [PersistentSession].
+  final PersistentSession persistentSession;
+
+  /// An OpenSSH user certificate — the one line of a `…-cert.pub` file —
+  /// presented with this host's key, for servers that trust a certificate
+  /// authority rather than each key. Null for none, the ordinary case.
+  ///
+  /// Kept here, not in the credential store: a certificate is signed, not
+  /// secret, and is useless without the private key it certifies.
+  final String? certificate;
+
+  /// See [HostTransport].
+  final HostTransport transport;
+
   /// `user@host` or `user@host:port` when the port is non-standard.
   String get target =>
       port == 22 ? '$username@$hostname' : '$username@$hostname:$port';
@@ -144,6 +241,12 @@ class Host {
     HostColorLabel? colorLabel,
     String? startupCommand,
     String? jumpHostId,
+    bool? legacyAlgorithms,
+    bool? agentForwarding,
+    bool? x11Forwarding,
+    PersistentSession? persistentSession,
+    String? certificate,
+    HostTransport? transport,
   }) {
     return Host(
       id: id ?? this.id,
@@ -157,6 +260,12 @@ class Host {
       colorLabel: colorLabel ?? this.colorLabel,
       startupCommand: startupCommand ?? this.startupCommand,
       jumpHostId: jumpHostId ?? this.jumpHostId,
+      legacyAlgorithms: legacyAlgorithms ?? this.legacyAlgorithms,
+      agentForwarding: agentForwarding ?? this.agentForwarding,
+      x11Forwarding: x11Forwarding ?? this.x11Forwarding,
+      persistentSession: persistentSession ?? this.persistentSession,
+      certificate: certificate ?? this.certificate,
+      transport: transport ?? this.transport,
     );
   }
 
@@ -178,6 +287,12 @@ class Host {
         colorLabel: colorLabel,
         startupCommand: startupCommand,
         jumpHostId: jumpHostId,
+        legacyAlgorithms: legacyAlgorithms,
+        agentForwarding: agentForwarding,
+        x11Forwarding: x11Forwarding,
+        persistentSession: persistentSession,
+        certificate: certificate,
+        transport: transport,
       );
 
   /// Reassigns this host's group, [group] null meaning Ungrouped.
@@ -198,6 +313,34 @@ class Host {
         colorLabel: colorLabel,
         startupCommand: startupCommand,
         jumpHostId: jumpHostId,
+        legacyAlgorithms: legacyAlgorithms,
+        agentForwarding: agentForwarding,
+        x11Forwarding: x11Forwarding,
+        persistentSession: persistentSession,
+        certificate: certificate,
+        transport: transport,
+      );
+
+  /// Sets (or removes, with null) the certificate. Its own helper for the
+  /// reason [withGroup] is one: [copyWith] cannot set a field back to null.
+  Host withCertificate(String? certificate) => Host(
+        id: id,
+        label: label,
+        hostname: hostname,
+        port: port,
+        username: username,
+        authMethod: authMethod,
+        lastConnectedAt: lastConnectedAt,
+        group: group,
+        colorLabel: colorLabel,
+        startupCommand: startupCommand,
+        jumpHostId: jumpHostId,
+        legacyAlgorithms: legacyAlgorithms,
+        agentForwarding: agentForwarding,
+        x11Forwarding: x11Forwarding,
+        persistentSession: persistentSession,
+        certificate: certificate,
+        transport: transport,
       );
 
   Map<String, dynamic> toJson() => {
@@ -213,6 +356,15 @@ class Host {
         if (colorLabel != null) 'colorLabel': colorLabel!.name,
         if (startupCommand != null) 'startupCommand': startupCommand,
         if (jumpHostId != null) 'jumpHostId': jumpHostId,
+        if (legacyAlgorithms) 'legacyAlgorithms': true,
+        // Each written only when it differs from the default, so a host that
+        // uses none of them saves exactly as it did before they existed.
+        if (agentForwarding) 'agentForwarding': true,
+        if (x11Forwarding) 'x11Forwarding': true,
+        if (persistentSession != PersistentSession.off)
+          'persistentSession': persistentSession.name,
+        if (certificate != null) 'certificate': certificate,
+        if (transport != HostTransport.ssh) 'transport': transport.name,
       };
 
   factory Host.fromJson(Map<String, dynamic> json) {
@@ -245,6 +397,21 @@ class Host {
         final String id when id.trim().isNotEmpty => id,
         _ => null,
       },
+      // Absent on every host saved before this existed: the modern defaults.
+      legacyAlgorithms: json['legacyAlgorithms'] == true,
+      // Absent on every host saved before 1.5: all off, plain SSH — what
+      // every connection did until then.
+      agentForwarding: json['agentForwarding'] == true,
+      x11Forwarding: json['x11Forwarding'] == true,
+      persistentSession: PersistentSession.fromName(
+        json['persistentSession'] as String?,
+      ),
+      // Blank reads as none, like jumpHostId: it could never be presented.
+      certificate: switch (json['certificate']) {
+        final String cert when cert.trim().isNotEmpty => cert,
+        _ => null,
+      },
+      transport: HostTransport.fromName(json['transport'] as String?),
     );
   }
 }

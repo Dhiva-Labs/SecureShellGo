@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
+import '../l10n/l10n.dart';
 import '../services/app_lock_controller.dart';
 
 /// The full-screen gate that covers the app while it is locked.
@@ -71,6 +72,10 @@ class _AppLockGateState extends State<AppLockGate>
   /// return to a locked app still gets its prompt.
   bool _autoPrompted = false;
 
+  /// What the OS sheet says it is for, in the app's language. Read in
+  /// [didChangeDependencies], since [initState] cannot look the language up.
+  String? _reason;
+
   @override
   void initState() {
     super.initState();
@@ -80,7 +85,24 @@ class _AppLockGateState extends State<AppLockGate>
       setState(_syncCooldownTicker);
       _promptIfNeeded();
     });
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final l10n = context.l10n;
+    _reason = l10n.appLockPromptReason(l10n.appTitle);
+    // The first prompt, here rather than in initState for the reason above.
+    // Also runs on a language change, where [_autoPrompted] keeps it from
+    // raising a second sheet.
     _promptIfNeeded();
+  }
+
+  Future<void> _authenticate() {
+    final reason = _reason;
+    return reason == null
+        ? widget.controller.authenticate()
+        : widget.controller.authenticate(reason: reason);
   }
 
   @override
@@ -144,7 +166,7 @@ class _AppLockGateState extends State<AppLockGate>
     if (controller.state.phase == AppLockPhase.authenticating) return;
     if (controller.isInCooldown()) return;
     _autoPrompted = true;
-    unawaited(controller.authenticate());
+    unawaited(_authenticate());
   }
 
   void _syncCooldownTicker() {
@@ -178,7 +200,7 @@ class _AppLockGateState extends State<AppLockGate>
         if (locked)
           _LockCover(
             controller: widget.controller,
-            onUnlock: () => unawaited(widget.controller.authenticate()),
+            onUnlock: () => unawaited(_authenticate()),
           ),
       ],
     );
@@ -194,6 +216,7 @@ class _LockCover extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final l10n = context.l10n;
     final cooling = controller.isInCooldown();
     final remaining = controller.cooldownRemaining();
     final busy = controller.state.phase == AppLockPhase.authenticating;
@@ -220,13 +243,13 @@ class _LockCover extends StatelessWidget {
                   ),
                   const SizedBox(height: 20),
                   Text(
-                    'SecureShell Go is locked',
+                    l10n.appLockLocked(l10n.appTitle),
                     style: theme.textTheme.titleLarge,
                     textAlign: TextAlign.center,
                   ),
                   const SizedBox(height: 10),
                   Text(
-                    'Your sessions and tunnels are still running.',
+                    l10n.appLockStillRunning,
                     style: theme.textTheme.bodyMedium?.copyWith(
                       color: theme.colorScheme.onSurfaceVariant,
                     ),
@@ -235,8 +258,7 @@ class _LockCover extends StatelessWidget {
                   const SizedBox(height: 28),
                   if (cooling)
                     Text(
-                      'Too many attempts. Try again in '
-                      '${_formatRemaining(remaining)}.',
+                      _cooldownMessage(l10n, remaining),
                       style: theme.textTheme.bodyMedium?.copyWith(
                         color: theme.colorScheme.error,
                       ),
@@ -246,12 +268,14 @@ class _LockCover extends StatelessWidget {
                     FilledButton.icon(
                       onPressed: busy ? null : onUnlock,
                       icon: const Icon(Icons.lock_open_outlined),
-                      label: Text(busy ? 'Waiting…' : 'Unlock'),
+                      label: Text(
+                        busy ? l10n.appLockWaiting : l10n.appLockUnlock,
+                      ),
                     ),
                   if (!cooling && controller.state.failedAttempts > 0) ...[
                     const SizedBox(height: 14),
                     Text(
-                      _attemptsMessage(controller.state.failedAttempts),
+                      _attemptsMessage(l10n, controller.state.failedAttempts),
                       style: theme.textTheme.bodySmall?.copyWith(
                         color: theme.colorScheme.onSurfaceVariant,
                       ),
@@ -270,19 +294,17 @@ class _LockCover extends StatelessWidget {
   /// Says how many tries are left before the wait, and — deliberately — says
   /// nothing that could be read as a threat to the user's data, because there
   /// is none: running out of attempts costs a delay and nothing else.
-  static String _attemptsMessage(int failed) {
+  static String _attemptsMessage(AppLocalizations l10n, int failed) {
     final left = AppLockController.attemptsBeforeCooldown -
         (failed % AppLockController.attemptsBeforeCooldown);
-    if (left == 1) return 'One more try before a short wait.';
-    return '$left more tries before a short wait.';
+    return l10n.appLockTriesLeft(left);
   }
 
-  static String _formatRemaining(Duration remaining) {
+  static String _cooldownMessage(AppLocalizations l10n, Duration remaining) {
     final seconds = remaining.inSeconds + (remaining.inMilliseconds % 1000 > 0
         ? 1
         : 0);
-    if (seconds < 60) return '${seconds}s';
-    final minutes = (seconds / 60).ceil();
-    return '${minutes}m';
+    if (seconds < 60) return l10n.appLockTooManySeconds(seconds);
+    return l10n.appLockTooManyMinutes((seconds / 60).ceil());
   }
 }

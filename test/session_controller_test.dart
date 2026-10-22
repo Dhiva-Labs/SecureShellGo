@@ -1,9 +1,9 @@
 import 'dart:async';
+import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:dartssh2/dartssh2.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:secure_shell_go/models/host.dart';
 import 'package:secure_shell_go/models/remote_entry.dart';
 import 'package:secure_shell_go/services/device_storage.dart';
 import 'package:secure_shell_go/services/download_plan.dart';
@@ -12,34 +12,18 @@ import 'package:secure_shell_go/services/sftp_service.dart';
 import 'package:secure_shell_go/services/ssh_service.dart';
 import 'package:secure_shell_go/services/transfer_queue.dart';
 
+import 'memory_fs.dart';
+import 'support/fake_transport.dart';
+
 /// Stands in for a live [SshConnection]. dartssh2's `SSHClient` cannot be
 /// faked usefully, which is exactly why [SessionTransport] exists.
-class FakeTransport implements SessionTransport {
+class FakeTransport extends FakeTransportBase {
   FakeTransport({this.sftpError});
 
-  final _done = Completer<void>();
   final Object? sftpError;
 
-  var closeCount = 0;
   var openSftpCount = 0;
-  var pingCount = 0;
   var startShellCount = 0;
-
-  @override
-  final Host host = const Host(
-    id: 'h1',
-    label: 'Test box',
-    hostname: 'example.com',
-    port: 22,
-    username: 'dev',
-    authMethod: SshAuthMethod.password,
-  );
-
-  @override
-  Future<void> get done => _done.future;
-
-  @override
-  bool get isClosed => closeCount > 0;
 
   /// The one thing about a shell that can be tested without a real SSH
   /// channel is *how many times it is opened*, which is the whole question
@@ -63,30 +47,6 @@ class FakeTransport implements SessionTransport {
   Future<SftpClient> openSftp() {
     openSftpCount++;
     throw UnimplementedError('tests inject a RemoteFileSystem instead');
-  }
-
-  @override
-  Future<SSHSession> execute(String command) =>
-      throw UnimplementedError('exec needs a real SSH channel');
-
-  @override
-  MutableSSHAgentHandler get agentSlot => _agentSlot;
-  final _agentSlot = MutableSSHAgentHandler();
-
-  @override
-  Future<void> ping() async => pingCount++;
-
-  @override
-  void close() => closeCount++;
-
-  /// Simulates the transport going away underneath the session.
-  void dropConnection([Object? error]) {
-    if (_done.isCompleted) return;
-    if (error == null) {
-      _done.complete();
-    } else {
-      _done.completeError(error);
-    }
   }
 }
 
@@ -436,7 +396,7 @@ void main() {
       addTearDown(session.dispose);
 
       final closed = session.changes.first;
-      transport.dropConnection();
+      transport.drop();
       await closed;
 
       expect(session.isClosed, isTrue);
@@ -448,7 +408,7 @@ void main() {
       addTearDown(session.dispose);
 
       final closed = session.changes.first;
-      transport.dropConnection(StateError('reset by peer'));
+      transport.drop(StateError('reset by peer'));
       await closed;
 
       expect(session.isClosed, isTrue);
@@ -502,7 +462,7 @@ void main() {
       addTearDown(session.dispose);
 
       final closed = session.changes.first;
-      transport.dropConnection();
+      transport.drop();
       await closed;
 
       // The background case is the one that matters: a drop noticed while the
@@ -560,7 +520,7 @@ void main() {
       addTearDown(session.dispose);
 
       final closed = session.changes.first;
-      transport.dropConnection();
+      transport.drop();
       await closed;
 
       await expectLater(session.sftp(), throwsA(isA<SftpFailure>()));
@@ -670,7 +630,7 @@ void main() {
       addTearDown(session.dispose);
 
       final closed = session.changes.first;
-      transport.dropConnection();
+      transport.drop();
       await closed;
 
       final task = session.queueDownload(file('a.txt'));
@@ -787,7 +747,8 @@ void main() {
         await deliver();
       }
 
-      expect(transport.pingCount, 3);
+      // Three ticks, and the one sent as the session opened.
+      expect(transport.pingCount, 4);
       expect(view.announcedNames, [
         ['notes.txt'],
       ]);
@@ -906,6 +867,124 @@ void main() {
 
       final picked = await session.pickLocalFiles();
       expect(picked.map((f) => f.name), ['a.txt', 'b.txt']);
+    });
+  });
+
+  group('folder uploads', () {
+    late Directory local;
+    late MemoryFs remote;
+
+    /// The folder on the server that a `Replace` is aimed at.
+    const oldTree = {
+      'file:index.html=4242',
+      'dir:old',
+      'file:old/stale.txt=7',
+    };
+
+    /// The picked folder, and what the server should hold once it replaces
+    /// the old one — the empty `logs/` included.
+    const newTree = {
+      'file:index.html=100',
+      'dir:css',
+      'file:css/app.css=300',
+      'dir:logs',
+    };
+
+    setUp(() {
+      local = Directory.systemTemp.createTempSync('folder-upload');
+      addTearDown(() => local.deleteSync(recursive: true));
+      Directory('${local.path}/site/css').createSync(recursive: true);
+      Directory('${local.path}/site/logs').createSync();
+      File('${local.path}/site/index.html').writeAsBytesSync(List.filled(100, 1));
+      File('${local.path}/site/css/app.css').writeAsBytesSync(List.filled(300, 2));
+
+      remote = MemoryFs()
+        ..directories.addAll(['/srv', '/srv/site', '/srv/site/old'])
+        ..files['/srv/site/index.html'] = 4242
+        ..files['/srv/site/old/stale.txt'] = 7;
+    });
+
+    SessionController buildOverRemote() => SessionController(
+          connection: transport,
+          storage: FakeStorage(),
+          openFileSystem: () async => remote,
+          keepaliveScheduler: (_, tick) {
+            final timer = HandCrankedTimer(tick);
+            keepaliveTimers.add(timer);
+            return timer;
+          },
+        );
+
+    TransferTask replaceSite(SessionController session) =>
+        session.queueUploadDirectory(
+          pickedPath: '${local.path}/site',
+          pickedName: 'site',
+          remoteDirectory: '/srv',
+          overwrite: true,
+        );
+
+    test('a replace yields exactly the new folder', () async {
+      final session = buildOverRemote();
+      addTearDown(session.dispose);
+
+      final task = replaceSite(session);
+      await settle(session);
+
+      expect(task.status, TransferStatus.completed);
+      expect(task.destination, '/srv/site');
+      expect(remote.treeUnder('/srv/site'), newTree);
+      expect(remote.leftovers, isEmpty);
+    });
+
+    test('a failure mid-upload leaves the folder being replaced, and no '
+        'staging folder', () async {
+      final session = buildOverRemote();
+      addTearDown(session.dispose);
+      // index.html (100 bytes) goes up; app.css drops part way through.
+      remote.failWriteAfter = 200;
+
+      final task = replaceSite(session);
+      await settle(session);
+
+      expect(task.status, TransferStatus.failed);
+      expect(remote.treeUnder('/srv/site'), oldTree);
+      expect(remote.leftovers, isEmpty);
+    });
+
+    test('a cancel mid-upload leaves the folder being replaced, and no '
+        'staging folder', () async {
+      final session = buildOverRemote();
+      addTearDown(session.dispose);
+      final marker = File('${local.path}/marker.txt')..writeAsBytesSync([1]);
+
+      late TransferTask task;
+      TransferTask? after;
+      var cancelled = false;
+      remote.onChunkRead = (moved) {
+        if (moved < 128 || cancelled) return;
+        cancelled = true;
+        // A cancel marks the row at once, while the upload is still
+        // unwinding. The queue runs one transfer at a time, so a transfer
+        // queued behind it finishing means the upload's cleanup has
+        // finished too.
+        after = session.transfers.enqueueUpload(
+          localPath: marker.path,
+          remotePath: '/srv/marker.txt',
+          name: 'marker.txt',
+        );
+        session.transfers.cancel(task.id);
+      };
+
+      task = replaceSite(session);
+      await session.transfers.changes
+          .firstWhere((_) => after?.status.isFinished ?? false);
+
+      expect(cancelled, isTrue);
+      expect(task.status, TransferStatus.cancelled);
+      expect(after!.status, TransferStatus.completed);
+      expect(remote.files['/srv/marker.txt'], 1);
+      expect(remote.treeUnder('/srv/site'), oldTree);
+      expect(remote.leftovers, isEmpty);
     });
   });
 
@@ -1288,7 +1367,7 @@ void main() {
       addTearDown(session.dispose);
 
       final closed = session.changes.first;
-      transport.dropConnection();
+      transport.drop();
       await closed;
 
       expect(

@@ -44,16 +44,24 @@ Compressed size:    ~147 MB (xz -6)
 pub-cache-3.44.6.tar.xz
 -----------------------
 The subset of the pub.dev hosted cache that resolves the exact package
-versions listed in pubspec.lock. Only the 77 hosted packages from
+versions listed in pubspec.lock. Only the 93 hosted packages from
 pubspec.lock are shipped, along with their matching sha256 hash files under
 hosted-hashes/pub.dev/.
 
-Populated by running `flutter pub get` once against the stripped Flutter SDK
-above with a scratch PUB_CACHE, then copying only the pubspec.lock-resolved
-package directories out.
+Populated by running `flutter pub get --enforce-lockfile` once against a
+fresh project checkout with a scratch PUB_CACHE, then copying only
+hosted/pub.dev/<name>-<version>/ and hosted-hashes/pub.dev/ out (not
+hosted/pub.dev/.cache/, pub's version listings, which an offline get with a
+lockfile does not read).
 
-Uncompressed size:  ~89 MB
-Compressed size:    ~19 MB (xz -6)
+Unlike the SDK tarball, this one goes stale whenever pubspec.lock changes:
+a package added or upgraded since it was built makes `flutter pub get
+--offline` fail with "could not find package <name> in cache". Rebuild it
+before every PPA upload that follows a pubspec.lock change. Last rebuilt for
+1.5.0, which added dartssh2 4.1, msix, intl, url_launcher and others.
+
+Uncompressed size:  ~150 MB
+Compressed size:    ~31 MB (xz -6)
 
 How debian/rules uses these
 ---------------------------
@@ -67,8 +75,8 @@ How debian/rules uses these
 
 No step reaches the network.
 
-Regenerating (only when bumping the Flutter version pin)
---------------------------------------------------------
+Regenerating the SDK (when bumping the Flutter version pin)
+-----------------------------------------------------------
 This is not automated because it only happens on a version bump. Steps:
 
   1. Download the upstream Flutter Linux stable tarball for the new version.

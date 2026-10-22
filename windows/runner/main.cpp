@@ -13,6 +13,26 @@ int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE prev,
     CreateAndAttachConsole();
   }
 
+  // One copy at a time. Two would each hold the saved hosts, settings and
+  // trusted host keys in memory and overwrite each other's saves; a second
+  // launch brings the running window to the front and leaves instead. The
+  // mutex is per signed-in user ("Local\\"), so two users on one PC each
+  // get their own copy.
+  HANDLE instance_mutex = ::CreateMutexW(
+      nullptr, FALSE, L"Local\\DhivaLabs.SecureShellGo.SingleInstance");
+  if (instance_mutex != nullptr && ::GetLastError() == ERROR_ALREADY_EXISTS) {
+    HWND existing =
+        ::FindWindowW(L"FLUTTER_RUNNER_WIN32_WINDOW", L"SecureShell Go");
+    if (existing != nullptr) {
+      if (::IsIconic(existing)) {
+        ::ShowWindow(existing, SW_RESTORE);
+      }
+      ::SetForegroundWindow(existing);
+    }
+    ::CloseHandle(instance_mutex);
+    return EXIT_SUCCESS;
+  }
+
   // Initialize COM, so that it is available for use in the library and/or
   // plugins.
   ::CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
@@ -39,5 +59,8 @@ int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE prev,
   }
 
   ::CoUninitialize();
+  if (instance_mutex != nullptr) {
+    ::CloseHandle(instance_mutex);
+  }
   return EXIT_SUCCESS;
 }

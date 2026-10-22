@@ -6,6 +6,7 @@ import android.os.Build
 import android.view.WindowManager
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
+import io.flutter.plugin.common.EventChannel
 import io.flutter.plugin.common.MethodChannel
 
 class MainActivity : FlutterActivity() {
@@ -23,6 +24,9 @@ class MainActivity : FlutterActivity() {
 
     /** The optional app lock's platform half. See `AppLockBridge.kt`. */
     private var appLock: AppLockBridge? = null
+
+    /** Default-network changes, for reconnecting. See `NetworkWatchBridge.kt`. */
+    private var networkWatch: NetworkWatchBridge? = null
 
     /**
      * Kept so a share arriving while the app is already running can tell Dart
@@ -112,14 +116,26 @@ class MainActivity : FlutterActivity() {
             AppLockBridge.CHANNEL,
         ).setMethodCallHandler(lock)
 
+        val watch = NetworkWatchBridge(this)
+        networkWatch = watch
+        EventChannel(
+            flutterEngine.dartExecutor.binaryMessenger,
+            NetworkWatchBridge.CHANNEL,
+        ).setStreamHandler(watch)
+
         // Start/stop the foreground service that keeps the process — and so
         // the SSH socket — alive while the user is in another app. The
         // reference counting lives on the Dart side in
-        // session_foreground.dart; this end just does what it is told.
-        MethodChannel(
+        // session_foreground.dart; this end just does what it is told, and
+        // says so when Android stops the service by itself.
+        val sessionService = MethodChannel(
             flutterEngine.dartExecutor.binaryMessenger,
             SESSION_SERVICE_CHANNEL,
-        ).setMethodCallHandler { call, result ->
+        )
+        SessionForegroundService.onTimedOut = {
+            runOnUiThread { runCatching { sessionService.invokeMethod("timedOut", null) } }
+        }
+        sessionService.setMethodCallHandler { call, result ->
             when (call.method) {
                 "start" -> {
                     val label = call.argument<String>("label").orEmpty()
@@ -217,6 +233,9 @@ class MainActivity : FlutterActivity() {
         appLock = null
         shareChannel?.setMethodCallHandler(null)
         shareChannel = null
+        networkWatch?.dispose()
+        networkWatch = null
+        SessionForegroundService.onTimedOut = null
         // The engine goes with the activity, and the session with the engine,
         // so a notification outliving this point would be advertising a
         // connection that no longer exists.

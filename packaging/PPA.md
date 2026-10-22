@@ -101,7 +101,9 @@ the source package under `packaging/vendor/`:
   * `packaging/vendor/flutter-3.44.6-linux-slim.tar.xz` — a Linux-only
     stripped copy of Flutter 3.44.6 stable (~147 MB compressed).
   * `packaging/vendor/pub-cache-3.44.6.tar.xz` — only the pub.dev packages
-    resolved by `pubspec.lock` (~19 MB compressed).
+    resolved by `pubspec.lock` (~31 MB compressed). Rebuild it whenever
+    `pubspec.lock` has changed since the last upload, or Launchpad's offline
+    `pub get` fails on the missing package.
 
 `debian/rules` extracts these into build-scoped `.flutter/` and
 `.pub-cache/` directories, sets `FLUTTER_PREBUILT_ENGINE_VERSION` so the
@@ -110,7 +112,7 @@ flutter tool doesn't try to derive it from a full git history, and runs
 — nothing reaches the network.
 
 See `packaging/vendor/README` for the full recipe used to produce those
-tarballs and how to refresh them on a Flutter version bump.
+tarballs and how to refresh them.
 
 ## 5. Once published: user install command
 

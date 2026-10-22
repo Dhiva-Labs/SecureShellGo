@@ -18,6 +18,8 @@ import 'package:secure_shell_go/services/ssh_service.dart';
 // ignore: implementation_imports
 import 'package:dartssh2/src/ssh_channel.dart';
 
+import 'support/fake_transport.dart';
+
 /// A real [SSHSession] wired to a channel connected to nothing, with every
 /// member the monitoring services read overridden to scripted values.
 ///
@@ -167,7 +169,7 @@ class _StdinSink implements StreamSink<Uint8List> {
 /// canned answer passes `stdout:`, and a test that needs different answers
 /// per command (a `ps` that refuses its flags and falls back, a `systemctl`
 /// probe followed by a list) supplies a function.
-class FakeExecTransport implements SessionTransport {
+class FakeExecTransport extends FakeTransportBase {
   FakeExecTransport({
     this.stdout = '',
     this.stderrText = '',
@@ -175,8 +177,21 @@ class FakeExecTransport implements SessionTransport {
     this.delay,
     bool agentForwarding = false,
     FakeExecSession Function(String command)? respond,
+    Host? host,
   })  : agentSlot = agentForwarding ? MutableSSHAgentHandler() : null,
-        _respond = respond; // ignore: prefer_initializing_formals
+        _respond = respond, // ignore: prefer_initializing_formals
+        // Which server this stands in for; [_defaultHost] unless a test
+        // needs two distinct ones.
+        super(host: host ?? _defaultHost);
+
+  static const Host _defaultHost = Host(
+    id: 'h1',
+    label: 'test',
+    hostname: 'example.test',
+    port: 22,
+    username: 'root',
+    authMethod: SshAuthMethod.password,
+  );
 
   String stdout;
   String stderrText;
@@ -237,43 +252,16 @@ class FakeExecTransport implements SessionTransport {
   }
 
   @override
-  Host get host => const Host(
-        id: 'h1',
-        label: 'test',
-        hostname: 'example.test',
-        port: 22,
-        username: 'root',
-        authMethod: SshAuthMethod.password,
-      );
-
-  @override
-  Future<void> get done => Completer<void>().future;
-
-  @override
   bool get isClosed => closed;
 
   /// Set by [close]. The direct copy path owns the connection it dials, so
   /// "was it hung up afterwards" is an assertion worth being able to make.
   var closed = false;
 
-  @override
-  Future<SSHSession> startShell({
-    required int columns,
-    required int rows,
-    String terminalType = 'xterm-256color',
-  }) =>
-      throw UnimplementedError();
-
-  @override
-  Future<SftpClient> openSftp() => throw UnimplementedError();
-
   /// Null unless built with `agentForwarding: true` — the production shape
   /// of a session connection, and the reason its execs are repeatable.
   @override
   final MutableSSHAgentHandler? agentSlot;
-
-  @override
-  Future<void> ping() async {}
 
   @override
   void close() => closed = true;

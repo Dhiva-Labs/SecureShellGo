@@ -257,21 +257,6 @@ jobs:
       - name: Install dependencies
         run: flutter pub get
 
-      # Four test files are left out on Windows because their tests assume
-      # Linux: POSIX paths and file modes (device_storage_test,
-      # public_key_push_test), the Linux "connection refused" text for a closed
-      # port (ssh_service_test), and a UTF-8 shell (log_tail_test). They fail
-      # on Windows x64 as well as arm64: the suite had only ever run on
-      # Linux, where it passes on x64 and arm64. Every other test file runs.
-      - name: Test
-        run: |
-          $linuxOnly = 'device_storage_test.dart', 'log_tail_test.dart', 'public_key_push_test.dart', 'ssh_service_test.dart'
-          $tests = Get-ChildItem test -Filter *_test.dart |
-            Where-Object { $linuxOnly -notcontains $_.Name } |
-            ForEach-Object { "test/$($_.Name)" }
-          "$($tests.Count) test files"
-          flutter test $tests
-
       - name: Build Windows release
         run: flutter build windows --release
 
@@ -376,6 +361,30 @@ jobs:
           name: SecureShellGo-windows-${{ matrix.arch }}
           path: SecureShellGo-windows-${{ matrix.arch }}.zip
           if-no-files-found: error
+
+      # Four test files are left out on Windows because their tests assume
+      # Linux: POSIX paths and file modes (device_storage_test,
+      # public_key_push_test), the Linux "connection refused" text for a closed
+      # port (ssh_service_test), and a UTF-8 shell (log_tail_test). They fail
+      # on Windows x64 as well as arm64: the suite had only ever run on
+      # Linux, where it passes on x64 and arm64. Every other test file runs.
+      #
+      # Some 1.5.0 runs never finished the suite: the runner dropped off the
+      # network a few minutes in and the job was killed at about 50 minutes
+      # with no log, on x64 and arm64 alike. That was ssh_agent_client_test
+      # serving a Unix-domain socket, which takes a Windows runner down; it
+      # now skips that group on Windows. The tests still run last, after the
+      # zip is uploaded, so a failure here fails the job (and the release
+      # job, which needs this one) without costing the build.
+      - name: Test
+        timeout-minutes: 20
+        run: |
+          $linuxOnly = 'device_storage_test.dart', 'log_tail_test.dart', 'public_key_push_test.dart', 'ssh_service_test.dart'
+          $tests = Get-ChildItem test -Filter *_test.dart |
+            Where-Object { $linuxOnly -notcontains $_.Name } |
+            ForEach-Object { "test/$($_.Name)" }
+          "$($tests.Count) test files"
+          flutter test --reporter expanded $tests
 
   build-macos:
     name: Build macOS

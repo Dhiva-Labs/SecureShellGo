@@ -76,7 +76,7 @@ void main() {
           original);
     });
 
-    test('mixed normalises to LF, which is what the save note says', () {
+    test('mixed decodes to LF; the editor asks which style to save', () {
       const original = 'one\r\ntwo\nthree\r\n';
       final decoded = decodeEditorText(bytesOf(original), name: 'a.txt');
       expect(decoded.lineEndings, LineEndingStyle.mixed);
@@ -86,11 +86,74 @@ void main() {
       );
     });
 
-    test('encoding never doubles a CR that is already there', () {
-      // The editor holds LF, but a paste could have put a CRLF into the
-      // buffer. Encoding to CRLF must not produce `\r\r\n`.
-      expect(utf8.decode(encodeEditorText('a\r\nb', LineEndingStyle.crlf)),
-          'a\r\nb');
+    test('a CR of the file\'s own before a CRLF survives', () {
+      // `\r\r\n` used to come back as `\r\n`: the encoder normalised CRLF
+      // already in the buffer. Encoding is now the exact inverse of decoding.
+      const original = 'a\r\r\nb\r\n';
+      final decoded = decodeEditorText(bytesOf(original), name: 'a.txt');
+      expect(decoded.lineEndings, LineEndingStyle.crlf);
+      expect(
+        utf8.decode(encodeEditorText(decoded.text, decoded.lineEndings)),
+        original,
+      );
+    });
+
+    test('tabs, trailing spaces and a missing final newline are untouched',
+        () {
+      const original = 'all:\n\tgcc -o app main.c  \n\t\techo done';
+      final decoded = decodeEditorText(bytesOf(original), name: 'Makefile');
+      expect(decoded.text, original);
+      expect(
+        utf8.decode(encodeEditorText(decoded.text, decoded.lineEndings)),
+        original,
+      );
+    });
+  });
+
+  group('byte-order mark', () {
+    test('is noticed, kept out of the text, and put back on save', () {
+      final original = Uint8List.fromList([...utf8Bom, ...utf8.encode('x = 1\r\n')]);
+      final decoded = decodeEditorText(original, name: 'a.py');
+      expect(decoded.hasBom, isTrue);
+      expect(decoded.text, 'x = 1\n', reason: 'no invisible character to type over');
+      expect(
+        encodeEditorText(decoded.text, decoded.lineEndings, bom: decoded.hasBom),
+        original,
+      );
+    });
+
+    test('a file without one does not gain one', () {
+      final decoded = decodeEditorText(bytesOf('x = 1\n'), name: 'a.py');
+      expect(decoded.hasBom, isFalse);
+      expect(encodeEditorText(decoded.text, decoded.lineEndings), bytesOf('x = 1\n'));
+    });
+  });
+
+  group('inserted line breaks', () {
+    test('a pasted CRLF becomes LF, so a CRLF save cannot double it', () {
+      final result = normaliseInsertedLineBreaks(
+        oldText: 'ab',
+        newText: 'a1\r\n2\r\nb',
+        base: 7,
+        extent: 7,
+      )!;
+      expect(result.text, 'a1\n2\nb');
+      expect(result.base, 5);
+      expect(utf8.decode(encodeEditorText(result.text, LineEndingStyle.crlf)),
+          'a1\r\n2\r\nb');
+    });
+
+    test('a CR already in the document is left alone', () {
+      // The buffer holds the file's own lone CR; the user types after it.
+      expect(
+        normaliseInsertedLineBreaks(
+          oldText: 'a\r\nb',
+          newText: 'a\r\nbc',
+          base: 5,
+          extent: 5,
+        ),
+        isNull,
+      );
     });
   });
 

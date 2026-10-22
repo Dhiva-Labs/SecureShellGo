@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../l10n/l10n.dart';
 import '../models/snippet.dart';
 import '../services/snippet_store.dart';
 import '../theme.dart';
@@ -59,6 +60,7 @@ class _SnippetEditScreenState extends State<SnippetEditScreen> {
       _error = null;
     });
 
+    final failed = context.l10n.snippetsSaveFailed;
     final existing = widget.snippet;
     final snippet = Snippet(
       id: existing?.id ?? widget.snippetStore.newId(),
@@ -79,7 +81,7 @@ class _SnippetEditScreenState extends State<SnippetEditScreen> {
       if (!mounted) return;
       setState(() {
         _saving = false;
-        _error = 'Could not save this snippet.';
+        _error = failed;
       });
     }
   }
@@ -87,9 +89,14 @@ class _SnippetEditScreenState extends State<SnippetEditScreen> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final l10n = context.l10n;
+    String? required(String? value) =>
+        (value == null || value.trim().isEmpty) ? l10n.snippetsRequired : null;
     return Scaffold(
       appBar: AppBar(
-        title: Text(widget.isEditing ? 'Edit snippet' : 'Add snippet'),
+        title: Text(
+          widget.isEditing ? l10n.snippetsEditTitle : l10n.snippetsAdd,
+        ),
       ),
       body: SafeArea(
         child: AbsorbPointer(
@@ -104,16 +111,13 @@ class _SnippetEditScreenState extends State<SnippetEditScreen> {
                   children: [
                     TextFormField(
                       controller: _nameController,
-                      decoration: const InputDecoration(
-                        labelText: 'Name',
-                        hintText: 'e.g. Tail app log',
-                        prefixIcon: Icon(Icons.label_outline),
+                      decoration: InputDecoration(
+                        labelText: l10n.snippetsName,
+                        hintText: l10n.snippetsNameHint,
+                        prefixIcon: const Icon(Icons.label_outline),
                       ),
                       textInputAction: TextInputAction.next,
-                      validator: (value) =>
-                          (value == null || value.trim().isEmpty)
-                              ? 'Required'
-                              : null,
+                      validator: required,
                     ),
                     const SizedBox(height: 16),
                     TextFormField(
@@ -125,26 +129,22 @@ class _SnippetEditScreenState extends State<SnippetEditScreen> {
                         fontFamilyFallback: AppTheme.monoFontFamilyFallback,
                         fontSize: 13,
                       ),
-                      decoration: const InputDecoration(
-                        labelText: 'Command',
+                      decoration: InputDecoration(
+                        labelText: l10n.snippetsCommand,
                         alignLabelWithHint: true,
                         hintText: 'tail -f /var/log/{app}.log',
                         helperText:
-                            'Wrap a name in braces — {name} — to ask for it '
-                            'each time this runs. Use {{ and }} for a '
-                            'literal brace.',
+                            l10n.snippetsCommandHelp('{name}', '{{', '}}'),
+                        helperMaxLines: 8,
                       ),
-                      validator: (value) =>
-                          (value == null || value.trim().isEmpty)
-                              ? 'Required'
-                              : null,
+                      validator: required,
                     ),
                     const SizedBox(height: 16),
                     TextFormField(
                       controller: _descriptionController,
-                      decoration: const InputDecoration(
-                        labelText: 'Description (optional)',
-                        prefixIcon: Icon(Icons.notes_outlined),
+                      decoration: InputDecoration(
+                        labelText: l10n.snippetsDescription,
+                        prefixIcon: const Icon(Icons.notes_outlined),
                       ),
                       textInputAction: TextInputAction.done,
                     ),
@@ -165,7 +165,9 @@ class _SnippetEditScreenState extends State<SnippetEditScreen> {
                               child: CircularProgressIndicator(strokeWidth: 2),
                             )
                           : const Icon(Icons.save_outlined),
-                      label: Text(_saving ? 'Saving…' : 'Save snippet'),
+                      label: Text(
+                        _saving ? l10n.snippetsSaving : l10n.snippetsSave,
+                      ),
                     ),
                   ],
                 ),

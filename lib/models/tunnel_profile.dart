@@ -21,15 +21,9 @@ enum TunnelType {
   /// [TunnelProfile.remoteHost] and [TunnelProfile.remotePort] are unused.
   dynamic;
 
-  String get label => switch (this) {
-        TunnelType.local => 'Local forward',
-        TunnelType.remote => 'Remote forward',
-        TunnelType.dynamic => 'Dynamic (SOCKS5)',
-      };
-
-  /// The equivalent OpenSSH flag, shown next to [label] in the type picker —
-  /// anyone who has typed `ssh -L` before knows instantly which one they
-  /// want, and nobody has to guess what "local" is local *to*.
+  /// The equivalent OpenSSH flag, shown next to the type's name in the type
+  /// picker — anyone who has typed `ssh -L` before knows instantly which one
+  /// they want, and nobody has to guess what "local" is local *to*.
   String get sshFlag => switch (this) {
         TunnelType.local => '-L',
         TunnelType.remote => '-R',
@@ -194,21 +188,25 @@ class TunnelProfile {
   }
 }
 
-/// Validates a typed port, returning the message to show under the field or
-/// null when it is fine.
+/// What is wrong with a typed port; the edit screen words it.
+enum TunnelPortProblem { empty, notANumber, zero, outOfRange }
+
+/// Validates a typed port, returning what is wrong with it or null when it
+/// is fine.
 ///
 /// A free function rather than a method on the form so the rule is one thing
 /// in one place: three fields on the edit screen use it, and port 0 means
 /// two different things (a legitimate "pick one for me" on a remote forward,
 /// nonsense on a listener) that a widget-local check kept getting wrong.
-String? validateTunnelPort(String? raw, {bool allowEphemeral = false}) {
+TunnelPortProblem? validateTunnelPort(
+  String? raw, {
+  bool allowEphemeral = false,
+}) {
   final trimmed = raw?.trim() ?? '';
-  if (trimmed.isEmpty) return 'Enter a port.';
+  if (trimmed.isEmpty) return TunnelPortProblem.empty;
   final value = int.tryParse(trimmed);
-  if (value == null) return 'Ports are numbers.';
-  if (value == 0) {
-    return allowEphemeral ? null : 'Port 0 is not a port to listen on.';
-  }
-  if (value < 0 || value > 65535) return 'Ports run from 1 to 65535.';
+  if (value == null) return TunnelPortProblem.notANumber;
+  if (value == 0) return allowEphemeral ? null : TunnelPortProblem.zero;
+  if (value < 0 || value > 65535) return TunnelPortProblem.outOfRange;
   return null;
 }

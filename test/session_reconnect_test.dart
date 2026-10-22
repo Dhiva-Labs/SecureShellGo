@@ -10,6 +10,8 @@ import 'package:secure_shell_go/services/session_controller.dart';
 import 'package:secure_shell_go/services/session_reconnect.dart';
 import 'package:secure_shell_go/services/ssh_service.dart';
 
+import 'support/fake_transport.dart';
+
 const testHost = Host(
   id: 'h1',
   label: 'Test box',
@@ -23,58 +25,10 @@ const testCredentials = SshCredentials(password: 'hunter2');
 
 /// Stands in for a live [SshConnection]. dartssh2's `SSHClient` cannot be
 /// faked usefully, which is exactly why [SessionTransport] exists.
-class FakeTransport implements SessionTransport {
-  FakeTransport({this.name = 'first'});
+class FakeTransport extends FakeTransportBase {
+  FakeTransport({this.name = 'first'}) : super(host: testHost);
 
   final String name;
-  final _done = Completer<void>();
-
-  var closeCount = 0;
-  var pingCount = 0;
-
-  @override
-  Host get host => testHost;
-
-  @override
-  Future<void> get done => _done.future;
-
-  @override
-  bool get isClosed => closeCount > 0;
-
-  @override
-  Future<SSHSession> startShell({
-    required int columns,
-    required int rows,
-    String terminalType = 'xterm-256color',
-  }) =>
-      throw UnimplementedError('the shell needs a real SSH channel');
-
-  @override
-  Future<SftpClient> openSftp() => throw UnimplementedError();
-
-  @override
-  Future<SSHSession> execute(String command) => throw UnimplementedError();
-
-  @override
-  MutableSSHAgentHandler get agentSlot => _agentSlot;
-  final _agentSlot = MutableSSHAgentHandler();
-
-  @override
-  Future<void> ping() async => pingCount++;
-
-  @override
-  void close() => closeCount++;
-
-  /// The transport going away underneath the session. With an error it is a
-  /// break; without one it is an orderly goodbye.
-  void drop([Object? error]) {
-    if (_done.isCompleted) return;
-    if (error == null) {
-      _done.complete();
-    } else {
-      _done.completeError(error);
-    }
-  }
 }
 
 /// A shell channel with no SSH underneath it.
@@ -117,6 +71,16 @@ class FakeShell implements SSHSession {
     if (!_done.isCompleted) _done.complete();
   }
 
+  bool get ended => _done.isCompleted;
+
+  /// The transport went: dartssh2 ends the channel normally, with no exit
+  /// status.
+  void hangUp() {
+    if (_done.isCompleted) return;
+    exitCode = null;
+    _done.complete();
+  }
+
   @override
   dynamic noSuchMethod(Invocation invocation) =>
       throw UnimplementedError('${invocation.memberName} is not faked');
@@ -127,6 +91,9 @@ class ShellTransport extends FakeTransport {
   ShellTransport() : super(name: 'with a shell');
 
   final FakeShell shell = FakeShell();
+
+  @override
+  void endChannels() => shell.hangUp();
 
   @override
   Future<SSHSession> startShell({
@@ -413,6 +380,27 @@ void main() {
 
       expect(harness.reconnector.message, 'Authentication failed for "dev".');
     });
+
+    test('a login prompt nobody can answer stops it the same way', () async {
+      // What `SshService.connect` throws when a server asks for a one-time
+      // code and no `answerPrompts` was given — which, on this path, is
+      // every time. See `ReconnectConnector`.
+      const asked = SshAuthenticationException(
+        '"Test box" asks "Verification code" at login, which needs you to '
+        'answer it, and nobody was asked here. Connect to it from the host '
+        'list to log in.',
+      );
+      final harness = buildReconnector([asked]);
+      addTearDown(harness.reconnector.dispose);
+
+      harness.reconnector.begin();
+      await harness.scheduler.fire();
+
+      expect(harness.connector.calls, 1);
+      expect(harness.scheduler.pendingCount, 0);
+      expect(harness.reconnector.hasGivenUp, isTrue);
+      expect(harness.reconnector.message, asked.message);
+    });
   });
 
   group('host keys', () {
@@ -520,6 +508,90 @@ void main() {
       expect(orphan.closeCount, 1, reason: 'and it must not be left open');
     });
 
+    /// A reconnector whose every dial waits for the test, which completes
+    /// [gates] in whatever order it likes.
+    ({
+      SessionReconnector reconnector,
+      ManualScheduler scheduler,
+      List<Completer<SessionTransport>> gates,
+      List<SessionTransport> adopted,
+    }) gated() {
+      final scheduler = ManualScheduler();
+      final gates = <Completer<SessionTransport>>[];
+      final adopted = <SessionTransport>[];
+      final reconnector = SessionReconnector(
+        host: testHost,
+        support: ReconnectSupport(
+          loadCredentials: (_) async => testCredentials,
+          connect: ({
+            required host,
+            required credentials,
+            required verifyHostKey,
+          }) {
+            final gate = Completer<SessionTransport>();
+            gates.add(gate);
+            return gate.future;
+          },
+        ),
+        adopt: (transport) async => adopted.add(transport),
+        scheduler: scheduler.schedule,
+      );
+      return (
+        reconnector: reconnector,
+        scheduler: scheduler,
+        gates: gates,
+        adopted: adopted,
+      );
+    }
+
+    test('a dial from before Stop never adopts after Reconnect', () async {
+      final harness = gated();
+      addTearDown(harness.reconnector.dispose);
+      final early = FakeTransport(name: 'early');
+      final fresh = FakeTransport(name: 'fresh');
+
+      // Stop, then Reconnect, while the first dial is still out.
+      harness.reconnector.begin();
+      await harness.scheduler.fire();
+      harness.reconnector.cancel();
+      harness.reconnector.retryNow();
+      await ManualScheduler.pump();
+      expect(harness.gates, hasLength(2));
+
+      harness.gates[0].complete(early);
+      await ManualScheduler.pump();
+      expect(harness.adopted, isEmpty,
+          reason: 'its schedule was stopped; the new one is not its own');
+      expect(early.closeCount, 1);
+      expect(harness.reconnector.phase, ReconnectPhase.connecting);
+
+      harness.gates[1].complete(fresh);
+      await ManualScheduler.pump();
+      expect(harness.adopted, [fresh]);
+      expect(fresh.closeCount, 0);
+      expect(harness.reconnector.phase, ReconnectPhase.connected);
+    });
+
+    test('a dial from before Stop failing does not start a second ladder',
+        () async {
+      final harness = gated();
+      addTearDown(harness.reconnector.dispose);
+
+      harness.reconnector.begin();
+      await harness.scheduler.fire();
+      harness.reconnector.cancel();
+      harness.reconnector.retryNow();
+      await ManualScheduler.pump();
+
+      harness.gates[0]
+          .completeError(const SshConnectionException('No route to host.'));
+      await ManualScheduler.pump();
+
+      expect(harness.scheduler.delays, const [Duration(seconds: 2)],
+          reason: 'the Reconnect\'s own dial is still out');
+      expect(harness.reconnector.phase, ReconnectPhase.connecting);
+    });
+
     test('cannot be resumed', () async {
       final harness = buildReconnector([FakeTransport()]);
       addTearDown(harness.reconnector.dispose);
@@ -579,18 +651,47 @@ void main() {
       expect(session.controller.reconnectMessage, contains('Reconnecting'));
     });
 
-    test('does not reconnect after an orderly close', () async {
+    test('reconnects after the server closes the connection in order',
+        () async {
       final session = buildSession([FakeTransport(name: 'second')]);
       addTearDown(session.controller.dispose);
 
-      // No error: the far end said goodbye. An idle timeout, an administrator,
-      // or the user's own `exit` — none of them want dialling back.
+      // No error, and no `exit` before it: the server went down under a
+      // session nobody ended — a reboot, sshd restarting. The shell is
+      // wanted back when it returns.
       session.transport.drop();
       await ManualScheduler.pump();
 
       expect(session.controller.isClosed, isTrue);
-      expect(session.controller.isReconnecting, isFalse);
-      expect(session.scheduler.delays, isEmpty);
+      expect(session.controller.isReconnecting, isTrue);
+      expect(session.scheduler.delays, const [Duration(seconds: 2)]);
+    });
+
+    test('does not reconnect an orderly close that follows exit', () async {
+      final transport = ShellTransport();
+      final scheduler = ManualScheduler();
+      final connector = ScriptedConnector([FakeTransport(name: 'second')]);
+      final controller = SessionController(
+        connection: transport,
+        storage: UnusedStorage(),
+        reconnect: ReconnectSupport(
+          loadCredentials: (_) async => testCredentials,
+          connect: connector.connect,
+        ),
+        reconnectScheduler: scheduler.schedule,
+      );
+      addTearDown(controller.dispose);
+      controller.terminal.resize(100, 30);
+      await controller.ensureShell();
+
+      transport.shell.exit();
+      await ManualScheduler.pump();
+      transport.drop();
+      await ManualScheduler.pump();
+
+      expect(controller.isClosed, isTrue);
+      expect(controller.isReconnecting, isFalse);
+      expect(scheduler.delays, isEmpty);
     });
 
     test('puts the new transport in the same session', () async {
@@ -765,11 +866,72 @@ void main() {
       controller.terminal.resize(100, 30);
       await controller.ensureShell();
 
+      // The shell's channel ends too — normally, with no exit status, and
+      // before the transport's own death is heard of — exactly as dartssh2
+      // ends every channel on a transport that has gone.
       transport.drop(const SocketException('Connection reset'));
       await ManualScheduler.pump();
 
+      expect(transport.shell.ended, isTrue);
+      expect(transport.shell.exitCode, isNull);
       expect(controller.isReconnecting, isTrue);
       expect(scheduler.delays, const [Duration(seconds: 2)]);
+    });
+
+    test('reconnects an orderly close that took the shell down with it',
+        () async {
+      // The server going down in order — sshd stopping — ends the shell's
+      // channel and then the connection, with no exit status for the shell.
+      final transport = ShellTransport();
+      final scheduler = ManualScheduler();
+      final connector = ScriptedConnector([FakeTransport(name: 'second')]);
+      final controller = SessionController(
+        connection: transport,
+        storage: UnusedStorage(),
+        reconnect: ReconnectSupport(
+          loadCredentials: (_) async => testCredentials,
+          connect: connector.connect,
+        ),
+        reconnectScheduler: scheduler.schedule,
+      );
+      addTearDown(controller.dispose);
+      controller.terminal.resize(100, 30);
+      await controller.ensureShell();
+
+      transport.drop();
+      await ManualScheduler.pump();
+
+      expect(transport.shell.ended, isTrue);
+      expect(controller.isReconnecting, isTrue);
+    });
+
+    test('does not reconnect a shell the server closed while the link was up',
+        () async {
+      // Some servers send no exit status at all. A shell channel that closes
+      // while its transport is still there has exited all the same.
+      final transport = ShellTransport();
+      final scheduler = ManualScheduler();
+      final connector = ScriptedConnector([FakeTransport(name: 'second')]);
+      final controller = SessionController(
+        connection: transport,
+        storage: UnusedStorage(),
+        reconnect: ReconnectSupport(
+          loadCredentials: (_) async => testCredentials,
+          connect: connector.connect,
+        ),
+        reconnectScheduler: scheduler.schedule,
+      );
+      addTearDown(controller.dispose);
+      controller.terminal.resize(100, 30);
+      await controller.ensureShell();
+
+      transport.shell.hangUp();
+      await ManualScheduler.pump();
+      transport.drop(const SocketException('Connection reset'));
+      await ManualScheduler.pump();
+
+      expect(controller.isReconnecting, isFalse);
+      expect(scheduler.delays, isEmpty);
     });
 
     test('the Stop button ends it', () async {

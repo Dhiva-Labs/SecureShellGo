@@ -3,13 +3,13 @@
          do its job without. -->
     <uses-permission android:name="android.permission.INTERNET"/>
     <!--
-      ACCESS_NETWORK_STATE was declared here to "tell no network apart from
-      host unreachable". It was never used: SshService._describeSocketError
-      reads the errno straight off the SocketException (ENETUNREACH 101,
-      EHOSTUNREACH 113, ECONNREFUSED 111) and asks no ConnectivityManager to
-      do it. A permission the code never exercises is one more line for a
-      reviewer to query and a user to distrust, so it is gone.
+      Lets NetworkWatchBridge.kt hear when the default network changes
+      (Wi-Fi to mobile data, a new access point), so an open session checks
+      its link and reconnects over the new network at once instead of a
+      minute and a half later. A normal permission: no prompt. Error messages
+      still come from the socket's own errno, not from here.
     -->
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>
     <!--
       Downloads land in the shared Downloads collection so they appear in the
       user's file manager. On API 29+ that needs no permission at all — scoped
@@ -25,12 +25,15 @@
       another app does not make the process a candidate for reclaim (and take
       the socket, the PTY and whatever was running in it along with it).
 
-      FOREGROUND_SERVICE_DATA_SYNC is the typed permission that API 34+
-      requires to match the service's foregroundServiceType below; dataSync is
-      the honest description of a long-running network transfer the user asked
-      for. See SessionForegroundService.kt for why the other types do not fit.
+      The service runs as specialUse on API 34+ (an interactive terminal has
+      no end, and dataSync is capped at six hours a day on Android 15), and as
+      dataSync on API 29-33, which have no specialUse, and as the fallback.
+      Each type needs its typed permission on API 34+. See
+      SessionForegroundService.kt, and store/play-fgs-declaration.md for the
+      Play Console declaration specialUse needs.
     -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE"/>
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC"/>
     <!--
       Requested at runtime the first time a session opens, never at launch. A
@@ -171,7 +174,12 @@
             android:name=".SessionForegroundService"
             android:exported="false"
             android:stopWithTask="true"
-            android:foregroundServiceType="dataSync"/>
+            android:foregroundServiceType="specialUse|dataSync">
+            <!-- What the specialUse is, for the platform and for Play review. -->
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Keeps a user-opened interactive SSH terminal session connected while the app is in the background"/>
+        </service>
         <!-- Don't delete the meta-data below.
              This is used by the Flutter tool to generate GeneratedPluginRegistrant.java -->
         <meta-data

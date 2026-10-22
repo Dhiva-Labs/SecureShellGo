@@ -1,76 +1,30 @@
 import 'dart:async';
 import 'dart:typed_data';
 
-import 'package:dartssh2/dartssh2.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:secure_shell_go/models/host.dart';
 import 'package:secure_shell_go/models/remote_entry.dart';
 import 'package:secure_shell_go/services/device_storage.dart';
 import 'package:secure_shell_go/services/session_controller.dart';
 import 'package:secure_shell_go/services/session_foreground.dart';
 import 'package:secure_shell_go/services/session_manager.dart';
 import 'package:secure_shell_go/services/sftp_service.dart';
-import 'package:secure_shell_go/services/ssh_service.dart';
 import 'package:secure_shell_go/services/transfer_queue.dart';
 
+import 'support/fake_transport.dart';
+
 /// One fake connection. Several of these is the whole point of this file.
-class FakeTransport implements SessionTransport {
+class FakeTransport extends FakeTransportBase {
   FakeTransport({
     String id = 'h1',
     String label = 'Test box',
     String hostname = 'example.com',
-  }) : host = Host(
-          id: id,
-          label: label,
-          hostname: hostname,
-          port: 22,
-          username: 'dev',
-          authMethod: SshAuthMethod.password,
+  }) : super(
+          host: FakeTransportBase.hostFor(
+            id: id,
+            label: label,
+            hostname: hostname,
+          ),
         );
-
-  final _done = Completer<void>();
-
-  @override
-  final Host host;
-
-  var closeCount = 0;
-  var pingCount = 0;
-
-  @override
-  Future<void> get done => _done.future;
-
-  @override
-  bool get isClosed => closeCount > 0;
-
-  @override
-  Future<SSHSession> startShell({
-    required int columns,
-    required int rows,
-    String terminalType = 'xterm-256color',
-  }) =>
-      throw UnimplementedError('the shell needs a real SSH channel');
-
-  @override
-  Future<SftpClient> openSftp() =>
-      throw UnimplementedError('tests inject a RemoteFileSystem instead');
-
-  @override
-  Future<SSHSession> execute(String command) =>
-      throw UnimplementedError('exec needs a real SSH channel');
-
-  @override
-  MutableSSHAgentHandler get agentSlot => _agentSlot;
-  final _agentSlot = MutableSSHAgentHandler();
-
-  @override
-  Future<void> ping() async => pingCount++;
-
-  @override
-  void close() => closeCount++;
-
-  void drop() {
-    if (!_done.isCompleted) _done.complete();
-  }
 }
 
 /// Enough of a filesystem for a session to hand one out, and for a

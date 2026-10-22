@@ -212,13 +212,189 @@ Future<void> _deleteSourceAfterVerifying({
 /// Hidden, so it does not clutter a directory someone is looking at while the
 /// transfer runs, and named after both the file and this app so anything left
 /// behind by a process that died mid-copy can be recognised for what it is.
-String _defaultTemporaryName(String finalName) {
-  final stamp = DateTime.now().millisecondsSinceEpoch;
-  final suffix = '.ssg-part-$stamp';
+String _defaultTemporaryName(String finalName) =>
+    _stampedName(finalName, 'part', DateTime.now().millisecondsSinceEpoch);
+
+/// `notes.md` → `.notes.md.ssg-<marker>-<stamp>`.
+String _stampedName(String finalName, String marker, int stamp) {
+  final suffix = '.ssg-$marker-$stamp';
   // POSIX allows 255 bytes per name; leave room for the marker rather than
   // letting the server reject the open.
   final head = finalName.length > 200 ? finalName.substring(0, 200) : finalName;
   return '.$head$suffix';
+}
+
+/// A folder "Replace" that does not destroy the folder it replaces until the
+/// new copy is safely beside it.
+///
+/// Every folder path used to clear the destination first and fill it after,
+/// so a dropped connection, a cancel or a failure part way through left the
+/// old folder gone and only some of the new one in its place. Instead:
+///
+///  1. the new tree is written into [staging], `.<name>.ssg-part-<stamp>`
+///     beside [target] — the convention a single file's copy already uses;
+///  2. the caller verifies it there ([verifyStaged], or its own check);
+///  3. [swapIn] moves the old folder aside to [retired],
+///     `.<name>.ssg-old-<stamp>`, renames [staging] to [target], and only
+///     then removes the old one. If the second rename fails, the old folder
+///     is renamed back.
+///
+/// Until the swap, [discard] is the whole of the cleanup: it removes
+/// [staging] and nothing else, so a cancel or a failure leaves the original
+/// exactly as it was.
+///
+/// Renames rather than copies because SFTP moves a folder with everything in
+/// it in one request, and because a rename never follows a symlink: a target
+/// named `www -> /var/www` is moved aside, and removed, as the link.
+class StagedDirectoryReplace {
+  /// [stamp] names the staging and retired folders; pass the one a
+  /// server-side job was started with to find what it wrote. Defaults to now.
+  factory StagedDirectoryReplace(
+    RemoteFileSystem fs,
+    String target, {
+    int? stamp,
+  }) {
+    final directory = RemotePath.parent(target);
+    final name = RemotePath.basename(target);
+    stamp ??= DateTime.now().millisecondsSinceEpoch;
+    return StagedDirectoryReplace._(
+      fs,
+      target,
+      staging: RemotePath.join(directory, _stampedName(name, 'part', stamp)),
+      retired: RemotePath.join(directory, _stampedName(name, 'old', stamp)),
+    );
+  }
+
+  StagedDirectoryReplace._(
+    this.fs,
+    this.target, {
+    required this.staging,
+    required this.retired,
+  });
+
+  final RemoteFileSystem fs;
+
+  /// The folder being replaced, and where the new one ends up.
+  final String target;
+
+  /// Where the new tree is written. Does not exist yet: the caller creates
+  /// it, or has `sftp put -r` create it.
+  final String staging;
+
+  /// Where [target] waits while [staging] takes its name.
+  final String retired;
+
+  String get _name => RemotePath.basename(target);
+
+  /// Checks that [staging] holds the [files] files and [bytes] bytes written
+  /// into it, before [swapIn] trusts it with the folder it replaces.
+  ///
+  /// Each file was size-checked as it landed; this is the count that says
+  /// none went missing on the way, and the total that says none changed
+  /// since. A server that lists some files without a size can only be held
+  /// to the count.
+  Future<void> verifyStaged({required int files, required int bytes}) async {
+    final landed = await measureRemoteTree(fs, staging);
+    if (landed.files != files ||
+        (landed.unsized == 0 && landed.bytes != bytes)) {
+      throw RemoteCopyFailure(
+        'The new copy of "$_name" did not land completely on the server, so '
+        'the folder there was left exactly as it was.',
+        details: 'wrote $files files ($bytes bytes), the server lists '
+            '${landed.files} (${landed.bytes} bytes)',
+      );
+    }
+  }
+
+  /// Puts [staging] in [target]'s place. See the class note for the order.
+  ///
+  /// Throws with [target] as it was, and the staged copy removed, when the
+  /// server will not make the swap. The one failure that cannot put things
+  /// back — the old folder moved aside, the new one refused its place, and
+  /// the old one then refused its own name back — keeps both and says where
+  /// they are.
+  Future<void> swapIn() async {
+    var setAside = false;
+    try {
+      await fs.rename(target, retired);
+      setAside = true;
+    } catch (_) {
+      // Nothing there to move: the folder went away after the collision
+      // prompt. Or something there that the server will not move, in which
+      // case the rename below is refused too — a folder cannot be renamed
+      // onto a name still taken by anything but an empty folder — and
+      // nothing is lost.
+    }
+
+    try {
+      await fs.rename(staging, target);
+    } catch (e) {
+      if (setAside) {
+        try {
+          await fs.rename(retired, target);
+        } catch (restore) {
+          throw RemoteCopyFailure(
+            'The server moved the old "$_name" aside but would neither put '
+            'the new copy in its place nor the old one back. The old folder '
+            'is in "$retired" and the new copy in "$staging".',
+            details: '$e; restoring: $restore',
+          );
+        }
+      }
+      await discard();
+      throw RemoteCopyFailure(
+        'The server would not put the new "$_name" in place, so the folder '
+        'there was left exactly as it was.',
+        details: e.toString(),
+      );
+    }
+
+    // The new folder is in place. Best-effort, like every tree removal: a
+    // part that will not go stays behind under its `.ssg-old-` name.
+    if (setAside) await removeRemoteDirectoryTree(fs, retired);
+  }
+
+  /// Removes the staged copy, and nothing else.
+  Future<void> discard() => removeRemoteDirectoryTree(fs, staging);
+}
+
+/// What a walk of [root] on [fs] finds: how many plain files, and the sum of
+/// the sizes the server listed for them. [unsized] counts the files listed
+/// without a size, which add nothing to [bytes].
+///
+/// Symlinks are neither counted nor followed, matching what the folder copies
+/// move. A subfolder that cannot be listed is stepped over, so it counts as
+/// empty.
+Future<({int files, int bytes, int unsized})> measureRemoteTree(
+  RemoteFileSystem fs,
+  String root,
+) async {
+  var files = 0;
+  var bytes = 0;
+  var unsized = 0;
+  final pending = <String>[root];
+  for (var index = 0; index < pending.length; index++) {
+    final List<RemoteEntry> entries;
+    try {
+      entries = await fs.list(pending[index]);
+    } catch (_) {
+      continue;
+    }
+    for (final entry in entries) {
+      if (entry.kind == RemoteEntryKind.file) {
+        files++;
+        final size = entry.size;
+        if (size == null) {
+          unsized++;
+        } else {
+          bytes += size;
+        }
+      } else if (entry.kind == RemoteEntryKind.directory) {
+        pending.add(RemotePath.join(pending[index], entry.name));
+      }
+    }
+  }
+  return (files: files, bytes: bytes, unsized: unsized);
 }
 
 /// One file inside a folder being copied across, resolved from the source's
@@ -246,20 +422,26 @@ class _WalkedFile {
 /// the batch level, applied here at the file level so a folder move takes its
 /// turn behind that session's other transfers rather than saturating them.
 ///
-/// **Collision handling belongs to the caller.** By the time this runs, the
-/// destination directory is either fresh — a top-level `replace` has already
-/// removed the old one — or unique (a `keep both` has already renamed
-/// [destinationDirectory] via [RemotePath.deduplicate]). Nothing inside the
-/// folder can therefore collide with anything already on the destination, so
-/// per-file copies run without overwrite and without a per-file prompt.
+/// **Collision handling belongs to the caller.** By the time this runs,
+/// [destinationDirectory] is either free — a `keep both` has already renamed
+/// it via [RemotePath.deduplicate] — or the folder a top-level `replace` is to
+/// take the place of. A replace is written into a fresh hidden sibling and
+/// swapped in only once all of it has landed (see [StagedDirectoryReplace]),
+/// so the folder it replaces comes through a cancel or a failure untouched.
+/// Either way nothing inside the folder can collide with anything already on
+/// the destination, so per-file copies run without overwrite and without a
+/// per-file prompt.
 ///
-/// **Move semantics.** [deleteSourceAfterVerify] pushes through to each
-/// per-file copy: only the four-check safety chain (bytes acked, handle
-/// closed, size on both sides matches) deletes anything. Directories on the
-/// source are then removed bottom-up once every file under them has left, and
-/// only rmdir'd if empty — a failed per-file copy leaves that file *and* every
-/// ancestor directory, which is what makes a partial move visible for a retry
-/// instead of hiding under a half-empty tree.
+/// **Move semantics.** Only the four-check safety chain (bytes acked, handle
+/// closed, size on both sides matches) deletes anything. Into a free name,
+/// [deleteSourceAfterVerify] pushes through to each per-file copy. A replace
+/// holds every deletion until after the swap instead: until then each file it
+/// has copied lives in a staging folder that any failure throws away, and a
+/// source deleted beside it would go too. Directories on the source are then
+/// removed bottom-up once every file under them has left, and only rmdir'd if
+/// empty — a failed per-file copy leaves that file *and* every ancestor
+/// directory, which is what makes a partial move visible for a retry instead
+/// of hiding under a half-empty tree.
 ///
 /// **Symlinks are not chased**, in either direction, for the same reason
 /// `download_plan.dart` skips them: a link to a directory can point back up
@@ -283,19 +465,25 @@ Future<RemoteCopyOutcome> copyRemoteDirectory({
 
   checkCancelled();
 
-  if (overwrite) {
-    // A top-level `Replace` at the collision prompt licenses this — anything
-    // deeper in the tree is not a collision, since the tree is about to be
-    // put back exactly by the copy below.
-    await removeRemoteDirectoryTree(destination, destinationDirectory);
-  }
+  final replace = overwrite
+      ? StagedDirectoryReplace(destination, destinationDirectory)
+      : null;
+  // Where the tree is written: beside the folder a replace is for, or
+  // straight into a free name.
+  final root = replace?.staging ?? destinationDirectory;
 
-  try {
-    await destination.mkdir(destinationDirectory);
-  } on SftpFailure {
-    // Already exists — either the caller pre-created it, or the overwrite
-    // rm above did not fully clear it (a permission error, say). Fall through
-    // and let the per-file writes report the problem if one is still there.
+  if (replace != null) {
+    // A fresh name, so a refusal is a real one — nothing can be written
+    // beside the folder being replaced — and arrives before anything has
+    // been touched.
+    await destination.mkdir(root);
+  } else {
+    try {
+      await destination.mkdir(root);
+    } on SftpFailure {
+      // Already exists — the caller pre-created it. Fall through and let the
+      // per-file writes report the problem if it cannot be used.
+    }
   }
 
   // Walk the source tree breadth-first. Directories in [subdirs] are the
@@ -304,94 +492,132 @@ Future<RemoteCopyOutcome> copyRemoteDirectory({
   // disappear across the transfer.
   final subdirs = <String>[];
   final files = <_WalkedFile>[];
-
-  final pending = <String>[''];
-  for (var index = 0; index < pending.length; index++) {
-    checkCancelled();
-    final relative = pending[index];
-    final currentSource = relative.isEmpty
-        ? sourceDirectory
-        : RemotePath.join(sourceDirectory, relative);
-    final List<RemoteEntry> listed;
-    try {
-      listed = await source.list(currentSource);
-    } on TransferCancelled {
-      rethrow;
-    } catch (_) {
-      // An unreadable subdirectory is stepped over rather than failing the
-      // whole move: the browser above has already told the user which
-      // directories will not open, and losing one branch of a large tree
-      // should not lose the whole tree.
-      continue;
-    }
-    for (final entry in listed) {
-      if (entry.kind == RemoteEntryKind.symlink) {
-        // A link to a directory could loop the walk, a link to a file would
-        // double-transfer bytes under two names. Same policy as the download
-        // walker and the direct path's tree.
-        continue;
-      }
-      final childRelative =
-          relative.isEmpty ? entry.name : '$relative/${entry.name}';
-      if (entry.kind == RemoteEntryKind.directory) {
-        subdirs.add(childRelative);
-        pending.add(childRelative);
-      } else if (entry.kind == RemoteEntryKind.file) {
-        files.add(_WalkedFile(
-          sourcePath: RemotePath.join(currentSource, entry.name),
-          destinationPath: RemotePath.join(destinationDirectory, childRelative),
-          size: entry.size,
-        ));
-      }
-    }
-  }
-
-  // Materialise every subdirectory on the destination up front, so an empty
-  // folder still lands and so per-file mkdirs never race with a parent that
-  // is still being created.
-  for (final relative in subdirs) {
-    checkCancelled();
-    final path = RemotePath.join(destinationDirectory, relative);
-    try {
-      await destination.mkdir(path);
-    } on SftpFailure {
-      // Already there — either from a repeated tree (see [overwrite] above)
-      // or from the caller having pre-populated. The per-file writes below
-      // are still gated on the temporary → rename dance, so a "wrong
-      // directory" would surface there.
-    }
-  }
-
+  final copied = <({String sourcePath, int bytes})>[];
   var bytesMoved = 0;
 
-  for (final file in files) {
-    checkCancelled();
-    // A per-file failure propagates out of the loop as-is: no rmdirs run,
-    // whatever files landed stay landed, and the source's remaining tree is
-    // untouched. That is the "two files and a message" rule that
-    // [copyRemoteFile] applies for one file, applied to the batch.
-    final outcome = await copyRemoteFile(
-      source: source,
-      destination: destination,
-      sourcePath: file.sourcePath,
-      destinationPath: file.destinationPath,
-      overwrite: false,
-      deleteSourceAfterVerify: deleteSourceAfterVerify,
-      onProgress: (bytes) {
-        onProgress?.call(bytesMoved + bytes);
-      },
-      isCancelled: isCancelled,
-      temporaryNamer: temporaryNamer,
-    );
-    bytesMoved += outcome.bytesCopied;
-    onProgress?.call(bytesMoved);
+  // Up to the swap, every exit from here — cancel, failure, a dropped
+  // connection — takes the staging folder with it. The swap cleans up after
+  // itself.
+  var discardStaging = replace != null;
+  try {
+    final pending = <String>[''];
+    for (var index = 0; index < pending.length; index++) {
+      checkCancelled();
+      final relative = pending[index];
+      final currentSource = relative.isEmpty
+          ? sourceDirectory
+          : RemotePath.join(sourceDirectory, relative);
+      final List<RemoteEntry> listed;
+      try {
+        listed = await source.list(currentSource);
+      } on TransferCancelled {
+        rethrow;
+      } catch (_) {
+        // An unreadable subdirectory is stepped over rather than failing the
+        // whole move: the browser above has already told the user which
+        // directories will not open, and losing one branch of a large tree
+        // should not lose the whole tree.
+        continue;
+      }
+      for (final entry in listed) {
+        if (entry.kind == RemoteEntryKind.symlink) {
+          // A link to a directory could loop the walk, a link to a file
+          // would double-transfer bytes under two names. Same policy as the
+          // download walker and the direct path's tree.
+          continue;
+        }
+        final childRelative =
+            relative.isEmpty ? entry.name : '$relative/${entry.name}';
+        if (entry.kind == RemoteEntryKind.directory) {
+          subdirs.add(childRelative);
+          pending.add(childRelative);
+        } else if (entry.kind == RemoteEntryKind.file) {
+          files.add(_WalkedFile(
+            sourcePath: RemotePath.join(currentSource, entry.name),
+            destinationPath: RemotePath.join(root, childRelative),
+            size: entry.size,
+          ));
+        }
+      }
+    }
+
+    // Materialise every subdirectory on the destination up front, so an
+    // empty folder still lands and so per-file mkdirs never race with a
+    // parent that is still being created.
+    for (final relative in subdirs) {
+      checkCancelled();
+      final path = RemotePath.join(root, relative);
+      try {
+        await destination.mkdir(path);
+      } on SftpFailure {
+        // Already there — from the caller having pre-populated. The per-file
+        // writes below are still gated on the temporary → rename dance, so a
+        // "wrong directory" would surface there.
+      }
+    }
+
+    for (final file in files) {
+      checkCancelled();
+      // A per-file failure propagates out of the loop as-is: no rmdirs run,
+      // and the source's remaining tree is untouched. Into a free name,
+      // whatever files landed stay landed — the "two files and a message"
+      // rule that [copyRemoteFile] applies for one file, applied to the
+      // batch. A replace's staging folder goes, and the folder it was to
+      // replace is still there.
+      final outcome = await copyRemoteFile(
+        source: source,
+        destination: destination,
+        sourcePath: file.sourcePath,
+        destinationPath: file.destinationPath,
+        overwrite: false,
+        deleteSourceAfterVerify: deleteSourceAfterVerify && replace == null,
+        onProgress: (bytes) {
+          onProgress?.call(bytesMoved + bytes);
+        },
+        isCancelled: isCancelled,
+        temporaryNamer: temporaryNamer,
+      );
+      bytesMoved += outcome.bytesCopied;
+      copied.add((sourcePath: file.sourcePath, bytes: outcome.bytesCopied));
+      onProgress?.call(bytesMoved);
+    }
+
+    if (replace != null) {
+      checkCancelled();
+      await replace.verifyStaged(files: copied.length, bytes: bytesMoved);
+      // The last point a cancel can stop the replace.
+      checkCancelled();
+      discardStaging = false;
+      await replace.swapIn();
+    }
+  } finally {
+    if (discardStaging) await replace!.discard();
   }
 
   var sourceDeleted = false;
   if (deleteSourceAfterVerify) {
     checkCancelled();
-    // Every file went across successfully — the loop above would have thrown
-    // otherwise — so every source subdirectory is *ours* to rmdir now.
+    if (replace != null) {
+      // The swap has happened, so the copies are where they belong. Each
+      // source file goes on check (4) from [copyRemoteFile]: the source must
+      // still hold exactly what was read from it.
+      for (final file in copied) {
+        final remaining = await source.sizeOf(file.sourcePath);
+        if (remaining != null && remaining != file.bytes) {
+          throw RemoteCopyFailure(
+            'The new folder is in place, but '
+            '"${RemotePath.basename(file.sourcePath)}" changed on the source '
+            'while it was being copied, so the move stopped there and the '
+            'rest of the original was left as it is.',
+            details: 'copied ${file.bytes} bytes, the source now holds '
+                '$remaining',
+          );
+        }
+        await source.remove(file.sourcePath);
+      }
+    }
+    // Every file went across successfully — the loops above would have
+    // thrown otherwise — so every source subdirectory is *ours* to rmdir now.
     // Bottom-up: a rmdir on a parent that still has a child directory in it
     // would fail, so descend the recorded [subdirs] in reverse (BFS order
     // reversed puts deepest first). A non-empty rmdir is silently swallowed:
@@ -423,13 +649,14 @@ Future<RemoteCopyOutcome> copyRemoteDirectory({
 }
 
 /// Walks [directory] on [fs] and removes everything under it, then the
-/// directory itself. Best-effort: failures are swallowed so that a subsequent
-/// mkdir can still put a fresh tree in place.
+/// directory itself. Best-effort: failures are swallowed, and whatever will
+/// not go stays where it is.
 ///
-/// Called by [copyRemoteDirectory] under an `overwrite` and by
-/// `direct_remote_copy.dart` to clear the target before `sftp put -r` fills
-/// it. Public so both callers reach the same implementation rather than
-/// growing two subtly different tree-blows.
+/// What [StagedDirectoryReplace] clears away — the folder a replace has moved
+/// aside, or a staged copy that will not be used — and what a direct folder
+/// copy uses on its partial tree and on a moved source. Public so every
+/// caller reaches the same implementation rather than growing subtly
+/// different tree-blows.
 Future<void> removeRemoteDirectoryTree(
   RemoteFileSystem fs,
   String directory,
