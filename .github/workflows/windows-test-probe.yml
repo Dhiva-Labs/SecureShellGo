@@ -30,19 +30,19 @@ jobs:
       fail-fast: false
       matrix:
         arch: [x64, arm64]
-        rep: [cancelclose, readclose]
+        rep: [closedelete, onepiecekeep]
         include:
           - arch: x64
             runner: windows-latest
           - arch: arm64
             runner: windows-11-arm
-          - rep: cancelclose
+          - rep: closedelete
             files: test/zz_afunix_close_probe_test.dart
-            args: --plain-name "cancel the read, then close"
+            args: --plain-name "close, then delete the folder"
             repeat: '5'
-          - rep: readclose
-            files: test/zz_afunix_close_probe_test.dart
-            args: --plain-name "close while still reading"
+          - rep: onepiecekeep
+            files: test/ssh_agent_client_test.dart
+            args: --dart-define=PROBE_AF_UNIX=true --dart-define=PROBE_NO_DELETE=true --plain-name "arriving in one piece"
             repeat: '5'
     defaults:
       run:

@@ -355,7 +355,9 @@ void main() {
       required void Function(Uint8List) onRequest,
     }) async {
       final dir = await Directory.systemTemp.createTemp('agent_socket');
-      addTearDown(() => dir.delete(recursive: true));
+      if (!const bool.fromEnvironment('PROBE_NO_DELETE')) {
+        addTearDown(() => dir.delete(recursive: true));
+      }
       final address = InternetAddress('${dir.path}/sock',
           type: InternetAddressType.unix);
 
