@@ -111,7 +111,12 @@ function Snapshot {
   $tcp = 0
   try { $tcp = [Net.NetworkInformation.IPGlobalProperties]::GetIPGlobalProperties().GetActiveTcpConnections().Count } catch {}
   $cpu = (Get-CimInstance Win32_Processor | Measure-Object LoadPercentage -Average).Average
+  $freeC = 0; $freeD = 0
+  try { $freeC = [IO.DriveInfo]::new('C').AvailableFreeSpace / 1GB } catch {}
+  try { $freeD = [IO.DriveInfo]::new('D').AvailableFreeSpace / 1GB } catch {}
   [pscustomobject]@{
+    FreeC       = $freeC
+    FreeD       = $freeD
     MemUsed     = ($os.TotalVisibleMemorySize - $os.FreePhysicalMemory) / 1MB
     MemTotal    = $os.TotalVisibleMemorySize / 1MB
     CommitUsed  = ($os.TotalVirtualMemorySize - $os.FreeVirtualMemory) / 1MB
@@ -139,9 +144,10 @@ while ($true) {
   Read-Json
   $s = Snapshot
   $runningNow = @(Format-Running)
-  $line = '{0,5}s mem {1:N1}/{2:N1}G commit {3:N1}/{4:N1}G cpu {5}% procs {6} thr {7} hnd {8} tcp {9} dart {10} running {11} | {12}' -f `
+  $line = '{0,5}s mem {1:N1}/{2:N1}G commit {3:N1}/{4:N1}G cpu {5}% free C {13:N1}G D {14:N1}G procs {6} thr {7} hnd {8} tcp {9} dart {10} running {11} | {12}' -f `
     $t, $s.MemUsed, $s.MemTotal, $s.CommitUsed, $s.CommitTotal, $s.Cpu, $s.Procs, $s.Threads, $s.Handles, $s.Tcp, $s.Dart, $running.Count,
-    (($s.Top | Select-Object -First 3 | ForEach-Object { '{0}:{1}:{2:N0}M' -f $_.Name, $_.Id, ($_.PrivateMemorySize64 / 1MB) }) -join ' ')
+    (($s.Top | Select-Object -First 3 | ForEach-Object { '{0}:{1}:{2:N0}M' -f $_.Name, $_.Id, ($_.PrivateMemorySize64 / 1MB) }) -join ' '),
+    $s.FreeC, $s.FreeD
   Write-Host $line
   $timeline.Add($line)
   Add-Content -Path $timelineFile -Value $line
@@ -149,6 +155,8 @@ while ($true) {
   $reason = $null
   if ($s.CommitUsed / $s.CommitTotal -gt 0.85) { $reason = 'commit charge above 85%' }
   elseif ($s.MemUsed / $s.MemTotal -gt 0.92) { $reason = 'physical memory above 92%' }
+  elseif ($s.FreeC -gt 0 -and $s.FreeC -lt 4) { $reason = 'less than 4 GB free on C:' }
+  elseif ($s.FreeD -gt 0 -and $s.FreeD -lt 4) { $reason = 'less than 4 GB free on D:' }
   elseif ($s.Procs -gt 1500) { $reason = 'more than 1500 processes' }
   elseif (($s.Top | Select-Object -First 1).PrivateMemorySize64 -gt 5GB) { $reason = 'one process above 5 GB private' }
   elseif ($t -gt $Minutes * 60) { $reason = "still running after $Minutes minutes" }
@@ -174,6 +182,13 @@ while ($true) {
       Where-Object { $_.Name -match 'dart|flutter' } |
       Select-Object ProcessId, ParentProcessId, Name, @{ n = 'PrivateMB'; e = { [int]($_.PrivatePageCount / 1MB) } }, CommandLine
     $cim | Format-List | Out-String -Width 400 | Write-Host
+    if ($reason -match 'free on') {
+      $big = Get-ChildItem -Path $env:TEMP, $env:RUNNER_TEMP, $env:GITHUB_WORKSPACE -Recurse -File -Force -ErrorAction SilentlyContinue |
+        Sort-Object Length -Descending | Select-Object -First 15 |
+        ForEach-Object { '{0,10:N0} MB {1}' -f ($_.Length / 1MB), $_.FullName }
+      $big | Write-Host
+      $detail += "`n" + ($big -join "`n")
+    }
     $detail += "`n`nKILLED: $reason`n" + ($cim | Format-List | Out-String -Width 400)
   }
 
