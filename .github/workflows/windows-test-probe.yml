@@ -30,12 +30,22 @@ jobs:
       fail-fast: false
       matrix:
         arch: [x64, arm64]
-        rep: [a, b, c]
+        rep: [full, pre, win1, win2]
         include:
           - arch: x64
             runner: windows-latest
           - arch: arm64
             runner: windows-11-arm
+          # pre: every file before the stretch where runs stopped answering;
+          # win1/win2: only that stretch.
+          - rep: pre
+            subset_to: session_tab_drop_test.dart
+          - rep: win1
+            subset_from: session_manager_test.dart
+            subset_to: ssh_legacy_algorithms_test.dart
+          - rep: win2
+            subset_from: session_manager_test.dart
+            subset_to: ssh_legacy_algorithms_test.dart
     defaults:
       run:
         shell: pwsh
@@ -44,6 +54,8 @@ jobs:
       PROBE_LABEL: ${{ matrix.rep }} run ${{ github.run_id }}
       GH_TOKEN: ${{ github.token }}
       TEST_FILES: ${{ inputs.test_files }}
+      SUBSET_FROM: ${{ matrix.subset_from }}
+      SUBSET_TO: ${{ matrix.subset_to }}
     steps:
       - name: Checkout
         uses: actions/checkout@v7
