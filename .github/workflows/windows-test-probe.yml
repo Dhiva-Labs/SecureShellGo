@@ -30,20 +30,36 @@ jobs:
       fail-fast: false
       matrix:
         arch: [x64, arm64]
-        rep: [bind, connect, echo, agentlike]
+        rep: [full1, full2, full3, onepiece, split, oversized, hangup]
         include:
           - arch: x64
             runner: windows-latest
           - arch: arm64
             runner: windows-11-arm
-          - rep: bind
-            args: --plain-name "bind only"
-          - rep: connect
-            args: --plain-name "bind and connect, no data"
-          - rep: echo
-            args: --plain-name "bind, connect and exchange bytes, both ends closed"
-          - rep: agentlike
-            args: --plain-name "as the agent test does"
+          # full*: the whole suite with the fix, once each.
+          - rep: full1
+            repeat: '1'
+          - rep: full2
+            repeat: '1'
+          - rep: full3
+            repeat: '1'
+          # The four framing tests on their own, forced on, five times each.
+          - rep: onepiece
+            files: test/ssh_agent_client_test.dart
+            args: --dart-define=PROBE_AF_UNIX=true --plain-name "arriving in one piece"
+            repeat: '5'
+          - rep: split
+            files: test/ssh_agent_client_test.dart
+            args: --dart-define=PROBE_AF_UNIX=true --plain-name "split across three reads"
+            repeat: '5'
+          - rep: oversized
+            files: test/ssh_agent_client_test.dart
+            args: --dart-define=PROBE_AF_UNIX=true --plain-name "oversized frame length"
+            repeat: '5'
+          - rep: hangup
+            files: test/ssh_agent_client_test.dart
+            args: --dart-define=PROBE_AF_UNIX=true --plain-name "hangs up mid-request"
+            repeat: '5'
     defaults:
       run:
         shell: pwsh
@@ -51,8 +67,8 @@ jobs:
       ARCH: ${{ matrix.arch }}
       PROBE_LABEL: ${{ matrix.rep }} run ${{ github.run_id }}
       GH_TOKEN: ${{ github.token }}
-      TEST_FILES: test/zz_afunix_probe_test.dart
-      REPEAT: '5'
+      TEST_FILES: ${{ matrix.files }}
+      REPEAT: ${{ matrix.repeat }}
       SUBSET_FROM: ${{ matrix.subset_from }}
       SUBSET_TO: ${{ matrix.subset_to }}
     steps:

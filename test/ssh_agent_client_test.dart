@@ -460,7 +460,7 @@ void main() {
       );
     });
   },
-      skip: Platform.isWindows
+      skip: Platform.isWindows && !const bool.fromEnvironment('PROBE_AF_UNIX')
           ? 'Unix-domain sockets take a Windows runner down'
           : null);
 
