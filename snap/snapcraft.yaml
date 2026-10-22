@@ -94,10 +94,14 @@ parts:
       craftctl default
       rm -rf build .dart_tool .flutter .pub-cache debian/.home \
         linux/flutter/ephemeral
-    stage-packages:
-      - libgtk-3-0
-      - libsecret-1-0
-      - libssl3
+    # No stage-packages: everything the app links against comes from the
+    # gnome-42-2204 content snap (GTK, libsecret, X11, Mesa) or the core22
+    # base. Staging libgtk-3-0 here used to drag jammy's GTK, libX11 1.7
+    # and libxcb into $SNAP/usr/lib, which comes before the content snap on
+    # LD_LIBRARY_PATH and so shadowed its newer copies. The amd64 content
+    # snap ships Mesa 25.2, whose X11 EGL and GLX refuse a display from an
+    # Xlib older than 1.8 (not thread-safe by default), so on X11 the app
+    # got no GL context and never showed its window.
 
   desktop-assets:
     # Reuse the same .desktop entry and icon the Debian package installs
