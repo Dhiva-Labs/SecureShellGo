@@ -263,14 +263,21 @@ jobs:
       # port (ssh_service_test), and a UTF-8 shell (log_tail_test). They fail
       # on Windows x64 as well as arm64: the suite had only ever run on
       # Linux, where it passes on x64 and arm64. Every other test file runs.
+      #
+      # The suite takes a few minutes. A test that hangs on Windows used to
+      # run the job into its 60-minute limit, and a runner killed that way
+      # uploads no log at all. The step's own limit fails it with its log
+      # kept, and the expanded reporter names each test as it starts, so the
+      # last line names the one that hung.
       - name: Test
+        timeout-minutes: 15
         run: |
           $linuxOnly = 'device_storage_test.dart', 'log_tail_test.dart', 'public_key_push_test.dart', 'ssh_service_test.dart'
           $tests = Get-ChildItem test -Filter *_test.dart |
             Where-Object { $linuxOnly -notcontains $_.Name } |
             ForEach-Object { "test/$($_.Name)" }
           "$($tests.Count) test files"
-          flutter test $tests
+          flutter test --reporter expanded $tests
 
       - name: Build Windows release
         run: flutter build windows --release

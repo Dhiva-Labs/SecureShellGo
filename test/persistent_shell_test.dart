@@ -90,6 +90,9 @@ exit $screenExit''');
 }
 
 void main() {
+  // FakeServer links /bin/sh and runs its stubs through it.
+  final posixOnly = Platform.isWindows ? 'needs a POSIX /bin/sh' : null;
+
   group('session names', () {
     test('are the host and the tab slot, in characters tmux keeps', () {
       expect(persistentSessionName(hostNamed('Test box'), 1), 'ssg-test-box-1_');
@@ -253,7 +256,7 @@ void main() {
 
       expect(out, 'tmux|new|-A|-s|$hostile|');
     });
-  });
+  }, skip: posixOnly);
 
   group('the probe', () {
     Future<bool?> probe(
@@ -330,10 +333,10 @@ void main() {
       expect(persistentProbeSaysNew('Welcome!\nnew\n'), isTrue);
       expect(persistentProbeSaysNew('sh: tmux: not found'), isNull);
     });
-  });
+  }, skip: posixOnly);
 
   group('with real GNU screen', () {
-    final noScreen =
+    final noScreen = Platform.isWindows ||
         Process.runSync('sh', ['-c', 'command -v screen']).exitCode != 0;
 
     test("a tab's probe does not find another tab's session", () async {
