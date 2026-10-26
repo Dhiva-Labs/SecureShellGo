@@ -272,14 +272,15 @@ flutter pub get
 flutter build apk --release
 ```
 
-Remote desktop needs CrossShell's agents in `assets/agents/`; without them the
-build still works and remote desktop says it is unavailable. Build them in the
-[CrossShell](https://github.com/Dhiva-Labs/CrossShell) repository with
-`scripts/build-agents.sh`, then stage them here, which checks them against the
-hashes pinned in `assets/agents/manifest.json`:
+Remote desktop carries CrossShell's agents in `assets/agents/`, packed and
+committed, with their hashes pinned in `assets/agents/manifest.json`. To move to
+a new [CrossShell](https://github.com/Dhiva-Labs/CrossShell) release, download
+its `crossshell-host-*` assets and `crossshell-host-SHA256SUMS` (renamed to
+`SHA256SUMS`) into one folder and stage them; every file is checked against the
+sums first:
 
 ```bash
-tool/stage_agents.sh ../cross_shell/dist/agents
+tool/stage_agents.sh path/to/that/folder
 ```
 
 Release builds are signed with the upload key named in

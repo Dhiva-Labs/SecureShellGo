@@ -5,7 +5,7 @@ Releases before 1.4.5 are described on the
 
 ## 1.5.0 - Unreleased
 
-A major update: an IDE-like file editor, Mosh, sign-in with agents, security keys and certificates, agent and X11 forwarding, a terminal that survives network changes and sleep, commands on many servers, new file actions, Windows Hello, translations into eight languages, and layouts for tablets, foldables, touch and mouse.
+A major update: remote desktop and virtual desktops, an IDE-like file editor, Mosh, sign-in with agents, security keys and certificates, agent and X11 forwarding, a terminal that survives network changes and sleep, commands on many servers, new file actions, Windows Hello, translations into eight languages, and layouts for tablets, foldables, touch and mouse.
 
 ### Security
 - On Android, the app lock stays shut when the device cannot show its unlock prompt, instead of letting the app open.
@@ -18,6 +18,13 @@ A major update: an IDE-like file editor, Mosh, sign-in with agents, security key
 - A backup that demands an unreasonable amount of key-derivation work is refused instead of freezing the app.
 
 ### Added
+- Remote desktop: see and control a server's desktop from any device, phones included, over the SSH connection you already have. It works with GNOME on Wayland, X11 desktops and Windows. A small agent is copied to the server for the session and stopped afterwards; it listens on the server's loopback only, so no port is opened and SSH is the only login. The person at the server's screen is told while it is being viewed.
+- Virtual desktops on servers with no screen: start a private desktop, such as Xfce, or a single program, and use it in the same viewer. Optionally keep it running after you disconnect and come back to it from Remote desktop later.
+- Open an app in a window: run one graphical program on the server and have its window open on your own desktop, without a terminal. Where that cannot work — on a phone, or with no X server on Windows — it offers a virtual desktop instead.
+- Show a Mac's screen through its built-in Screen Sharing, over the same SSH connection.
+- On touch screens the viewer has a trackpad mode and a direct-touch mode, pinch to zoom, and a key bar with Esc, Tab, Ctrl, Alt, Super, arrows, function keys and Ctrl+Alt+Del. Clipboard text goes both ways.
+- When a server is missing what a virtual desktop needs (the virtual screen, a desktop, or a program you typed), the app offers to install it and does, asking for your sudo password only if the server wants it. It is used for that install and not saved.
+- VS Code, VSCodium, Cursor and Chromium-based browsers open in a virtual desktop, as root too: the app adds the options they need there and says so.
 - The remote editor indents like a code editor. Tab and Shift+Tab indent and outdent, Enter keeps the indentation and goes a level deeper after a Python colon or an opening bracket, and each file's own style (tabs or 2, 4 or 8 spaces) is detected and shown in the status bar, where it can be changed.
 - Line and comment shortcuts: toggle comment (Ctrl+/), move line (Alt+↑/↓), duplicate line (Shift+Alt+↑/↓), indent and outdent line (Ctrl+] and Ctrl+[).
 - Show whitespace, and a warning when a Python, YAML or Makefile file mixes tabs and spaces.
@@ -77,6 +84,7 @@ A major update: an IDE-like file editor, Mosh, sign-in with agents, security key
 - The app speaks Simplified Chinese, Japanese, Brazilian Portuguese, Spanish, Russian, German, Korean and French as well as English. It follows the device's language, or the one picked in Settings > Appearance > Language.
 
 ### Changed
+- The app is about 4.5 MB larger, for the remote-desktop agents. Nothing extra runs until a remote desktop is opened, and agents left on a server by an older version of the app are removed when a newer one is installed.
 - Each open file keeps its own undo history when switching between them.
 - Transfers cut off by a dropped connection are marked interrupted rather than cancelled, and start again by themselves once the session reconnects — including copies to another server whose session dropped.
 - A server closing the connection under a running shell (a reboot, sshd restarting) is reconnected; typing `exit` still ends the session for good.

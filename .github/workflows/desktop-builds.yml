@@ -506,7 +506,10 @@ jobs:
           kill "$pid" 2> /dev/null
           exit 1
           EOF
-          xvfb-run -a -s "-screen 0 1280x800x24 -ac" bash "$RUNNER_TEMP/snap-smoke.sh"
+          # Xvfb has no GPU; on the amd64 runner Mesa then offers no GL
+          # configuration Flutter can render with, the view is never made and
+          # no window maps. Software GL is what a GPU-less machine uses anyway.
+          LIBGL_ALWAYS_SOFTWARE=1 xvfb-run -a -s "-screen 0 1280x800x24 -ac +extension GLX" bash "$RUNNER_TEMP/snap-smoke.sh"
 
       # Not published from here: the Snap Store upload is done by hand.
       - name: Upload artifact

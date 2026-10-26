@@ -11,8 +11,11 @@
 # leaves out (linux-aarch64 full is built on CI only) are simply absent from
 # the manifest — the app then falls back or says that flavour is missing.
 #
-# The binaries are gitignored and the manifest is committed: the hashes the
-# app checks every launch against are reviewed source, not build output.
+# The packed agents and the manifest are both committed, so every build of
+# the app (CI, the snap, Launchpad's offline PPA builders) carries them.
+# Stage them from a CrossShell release's assets, never from a local build:
+# the manifest pins those exact files, and the app checks every launch
+# against it.
 #
 # The engine version comes from CROSSSHELL_ENGINE_VERSION, or else from the
 # CrossShell workspace's engine/Cargo.toml beside DIR. For the full Linux
