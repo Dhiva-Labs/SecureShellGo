@@ -71,6 +71,30 @@ final class CsrdJpegTile extends CsrdTile {
   final Uint8List jpeg;
 }
 
+/// A rectangle copied from elsewhere on the screen: RFB's CopyRect, which
+/// VNC servers send for scrolling and dragged windows. The CSRD agent never
+/// sends one.
+///
+/// The source is the screen as it was before this frame, never what an
+/// earlier tile of the same frame drew. A producer whose protocol reads
+/// sequentially, as RFB does, splits its update into consecutive frames
+/// wherever a copy's source was drawn by an earlier rect, and it checks
+/// both rects against the frame, since the compositor does not.
+final class CsrdCopyTile extends CsrdTile {
+  const CsrdCopyTile(
+    super.x,
+    super.y,
+    super.width,
+    super.height, {
+    required this.srcX,
+    required this.srcY,
+  });
+
+  /// Top-left of the source rect, which has this tile's size.
+  final int srcX;
+  final int srcY;
+}
+
 /// A frame whose rects have been checked and decoded.
 class CsrdDecodedFrame {
   const CsrdDecodedFrame({
