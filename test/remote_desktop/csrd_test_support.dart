@@ -198,6 +198,10 @@ class CpuFramebuffer {
         bgra[i] = 0xff;
       }
     }
+    // Copies read the screen as it was before the frame (see CsrdCopyTile).
+    final before = frame.tiles.any((t) => t is CsrdCopyTile)
+        ? Uint8List.fromList(bgra)
+        : bgra;
     for (var k = 0; k < frame.tiles.length; k++) {
       final t = frame.tiles[k];
       switch (t) {
@@ -216,6 +220,15 @@ class CpuFramebuffer {
         case CsrdJpegTile():
           final px = jpegPixels?[k];
           if (px != null) _blit(t, px);
+        case CsrdCopyTile(:final srcX, :final srcY):
+          for (var row = 0; row < t.height; row++) {
+            bgra.setRange(
+              ((t.y + row) * width + t.x) * 4,
+              ((t.y + row) * width + t.x + t.width) * 4,
+              before,
+              ((srcY + row) * width + srcX) * 4,
+            );
+          }
       }
     }
   }

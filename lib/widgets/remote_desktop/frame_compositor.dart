@@ -142,7 +142,7 @@ class FrameCompositor extends ChangeNotifier
       final Future<ui.Image>? image = switch (tiles[i]) {
         final CsrdPixelTile t => _pixelImage(t),
         final CsrdJpegTile t => _jpegImage(t),
-        CsrdFillTile() => null,
+        CsrdFillTile() || CsrdCopyTile() => null,
       };
       if (image != null) pending.add(image.then((img) => images[i] = img));
     }
@@ -195,7 +195,37 @@ class FrameCompositor extends ChangeNotifier
     }
     for (var i = 0; i < tiles.length; i++) {
       final t = tiles[i];
-      if (t is CsrdFillTile) {
+      if (t is CsrdCopyTile) {
+        // From the screen as it was before this frame (see CsrdCopyTile),
+        // which is black when there was none yet.
+        final dst = ui.Rect.fromLTWH(
+          t.x.toDouble(),
+          t.y.toDouble(),
+          t.width.toDouble(),
+          t.height.toDouble(),
+        );
+        if (previous != null) {
+          canvas.drawImageRect(
+            previous,
+            ui.Rect.fromLTWH(
+              t.srcX.toDouble(),
+              t.srcY.toDouble(),
+              t.width.toDouble(),
+              t.height.toDouble(),
+            ),
+            dst,
+            copy,
+          );
+        } else {
+          canvas.drawRect(
+            dst,
+            ui.Paint()
+              ..color = const ui.Color(0xff000000)
+              ..blendMode = ui.BlendMode.src
+              ..isAntiAlias = false,
+          );
+        }
+      } else if (t is CsrdFillTile) {
         canvas.drawRect(
           ui.Rect.fromLTWH(
             t.x.toDouble(),
