@@ -3,6 +3,8 @@ import 'dart:ui' as ui;
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:secure_shell_go/services/remote_desktop/csrd_tiles.dart';
+import 'package:secure_shell_go/services/remote_desktop/rfb_client.dart';
+import 'package:secure_shell_go/services/remote_desktop/rfb_protocol.dart';
 import 'package:secure_shell_go/widgets/remote_desktop/frame_compositor.dart';
 
 import 'csrd_test_support.dart' show CpuFramebuffer;
@@ -133,5 +135,59 @@ void main() {
       ui.Image.onCreate = null;
       ui.Image.onDispose = null;
     }
+  });
+
+  test('driving an RfbClient: split updates land as RFB means them, and '
+      'each request waits for the screen', () async {
+    final server = FakeRfbServer();
+    final client = RfbClient(
+      input: server.clientInput,
+      output: server.clientOutput,
+      timing: const RfbTiming(closeFlushTimeout: Duration(milliseconds: 50)),
+    );
+    final presented = <int>[];
+    final compositor = FrameCompositor(
+      presentation: immediately,
+      onPresented: presented.add,
+    );
+    final frames = compositor.drive(client);
+    final connecting = client.connect(credentials: (_) async => null);
+    await server.handshakeNone(width: w, height: h);
+    await connecting;
+    await server.next<UpdateRequestMsg>();
+
+    final z = ZrleEncoder();
+    final model = Picture(w, h)..blit(0, 0, first);
+    server.send([
+      ...updateHeader(1),
+      ...z.wireRect(model, 0, 0, w, h, choose: mixedSub),
+    ]);
+    expect((await server.next<UpdateRequestMsg>()).incremental, isTrue);
+
+    final patch = busyPicture(20, 20, seed: 9);
+    model
+      ..blit(10, 10, patch)
+      ..copyRect(0, 0, 30, 30, 34, 18) // reads the patch: a second frame
+      ..copyRect(34, 18, 30, 30, 0, 0); // reads that copy: a third
+    server.send([
+      ...updateHeader(3),
+      ...rectHeader(10, 10, 20, 20, RfbEncoding.raw),
+      ...patch.rawWire(),
+      ...rectHeader(34, 18, 30, 30, RfbEncoding.copyRect),
+      ...be16(0),
+      ...be16(0),
+      ...rectHeader(0, 0, 30, 30, RfbEncoding.copyRect),
+      ...be16(34),
+      ...be16(18),
+    ]);
+    await server.next<UpdateRequestMsg>();
+    expect(presented, [1, 2, 3, 4]);
+    final got = await bgraOf(compositor.value!);
+    expect(firstDifference(got, model.bgra), -1);
+
+    await frames.cancel();
+    await client.close();
+    await server.hangUp();
+    compositor.dispose();
   });
 }
