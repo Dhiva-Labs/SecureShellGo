@@ -1,7 +1,8 @@
 import 'dart:convert';
-import 'dart:io' show gzip;
+import 'dart:isolate';
 import 'dart:typed_data';
 
+import 'package:archive/archive.dart' show XZDecoder;
 import 'package:crypto/crypto.dart';
 
 import 'agent_failure.dart';
@@ -77,11 +78,11 @@ class AgentBinary {
   /// needs, as `2.30`. Null for static builds and Windows.
   final String? minGlibc;
 
-  /// Where the build keeps it: gzipped, which takes the bundled agents from
-  /// about 15 MB to about 6 on every install, desktop and phone alike, for
-  /// people who never open a remote desktop. [sha256] and [size] are still
-  /// those of the binary itself, so what is checked is what runs.
-  String get assetKey => '${AgentBundle.assetDirectory}$file.gz';
+  /// Where the build keeps it: xz-compressed, which takes the bundled agents
+  /// from about 15 MB to under 4.5 on every install, desktop and phone
+  /// alike, for people who never open a remote desktop. [sha256] and [size]
+  /// are still those of the binary itself, so what is checked is what runs.
+  String get assetKey => '${AgentBundle.assetDirectory}$file.xz';
 
   /// The name the binary is installed under on the server. The flavour is
   /// in the content-addressed directory already, so the name stays plain.
@@ -261,10 +262,19 @@ class AgentBundle {
     // Unpacked only here, on the way to a server, so nothing is held in
     // memory until a remote desktop is actually opened. A file that does
     // not unpack is as wrong as one that does not hash.
+    // On another isolate: unpacking takes a moment, and the screen showing
+    // progress should keep moving meanwhile. Capped at the pinned size, so
+    // a damaged asset cannot unpack into something larger.
+    final size = binary.size;
     Uint8List bytes;
     try {
-      bytes = Uint8List.fromList(gzip.decode(packed));
-    } on FormatException {
+      bytes = await Isolate.run(() => XZDecoder().decodeBytes(
+            packed,
+            verify: true,
+            throwOnError: true,
+            maxOutputSize: size,
+          ));
+    } catch (_) {
       bytes = Uint8List(0);
     }
     final digest = sha256.convert(bytes).toString();

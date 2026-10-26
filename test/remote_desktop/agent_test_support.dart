@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
+import 'package:archive/archive.dart' show XZEncoder;
 import 'package:crypto/crypto.dart';
 import 'package:dartssh2/dartssh2.dart';
 import 'package:secure_shell_go/services/remote_desktop/agent_manifest.dart';
@@ -94,10 +95,10 @@ class FailingFiles implements RemoteFileSystem {
 /// A bundle built in memory: [binaries] maps a manifest entry to its bytes.
 AgentBundle bundleOf(Map<AgentBinary, Uint8List> binaries,
     {String engine = '0.2.0'}) {
-  // Gzipped, as tool/stage_agents.sh stages them.
+  // XZ-compressed, as tool/stage_agents.sh stages them.
   final byKey = {
     for (final e in binaries.entries)
-      e.key.assetKey: Uint8List.fromList(gzip.encode(e.value)),
+      e.key.assetKey: XZEncoder().encodeBytes(e.value),
   };
   return AgentBundle(
     manifest: AgentManifest(engineVersion: engine, agents: binaries.keys.toList()),

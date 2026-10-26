@@ -60,6 +60,12 @@ dependencies:
   # (GTK, IFileDialog, NSOpenPanel) would cost far more native code than this
   # one Flutter-team-maintained dependency.
   file_selector: ^1.1.0
+  # XZ unpacking of the bundled remote-desktop agents (agent_manifest.dart).
+  # Already in the tree through msix; xz carries the agents in 4.4 MB where
+  # the zlib dart:io has would take 6.0, on every install of the app, for
+  # people who never open a remote desktop. Pure Dart, and only the decoder
+  # is compiled in.
+  archive: ^4.0.0
   # Opens a web address tapped in the terminal in the browser. Only
   # http/https ever reach it; see services/terminal_links.dart.
   url_launcher: ^6.3.3

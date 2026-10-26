@@ -1,6 +1,7 @@
 import 'dart:io';
 import 'dart:typed_data';
 
+import 'package:archive/archive.dart' show XZEncoder;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:secure_shell_go/services/remote_desktop/agent_failure.dart';
 import 'package:secure_shell_go/services/remote_desktop/agent_manifest.dart';
@@ -26,7 +27,7 @@ void main() {
       expect(manifest.agents, hasLength(3));
       final full = manifest.find(AgentOs.linux, AgentArch.x86_64, AgentFlavour.full)!;
       expect(full.minGlibc, '2.30');
-      expect(full.assetKey, 'assets/agents/crossshell-host-linux-x86_64.gz');
+      expect(full.assetKey, 'assets/agents/crossshell-host-linux-x86_64.xz');
       expect(full.installedName, 'crossshell-host');
       final windows = manifest.find(AgentOs.windows, AgentArch.x86_64, AgentFlavour.full)!;
       expect(windows.installedName, 'crossshell-host.exe');
@@ -113,7 +114,7 @@ void main() {
       final bundle = AgentBundle(
         manifest: AgentManifest(engineVersion: '0.2.0', agents: [binary]),
         loadBytes: (_) async =>
-            Uint8List.fromList(gzip.encode(bytesOf('something else'))),
+            XZEncoder().encodeBytes(bytesOf('something else')),
       );
       await expectLater(
         bundle.bytesOf(binary),
