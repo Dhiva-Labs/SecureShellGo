@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:io' show gzip;
 import 'dart:typed_data';
 
 import 'package:crypto/crypto.dart';
@@ -76,7 +77,11 @@ class AgentBinary {
   /// needs, as `2.30`. Null for static builds and Windows.
   final String? minGlibc;
 
-  String get assetKey => '${AgentBundle.assetDirectory}$file';
+  /// Where the build keeps it: gzipped, which takes the bundled agents from
+  /// about 15 MB to about 6 on every install, desktop and phone alike, for
+  /// people who never open a remote desktop. [sha256] and [size] are still
+  /// those of the binary itself, so what is checked is what runs.
+  String get assetKey => '${AgentBundle.assetDirectory}$file.gz';
 
   /// The name the binary is installed under on the server. The flavour is
   /// in the content-addressed directory already, so the name stays plain.
@@ -242,9 +247,9 @@ class AgentBundle {
   /// hash to the pinned value are refused outright: whatever they are, they
   /// are not what this source tree reviewed.
   Future<Uint8List> bytesOf(AgentBinary binary) async {
-    final Uint8List bytes;
+    final Uint8List packed;
     try {
-      bytes = await _loadBytes(binary.assetKey);
+      packed = await _loadBytes(binary.assetKey);
     } catch (e) {
       throw AgentFailure(
         AgentFailureKind.unavailableInBuild,
@@ -252,6 +257,15 @@ class AgentBundle {
         details: '${binary.file} is listed in the manifest but is not in '
             'this build ($e)',
       );
+    }
+    // Unpacked only here, on the way to a server, so nothing is held in
+    // memory until a remote desktop is actually opened. A file that does
+    // not unpack is as wrong as one that does not hash.
+    Uint8List bytes;
+    try {
+      bytes = Uint8List.fromList(gzip.decode(packed));
+    } on FormatException {
+      bytes = Uint8List(0);
     }
     final digest = sha256.convert(bytes).toString();
     if (bytes.length != binary.size || digest != binary.sha256) {

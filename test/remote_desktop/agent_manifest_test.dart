@@ -26,7 +26,7 @@ void main() {
       expect(manifest.agents, hasLength(3));
       final full = manifest.find(AgentOs.linux, AgentArch.x86_64, AgentFlavour.full)!;
       expect(full.minGlibc, '2.30');
-      expect(full.assetKey, 'assets/agents/crossshell-host-linux-x86_64');
+      expect(full.assetKey, 'assets/agents/crossshell-host-linux-x86_64.gz');
       expect(full.installedName, 'crossshell-host');
       final windows = manifest.find(AgentOs.windows, AgentArch.x86_64, AgentFlavour.full)!;
       expect(windows.installedName, 'crossshell-host.exe');
@@ -112,7 +112,21 @@ void main() {
       final binary = binaryFor(bytesOf('the agent'));
       final bundle = AgentBundle(
         manifest: AgentManifest(engineVersion: '0.2.0', agents: [binary]),
-        loadBytes: (_) async => bytesOf('something else'),
+        loadBytes: (_) async =>
+            Uint8List.fromList(gzip.encode(bytesOf('something else'))),
+      );
+      await expectLater(
+        bundle.bytesOf(binary),
+        throwsA(isA<AgentFailure>()
+            .having((f) => f.kind, 'kind', AgentFailureKind.hashMismatch)),
+      );
+    });
+
+    test('an asset that does not unpack is refused like a wrong hash', () async {
+      final binary = binaryFor(bytesOf('the agent'));
+      final bundle = AgentBundle(
+        manifest: AgentManifest(engineVersion: '0.2.0', agents: [binary]),
+        loadBytes: (_) async => bytesOf('not gzip at all'),
       );
       await expectLater(
         bundle.bytesOf(binary),

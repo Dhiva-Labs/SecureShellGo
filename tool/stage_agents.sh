@@ -77,9 +77,12 @@ while read -r hash name; do
   [ ${#hash} -eq 64 ] || die "bad hash for $name"
   if [ "$os" = linux ] && [ "$flavour" = full ]; then glibc=$(glibc_of "$src/$name"); fi
   size=$(wc -c < "$src/$name" | tr -d ' ')
-  cp "$src/$name" "$out/$name.tmp"
-  mv -f "$out/$name.tmp" "$out/$name"
-  staged+=("$name")
+  # Gzipped: about 15 MB of agents become about 6 in every install. The
+  # manifest keeps the binary's own hash and size, which the app checks
+  # after unpacking. -n keeps the output reproducible (no name or time).
+  gzip -9n -c "$src/$name" > "$out/$name.gz.tmp"
+  mv -f "$out/$name.gz.tmp" "$out/$name.gz"
+  staged+=("$name.gz")
   entry=$(printf '    {"file": "%s", "os": "%s", "arch": "%s", "flavour": "%s", "sha256": "%s", "size": %s' \
     "$name" "$os" "$arch" "$flavour" "$hash" "$size")
   [ -n "$glibc" ] && entry="$entry, \"glibc\": \"$glibc\""
