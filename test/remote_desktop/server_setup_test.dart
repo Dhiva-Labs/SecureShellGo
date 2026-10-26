@@ -167,6 +167,10 @@ void main() {
       expect(programOf(r'$EDITOR'), isNull);
       expect(programOf('FOO=1 app'), isNull);
       expect(programOf('(cd /tmp && app)'), isNull);
+      // As an installed app's entry gives it.
+      expect(programOf("'/snap/bin/code' '--force-user-env'"), '/snap/bin/code');
+      expect(programOf('"/opt/My App/run" --x'), '/opt/My App/run');
+      expect(programOf('"\$HOME/bin/x"'), isNull);
     });
   });
 

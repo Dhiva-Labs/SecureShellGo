@@ -1310,5 +1310,6 @@
   "remoteDesktopSetupLinger": "Не останавливать рабочие столы после выхода",
   "remoteDesktopSetupLingerDetail": "Включает lingering для вашей учётной записи, чтобы её программы не останавливались при выходе.",
   "remoteDesktopProgramStopped": "Программа остановилась вскоре после запуска (код выхода {code}).",
-  "remoteDesktopLaunchHelperNote": "В первый раз SecureShell Go копирует на сервер небольшой помощник (2–5 МБ). Он работает только пока вы им пользуетесь."
+  "remoteDesktopLaunchHelperNote": "В первый раз SecureShell Go копирует на сервер небольшой помощник (2–5 МБ). Он работает только пока вы им пользуетесь.",
+  "remoteDesktopVirtualClearApp": "Очистить"
 }

@@ -1310,5 +1310,6 @@
   "remoteDesktopSetupLinger": "Desktops nach dem Abmelden weiterlaufen lassen",
   "remoteDesktopSetupLingerDetail": "Aktiviert Lingering für dein Konto, damit seine Programme beim Abmelden nicht beendet werden.",
   "remoteDesktopProgramStopped": "Das Programm wurde kurz nach dem Start beendet (Exitcode {code}).",
-  "remoteDesktopLaunchHelperNote": "Beim ersten Mal kopiert SecureShell Go ein kleines Hilfsprogramm (2–5 MB) auf den Server. Es läuft nur, solange du es nutzt."
+  "remoteDesktopLaunchHelperNote": "Beim ersten Mal kopiert SecureShell Go ein kleines Hilfsprogramm (2–5 MB) auf den Server. Es läuft nur, solange du es nutzt.",
+  "remoteDesktopVirtualClearApp": "Leeren"
 }

@@ -374,12 +374,27 @@ String? parseCommandNotFound(String output) {
   return _packageName.hasMatch(name) ? name : null;
 }
 
-/// The program in a command as a person typed it: its first word, or null
+/// The program in a command as a person typed it, or as an installed app's
+/// entry gives it (each word single-quoted): its first word, unquoted. Null
 /// for one that starts with something other than a plain program name (a
-/// variable, a path with spaces, a subshell) — those are run as typed.
+/// variable, an assignment, a subshell): those are run as typed.
 String? programOf(String command) {
-  final first = command.trim().split(RegExp(r'\s+')).first;
-  if (first.isEmpty || !RegExp(r'^[A-Za-z0-9_./+-]+$').hasMatch(first)) return null;
-  if (first.contains('=')) return null;
-  return first;
+  final text = command.trimLeft();
+  if (text.isEmpty) return null;
+  String word;
+  if (text.startsWith("'")) {
+    final end = text.indexOf("'", 1);
+    if (end < 0) return null;
+    word = text.substring(1, end);
+  } else if (text.startsWith('"')) {
+    final end = text.indexOf('"', 1);
+    if (end < 0) return null;
+    word = text.substring(1, end);
+    if (RegExp(r'[$`\\]').hasMatch(word)) return null;
+  } else {
+    word = text.split(RegExp(r'\s+')).first;
+  }
+  if (word.isEmpty || word.contains('=')) return null;
+  if (!RegExp(r'^[A-Za-z0-9_./+ -]+$').hasMatch(word)) return null;
+  return word;
 }

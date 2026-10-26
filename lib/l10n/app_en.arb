@@ -7511,5 +7511,9 @@
   "remoteDesktopLaunchHelperNote": "The first time, SecureShell Go copies a small helper (2–5 MB) to the server. It runs only while you use it.",
   "@remoteDesktopLaunchHelperNote": {
     "description": "Remote desktop chooser: footnote about the helper the app copies to the server."
+  },
+  "remoteDesktopVirtualClearApp": "Clear",
+  "@remoteDesktopVirtualClearApp": {
+    "description": "Virtual desktop setup: tooltip of the button that clears the app picked from the server's list."
   }
 }

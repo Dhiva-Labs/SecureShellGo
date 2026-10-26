@@ -1310,5 +1310,6 @@
   "remoteDesktopSetupLinger": "注销后保持桌面运行",
   "remoteDesktopSetupLingerDetail": "为你的账户开启 lingering，注销时不会停止其程序。",
   "remoteDesktopProgramStopped": "程序启动后不久就停止了（退出代码 {code}）。",
-  "remoteDesktopLaunchHelperNote": "首次使用时，SecureShell Go 会将一个小型助手程序（2–5 MB）复制到服务器。它仅在你使用时运行。"
+  "remoteDesktopLaunchHelperNote": "首次使用时，SecureShell Go 会将一个小型助手程序（2–5 MB）复制到服务器。它仅在你使用时运行。",
+  "remoteDesktopVirtualClearApp": "清除"
 }

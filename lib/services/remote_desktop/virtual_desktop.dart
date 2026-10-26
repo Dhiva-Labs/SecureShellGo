@@ -13,12 +13,13 @@ import 'agent_shell.dart';
 
 // --------------------------------------------------------- programs as root
 
-/// Programs built on Chromium (VS Code and its forks, the Chromium-based
-/// browsers) that will not start as root unless told to run without their
-/// sandbox and with a profile folder of their own. Their own message says
-/// so ("add the argument --no-sandbox and specify an alternate user data
-/// directory"); a person signed in to a server as root should not have to
-/// learn that to open one.
+/// Programs built on Chromium: VS Code and its forks, and the
+/// Chromium-based browsers. A virtual desktop has no graphics hardware, and
+/// these try to draw with it, fail, retry, and leave a blank window: they
+/// need telling to draw in software. As root they also refuse to start at
+/// all unless told to run without their sandbox and with a profile folder
+/// of their own (their own message says so). A person should not have to
+/// learn either to open one.
 const Map<String, String> _chromiumPrograms = {
   'code': 'Code',
   'code-insiders': 'Code - Insiders',
@@ -34,16 +35,24 @@ const Map<String, String> _chromiumPrograms = {
   'microsoft-edge-stable': 'microsoft-edge',
 };
 
-/// What [command] needs added to start as root, or null when it needs
-/// nothing: [program] is its first word (see `programOf`), by path or name.
-/// The profile folder is a separate one, so a later run as an ordinary user
+/// What [program] (a command's first word, by path or name) needs added to
+/// run in a virtual desktop, or null when it needs nothing. With [root] the
+/// profile folder is a separate one, so a later run as an ordinary user
 /// does not find files root owns in its own.
-String? rootArgumentsFor(String program) {
+String? virtualDesktopArgumentsFor(String program, {required bool root}) {
   final name = program.split('/').last;
   final profile = _chromiumPrograms[name];
   if (profile == null) return null;
-  return '--no-sandbox --user-data-dir="\$HOME/.config/$profile (root)"';
+  return [
+    '--disable-gpu',
+    if (root) '--no-sandbox --user-data-dir="\$HOME/.config/$profile (root)"',
+  ].join(' ');
 }
+
+/// Whether [program] is one that needs [virtualDesktopArgumentsFor] as root:
+/// what the note under the command field speaks of.
+bool needsRootArguments(String program) =>
+    _chromiumPrograms.containsKey(program.split('/').last);
 
 // ------------------------------------------------------------ install hints
 

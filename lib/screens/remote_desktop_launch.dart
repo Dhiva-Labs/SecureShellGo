@@ -778,6 +778,13 @@ class _VirtualDesktopDialogState extends State<_VirtualDesktopDialog> {
   /// Checking for, or installing, something on the server.
   bool _busy = false;
 
+  /// An app picked from the server's list: shown by its name, its command
+  /// kept out of sight. Typing a command instead clears it.
+  InstalledRemoteApp? _picked;
+
+  /// What will run in "one program" mode: the picked app, or what was typed.
+  String get _commandText => _picked?.command ?? _command.text.trim();
+
   /// The program typed is not on the server, and the package that has it,
   /// where the server could say.
   ({String program, String? package})? _missing;
@@ -841,9 +848,9 @@ class _VirtualDesktopDialogState extends State<_VirtualDesktopDialog> {
   /// what is added.
   String? get _rootProgram {
     if (_linux.uid != 0) return null;
-    final program = programOf(_command.text);
-    if (program == null || rootArgumentsFor(program) == null) return null;
-    return program.split('/').last;
+    final program = programOf(_commandText);
+    if (program == null || !needsRootArguments(program)) return null;
+    return _picked?.name ?? program.split('/').last;
   }
 
   Future<void> _allowKeepRunning() async {
@@ -917,7 +924,8 @@ class _VirtualDesktopDialogState extends State<_VirtualDesktopDialog> {
     );
     if (picked == null || !mounted) return;
     setState(() {
-      _command.text = picked.command;
+      _picked = picked;
+      _command.clear();
       _commandError = null;
       _missing = null;
     });
@@ -930,7 +938,7 @@ class _VirtualDesktopDialogState extends State<_VirtualDesktopDialog> {
     if (session != null) {
       content = VirtualSessionContent(session);
     } else {
-      final command = _command.text.trim();
+      final command = _commandText;
       if (command.isEmpty) {
         setState(
           () => _commandError = context.l10n.remoteDesktopVirtualNeedsCommand,
@@ -960,11 +968,11 @@ class _VirtualDesktopDialogState extends State<_VirtualDesktopDialog> {
         });
         if (!exists) return;
       }
-      final extra = _linux.uid == 0 && program != null && !command.contains('--no-sandbox')
-          ? rootArgumentsFor(program)
+      final extra = program != null && !command.contains('--disable-gpu')
+          ? virtualDesktopArgumentsFor(program, root: _linux.uid == 0)
           : null;
       content = VirtualAppContent(extra == null ? command : '$command $extra',
-          label: program?.split('/').last);
+          label: _picked?.name ?? program?.split('/').last);
     }
     final (w, h) = _size ?? sizes.first;
     Navigator.of(context).pop(
@@ -1056,6 +1064,38 @@ class _VirtualDesktopDialogState extends State<_VirtualDesktopDialog> {
                     label: Text(l10n.remoteAppInstalledApps),
                   ),
                 ),
+                if (_picked case final app?) ...[
+                  const SizedBox(height: 8),
+                  Container(
+                    decoration: BoxDecoration(
+                      color: theme.colorScheme.secondaryContainer,
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    padding: const EdgeInsetsDirectional.only(start: 12),
+                    child: Row(
+                      children: [
+                        Icon(Icons.apps, color: theme.colorScheme.onSecondaryContainer),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: Text(
+                            app.name,
+                            style: theme.textTheme.titleSmall?.copyWith(
+                              color: theme.colorScheme.onSecondaryContainer,
+                            ),
+                          ),
+                        ),
+                        IconButton(
+                          tooltip: l10n.remoteDesktopVirtualClearApp,
+                          icon: const Icon(Icons.close),
+                          onPressed: () => setState(() {
+                            _picked = null;
+                            _missing = null;
+                          }),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
                 const SizedBox(height: 8),
                 TextField(
                   controller: _command,
@@ -1064,9 +1104,10 @@ class _VirtualDesktopDialogState extends State<_VirtualDesktopDialog> {
                     hintText: l10n.remoteAppCommandHint,
                     errorText: _commandError,
                   ),
-                  onChanged: (_) => setState(() {
+                  onChanged: (text) => setState(() {
                     _commandError = null;
                     _missing = null;
+                    if (text.isNotEmpty) _picked = null;
                   }),
                   onSubmitted: (_) => unawaited(_start(sizes)),
                 ),

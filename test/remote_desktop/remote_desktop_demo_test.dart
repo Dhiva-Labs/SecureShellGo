@@ -165,6 +165,47 @@ void main() {
     timeout: const Timeout(Duration(minutes: 20)),
   );
 
+  // Signed in as root, an app picked from the server's own list (VS Code by
+  // default) opens in a virtual desktop: the options it needs as root are
+  // added, and the app is seen.
+  final rootServer = env['SSGO_RD_DEMO_ROOT'];
+  testWidgets(
+    'Root server: an installed app picked from the list',
+    (tester) async {
+      final appName = env['SSGO_RD_DEMO_ROOT_APP'] ?? 'Visual Studio Code';
+      final live = (await tester.runAsync(
+        () => _connect(rootServer!, env['SSGO_RD_DEMO_ROOT_KEY'],
+            label: 'vps', fingerprint: env['SSGO_RD_DEMO_ROOT_FINGERPRINT']),
+      ))!;
+      addTearDown(() => live.client.close());
+      final l10n = await _app(tester, live.session);
+      debugDisableShadows = false;
+
+      await tester.tap(find.text('Open remote desktop'));
+      await _waitFor(tester, find.text(l10n.remoteDesktopLaunchNewVirtual));
+      await tester.tap(find.text(l10n.remoteDesktopLaunchNewVirtual));
+      await _waitFor(tester, find.text(l10n.remoteDesktopVirtualOneApp));
+      await tester.tap(find.text(l10n.remoteDesktopVirtualOneApp));
+      await _settle(tester, const Duration(milliseconds: 300));
+      await tester.tap(find.text(l10n.remoteAppInstalledApps));
+      await _waitFor(tester, find.text(appName));
+      await _shot(tester, out!, '15-root-app-list');
+      await tester.tap(find.text(appName));
+      await _settle(tester, const Duration(milliseconds: 500));
+      await _shot(tester, out, '16-root-app-note');
+      await tester.tap(find.text(l10n.remoteDesktopVirtualStart));
+      await _waitFor(tester, find.byKey(const ValueKey('remote-viewer')),
+          timeout: const Duration(seconds: 90));
+      await _settle(tester, const Duration(seconds: 25));
+      await _shot(tester, out, '17-root-app-running');
+      debugDisableShadows = true;
+      await tester.tap(find.byTooltip(l10n.remoteDesktopDisconnect).first);
+      await _settle(tester, const Duration(seconds: 3));
+    },
+    skip: none != null || rootServer == null,
+    timeout: const Timeout(Duration(minutes: 5)),
+  );
+
   testWidgets(
     'Windows laptop: its real desktop, no input sent',
     (tester) async {

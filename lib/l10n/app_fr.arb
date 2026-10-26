@@ -1310,5 +1310,6 @@
   "remoteDesktopSetupLinger": "Garder les bureaux actifs après la déconnexion",
   "remoteDesktopSetupLingerDetail": "Active le lingering pour votre compte, afin que ses programmes ne s'arrêtent pas à la déconnexion.",
   "remoteDesktopProgramStopped": "Le programme s'est arrêté peu après son démarrage (code de sortie {code}).",
-  "remoteDesktopLaunchHelperNote": "La première fois, SecureShell Go copie un petit assistant (2 à 5 Mo) sur le serveur. Il ne tourne que pendant que vous l'utilisez."
+  "remoteDesktopLaunchHelperNote": "La première fois, SecureShell Go copie un petit assistant (2 à 5 Mo) sur le serveur. Il ne tourne que pendant que vous l'utilisez.",
+  "remoteDesktopVirtualClearApp": "Effacer"
 }

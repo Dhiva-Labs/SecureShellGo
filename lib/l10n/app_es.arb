@@ -1310,5 +1310,6 @@
   "remoteDesktopSetupLinger": "Mantener los escritorios tras cerrar sesión",
   "remoteDesktopSetupLingerDetail": "Activa lingering para tu cuenta, para que sus programas no se detengan al cerrar la sesión.",
   "remoteDesktopProgramStopped": "El programa se detuvo poco después de iniciarse (código de salida {code}).",
-  "remoteDesktopLaunchHelperNote": "La primera vez, SecureShell Go copia un pequeño asistente (2–5 MB) al servidor. Solo se ejecuta mientras lo usas."
+  "remoteDesktopLaunchHelperNote": "La primera vez, SecureShell Go copia un pequeño asistente (2–5 MB) al servidor. Solo se ejecuta mientras lo usas.",
+  "remoteDesktopVirtualClearApp": "Quitar"
 }

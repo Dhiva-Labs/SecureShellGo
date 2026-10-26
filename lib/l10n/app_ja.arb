@@ -1310,5 +1310,6 @@
   "remoteDesktopSetupLinger": "サインアウト後もデスクトップを実行し続ける",
   "remoteDesktopSetupLingerDetail": "アカウントの lingering を有効にし、サインアウト時にプログラムが停止されないようにします。",
   "remoteDesktopProgramStopped": "プログラムは起動後すぐに終了しました（終了コード {code}）。",
-  "remoteDesktopLaunchHelperNote": "初回は、SecureShell Go が小さなヘルパー（2～5 MB）をサーバーにコピーします。使用中だけ動作します。"
+  "remoteDesktopLaunchHelperNote": "初回は、SecureShell Go が小さなヘルパー（2～5 MB）をサーバーにコピーします。使用中だけ動作します。",
+  "remoteDesktopVirtualClearApp": "クリア"
 }

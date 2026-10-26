@@ -1310,5 +1310,6 @@
   "remoteDesktopSetupLinger": "Manter as áreas de trabalho após sair",
   "remoteDesktopSetupLingerDetail": "Ativa o lingering da sua conta, para que seus programas não sejam encerrados quando você sair.",
   "remoteDesktopProgramStopped": "O programa parou logo após iniciar (código de saída {code}).",
-  "remoteDesktopLaunchHelperNote": "Na primeira vez, o SecureShell Go copia um pequeno auxiliar (2–5 MB) para o servidor. Ele só roda enquanto você usa."
+  "remoteDesktopLaunchHelperNote": "Na primeira vez, o SecureShell Go copia um pequeno auxiliar (2–5 MB) para o servidor. Ele só roda enquanto você usa.",
+  "remoteDesktopVirtualClearApp": "Limpar"
 }

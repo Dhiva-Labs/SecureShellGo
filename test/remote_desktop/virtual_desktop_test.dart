@@ -28,22 +28,27 @@ OsRelease _os(String id, [String like = '', String version = '']) =>
     OsRelease(id: id, idLike: like.split(' ').where((s) => s.isNotEmpty).toList(), versionId: version);
 
 void main() {
-  group('programs as root', () {
-    test('Chromium-based apps get no sandbox and a profile of their own', () {
-      expect(rootArgumentsFor('code'),
-          '--no-sandbox --user-data-dir="\$HOME/.config/Code (root)"');
-      expect(rootArgumentsFor('/snap/bin/code'), contains('--no-sandbox'));
-      expect(rootArgumentsFor('google-chrome-stable'), contains('google-chrome (root)'));
-      expect(rootArgumentsFor('gedit'), isNull);
-      expect(rootArgumentsFor('xclock'), isNull);
+  group('Chromium-based programs', () {
+    test('draw in software everywhere, and as root get what they ask for', () {
+      expect(virtualDesktopArgumentsFor('code', root: false), '--disable-gpu');
+      expect(virtualDesktopArgumentsFor('code', root: true),
+          '--disable-gpu --no-sandbox --user-data-dir="\$HOME/.config/Code (root)"');
+      expect(virtualDesktopArgumentsFor('/snap/bin/code', root: true),
+          contains('--no-sandbox'));
+      expect(virtualDesktopArgumentsFor('google-chrome-stable', root: true),
+          contains('google-chrome (root)'));
+      expect(virtualDesktopArgumentsFor('gedit', root: true), isNull);
+      expect(needsRootArguments('/snap/bin/code'), isTrue);
+      expect(needsRootArguments('xclock'), isFalse);
     });
 
     test('the arguments survive the shell the program is started by', () async {
       final r = await Process.run('sh', [
         '-c',
-        'set -- \${0+} ; HOME=/root; eval "set -- code \${1-} \$ARGS"; printf "%s|" "\$@"',
-      ], environment: {'ARGS': rootArgumentsFor('code')!});
-      expect(r.stdout, 'code|--no-sandbox|--user-data-dir=/root/.config/Code (root)|');
+        'HOME=/root; eval "set -- code \$ARGS"; printf "%s|" "\$@"',
+      ], environment: {'ARGS': virtualDesktopArgumentsFor('code', root: true)!});
+      expect(r.stdout,
+          'code|--disable-gpu|--no-sandbox|--user-data-dir=/root/.config/Code (root)|');
     });
   });
 
