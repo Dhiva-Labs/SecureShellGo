@@ -5,6 +5,7 @@ import 'dart:typed_data';
 
 import 'csrd_messages.dart';
 import 'csrd_tiles.dart';
+import 'remote_screen_session.dart';
 
 /// The viewer side of one CSRD session: the port of CrossShell's
 /// `crossshell-view/src/net.rs`, over whatever carries the bytes.
@@ -35,7 +36,7 @@ import 'csrd_tiles.dart';
 /// Listen to [events] before calling [connect]: it is a broadcast stream,
 /// and an event nobody is listening for is gone, a frame included, and an
 /// unacknowledged frame stalls the stream.
-class CsrdClient {
+class CsrdClient implements RemoteScreenSession {
   CsrdClient({
     required this._input,
     required this._output,
@@ -89,11 +90,14 @@ class CsrdClient {
 
   /// Everything that happens in the session, in order. Ends with one
   /// [CsrdClosedEvent].
+  @override
   Stream<CsrdEvent> get events => _events.stream;
 
+  @override
   CsrdClientState get state => _state;
 
   /// Completes once, when the session is over for any reason.
+  @override
   Future<CsrdCloseReason> get done => _done.future;
 
   /// Why the session ended; null while it has not.
@@ -101,34 +105,44 @@ class CsrdClient {
 
   /// The agent's displays, as of the last [CsrdWelcome] or
   /// [CsrdDisplaysEvent]. Empty before the handshake.
+  @override
   List<CsrdDisplayInfo> get displays => _displays;
 
   /// The display being streamed: the one asked for if the agent has it,
   /// else its primary, else its first.
+  @override
   int? get display => _display;
+  @override
   CsrdQuality get quality => _quality;
+
+  @override
+  bool get supportsQuality => true;
   int get maxFps => _maxFps;
 
   /// The `Welcome.caps` bits.
   int get hostCaps => _hostCaps;
 
   /// The latest ping round trip.
+  @override
   Duration? get rtt => _rtt;
 
   /// Frames received and not yet acknowledged.
   int get unackedFrames => _unacked.length;
 
   /// True while input and outgoing clipboard text are being dropped.
+  @override
   bool get viewOnly => _viewOnly;
 
   /// True when the session was started view-only. The agent then opened no
   /// input injector at all, so [viewOnly] cannot be turned off without
   /// reconnecting.
+  @override
   bool get viewOnlyLocked => _viewOnlyLocked;
 
   /// Stops sending input (and clipboard text), or starts again. Turning it
   /// on releases whatever this viewer holds down first, so no key is left
   /// stuck on the remote. Ignored when [viewOnlyLocked].
+  @override
   set viewOnly(bool value) {
     if (value == _viewOnly || (!value && _viewOnlyLocked)) return;
     if (value) releaseAll();
@@ -195,6 +209,7 @@ class CsrdClient {
   ///
   /// Throws [ArgumentError] for a display the agent did not list: the agent
   /// ends the whole session over one.
+  @override
   void selectDisplay(int display, {CsrdQuality? quality, int? maxFps}) {
     if (_state != CsrdClientState.connected) return;
     if (!_displays.any((d) => d.index == display)) {
@@ -214,6 +229,7 @@ class CsrdClient {
 
   /// Says frame [seq], and every frame before it, is on screen. Unknown,
   /// repeated and out-of-date acknowledgements are ignored.
+  @override
   void ackFrame(int seq) {
     if (_state != CsrdClientState.connected || !_unacked.contains(seq)) {
       return;
@@ -224,6 +240,7 @@ class CsrdClient {
 
   /// Moves the remote pointer to display pixel ([x], [y]). Moves queued
   /// together collapse into the last one.
+  @override
   void pointerMove(int x, int y) {
     if (!_inputAllowed) return;
     _send(CsrdPointerMove(_i32(x), _i32(y)));
@@ -231,6 +248,7 @@ class CsrdClient {
 
   /// A [CsrdButton] went [down] or up. Other numbers are ignored, as the
   /// agent would.
+  @override
   void pointerButton(int button, {required bool down}) {
     if (!_inputAllowed || button < 1 || button > 5) return;
     _send(CsrdPointerButton(button, down: down));
@@ -238,12 +256,14 @@ class CsrdClient {
 
   /// Wheel movement in 1/120-notch units: positive [dy] scrolls up,
   /// positive [dx] right. Clamped to the wire's 16 bits.
+  @override
   void scroll(int dx, int dy) {
     if (!_inputAllowed || (dx == 0 && dy == 0)) return;
     _send(CsrdScroll(dx.clamp(-0x8000, 0x7fff), dy.clamp(-0x8000, 0x7fff)));
   }
 
   /// A key by evdev [code] (see `csrd_keymap.dart`).
+  @override
   void key(int code, {required bool down}) {
     if (!_inputAllowed || code < 1 || code > 0xffff) return;
     _send(CsrdKey(code, down: down));
@@ -252,6 +272,7 @@ class CsrdClient {
   /// Releases every key and button this viewer holds on the remote. For
   /// focus loss, and anything else after which held keys would be a
   /// surprise.
+  @override
   void releaseAll() {
     if (!_inputAllowed) return;
     _send(const CsrdReleaseAll());
@@ -260,6 +281,7 @@ class CsrdClient {
   /// Puts [text] on the remote clipboard. Text over [csrdMaxClipboard]
   /// UTF-8 bytes is cut on a character boundary: the agent would end the
   /// session over a longer one, not just refuse it.
+  @override
   void sendClipboard(String text) {
     if (!_inputAllowed) return;
     _send(CsrdClipboardText(_truncateUtf8(text, csrdMaxClipboard)));
@@ -270,6 +292,7 @@ class CsrdClient {
   /// With [error], the session is reported as having failed with it (a
   /// frame the compositor could not decode, say) rather than closed by the
   /// user.
+  @override
   Future<CsrdCloseReason> close({String? error}) async {
     await _shutdown(
       error == null

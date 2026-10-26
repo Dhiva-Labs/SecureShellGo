@@ -18,6 +18,7 @@ import 'package:flutter/scheduler.dart';
 import '../../services/remote_desktop/csrd_client.dart';
 import '../../services/remote_desktop/csrd_messages.dart';
 import '../../services/remote_desktop/csrd_tiles.dart';
+import '../../services/remote_desktop/remote_screen_session.dart';
 
 /// Completes once the newest framebuffer is on screen.
 typedef FramePresentation = Future<void> Function();
@@ -116,7 +117,7 @@ class FrameCompositor extends ChangeNotifier
   ///
   /// Subscribe before [CsrdClient.connect], so the first frame is not
   /// missed. Cancel the subscription to stop.
-  StreamSubscription<CsrdEvent> drive(CsrdClient client) {
+  StreamSubscription<CsrdEvent> drive(RemoteScreenSession client) {
     return client.events.listen((event) {
       if (event is! CsrdFrameEvent) return;
       final seq = event.frame.seq;
