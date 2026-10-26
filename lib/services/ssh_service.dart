@@ -375,6 +375,18 @@ abstract class SessionTransport {
   /// transfer that installed it.
   MutableSSHAgentHandler? get agentSlot => null;
 
+  /// The forwarder that carries this connection's `x11` channels back to this
+  /// device's X server — and holds the fake cookie a channel asking for X11
+  /// has to present — or null when the connection was made without X11
+  /// forwarding: the host had it off, or this device has no display.
+  ///
+  /// Read-only, and decided once, when the connection was dialled (see
+  /// [SshService.connect]). "Open an app in a window"
+  /// (`remote_app_runner.dart`) reads it to put an `x11-req` on a single exec
+  /// channel and to tell the person which of those two it was; nothing else
+  /// has any use for it.
+  X11Forwarder? get x11Forwarder => null;
+
   /// Sends one keep-alive and waits for the server's reply.
   ///
   /// Driven by `SessionKeepalive` rather than by dartssh2's own timer — see
@@ -478,6 +490,12 @@ class SshConnection implements SessionTransport {
   /// before this call. See [SessionTransport.execute].
   @override
   Future<SSHSession> execute(String command) => client.execute(command);
+
+  @override
+  X11Forwarder? get x11Forwarder => switch (client) {
+        ForwardingSSHClient(:final forwarding) => forwarding?.x11,
+        _ => null,
+      };
 
   @override
   Future<SSHSession> startShell({
