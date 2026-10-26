@@ -14,12 +14,15 @@ import '../services/remote_desktop/agent_probe.dart';
 import '../services/remote_desktop/csrd_client.dart';
 import '../services/remote_desktop/remote_screen_session.dart';
 import '../services/remote_desktop/rfb_mac_opener.dart';
+import '../services/remote_desktop/server_setup.dart';
 import '../services/remote_desktop/virtual_desktop.dart';
 import '../services/session_controller.dart';
 import '../services/ssh_service.dart';
 import '../services/tunnel_carrier.dart';
 import 'remote_app_launcher.dart';
 import 'remote_desktop_screen.dart';
+import 'server_setup_dialog.dart';
+import '../widgets/terminal_fonts.dart';
 
 /// "Remote desktop…" on a session: find out what the server can show, offer
 /// that, and open the viewer on the choice.
@@ -61,7 +64,9 @@ Future<void> startRemoteDesktop(
   final (:probe, :running, :listError) = checked;
 
   final linux = probe.linux;
-  if (virtualOnly && linux != null && linux.hasXvfb) {
+  if (virtualOnly &&
+      linux != null &&
+      (linux.hasXvfb || packageManagerFor(linux.osRelease) != null)) {
     await _startVirtual(context, session, probe);
     return;
   }
@@ -372,15 +377,49 @@ Future<void> _startVirtual(
   RemoteDesktopProbe probe,
 ) async {
   final l10n = context.l10n;
+  var current = probe;
+  final linux = current.linux!;
+  if (!linux.hasXvfb) {
+    final pm = packageManagerFor(linux.osRelease);
+    if (pm == null) return;
+    final installed = await showServerSetup(
+      context,
+      transport: session.connection,
+      hostName: session.host.displayName,
+      pm: pm,
+      items: [
+        SetupItem(
+          title: l10n.remoteDesktopSetupXvfb,
+          detail: l10n.remoteDesktopSetupXvfbDetail,
+          packages: SetupPackages.xvfb(pm),
+        ),
+        // Offered, ticked, when there is no desktop to run: an empty screen
+        // is rarely what was wanted. It can be unticked.
+        if (linux.virtualSessions.isEmpty)
+          SetupItem(
+            title: l10n.remoteDesktopSetupDesktop,
+            detail: l10n.remoteDesktopSetupDesktopDetail,
+            packages: SetupPackages.desktop(pm),
+            required: false,
+          ),
+      ],
+    );
+    if (!installed || !context.mounted) return;
+    // Look again: what is installed now decides what the setup offers.
+    final again = await _whileChecking(
+        context, l10n, () => RemoteDesktopProbe.run(session.connection));
+    if (again == null || !context.mounted) return;
+    current = again;
+  }
   final spec = await showDialog<VirtualDesktopSpec>(
     context: context,
-    builder: (_) => _VirtualDesktopDialog(session: session, probe: probe),
+    builder: (_) => _VirtualDesktopDialog(session: session, probe: current),
   );
   if (spec == null || !context.mounted) return;
   await openRemoteDesktop(
     context,
     hostName: session.host.displayName,
-    opener: _virtualOpener(l10n, session, probe, spec),
+    opener: _virtualOpener(l10n, session, current, spec),
   );
 }
 
@@ -511,7 +550,11 @@ class _ChooserState extends State<_Chooser> {
 
       if (linux != null) {
         final support = VirtualDesktopSupport.of(linux);
-        final install = support.xvfbInstall;
+        // What is missing, the app installs on a click where it knows the
+        // server's package manager; only elsewhere is the person handed a
+        // command.
+        final installable = packageManagerFor(linux.osRelease) != null;
+        final available = support.hasXvfb || installable;
         children.add(
           ListTile(
             leading: const Icon(Icons.add_to_queue_outlined),
@@ -519,15 +562,16 @@ class _ChooserState extends State<_Chooser> {
             subtitle: Text(
               support.hasXvfb
                   ? l10n.remoteDesktopLaunchNewVirtualHint
-                  : l10n.remoteDesktopLaunchNeedsXvfb,
+                  : installable
+                      ? l10n.remoteDesktopLaunchSetupNeeded
+                      : l10n.remoteDesktopLaunchNeedsXvfb,
             ),
-            enabled: support.hasXvfb,
-            onTap: support.hasXvfb
-                ? () => _choose(const _NewVirtual())
-                : null,
+            enabled: available,
+            onTap: available ? () => _choose(const _NewVirtual()) : null,
           ),
         );
-        if (!support.hasXvfb && install != null) {
+        final install = support.xvfbInstall;
+        if (!available && install != null) {
           children.add(_CommandLine(command: install.command));
         }
         final listError = widget.listError;
@@ -606,19 +650,16 @@ class _ChooserState extends State<_Chooser> {
 /// A command to run on the server, shown to be copied rather than run: the
 /// app never types a sudo password for anyone.
 class _CommandLine extends StatelessWidget {
-  const _CommandLine({required this.command, this.inset = true});
+  const _CommandLine({required this.command});
 
   final String command;
-
-  /// Indented to line up with list tiles; off inside a dialog's own padding.
-  final bool inset;
 
   @override
   Widget build(BuildContext context) {
     final l10n = context.l10n;
     final theme = Theme.of(context);
     return Padding(
-      padding: inset ? const EdgeInsets.fromLTRB(16, 0, 16, 8) : EdgeInsets.zero,
+      padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
       child: Container(
         decoration: BoxDecoration(
           color: theme.colorScheme.surfaceContainerHighest,
@@ -631,7 +672,7 @@ class _CommandLine extends StatelessWidget {
               child: SelectableText(
                 command,
                 style: theme.textTheme.bodyMedium?.copyWith(
-                  fontFamily: 'JetBrainsMono',
+                  fontFamily: TerminalFonts.jetBrainsMono,
                 ),
               ),
             ),
@@ -689,9 +730,10 @@ class _VirtualDesktopDialog extends StatefulWidget {
 }
 
 class _VirtualDesktopDialogState extends State<_VirtualDesktopDialog> {
-  late final VirtualDesktopSupport _support = VirtualDesktopSupport.of(
-    widget.probe.linux!,
-  );
+  /// Looked at again after the app installs something, so what it offers
+  /// follows what is there.
+  late LinuxProbe _linux = widget.probe.linux!;
+  late VirtualDesktopSupport _support = VirtualDesktopSupport.of(_linux);
   final _command = TextEditingController();
 
   /// The desktop session to run, or null for one program.
@@ -700,6 +742,83 @@ class _VirtualDesktopDialogState extends State<_VirtualDesktopDialog> {
   bool _keep = false;
   String? _commandError;
   bool _loadingApps = false;
+
+  /// Checking for, or installing, something on the server.
+  bool _busy = false;
+
+  /// The program typed is not on the server, and the package that has it,
+  /// where the server could say.
+  ({String program, String? package})? _missing;
+
+  PackageManager? get _pm => packageManagerFor(_linux.osRelease);
+
+  Future<void> _reprobe() async {
+    try {
+      final again = await RemoteDesktopProbe.run(widget.session.connection);
+      final linux = again.linux;
+      if (!mounted || linux == null) return;
+      setState(() {
+        _linux = linux;
+        _support = VirtualDesktopSupport.of(linux);
+        _session = _support.sessions.firstOrNull ?? _session;
+      });
+    } catch (_) {
+      // What was offered before still stands.
+    }
+  }
+
+  Future<bool> _install(List<SetupItem> items) async {
+    final pm = _pm;
+    if (pm == null) return false;
+    setState(() => _busy = true);
+    try {
+      return await showServerSetup(
+        context,
+        transport: widget.session.connection,
+        hostName: widget.session.host.displayName,
+        pm: pm,
+        items: items,
+      );
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  Future<void> _installDesktop() async {
+    final pm = _pm;
+    if (pm == null) return;
+    final l10n = context.l10n;
+    final installed = await _install([
+      SetupItem(
+        title: l10n.remoteDesktopSetupDesktop,
+        detail: l10n.remoteDesktopSetupDesktopDetail,
+        packages: SetupPackages.desktop(pm),
+      ),
+    ]);
+    if (installed && mounted) {
+      setState(() => _busy = true);
+      await _reprobe();
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  Future<void> _installProgram(List<(int, int)> sizes) async {
+    final missing = _missing;
+    final package = missing?.package;
+    if (missing == null || package == null) return;
+    final l10n = context.l10n;
+    final installed = await _install([
+      SetupItem(
+        title: missing.program,
+        detail: l10n.remoteDesktopSetupProgramDetail(package),
+        packages: [package],
+      ),
+    ]);
+    if (installed && mounted) {
+      setState(() => _missing = null);
+      await _start(sizes);
+    }
+  }
 
   @override
   void dispose() {
@@ -743,7 +862,8 @@ class _VirtualDesktopDialogState extends State<_VirtualDesktopDialog> {
     });
   }
 
-  void _start(List<(int, int)> sizes) {
+  Future<void> _start(List<(int, int)> sizes) async {
+    if (_busy) return;
     final session = _session;
     final VirtualDesktopContent content;
     if (session != null) {
@@ -755,6 +875,29 @@ class _VirtualDesktopDialogState extends State<_VirtualDesktopDialog> {
           () => _commandError = context.l10n.remoteDesktopVirtualNeedsCommand,
         );
         return;
+      }
+      // A program that is not there would only open an empty screen; say so
+      // here, and offer to install it, before anything starts.
+      final program = programOf(command);
+      if (program != null) {
+        setState(() => _busy = true);
+        final transport = widget.session.connection;
+        var exists = true;
+        String? package;
+        try {
+          exists = await programExists(transport, program);
+          if (!exists && _pm == PackageManager.apt) {
+            package = await packageForProgram(transport, program);
+          }
+        } catch (_) {
+          // Could not check: let the start say what happens.
+        }
+        if (!mounted) return;
+        setState(() {
+          _busy = false;
+          _missing = exists ? null : (program: program, package: package);
+        });
+        if (!exists) return;
       }
       content = VirtualAppContent(command);
     }
@@ -801,15 +944,15 @@ class _VirtualDesktopDialogState extends State<_VirtualDesktopDialog> {
                   ),
                 ),
               // A headless server rarely has a desktop, and one program on
-              // an empty screen is seldom what was wanted: say how to get
-              // one, as the chooser does for Xvfb.
-              if (_support.desktopInstall case final hint?) ...[
-                Text(
-                  l10n.remoteDesktopVirtualInstallDesktop,
-                  style: theme.textTheme.bodySmall,
+              // an empty screen is seldom what was wanted: offer to install
+              // one.
+              if (_support.sessions.isEmpty && _pm != null) ...[
+                FilledButton.tonalIcon(
+                  style: FilledButton.styleFrom(minimumSize: const Size(0, 44)),
+                  onPressed: _busy ? null : () => unawaited(_installDesktop()),
+                  icon: const Icon(Icons.download_outlined),
+                  label: Text(l10n.remoteDesktopVirtualInstallDesktopButton),
                 ),
-                const SizedBox(height: 6),
-                _CommandLine(command: hint.command, inset: false),
                 const SizedBox(height: 8),
               ],
               RadioGroup<VirtualSessionKind?>(
@@ -841,12 +984,34 @@ class _VirtualDesktopDialogState extends State<_VirtualDesktopDialog> {
                     errorText: _commandError,
                   ),
                   onChanged: (_) {
-                    if (_commandError != null) {
-                      setState(() => _commandError = null);
+                    if (_commandError != null || _missing != null) {
+                      setState(() {
+                        _commandError = null;
+                        _missing = null;
+                      });
                     }
                   },
-                  onSubmitted: (_) => _start(sizes),
+                  onSubmitted: (_) => unawaited(_start(sizes)),
                 ),
+                if (_missing case final missing?) ...[
+                  const SizedBox(height: 8),
+                  Text(
+                    l10n.remoteDesktopVirtualProgramMissing(missing.program),
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      color: theme.colorScheme.error,
+                    ),
+                  ),
+                  if (missing.package case final package?) ...[
+                    const SizedBox(height: 6),
+                    FilledButton.tonalIcon(
+                      style: FilledButton.styleFrom(minimumSize: const Size(0, 44)),
+                      onPressed:
+                          _busy ? null : () => unawaited(_installProgram(sizes)),
+                      icon: const Icon(Icons.download_outlined),
+                      label: Text(l10n.remoteDesktopVirtualInstallProgram(package)),
+                    ),
+                  ],
+                ],
                 Align(
                   alignment: AlignmentDirectional.centerStart,
                   child: TextButton.icon(
@@ -908,8 +1073,13 @@ class _VirtualDesktopDialogState extends State<_VirtualDesktopDialog> {
           // The theme's buttons fill the width, which a dialog's action row
           // has no room for; the app's other dialogs say the same.
           style: FilledButton.styleFrom(minimumSize: const Size(0, 48)),
-          onPressed: () => _start(sizes),
-          child: Text(l10n.remoteDesktopVirtualStart),
+          onPressed: _busy ? null : () => unawaited(_start(sizes)),
+          child: _busy
+              ? const SizedBox.square(
+                  dimension: 18,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+              : Text(l10n.remoteDesktopVirtualStart),
         ),
       ],
     );

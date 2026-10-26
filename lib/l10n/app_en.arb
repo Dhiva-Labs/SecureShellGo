@@ -7375,8 +7375,108 @@
       }
     }
   },
-  "remoteDesktopVirtualInstallDesktop": "For a full desktop, install one on the server:",
-  "@remoteDesktopVirtualInstallDesktop": {
-    "description": "Virtual desktop setup: shown above the command that installs a desktop environment, when the server has none."
+  "remoteDesktopSetupTitle": "Set up this server",
+  "@remoteDesktopSetupTitle": {
+    "description": "Server setup dialog: title. The app installs what a virtual desktop needs on the server."
+  },
+  "remoteDesktopSetupChecking": "Checking how software can be installed…",
+  "@remoteDesktopSetupChecking": {
+    "description": "Server setup dialog: shown while checking whether this account is root or can use sudo."
+  },
+  "remoteDesktopSetupIntro": "SecureShell Go will install these on {host}:",
+  "@remoteDesktopSetupIntro": {
+    "description": "Server setup dialog: above the list of things to install. {host} is the server name.",
+    "placeholders": {
+      "host": {
+        "type": "String"
+      }
+    }
+  },
+  "remoteDesktopSetupNoSudo": "This account can't install software on the server. Someone with an administrator account can install it with:",
+  "@remoteDesktopSetupNoSudo": {
+    "description": "Server setup dialog: this account has no sudo, so the app cannot install; followed by the command for an administrator."
+  },
+  "remoteDesktopSetupPassword": "Your password on the server",
+  "@remoteDesktopSetupPassword": {
+    "description": "Server setup dialog: label of the field for the account's own password, which sudo asks for."
+  },
+  "remoteDesktopSetupPasswordHint": "sudo asks for it to install software. It is used for this install only and is not saved.",
+  "@remoteDesktopSetupPasswordHint": {
+    "description": "Server setup dialog: helper text under the sudo password field."
+  },
+  "remoteDesktopSetupInstall": "Install",
+  "@remoteDesktopSetupInstall": {
+    "description": "Server setup dialog: button that starts the install."
+  },
+  "remoteDesktopSetupInstalling": "Installing… {minutes}:{seconds}. This can take a few minutes.",
+  "@remoteDesktopSetupInstalling": {
+    "description": "Server setup dialog: progress while installing. {minutes}:{seconds} is the time so far.",
+    "placeholders": {
+      "minutes": {
+        "type": "int"
+      },
+      "seconds": {
+        "type": "String"
+      }
+    }
+  },
+  "remoteDesktopSetupHide": "Close",
+  "@remoteDesktopSetupHide": {
+    "description": "Server setup dialog: closes the dialog while the install goes on by itself on the server."
+  },
+  "remoteDesktopSetupDone": "Installed.",
+  "@remoteDesktopSetupDone": {
+    "description": "Server setup dialog: the install finished."
+  },
+  "remoteDesktopSetupXvfb": "Virtual screen (Xvfb)",
+  "@remoteDesktopSetupXvfb": {
+    "description": "Server setup dialog: item — the virtual screen (Xvfb) every virtual desktop runs in."
+  },
+  "remoteDesktopSetupXvfbDetail": "Needed for every virtual desktop. A few megabytes.",
+  "@remoteDesktopSetupXvfbDetail": {
+    "description": "Server setup dialog: detail under the Xvfb item."
+  },
+  "remoteDesktopSetupDesktop": "Xfce desktop",
+  "@remoteDesktopSetupDesktop": {
+    "description": "Server setup dialog: item — the Xfce desktop."
+  },
+  "remoteDesktopSetupDesktopDetail": "A light desktop with a terminal and a file manager. Around 150–250 MB on a server with no desktop yet.",
+  "@remoteDesktopSetupDesktopDetail": {
+    "description": "Server setup dialog: detail under the Xfce desktop item."
+  },
+  "remoteDesktopSetupProgramDetail": "From the {package} package.",
+  "@remoteDesktopSetupProgramDetail": {
+    "description": "Server setup dialog: detail under a program to install. {package} is the package that provides it.",
+    "placeholders": {
+      "package": {
+        "type": "String"
+      }
+    }
+  },
+  "remoteDesktopLaunchSetupNeeded": "This server needs a virtual screen first. SecureShell Go can install it for you.",
+  "@remoteDesktopLaunchSetupNeeded": {
+    "description": "Remote desktop chooser: subtitle of the virtual-desktop option when the server lacks Xvfb but the app can install it."
+  },
+  "remoteDesktopVirtualInstallDesktopButton": "Install the Xfce desktop",
+  "@remoteDesktopVirtualInstallDesktopButton": {
+    "description": "Virtual desktop setup: button that installs the Xfce desktop on the server."
+  },
+  "remoteDesktopVirtualProgramMissing": "{program} is not installed on the server.",
+  "@remoteDesktopVirtualProgramMissing": {
+    "description": "Virtual desktop setup: the program typed is not installed on the server. {program} is its name.",
+    "placeholders": {
+      "program": {
+        "type": "String"
+      }
+    }
+  },
+  "remoteDesktopVirtualInstallProgram": "Install {package}",
+  "@remoteDesktopVirtualInstallProgram": {
+    "description": "Virtual desktop setup: button that installs the package providing the program. {package} is the package name.",
+    "placeholders": {
+      "package": {
+        "type": "String"
+      }
+    }
   }
 }

@@ -91,6 +91,80 @@ void main() {
     timeout: const Timeout(Duration(minutes: 4)),
   );
 
+  // A fresh server with nothing graphical on it and a sudo that asks for the
+  // password: the app offers to install what it needs, installs it on a
+  // click, and goes on to the desktop; then a program that is not there is
+  // offered and installed the same way.
+  final fresh = env['SSGO_RD_DEMO_FRESH'];
+  testWidgets(
+    'Fresh server: installs what it needs, then a desktop and a program',
+    (tester) async {
+      final live = (await tester.runAsync(
+        () => _connect(fresh!, env['SSGO_RD_DEMO_FRESH_KEY'], label: 'fresh-server'),
+      ))!;
+      addTearDown(() => live.client.close());
+      final sudo = env['SSGO_RD_DEMO_FRESH_SUDO']!;
+      final l10n = await _app(tester, live.session);
+      debugDisableShadows = false;
+
+      await tester.tap(find.text('Open remote desktop'));
+      await _waitFor(tester, find.text(l10n.remoteDesktopLaunchSetupNeeded));
+      await _shot(tester, out!, '08-fresh-chooser');
+
+      await tester.tap(find.text(l10n.remoteDesktopLaunchNewVirtual));
+      await _waitFor(tester, find.text(l10n.remoteDesktopSetupPassword));
+      await _shot(tester, out, '09-fresh-setup');
+
+      await tester.enterText(find.byType(TextField), sudo);
+      await _settle(tester, const Duration(milliseconds: 200));
+      await tester.tap(find.text(l10n.remoteDesktopSetupInstall));
+      await _settle(tester, const Duration(seconds: 20));
+      await _shot(tester, out, '10-fresh-installing');
+      // Then the setup dialog for the desktop, with Xfce now there.
+      await _waitFor(tester, find.text(l10n.remoteDesktopVirtualSession('Xfce')),
+          timeout: const Duration(minutes: 10));
+      await _shot(tester, out, '11-fresh-desktop-ready');
+
+      await tester.tap(find.text(l10n.remoteDesktopVirtualStart));
+      await _waitFor(tester, find.byKey(const ValueKey('remote-viewer')),
+          timeout: const Duration(seconds: 60));
+      await _settle(tester, const Duration(seconds: 12));
+      await _shot(tester, out, '12-fresh-xfce');
+      await tester.tap(find.byTooltip(l10n.remoteDesktopDisconnect).first);
+      await _settle(tester, const Duration(seconds: 3));
+      // Disconnect may already have left the viewer; if not, leave it.
+      final back = find.byType(BackButton);
+      if (back.evaluate().isNotEmpty) await tester.tap(back.first);
+      await _settle(tester, const Duration(seconds: 1));
+
+      // One program that is not installed: offered, installed, started.
+      await tester.tap(find.text('Open remote desktop'));
+      await _waitFor(tester, find.text(l10n.remoteDesktopLaunchNewVirtual));
+      await tester.tap(find.text(l10n.remoteDesktopLaunchNewVirtual));
+      await _waitFor(tester, find.text(l10n.remoteDesktopVirtualOneApp));
+      await tester.tap(find.text(l10n.remoteDesktopVirtualOneApp));
+      await _settle(tester, const Duration(milliseconds: 300));
+      await tester.enterText(find.byType(TextField).last, 'xclock');
+      await tester.tap(find.text(l10n.remoteDesktopVirtualStart));
+      await _waitFor(tester, find.text(l10n.remoteDesktopVirtualInstallProgram('x11-apps')));
+      await _shot(tester, out, '13-fresh-program-missing');
+      await tester.tap(find.text(l10n.remoteDesktopVirtualInstallProgram('x11-apps')));
+      await _waitFor(tester, find.text(l10n.remoteDesktopSetupPassword));
+      await tester.enterText(find.byType(TextField).last, sudo);
+      await _settle(tester, const Duration(milliseconds: 200));
+      await tester.tap(find.text(l10n.remoteDesktopSetupInstall));
+      await _waitFor(tester, find.byKey(const ValueKey('remote-viewer')),
+          timeout: const Duration(minutes: 5));
+      await _settle(tester, const Duration(seconds: 6));
+      await _shot(tester, out, '14-fresh-xclock');
+      debugDisableShadows = true;
+      await tester.tap(find.byTooltip(l10n.remoteDesktopDisconnect).first);
+      await _settle(tester, const Duration(seconds: 3));
+    },
+    skip: none != null || fresh == null,
+    timeout: const Timeout(Duration(minutes: 20)),
+  );
+
   testWidgets(
     'Windows laptop: its real desktop, no input sent',
     (tester) async {
