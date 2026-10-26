@@ -606,16 +606,19 @@ class _ChooserState extends State<_Chooser> {
 /// A command to run on the server, shown to be copied rather than run: the
 /// app never types a sudo password for anyone.
 class _CommandLine extends StatelessWidget {
-  const _CommandLine({required this.command});
+  const _CommandLine({required this.command, this.inset = true});
 
   final String command;
+
+  /// Indented to line up with list tiles; off inside a dialog's own padding.
+  final bool inset;
 
   @override
   Widget build(BuildContext context) {
     final l10n = context.l10n;
     final theme = Theme.of(context);
     return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+      padding: inset ? const EdgeInsets.fromLTRB(16, 0, 16, 8) : EdgeInsets.zero,
       child: Container(
         decoration: BoxDecoration(
           color: theme.colorScheme.surfaceContainerHighest,
@@ -797,6 +800,18 @@ class _VirtualDesktopDialogState extends State<_VirtualDesktopDialog> {
                     style: theme.textTheme.bodySmall,
                   ),
                 ),
+              // A headless server rarely has a desktop, and one program on
+              // an empty screen is seldom what was wanted: say how to get
+              // one, as the chooser does for Xvfb.
+              if (_support.desktopInstall case final hint?) ...[
+                Text(
+                  l10n.remoteDesktopVirtualInstallDesktop,
+                  style: theme.textTheme.bodySmall,
+                ),
+                const SizedBox(height: 6),
+                _CommandLine(command: hint.command, inset: false),
+                const SizedBox(height: 8),
+              ],
               RadioGroup<VirtualSessionKind?>(
                 groupValue: _session,
                 onChanged: (value) => setState(() => _session = value),

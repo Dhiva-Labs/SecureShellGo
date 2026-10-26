@@ -1284,5 +1284,6 @@
   "remoteDesktopVncUser": "ユーザー名",
   "remoteDesktopVncPassword": "パスワード",
   "remoteDesktopVncSignIn": "サインイン",
-  "remoteDesktopLaunchListFailed": "実行中の仮想デスクトップを確認できませんでした: {error}"
+  "remoteDesktopLaunchListFailed": "実行中の仮想デスクトップを確認できませんでした: {error}",
+  "remoteDesktopVirtualInstallDesktop": "完全なデスクトップを使うには、サーバーにインストールしてください:"
 }

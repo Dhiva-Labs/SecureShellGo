@@ -1284,5 +1284,6 @@
   "remoteDesktopVncUser": "Benutzername",
   "remoteDesktopVncPassword": "Passwort",
   "remoteDesktopVncSignIn": "Anmelden",
-  "remoteDesktopLaunchListFailed": "Laufende virtuelle Desktops konnten nicht geprüft werden: {error}"
+  "remoteDesktopLaunchListFailed": "Laufende virtuelle Desktops konnten nicht geprüft werden: {error}",
+  "remoteDesktopVirtualInstallDesktop": "Für einen vollständigen Desktop installiere einen auf dem Server:"
 }

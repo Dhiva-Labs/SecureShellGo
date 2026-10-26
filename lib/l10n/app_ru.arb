@@ -1284,5 +1284,6 @@
   "remoteDesktopVncUser": "Имя пользователя",
   "remoteDesktopVncPassword": "Пароль",
   "remoteDesktopVncSignIn": "Войти",
-  "remoteDesktopLaunchListFailed": "Не удалось проверить запущенные виртуальные рабочие столы: {error}"
+  "remoteDesktopLaunchListFailed": "Не удалось проверить запущенные виртуальные рабочие столы: {error}",
+  "remoteDesktopVirtualInstallDesktop": "Чтобы получить полноценный рабочий стол, установите его на сервере:"
 }

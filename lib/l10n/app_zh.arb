@@ -1284,5 +1284,6 @@
   "remoteDesktopVncUser": "用户名",
   "remoteDesktopVncPassword": "密码",
   "remoteDesktopVncSignIn": "登录",
-  "remoteDesktopLaunchListFailed": "无法检查正在运行的虚拟桌面：{error}"
+  "remoteDesktopLaunchListFailed": "无法检查正在运行的虚拟桌面：{error}",
+  "remoteDesktopVirtualInstallDesktop": "如需完整桌面，请在服务器上安装："
 }

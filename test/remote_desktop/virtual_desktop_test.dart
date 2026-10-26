@@ -45,6 +45,14 @@ void main() {
       expect(xvfbInstallHint(const OsRelease()), isNull);
     });
 
+    test('a desktop to install, per distribution', () {
+      expect(desktopInstallHint(_os('ubuntu'))!.command,
+          'sudo apt install xfce4 xfce4-terminal dbus-x11');
+      expect(desktopInstallHint(_os('fedora'))!.packageManager, 'dnf');
+      expect(desktopInstallHint(_os('arch'))!.command, 'sudo pacman -S --needed xfce4');
+      expect(desktopInstallHint(_os('gentoo')), isNull);
+    });
+
     test('support summary from a probe', () {
       final support = VirtualDesktopSupport.of(LinuxProbe(
         system: 'Linux',
@@ -57,7 +65,19 @@ void main() {
       expect(support.hasXvfb, isFalse);
       expect(support.xvfbInstall!.packageManager, 'apt');
       expect(support.sessions, [VirtualSessionKind.openbox]);
+      expect(support.desktopInstall, isNull, reason: 'it has a desktop');
       expect(support.keepRunningNeedsLinger, isTrue);
+
+      final bare = VirtualDesktopSupport.of(LinuxProbe(
+        system: 'Linux',
+        machine: 'x86_64',
+        uid: 0,
+        home: '/root',
+        tools: const {'Xvfb'},
+        osRelease: _os('ubuntu'),
+      ));
+      expect(bare.sessions, isEmpty);
+      expect(bare.desktopInstall!.command, contains('xfce4'));
     });
   });
 
@@ -382,6 +402,9 @@ while :; do sleep 1; done
 
     test('a desktop that is not kept writes no record and idles out by the '
         'agent', () async {
+      // A desktop session that stays up, as a real one does.
+      File('$fakeBin/openbox-session').writeAsStringSync('#!/bin/sh\nwhile :; do sleep 1; done\n');
+      Process.runSync('chmod', ['755', '$fakeBin/openbox-session']);
       final command = VirtualDesktops.launchCommand(
         agent: _agent('${dir.path}/crossshell-host'),
         id: _id,
@@ -402,6 +425,59 @@ while :; do sleep 1; done
       await shell.execute(VirtualDesktops.stopCommand(_id));
       expect(Process.runSync('pgrep', ['-f', 'ssgo-vd-$_id']).stdout, '');
       expect(Directory(rt).existsSync(), isFalse);
+    });
+
+    test('a program that is not installed fails the start with its own error',
+        () async {
+      final command = VirtualDesktops.launchCommand(
+        agent: _agent('${dir.path}/crossshell-host'),
+        id: _id,
+        runtimeDir: rt,
+        spec: const VirtualDesktopSpec(
+          width: 640,
+          height: 480,
+          content: VirtualAppContent('definitely-not-installed-xyz'),
+          keepRunning: true,
+        ),
+        createdAt: DateTime.utc(2026),
+        useSystemd: false,
+        timeout: const Duration(seconds: 5),
+      );
+      final out = (await shell.execute(command) as FakeExecSession).stdoutChunks.join();
+      expect(out, contains('SSG-APP-EXITED 127'));
+      expect(out, isNot(contains('SSG-READY')));
+      expect(out, contains('definitely-not-installed-xyz'),
+          reason: "the program's own error comes back in the log");
+      // Nothing is left: no X server, agent, runtime folder or record.
+      expect(Directory(rt).existsSync(), isFalse);
+      expect(File('${dir.path}/.cache/secureshellgo/vdesk/$_id.json').existsSync(), isFalse);
+      await Future<void>.delayed(const Duration(milliseconds: 300));
+      expect(Process.runSync('pgrep', ['-f', 'ssgo-vd-$_id']).stdout, '');
+
+      expect(
+        () => VirtualDesktops.checkLaunch(
+            out.split('\n'), '', LinuxProbe(system: 'Linux', machine: 'x86_64', uid: 1000, home: dir.path)),
+        throwsA(isA<AgentFailure>()
+            .having((f) => f.message, 'message', contains('not installed'))
+            .having((f) => f.details, 'details', contains('not found'))),
+      );
+    });
+
+    test('a program that exits 0 at once is left alone', () async {
+      // Launchers that hand their window to another process exit 0.
+      final command = VirtualDesktops.launchCommand(
+        agent: _agent('${dir.path}/crossshell-host'),
+        id: _id,
+        runtimeDir: rt,
+        spec: const VirtualDesktopSpec(
+            width: 640, height: 480, content: VirtualAppContent('true')),
+        createdAt: DateTime.utc(2026),
+        useSystemd: false,
+        timeout: const Duration(seconds: 5),
+      );
+      final out = (await shell.execute(command) as FakeExecSession).stdoutChunks.join();
+      expect(out, contains('SSG-READY'));
+      expect(out, isNot(contains('SSG-APP-EXITED')));
     });
 
     test('a missing Xvfb is reported before anything starts', () async {

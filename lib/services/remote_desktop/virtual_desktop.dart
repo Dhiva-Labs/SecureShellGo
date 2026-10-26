@@ -22,6 +22,43 @@ class InstallHint {
   final String command;
 }
 
+/// The command that installs a light desktop (Xfce) on [os], or null for a
+/// distribution this does not know. Offered when a server has no desktop to
+/// run in a virtual desktop: a headless server usually has none, and one
+/// program on an empty screen is not what most people are after.
+InstallHint? desktopInstallHint(OsRelease os) {
+  for (final family in os.families) {
+    switch (family) {
+      case 'debian' || 'ubuntu' || 'linuxmint' || 'raspbian' || 'pop':
+        return const InstallHint(
+            packageManager: 'apt',
+            command: 'sudo apt install xfce4 xfce4-terminal dbus-x11');
+      case 'fedora' || 'rhel' || 'centos' || 'rocky' || 'almalinux' || 'ol' ||
+          'amzn':
+        return const InstallHint(
+            packageManager: 'dnf',
+            command: 'sudo dnf install xfce4-session xfwm4 xfce4-panel '
+                'xfdesktop xfce4-terminal');
+      case 'opensuse' ||
+            'opensuse-leap' ||
+            'opensuse-tumbleweed' ||
+            'suse' ||
+            'sles':
+        return const InstallHint(
+            packageManager: 'zypper',
+            command: 'sudo zypper install -t pattern xfce');
+      case 'arch' || 'manjaro' || 'endeavouros':
+        return const InstallHint(
+            packageManager: 'pacman', command: 'sudo pacman -S --needed xfce4');
+      case 'alpine':
+        return const InstallHint(
+            packageManager: 'apk',
+            command: 'sudo apk add xfce4 xfce4-terminal dbus-x11');
+    }
+  }
+  return null;
+}
+
 /// The command that installs Xvfb on [os], or null for a distribution this
 /// does not know — the UI then names the package generically.
 ///
@@ -258,6 +295,7 @@ class VirtualDesktopSupport {
     required this.hasXvfb,
     required this.xvfbInstall,
     required this.sessions,
+    this.desktopInstall,
     required this.keepRunningNeedsLinger,
   });
 
@@ -265,6 +303,9 @@ class VirtualDesktopSupport {
         hasXvfb: probe.hasXvfb,
         xvfbInstall: probe.hasXvfb ? null : xvfbInstallHint(probe.osRelease),
         sessions: probe.virtualSessions,
+        desktopInstall: probe.virtualSessions.isEmpty
+            ? desktopInstallHint(probe.osRelease)
+            : null,
         keepRunningNeedsLinger:
             probe.hasSystemdRun && !probe.lingering,
       );
@@ -276,6 +317,9 @@ class VirtualDesktopSupport {
 
   /// Desktop sessions installed there, for "run a whole desktop".
   final List<VirtualSessionKind> sessions;
+
+  /// How to install a desktop, when the server has none to offer.
+  final InstallHint? desktopInstall;
 
   /// The user manager stops — taking every unit with it, a kept virtual
   /// desktop included — when this account's last login ends, unless
@@ -524,7 +568,7 @@ class VirtualDesktops {
         what: 'start the virtual desktop',
         timeout: timeout + const Duration(seconds: 15));
     final lines = AgentShell.lines(result.stdout);
-    _checkLaunch(lines, result.stderr, probe);
+    checkLaunch(lines, result.stderr, probe);
     final json = AgentShell.between(lines, 'SSG-READY', 'SSG-END')!;
     final AgentHostInfo info;
     try {
@@ -558,7 +602,9 @@ class VirtualDesktops {
         id: id, display: display, endpoint: endpoint, record: record);
   }
 
-  static void _checkLaunch(List<String> lines, String stderr, LinuxProbe probe) {
+  /// Turns the launch script's output into an [AgentFailure], or returns
+  /// when the desktop is ready. Public for its tests.
+  static void checkLaunch(List<String> lines, String stderr, LinuxProbe probe) {
     if (lines.contains('SSG-NO-XVFB')) {
       throw AgentFailure(
         AgentFailureKind.missingTool,
@@ -592,6 +638,24 @@ class VirtualDesktops {
     if (AgentShell.between(lines, 'SSG-READY', 'SSG-END') != null) return;
     final log = AgentShell.after(lines, 'SSG-LOG');
     final details = [log, stderr.trim()].where((s) => s.isNotEmpty).join('\n');
+    final exited = int.tryParse(AgentShell.valueAfter(lines, 'SSG-APP-EXITED ') ?? '');
+    if (exited != null) {
+      // Without this the viewer opened on an empty black screen, with
+      // nothing to say the program never started. Its own error, from the
+      // log, is in [details].
+      throw AgentFailure(
+        AgentFailureKind.launchFailed,
+        switch (exited) {
+          127 => 'The program is not installed on the server, or is not on '
+              'its PATH, so the virtual desktop was not started.',
+          126 => 'The program could not be run (it is not executable), so '
+              'the virtual desktop was not started.',
+          _ => 'The program stopped as soon as it started (exit code '
+              '$exited), so the virtual desktop was not started.',
+        },
+        details: details.isEmpty ? null : details,
+      );
+    }
     throw AgentFailure(
       lines.contains('SSG-TIMEOUT')
           ? AgentFailureKind.launchTimedOut
@@ -679,8 +743,8 @@ echo "$D" > "$rt/display"
 if command -v dbus-run-session >/dev/null 2>&1; then bus="dbus-run-session --"; elif command -v dbus-launch >/dev/null 2>&1; then bus=dbus-launch; else bus=; fi
 xenv() { env -i HOME="$HOME" USER="${USER:-}" LOGNAME="${LOGNAME:-${USER:-}}" SHELL="${SHELL:-/bin/sh}" PATH="$PATH" LANG="${LANG:-C.UTF-8}" XDG_RUNTIME_DIR="$rt/xdg" DISPLAY="$D" XAUTHORITY="$rt/xauth" XDG_SESSION_TYPE=x11 GDK_BACKEND=x11 QT_QPA_PLATFORM=xcb SSGO_VDESK="$id" "$@"; }
 case "$mode" in
-  session) xenv $bus "$cmd" >> "$rt/session.log" 2>&1 & ;;
-  app) xenv $bus sh -c "$cmd" >> "$rt/session.log" 2>&1 & ;;
+  session) ( xenv $bus "$cmd" >> "$rt/session.log" 2>&1; echo $? > "$rt/app.exit" ) & ;;
+  app) ( xenv $bus sh -c "$cmd" >> "$rt/session.log" 2>&1; echo $? > "$rt/app.exit" ) & ;;
 esac
 set -- --runtime-dir "$rt/agent" --no-notify
 if [ "$idle" -gt 0 ]; then set -- "$@" --exit-when-idle "$idle"; fi
@@ -769,6 +833,14 @@ alive() { if [ -n "\$unit" ]; then systemctl --user is-active --quiet "\$unit"; 
 n=0
 while [ \$n -lt $polls ]; do
   if [ -s "\$rt/agent/host.json" ]; then
+    # The program inside starts before the agent, so one that cannot run at
+    # all (not installed, no permission) has usually failed by now; a short
+    # grace catches the slower failures. Only a failure counts: a launcher
+    # that hands its window to another process and exits 0 is fine.
+    g=0
+    while [ \$g -lt 3 ] && [ ! -s "\$rt/app.exit" ]; do ${AgentShell.shShortSleep}; g=\$((g + 1)); done
+    e=\$(cat "\$rt/app.exit" 2>/dev/null)
+    if [ -n "\$e" ] && [ "\$e" != 0 ]; then echo "SSG-APP-EXITED \$e"; break; fi
     D=\$(cat "\$rt/display" 2>/dev/null)
     record "\$D"
     echo "SSG-DISPLAY \$D"; echo SSG-READY; cat "\$rt/agent/host.json"; echo; echo SSG-END; exit 0
@@ -779,7 +851,9 @@ while [ \$n -lt $polls ]; do
 done
 [ \$n -lt $polls ] || echo SSG-TIMEOUT
 echo SSG-LOG
-for f in launch.log xvfb.log agent.log agent/host.log session.log; do [ -s "\$rt/\$f" ] && { echo "--- \$f"; tail -n 15 "\$rt/\$f"; }; done
+# The program's own output first: when it is what failed, its error is the
+# one line that matters. Xvfb's keyboard-map warnings are noise on every start.
+for f in session.log launch.log xvfb.log agent.log agent/host.log; do [ -s "\$rt/\$f" ] && { echo "--- \$f"; grep -v 'Could not resolve keysym' "\$rt/\$f" | tail -n 15; }; done
 [ -n "\$unit" ] && journalctl --user -u "\$unit" -n 15 --no-pager -o cat 2>/dev/null
 if [ -n "\$unit" ]; then systemctl --user stop "\$unit" 2>/dev/null; else kill -TERM "-\$p" 2>/dev/null || kill "\$p" 2>/dev/null; fi
 rm -rf "\$rt"; rm -f "\$vd/\$id.json" "\$vd/\$id.json.tmp" "\$vd/\$id.pid"

@@ -1284,5 +1284,6 @@
   "remoteDesktopVncUser": "Nome de usuário",
   "remoteDesktopVncPassword": "Senha",
   "remoteDesktopVncSignIn": "Entrar",
-  "remoteDesktopLaunchListFailed": "Não foi possível verificar as áreas de trabalho virtuais em execução: {error}"
+  "remoteDesktopLaunchListFailed": "Não foi possível verificar as áreas de trabalho virtuais em execução: {error}",
+  "remoteDesktopVirtualInstallDesktop": "Para ter uma área de trabalho completa, instale uma no servidor:"
 }

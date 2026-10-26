@@ -1284,5 +1284,6 @@
   "remoteDesktopVncUser": "Nombre de usuario",
   "remoteDesktopVncPassword": "Contraseña",
   "remoteDesktopVncSignIn": "Iniciar sesión",
-  "remoteDesktopLaunchListFailed": "No se pudieron comprobar los escritorios virtuales en ejecución: {error}"
+  "remoteDesktopLaunchListFailed": "No se pudieron comprobar los escritorios virtuales en ejecución: {error}",
+  "remoteDesktopVirtualInstallDesktop": "Para tener un escritorio completo, instala uno en el servidor:"
 }

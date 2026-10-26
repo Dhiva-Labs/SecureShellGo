@@ -7374,5 +7374,9 @@
         "type": "String"
       }
     }
+  },
+  "remoteDesktopVirtualInstallDesktop": "For a full desktop, install one on the server:",
+  "@remoteDesktopVirtualInstallDesktop": {
+    "description": "Virtual desktop setup: shown above the command that installs a desktop environment, when the server has none."
   }
 }

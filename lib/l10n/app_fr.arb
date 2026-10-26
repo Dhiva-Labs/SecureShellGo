@@ -1284,5 +1284,6 @@
   "remoteDesktopVncUser": "Nom d'utilisateur",
   "remoteDesktopVncPassword": "Mot de passe",
   "remoteDesktopVncSignIn": "Se connecter",
-  "remoteDesktopLaunchListFailed": "Impossible de vérifier les bureaux virtuels en cours : {error}"
+  "remoteDesktopLaunchListFailed": "Impossible de vérifier les bureaux virtuels en cours : {error}",
+  "remoteDesktopVirtualInstallDesktop": "Pour un bureau complet, installez-en un sur le serveur :"
 }
