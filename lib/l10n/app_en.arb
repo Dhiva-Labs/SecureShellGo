@@ -2726,6 +2726,200 @@
   "@sessionTailFile": {
     "description": "Session screen: overflow-menu item that follows a remote log file live (like tail -f). The ellipsis means a dialog follows."
   },
+  "remoteAppTitle": "Open an app in a window",
+  "@remoteAppTitle": {
+    "description": "Remote app launcher: title of the dialog or sheet, and the name of the session menu entry that opens it. A graphical program on the server gets its own window on this device."
+  },
+  "remoteAppIntro": "Start one program on the server and its window opens here, on this device's desktop. No terminal needed.",
+  "@remoteAppIntro": {
+    "description": "Remote app launcher: one-line explanation under the title."
+  },
+  "remoteAppCommandLabel": "Command to run",
+  "@remoteAppCommandLabel": {
+    "description": "Remote app launcher: label of the text field for the command line to start on the server."
+  },
+  "remoteAppCommandHint": "For example gedit, xeyes or firefox",
+  "@remoteAppCommandHint": {
+    "description": "Remote app launcher: hint inside the command field. Keep the program names untranslated."
+  },
+  "remoteAppRun": "Run",
+  "@remoteAppRun": {
+    "description": "Remote app launcher: button that starts the command on the server."
+  },
+  "remoteAppInstalledApps": "Installed apps…",
+  "@remoteAppInstalledApps": {
+    "description": "Remote app launcher: button that opens a list of the applications installed on the server. The ellipsis means a list follows."
+  },
+  "remoteAppInstalledTitle": "Apps on the server",
+  "@remoteAppInstalledTitle": {
+    "description": "Remote app launcher: title of the list of applications installed on the server."
+  },
+  "remoteAppInstalledSearch": "Search apps",
+  "@remoteAppInstalledSearch": {
+    "description": "Remote app launcher: hint of the search field above the list of installed applications."
+  },
+  "remoteAppInstalledEmpty": "No applications were found on the server.",
+  "@remoteAppInstalledEmpty": {
+    "description": "Remote app launcher: shown when the server has no desktop applications to list."
+  },
+  "remoteAppInstalledFailed": "Could not read the server's list of applications. {error}",
+  "@remoteAppInstalledFailed": {
+    "description": "Remote app launcher: shown when listing the applications installed on the server failed. {error} is the technical reason, in English.",
+    "placeholders": {
+      "error": {
+        "type": "String",
+        "example": "Permission denied"
+      }
+    }
+  },
+  "remoteAppRecent": "Recent",
+  "@remoteAppRecent": {
+    "description": "Remote app launcher: heading above the chips of commands used before on this host."
+  },
+  "remoteAppForgetRecent": "Forget this command",
+  "@remoteAppForgetRecent": {
+    "description": "Remote app launcher: tooltip of the delete button on a recent-command chip."
+  },
+  "remoteAppRunningTitle": "Apps from this session",
+  "@remoteAppRunningTitle": {
+    "description": "Remote app launcher: heading above the list of programs started from this session, running or ended."
+  },
+  "remoteAppStop": "Stop",
+  "@remoteAppStop": {
+    "description": "Remote app launcher: button that ends a running program on the server."
+  },
+  "remoteAppRemove": "Remove from the list",
+  "@remoteAppRemove": {
+    "description": "Remote app launcher: tooltip of the button that removes an ended program from the list."
+  },
+  "remoteAppStateStarting": "Starting…",
+  "@remoteAppStateStarting": {
+    "description": "Remote app launcher: state of a program whose channel is being opened."
+  },
+  "remoteAppStateRunning": "Running",
+  "@remoteAppStateRunning": {
+    "description": "Remote app launcher: state of a program that is running on the server."
+  },
+  "remoteAppStateStopping": "Stopping…",
+  "@remoteAppStateStopping": {
+    "description": "Remote app launcher: state of a program after Stop was pressed, until it has ended."
+  },
+  "remoteAppStateStopped": "Stopped",
+  "@remoteAppStateStopped": {
+    "description": "Remote app launcher: state of a program that the person stopped."
+  },
+  "remoteAppStateExited": "Exited with code {code}",
+  "@remoteAppStateExited": {
+    "description": "Remote app launcher: state of a program that ended by itself; {code} is its exit status (0 means it finished normally).",
+    "placeholders": {
+      "code": {
+        "type": "int",
+        "example": "1"
+      }
+    }
+  },
+  "remoteAppStateEnded": "Ended",
+  "@remoteAppStateEnded": {
+    "description": "Remote app launcher: state of a program that ended without the server giving an exit status."
+  },
+  "remoteAppStateSignal": "Ended by signal {signal}",
+  "@remoteAppStateSignal": {
+    "description": "Remote app launcher: state of a program that was ended by a Unix signal; {signal} is its name, such as TERM or SEGV.",
+    "placeholders": {
+      "signal": {
+        "type": "String",
+        "example": "SEGV"
+      }
+    }
+  },
+  "remoteAppStateLost": "Connection lost",
+  "@remoteAppStateLost": {
+    "description": "Remote app launcher: state of a program whose SSH connection went away while it ran, so what became of it is unknown."
+  },
+  "remoteAppStateRefused": "Refused by the server",
+  "@remoteAppStateRefused": {
+    "description": "Remote app launcher: state of a program the server would not start because it refused X11 forwarding."
+  },
+  "remoteAppStateFailed": "Could not start. {reason}",
+  "@remoteAppStateFailed": {
+    "description": "Remote app launcher: state of a program that could not be started; {reason} is the technical reason, in English, and may be empty.",
+    "placeholders": {
+      "reason": {
+        "type": "String",
+        "example": "Channel open failure"
+      }
+    }
+  },
+  "remoteAppStartedAt": "Started {time}",
+  "@remoteAppStartedAt": {
+    "description": "Remote app launcher: when a program was started; {time} is a clock time such as 14:02.",
+    "placeholders": {
+      "time": {
+        "type": "String",
+        "example": "14:02"
+      }
+    }
+  },
+  "remoteAppErrorOutput": "Error output",
+  "@remoteAppErrorOutput": {
+    "description": "Remote app launcher: heading above the last lines a program wrote to its error output (stderr)."
+  },
+  "remoteAppFullAccessWarning": "This display cannot give the server limited access, so this app can see and control every window on it.",
+  "@remoteAppFullAccessWarning": {
+    "description": "Remote app launcher: warning shown when X11 forwarding on this device can only be done with full access (as ssh -Y does). Keep the warning as strong."
+  },
+  "remoteAppSecurityDesktop": "The app gets limited access to this display, as with ssh -X: it can show its own windows, but not read your other windows or watch your keyboard. If this display cannot limit it, the app can see and control every window on it, as with ssh -Y, and this screen says so. Only open apps from servers you trust.",
+  "@remoteAppSecurityDesktop": {
+    "description": "Remote app launcher: security note on Linux and macOS about what X11 forwarding lets the server do. Keep ssh -X and ssh -Y, and keep the warning as strong."
+  },
+  "remoteAppSecurityWindows": "While the app is open, programs on the server can see and control every window on this display, because X servers on Windows cannot limit them. Only open apps from servers you trust.",
+  "@remoteAppSecurityWindows": {
+    "description": "Remote app launcher: security note on Windows about what X11 forwarding lets the server do. Keep the warning as strong."
+  },
+  "remoteAppUnavailableTitle": "An app can't open in a window right now",
+  "@remoteAppUnavailableTitle": {
+    "description": "Remote app launcher: heading of the explanation shown when the feature cannot be used on this session."
+  },
+  "remoteAppUnavailableUnsupported": "This device has no X server to draw the app's window on, so apps from the server cannot open as windows here. A virtual desktop shows the server's own desktop instead.",
+  "@remoteAppUnavailableUnsupported": {
+    "description": "Remote app launcher: why it is unavailable on Android and iOS."
+  },
+  "remoteAppUnavailableNoDisplay": "There is no X display on this device to draw on: DISPLAY is not set, or the X server it names is not answering. Start your desktop's X server, then check again.",
+  "@remoteAppUnavailableNoDisplay": {
+    "description": "Remote app launcher: why it is unavailable on Linux and macOS when there is no X display. Keep DISPLAY as written."
+  },
+  "remoteAppUnavailableNoDisplayWindows": "No X server is answering on this computer. Install and start one, such as VcXsrv or X410, then check again.",
+  "@remoteAppUnavailableNoDisplayWindows": {
+    "description": "Remote app launcher: why it is unavailable on Windows when no X server answers. Keep VcXsrv and X410."
+  },
+  "remoteAppUnavailableHostX11Off": "X11 forwarding is off for this host, and a connection decides that when it is made. Turn it on for this host and reconnect.",
+  "@remoteAppUnavailableHostX11Off": {
+    "description": "Remote app launcher: why it is unavailable when the host has X11 forwarding switched off."
+  },
+  "remoteAppUnavailableSsh": "The SSH connection to the server isn't available right now: the session is closed or reconnecting, or only its Mosh terminal is still up. Reconnect, then try again.",
+  "@remoteAppUnavailableSsh": {
+    "description": "Remote app launcher: why it is unavailable when the session has no working SSH connection."
+  },
+  "remoteAppUnavailableRefused": "The server refused X11 forwarding. Its sshd_config may have X11Forwarding no, or xauth may not be installed there.",
+  "@remoteAppUnavailableRefused": {
+    "description": "Remote app launcher: why it is unavailable after the server refused X11 forwarding. Keep sshd_config, X11Forwarding no and xauth as written."
+  },
+  "remoteAppUnavailableRefusedCertificate": "The server refused X11 forwarding. The certificate this host signs in with does not permit it (no permit-X11-forwarding); ask its CA for one that does.",
+  "@remoteAppUnavailableRefusedCertificate": {
+    "description": "Remote app launcher: why it is unavailable after the server refused X11 forwarding, when the certificate this host signs in with lacks the permit-X11-forwarding extension. Keep permit-X11-forwarding as written."
+  },
+  "remoteAppCheckAgain": "Check again",
+  "@remoteAppCheckAgain": {
+    "description": "Remote app launcher: button that checks again whether an X server is now answering."
+  },
+  "remoteAppEnableX11": "Turn on X11 forwarding for this host",
+  "@remoteAppEnableX11": {
+    "description": "Remote app launcher: button that switches X11 forwarding on in the saved host and reconnects."
+  },
+  "remoteAppVirtualDesktop": "Open a virtual desktop instead",
+  "@remoteAppVirtualDesktop": {
+    "description": "Remote app launcher: button offered whenever an app cannot open in a window; it opens the server's own desktop in a virtual desktop instead."
+  },
   "sessionNew": "New session",
   "@sessionNew": {
     "description": "Session screen and split panes: button, tooltip and menu item that opens another session (picks a host)."
