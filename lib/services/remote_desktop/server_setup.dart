@@ -244,12 +244,17 @@ Future<SetupRun> runInstall(
   }
 
   final session = await transport.execute(command);
-  if (privilege == Privilege.sudoPassword) {
-    session.stdin.add(utf8.encode('$password\n'));
-  }
+  // sudo that refuses this account outright exits without reading stdin, so
+  // the write can meet a closed channel. That is not the failure to report:
+  // sudo's own words, below, are.
+  try {
+    if (privilege == Privilege.sudoPassword) {
+      session.stdin.add(utf8.encode('$password\n'));
+    }
+  } catch (_) {}
   // Nothing else will ever be typed; a package manager that asks anyway
   // reads end-of-file and gives up instead of hanging.
-  unawaited(session.stdin.close());
+  unawaited(session.stdin.close().then<void>((_) {}, onError: (_) {}));
 
   final controller = StreamController<String>.broadcast();
   final tail = <String>[];
