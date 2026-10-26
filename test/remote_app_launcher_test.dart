@@ -6,12 +6,14 @@ import 'package:dartssh2/dartssh2.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:secure_shell_go/l10n/l10n.dart';
+import 'package:secure_shell_go/models/app_settings.dart';
 import 'package:secure_shell_go/screens/remote_app_launcher.dart';
 import 'package:secure_shell_go/services/remote_app_history.dart';
 import 'package:secure_shell_go/services/remote_app_runner.dart';
 import 'package:secure_shell_go/services/session_controller.dart';
 import 'package:secure_shell_go/services/ssh_service.dart';
 import 'package:secure_shell_go/services/x11_forwarding.dart';
+import 'package:secure_shell_go/theme.dart';
 
 import 'support/remote_app_fakes.dart';
 import 'support/settle.dart';
@@ -108,12 +110,14 @@ Future<void> _pumpLauncher(
   bool offerEnableX11 = true,
   Future<List<InstalledRemoteApp>> Function()? listInstalledApps,
   Locale? locale,
+  ThemeData? theme,
 }) async {
   tester.view.physicalSize = size;
   tester.view.devicePixelRatio = 1.0;
   addTearDown(tester.view.reset);
   await tester.pumpWidget(
     MaterialApp(
+      theme: theme,
       locale: locale,
       localizationsDelegates: AppLocalizations.localizationsDelegates,
       supportedLocales: AppLocalizations.supportedLocales,
@@ -160,6 +164,30 @@ Future<void> _runCommand(WidgetTester tester, String command) async {
 }
 
 void main() {
+  // The app's own themes make filled buttons as wide as they may be, which
+  // in a row of buttons is infinitely wide: the default theme the other
+  // tests use cannot show that.
+  for (final style in UiStyle.values) {
+    testWidgets('lays out under the app\'s ${style.name} theme', (tester) async {
+      final f = _Fixture();
+      await _pumpLauncher(
+        tester,
+        f,
+        theme: AppTheme.themeFor(style, Brightness.dark),
+      );
+      await _runCommand(tester, 'xclock');
+      expect(tester.takeException(), isNull);
+      expect(find.text('xclock'), findsWidgets);
+
+      await _pumpLauncher(
+        tester,
+        _Fixture(hostX11: false, hasForwarder: false),
+        theme: AppTheme.themeFor(style, Brightness.dark),
+      );
+      expect(tester.takeException(), isNull);
+    });
+  }
+
   group('where it opens', () {
     testWidgets('as a dialog on a wide screen', (tester) async {
       await _pumpLauncher(tester, _Fixture());

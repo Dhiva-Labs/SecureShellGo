@@ -13,6 +13,11 @@ import '../theme.dart';
 /// for the person and the [command] that starts it.
 typedef InstalledRemoteApp = ({String name, String command});
 
+/// The app's theme makes filled buttons as wide as they are allowed to be,
+/// which in a row or a wrap is infinitely wide; these sit beside others.
+final ButtonStyle _rowButton =
+    FilledButton.styleFrom(minimumSize: const Size(0, 48));
+
 /// "Open an app in a window": start one graphical program on [session]'s
 /// server and have its window open on this device, with no terminal.
 ///
@@ -339,6 +344,7 @@ class _LauncherBodyState extends State<_LauncherBody> {
               onPressed: _pickInstalled,
             ),
           FilledButton.icon(
+            style: _rowButton,
             icon: _launching
                 ? const SizedBox(
                     width: 16,
@@ -501,6 +507,7 @@ class _UnavailablePanel extends StatelessWidget {
               if (availability == RemoteAppAvailability.hostX11Off &&
                   onEnableX11 != null)
                 FilledButton(
+                  style: _rowButton,
                   onPressed: onEnableX11,
                   child: Text(l10n.remoteAppEnableX11),
                 ),
@@ -511,6 +518,7 @@ class _UnavailablePanel extends StatelessWidget {
                 ),
               if (onOfferVirtualDesktop != null)
                 FilledButton.tonal(
+                  style: _rowButton,
                   onPressed: onOfferVirtualDesktop,
                   child: Text(l10n.remoteAppVirtualDesktop),
                 ),
@@ -593,6 +601,7 @@ class _AppTile extends StatelessWidget {
                 ),
                 if (app.isActive)
                   FilledButton.tonal(
+                    style: _rowButton,
                     onPressed:
                         app.isStopping ? null : () => runner.stop(app),
                     child: Text(l10n.remoteAppStop),
