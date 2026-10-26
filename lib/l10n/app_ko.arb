@@ -1283,5 +1283,6 @@
   "remoteDesktopVncAccountHint": "이 Mac의 사용자 계정으로 로그인하세요.",
   "remoteDesktopVncUser": "사용자 이름",
   "remoteDesktopVncPassword": "암호",
-  "remoteDesktopVncSignIn": "로그인"
+  "remoteDesktopVncSignIn": "로그인",
+  "remoteDesktopLaunchListFailed": "실행 중인 가상 데스크톱을 확인할 수 없습니다: {error}"
 }

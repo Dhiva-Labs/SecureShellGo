@@ -7365,5 +7365,14 @@
   "remoteDesktopVncSignIn": "Sign in",
   "@remoteDesktopVncSignIn": {
     "description": "Screen Sharing sign-in dialog: confirm button."
+  },
+  "remoteDesktopLaunchListFailed": "Could not check for running virtual desktops: {error}",
+  "@remoteDesktopLaunchListFailed": {
+    "description": "Remote desktop chooser: the virtual desktops kept running on the server could not be listed. {error} is the reason.",
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
   }
 }

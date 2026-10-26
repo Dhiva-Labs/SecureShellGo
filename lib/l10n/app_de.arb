@@ -1283,5 +1283,6 @@
   "remoteDesktopVncAccountHint": "Melde dich mit einem Benutzerkonto dieses Mac an.",
   "remoteDesktopVncUser": "Benutzername",
   "remoteDesktopVncPassword": "Passwort",
-  "remoteDesktopVncSignIn": "Anmelden"
+  "remoteDesktopVncSignIn": "Anmelden",
+  "remoteDesktopLaunchListFailed": "Laufende virtuelle Desktops konnten nicht geprüft werden: {error}"
 }

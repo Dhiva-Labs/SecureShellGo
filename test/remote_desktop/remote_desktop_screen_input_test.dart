@@ -1103,7 +1103,7 @@ void main() {
       final session = await open(tester);
       final mark = session.log.length;
       final finger = await tester.startGesture(
-        tester.getCenter(find.text('▲')),
+        tester.getCenter(find.text('▲\uFE0E')),
       );
       await tester.pump(const Duration(milliseconds: 700));
       expect(session.since(mark), ['key ${CsrdEvdev.keyUp} down']);
@@ -1120,7 +1120,7 @@ void main() {
     testWidgets('a tap on an arrow is a press and a release', (tester) async {
       final session = await open(tester);
       final mark = session.log.length;
-      await tester.tap(find.text('◀'));
+      await tester.tap(find.text('◀\uFE0E'));
       await tester.pump();
       expect(session.since(mark), [
         'key ${CsrdEvdev.keyLeft} down',

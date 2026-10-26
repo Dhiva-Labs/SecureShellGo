@@ -1283,5 +1283,6 @@
   "remoteDesktopVncAccountHint": "Connectez-vous avec un compte utilisateur de ce Mac.",
   "remoteDesktopVncUser": "Nom d'utilisateur",
   "remoteDesktopVncPassword": "Mot de passe",
-  "remoteDesktopVncSignIn": "Se connecter"
+  "remoteDesktopVncSignIn": "Se connecter",
+  "remoteDesktopLaunchListFailed": "Impossible de vérifier les bureaux virtuels en cours : {error}"
 }

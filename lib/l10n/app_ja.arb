@@ -1283,5 +1283,6 @@
   "remoteDesktopVncAccountHint": "この Mac のユーザーアカウントでサインインしてください。",
   "remoteDesktopVncUser": "ユーザー名",
   "remoteDesktopVncPassword": "パスワード",
-  "remoteDesktopVncSignIn": "サインイン"
+  "remoteDesktopVncSignIn": "サインイン",
+  "remoteDesktopLaunchListFailed": "実行中の仮想デスクトップを確認できませんでした: {error}"
 }

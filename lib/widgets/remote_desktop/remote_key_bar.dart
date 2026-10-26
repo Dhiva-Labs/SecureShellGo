@@ -61,10 +61,12 @@ class RemoteKeyBar extends StatelessWidget {
                     active: armed.contains(modifier),
                     onPressed: () => input.toggleModifier(modifier),
                   ),
-                _tap('◀', CsrdEvdev.keyLeft, hold: true),
-                _tap('▼', CsrdEvdev.keyDown, hold: true),
-                _tap('▲', CsrdEvdev.keyUp, hold: true),
-                _tap('▶', CsrdEvdev.keyRight, hold: true),
+                // U+FE0E asks for the plain glyph: Android draws ◀ and ▶ as
+                // orange emoji otherwise, beside a plain ▲ and ▼.
+                _tap('◀\uFE0E', CsrdEvdev.keyLeft, hold: true),
+                _tap('▼\uFE0E', CsrdEvdev.keyDown, hold: true),
+                _tap('▲\uFE0E', CsrdEvdev.keyUp, hold: true),
+                _tap('▶\uFE0E', CsrdEvdev.keyRight, hold: true),
                 _tap('Home', CsrdEvdev.keyHome),
                 _tap('End', CsrdEvdev.keyEnd),
                 _tap('PgUp', CsrdEvdev.keyPageUp, hold: true),

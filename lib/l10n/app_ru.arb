@@ -1283,5 +1283,6 @@
   "remoteDesktopVncAccountHint": "Войдите с учётной записью пользователя этого Mac.",
   "remoteDesktopVncUser": "Имя пользователя",
   "remoteDesktopVncPassword": "Пароль",
-  "remoteDesktopVncSignIn": "Войти"
+  "remoteDesktopVncSignIn": "Войти",
+  "remoteDesktopLaunchListFailed": "Не удалось проверить запущенные виртуальные рабочие столы: {error}"
 }

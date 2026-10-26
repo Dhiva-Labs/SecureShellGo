@@ -1283,5 +1283,6 @@
   "remoteDesktopVncAccountHint": "Inicia sesión con una cuenta de usuario de este Mac.",
   "remoteDesktopVncUser": "Nombre de usuario",
   "remoteDesktopVncPassword": "Contraseña",
-  "remoteDesktopVncSignIn": "Iniciar sesión"
+  "remoteDesktopVncSignIn": "Iniciar sesión",
+  "remoteDesktopLaunchListFailed": "No se pudieron comprobar los escritorios virtuales en ejecución: {error}"
 }

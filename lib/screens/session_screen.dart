@@ -913,9 +913,10 @@ class _SessionsScreenState extends State<SessionsScreen> {
               ),
               onPressed: _toggleTerminalFullWidth,
             ),
-          // On a desktop-sized window remote desktop gets a button of its
-          // own; on a phone it is in the menu, with everything else.
-          if (!narrow)
+          // On a tablet or desktop window remote desktop gets a button of
+          // its own; on a phone it is in the menu, where it does not squeeze
+          // the host's name out of the title.
+          if (wide)
             IconButton(
               tooltip: l10n.sessionRemoteDesktop,
               icon: const Icon(Icons.desktop_windows_outlined),

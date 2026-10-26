@@ -1283,5 +1283,6 @@
   "remoteDesktopVncAccountHint": "Entre com uma conta de usuário deste Mac.",
   "remoteDesktopVncUser": "Nome de usuário",
   "remoteDesktopVncPassword": "Senha",
-  "remoteDesktopVncSignIn": "Entrar"
+  "remoteDesktopVncSignIn": "Entrar",
+  "remoteDesktopLaunchListFailed": "Não foi possível verificar as áreas de trabalho virtuais em execução: {error}"
 }

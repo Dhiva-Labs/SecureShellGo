@@ -1283,5 +1283,6 @@
   "remoteDesktopVncAccountHint": "请使用此 Mac 上的用户账户登录。",
   "remoteDesktopVncUser": "用户名",
   "remoteDesktopVncPassword": "密码",
-  "remoteDesktopVncSignIn": "登录"
+  "remoteDesktopVncSignIn": "登录",
+  "remoteDesktopLaunchListFailed": "无法检查正在运行的虚拟桌面：{error}"
 }

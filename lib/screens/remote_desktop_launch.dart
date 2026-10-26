@@ -45,16 +45,20 @@ Future<void> startRemoteDesktop(
   final checked = await _whileChecking(context, l10n, () async {
     final probe = await RemoteDesktopProbe.run(transport);
     var running = const <VirtualDesktopRecord>[];
+    String? listError;
     if (probe.os == AgentOs.linux) {
-      // A list that cannot be read is no reason not to offer the rest.
+      // A list that cannot be read is no reason not to offer the rest, but
+      // it is said: a desktop kept running that does not show up looks lost.
       try {
         running = await listVirtualDesktops(transport);
-      } catch (_) {}
+      } catch (e) {
+        listError = _describe(e);
+      }
     }
-    return (probe: probe, running: running);
+    return (probe: probe, running: running, listError: listError);
   });
   if (checked == null || !context.mounted) return;
-  final (:probe, :running) = checked;
+  final (:probe, :running, :listError) = checked;
 
   final linux = probe.linux;
   if (virtualOnly && linux != null && linux.hasXvfb) {
@@ -68,6 +72,7 @@ Future<void> startRemoteDesktop(
       hostName: session.host.displayName,
       probe: probe,
       running: running,
+      listError: listError,
       session: session,
     ),
   );
@@ -421,11 +426,15 @@ class _Chooser extends StatefulWidget {
     required this.probe,
     required this.running,
     required this.session,
+    this.listError,
   });
 
   final String hostName;
   final RemoteDesktopProbe probe;
   final List<VirtualDesktopRecord> running;
+
+  /// Why the running virtual desktops could not be listed, if they could not.
+  final String? listError;
   final SessionController session;
 
   @override
@@ -520,6 +529,20 @@ class _ChooserState extends State<_Chooser> {
         );
         if (!support.hasXvfb && install != null) {
           children.add(_CommandLine(command: install.command));
+        }
+        final listError = widget.listError;
+        if (listError != null) {
+          children.add(
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+              child: Text(
+                l10n.remoteDesktopLaunchListFailed(listError),
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: theme.colorScheme.error,
+                ),
+              ),
+            ),
+          );
         }
         if (_running.isNotEmpty) {
           children.add(
