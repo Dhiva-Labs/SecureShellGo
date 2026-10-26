@@ -867,6 +867,9 @@ class _VirtualDesktopDialogState extends State<_VirtualDesktopDialog> {
           child: Text(l10n.remoteDesktopCancel),
         ),
         FilledButton(
+          // The theme's buttons fill the width, which a dialog's action row
+          // has no room for; the app's other dialogs say the same.
+          style: FilledButton.styleFrom(minimumSize: const Size(0, 48)),
           onPressed: () => _start(sizes),
           child: Text(l10n.remoteDesktopVirtualStart),
         ),
@@ -943,7 +946,11 @@ class _VncCredentialsDialogState extends State<_VncCredentialsDialog> {
           onPressed: () => Navigator.of(context).pop(),
           child: Text(l10n.remoteDesktopCancel),
         ),
-        FilledButton(onPressed: _submit, child: Text(l10n.remoteDesktopVncSignIn)),
+        FilledButton(
+          style: FilledButton.styleFrom(minimumSize: const Size(0, 48)),
+          onPressed: _submit,
+          child: Text(l10n.remoteDesktopVncSignIn),
+        ),
       ],
     );
   }
