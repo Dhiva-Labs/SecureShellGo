@@ -126,6 +126,27 @@ French.
 - Server stats (load, memory, disk, uptime), a live log viewer with filtering
   and severity highlighting, and a systemd service and process manager
 
+### Remote desktop and graphical apps
+- **See and control a server's desktop**, TeamViewer-style, from any device,
+  phones included: GNOME on Wayland, X11 desktops and Windows. The app copies
+  a small agent over the SSH connection you already have, starts it for the
+  session and stops it after; it listens on the server's loopback only and
+  is reached through the SSH tunnel, so no port is opened and SSH is the only
+  login. The person at the screen is told while it is being viewed.
+- **Virtual desktops on headless servers**: start a private screen (Xvfb)
+  running a desktop such as Xfce, or a single program, and use it from the
+  same viewer. Optionally keep it running after you disconnect and come back
+  to it later.
+- **Open an app in a window**: run one graphical program on the server and
+  have its window open on this device's own desktop, through X11 forwarding
+  (Linux, or Windows with an X server such as VcXsrv or X410).
+- **Macs** through their built-in Screen Sharing, over the same tunnel.
+- Mouse, keyboard and clipboard; on touch screens a trackpad mode and a
+  direct mode, and a key bar with Ctrl, Alt, Super and Ctrl+Alt+Del.
+- Nothing runs on a server until you open a remote desktop on it. The agents
+  add about 4.5 MB to the app, and older ones the app left behind are
+  removed from servers when a newer one is installed.
+
 ### Locked down
 - Optional app lock behind your device's own authentication (Android) or
   Windows Hello
@@ -249,6 +270,16 @@ connects to are the ones you configure. Full text: [Privacy policy](docs/privacy
 ```bash
 flutter pub get
 flutter build apk --release
+```
+
+Remote desktop needs CrossShell's agents in `assets/agents/`; without them the
+build still works and remote desktop says it is unavailable. Build them in the
+[CrossShell](https://github.com/Dhiva-Labs/CrossShell) repository with
+`scripts/build-agents.sh`, then stage them here, which checks them against the
+hashes pinned in `assets/agents/manifest.json`:
+
+```bash
+tool/stage_agents.sh ../cross_shell/dist/agents
 ```
 
 Release builds are signed with the upload key named in
