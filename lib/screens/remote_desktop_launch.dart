@@ -843,6 +843,15 @@ class _VirtualDesktopDialogState extends State<_VirtualDesktopDialog> {
     }
   }
 
+  /// The size suggested before the person picks one. A phone's own
+  /// resolution would make a desktop's text tiny, and one program opens at
+  /// its own size, around 1000 by 700, in the corner of a screen however big:
+  /// 1280×720 suits both. A full desktop on a computer gets the window's size.
+  (int, int) _preferredSize(BuildContext context, (int, int) fit) {
+    final phone = MediaQuery.sizeOf(context).shortestSide < 600;
+    return phone || _session == null ? (1280, 720) : fit;
+  }
+
   /// The app typed or picked, when it is one that needs extra options to
   /// start as root and this account is root: the note under the field says
   /// what is added.
@@ -974,7 +983,7 @@ class _VirtualDesktopDialogState extends State<_VirtualDesktopDialog> {
       content = VirtualAppContent(extra == null ? command : '$command $extra',
           label: _picked?.name ?? program?.split('/').last);
     }
-    final (w, h) = _size ?? sizes.first;
+    final (w, h) = _size ?? _preferredSize(context, sizes.first);
     Navigator.of(context).pop(
       VirtualDesktopSpec(
         width: w,
@@ -995,7 +1004,7 @@ class _VirtualDesktopDialogState extends State<_VirtualDesktopDialog> {
       for (final s in _presetSizes)
         if (s != fit) s,
     ];
-    final size = _size ?? fit;
+    final size = _size ?? _preferredSize(context, fit);
 
     return AlertDialog(
       title: Text(l10n.remoteDesktopVirtualTitle),
@@ -1140,6 +1149,8 @@ class _VirtualDesktopDialogState extends State<_VirtualDesktopDialog> {
               ],
               const SizedBox(height: 12),
               DropdownButtonFormField<(int, int)>(
+                // Rebuilt when the suggestion changes with what runs.
+                key: ValueKey(size),
                 initialValue: size,
                 decoration: InputDecoration(labelText: l10n.remoteDesktopVirtualSize),
                 items: [
