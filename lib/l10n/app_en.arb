@@ -7132,5 +7132,238 @@
   "remoteDesktopDismissNotice": "Dismiss",
   "@remoteDesktopDismissNotice": {
     "description": "Remote desktop: tooltip of the close button on a notice banner sent by the remote side."
+  },
+  "sessionRemoteDesktop": "Remote desktop…",
+  "@sessionRemoteDesktop": {
+    "description": "Session screen: overflow-menu item and toolbar tooltip that opens remote desktop for this server."
+  },
+  "sessionOpenAppWindow": "Open an app in a window…",
+  "@sessionOpenAppWindow": {
+    "description": "Session screen: overflow-menu item that opens the launcher for running one graphical program from the server in a window on this device."
+  },
+  "remoteDesktopLaunchChecking": "Checking what this server can show…",
+  "@remoteDesktopLaunchChecking": {
+    "description": "Remote desktop: shown while the app checks which kinds of remote desktop the server can offer."
+  },
+  "remoteDesktopLaunchTitle": "Remote desktop on {host}",
+  "@remoteDesktopLaunchTitle": {
+    "description": "Remote desktop: title of the chooser listing the kinds of remote desktop for a server. {host} is the server's name.",
+    "placeholders": {
+      "host": {
+        "type": "String"
+      }
+    }
+  },
+  "remoteDesktopLaunchShowDesktop": "Show the desktop",
+  "@remoteDesktopLaunchShowDesktop": {
+    "description": "Remote desktop chooser: option that shows and controls the desktop already signed in on the server."
+  },
+  "remoteDesktopLaunchShowDesktopHint": "See and control the desktop signed in on this server.",
+  "@remoteDesktopLaunchShowDesktopHint": {
+    "description": "Remote desktop chooser: subtitle of the show-the-desktop option."
+  },
+  "remoteDesktopLaunchNoDesktop": "Nobody is signed in to a desktop on this server.",
+  "@remoteDesktopLaunchNoDesktop": {
+    "description": "Remote desktop chooser: why show-the-desktop is unavailable — nobody is signed in to a graphical desktop on the server."
+  },
+  "remoteDesktopLaunchOtherUser": "The desktop here belongs to {users}. Sign in as that account to show it.",
+  "@remoteDesktopLaunchOtherUser": {
+    "description": "Remote desktop chooser: why show-the-desktop is unavailable — the desktop belongs to other accounts. {users} is a comma-separated list of user names.",
+    "placeholders": {
+      "users": {
+        "type": "String"
+      }
+    }
+  },
+  "remoteDesktopLaunchNewVirtual": "Start a virtual desktop…",
+  "@remoteDesktopLaunchNewVirtual": {
+    "description": "Remote desktop chooser: option that starts a new virtual desktop (a private screen on the server)."
+  },
+  "remoteDesktopLaunchNewVirtualHint": "Run programs on a private screen on the server, even with no monitor attached.",
+  "@remoteDesktopLaunchNewVirtualHint": {
+    "description": "Remote desktop chooser: subtitle of the virtual-desktop option."
+  },
+  "remoteDesktopLaunchNeedsXvfb": "Virtual desktops need Xvfb on the server. Install it there with:",
+  "@remoteDesktopLaunchNeedsXvfb": {
+    "description": "Remote desktop chooser: virtual desktops need the Xvfb package on the server; followed by the install command."
+  },
+  "remoteDesktopLaunchCopy": "Copy",
+  "@remoteDesktopLaunchCopy": {
+    "description": "Remote desktop: tooltip of the button that copies a shown command to the clipboard."
+  },
+  "remoteDesktopLaunchCopied": "Copied to the clipboard",
+  "@remoteDesktopLaunchCopied": {
+    "description": "Remote desktop: snackbar after a command was copied."
+  },
+  "remoteDesktopLaunchRunning": "Running virtual desktops",
+  "@remoteDesktopLaunchRunning": {
+    "description": "Remote desktop chooser: heading above virtual desktops that were kept running on the server."
+  },
+  "remoteDesktopLaunchRunningItem": "{label} on {display}, {width}×{height}",
+  "@remoteDesktopLaunchRunningItem": {
+    "description": "Remote desktop chooser: one running virtual desktop. {label} is what runs in it, {display} its X display such as :3.",
+    "placeholders": {
+      "label": {
+        "type": "String"
+      },
+      "display": {
+        "type": "String"
+      },
+      "width": {
+        "type": "int"
+      },
+      "height": {
+        "type": "int"
+      }
+    }
+  },
+  "remoteDesktopLaunchStop": "Stop",
+  "@remoteDesktopLaunchStop": {
+    "description": "Remote desktop chooser: button that stops a running virtual desktop."
+  },
+  "remoteDesktopLaunchMac": "Show this Mac's screen",
+  "@remoteDesktopLaunchMac": {
+    "description": "Remote desktop chooser: option that shows a Mac's screen through its built-in Screen Sharing."
+  },
+  "remoteDesktopLaunchMacHint": "Uses the Mac's built-in Screen Sharing, through this SSH connection.",
+  "@remoteDesktopLaunchMacHint": {
+    "description": "Remote desktop chooser: subtitle of the Mac option."
+  },
+  "remoteDesktopLaunchUnsupported": "Remote desktop works with Linux, Windows and macOS servers.",
+  "@remoteDesktopLaunchUnsupported": {
+    "description": "Remote desktop chooser: shown when the server is not Linux, Windows or macOS."
+  },
+  "remoteDesktopLaunchFailed": "Could not check this server: {error}",
+  "@remoteDesktopLaunchFailed": {
+    "description": "Remote desktop: snackbar when checking the server failed. {error} is the reason.",
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
+  "remoteDesktopVirtualTitle": "New virtual desktop",
+  "@remoteDesktopVirtualTitle": {
+    "description": "Virtual desktop setup: dialog title."
+  },
+  "remoteDesktopVirtualWhat": "What to run",
+  "@remoteDesktopVirtualWhat": {
+    "description": "Virtual desktop setup: heading above the choice of what runs in it."
+  },
+  "remoteDesktopVirtualSession": "{name} desktop",
+  "@remoteDesktopVirtualSession": {
+    "description": "Virtual desktop setup: one installed desktop environment to run. {name} is its name, such as Xfce.",
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "remoteDesktopVirtualOneApp": "One program",
+  "@remoteDesktopVirtualOneApp": {
+    "description": "Virtual desktop setup: option to run a single program instead of a desktop environment."
+  },
+  "remoteDesktopVirtualNoSessions": "No desktop environment such as Xfce is installed on the server, so the virtual desktop will run one program.",
+  "@remoteDesktopVirtualNoSessions": {
+    "description": "Virtual desktop setup: shown when no desktop environment is installed on the server."
+  },
+  "remoteDesktopVirtualSize": "Screen size",
+  "@remoteDesktopVirtualSize": {
+    "description": "Virtual desktop setup: label of the screen-size choice."
+  },
+  "remoteDesktopVirtualSizeFit": "This window ({width}×{height})",
+  "@remoteDesktopVirtualSizeFit": {
+    "description": "Virtual desktop setup: screen size matching this window. {width}×{height} in pixels.",
+    "placeholders": {
+      "width": {
+        "type": "int"
+      },
+      "height": {
+        "type": "int"
+      }
+    }
+  },
+  "remoteDesktopVirtualKeep": "Keep running after I disconnect",
+  "@remoteDesktopVirtualKeep": {
+    "description": "Virtual desktop setup: checkbox to keep the virtual desktop running on the server after disconnecting."
+  },
+  "remoteDesktopVirtualKeepHint": "Reconnect to it later from Remote desktop. It runs until you stop it.",
+  "@remoteDesktopVirtualKeepHint": {
+    "description": "Virtual desktop setup: explains the keep-running option."
+  },
+  "remoteDesktopVirtualLinger": "Without lingering, the server stops it when you sign out. Run {command} on the server once to allow it.",
+  "@remoteDesktopVirtualLinger": {
+    "description": "Virtual desktop setup: warning that the server stops user programs at sign-out unless lingering is enabled. {command} is the command that enables it.",
+    "placeholders": {
+      "command": {
+        "type": "String"
+      }
+    }
+  },
+  "remoteDesktopVirtualStart": "Start",
+  "@remoteDesktopVirtualStart": {
+    "description": "Virtual desktop setup: button that starts the virtual desktop."
+  },
+  "remoteDesktopVirtualNeedsCommand": "Enter a program to run.",
+  "@remoteDesktopVirtualNeedsCommand": {
+    "description": "Virtual desktop setup: validation error when no program was entered."
+  },
+  "remoteDesktopVirtualScreenTitle": "Virtual desktop {display}",
+  "@remoteDesktopVirtualScreenTitle": {
+    "description": "Remote desktop screen: title for a virtual desktop. {display} is its X display, such as :3.",
+    "placeholders": {
+      "display": {
+        "type": "String"
+      }
+    }
+  },
+  "remoteDesktopStatusPreparing": "Preparing the remote-desktop agent…",
+  "@remoteDesktopStatusPreparing": {
+    "description": "Remote desktop: progress while the agent is prepared for the server."
+  },
+  "remoteDesktopStatusUploading": "Uploading the remote-desktop agent… {percent}%",
+  "@remoteDesktopStatusUploading": {
+    "description": "Remote desktop: progress while the agent is copied to the server. {percent} is 0–100.",
+    "placeholders": {
+      "percent": {
+        "type": "int"
+      }
+    }
+  },
+  "remoteDesktopStatusStarting": "Starting the agent on the server…",
+  "@remoteDesktopStatusStarting": {
+    "description": "Remote desktop: progress while the agent starts on the server."
+  },
+  "remoteDesktopStatusStartingVirtual": "Starting the virtual desktop…",
+  "@remoteDesktopStatusStartingVirtual": {
+    "description": "Remote desktop: progress while a virtual desktop starts on the server."
+  },
+  "remoteDesktopStatusReattaching": "Reconnecting to the virtual desktop…",
+  "@remoteDesktopStatusReattaching": {
+    "description": "Remote desktop: progress while reconnecting to a virtual desktop that kept running."
+  },
+  "remoteDesktopVncTitle": "Screen Sharing sign-in",
+  "@remoteDesktopVncTitle": {
+    "description": "Screen Sharing sign-in dialog: title."
+  },
+  "remoteDesktopVncPasswordHint": "Enter the screen-sharing password set on the server.",
+  "@remoteDesktopVncPasswordHint": {
+    "description": "Screen Sharing sign-in dialog: the server asks for its screen-sharing (VNC) password."
+  },
+  "remoteDesktopVncAccountHint": "Sign in with a user account on this Mac.",
+  "@remoteDesktopVncAccountHint": {
+    "description": "Screen Sharing sign-in dialog: the Mac asks for one of its user accounts."
+  },
+  "remoteDesktopVncUser": "User name",
+  "@remoteDesktopVncUser": {
+    "description": "Screen Sharing sign-in dialog: user-name field label."
+  },
+  "remoteDesktopVncPassword": "Password",
+  "@remoteDesktopVncPassword": {
+    "description": "Screen Sharing sign-in dialog: password field label."
+  },
+  "remoteDesktopVncSignIn": "Sign in",
+  "@remoteDesktopVncSignIn": {
+    "description": "Screen Sharing sign-in dialog: confirm button."
   }
 }

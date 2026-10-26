@@ -29,6 +29,8 @@ import '../widgets/tunnel_indicator.dart';
 import 'file_browser_pane.dart';
 import 'fleet_push_screen.dart';
 import 'log_viewer_screen.dart';
+import 'remote_app_launcher.dart';
+import 'remote_desktop_launch.dart';
 import 'server_stats_screen.dart';
 import 'services_screen.dart';
 import 'terminal_pane.dart';
@@ -155,6 +157,8 @@ enum _SessionMenu {
   stats,
   services,
   tail,
+  remoteDesktop,
+  appWindow,
   newSession,
   close,
 }
@@ -436,6 +440,16 @@ class _SessionsScreenState extends State<SessionsScreen> {
         await _handleMonitorAction(_MonitorAction.services, session);
       case _SessionMenu.tail:
         await _handleMonitorAction(_MonitorAction.tail, session);
+      case _SessionMenu.remoteDesktop:
+        await startRemoteDesktop(context, session);
+      case _SessionMenu.appWindow:
+        await openRemoteAppLauncher(
+          context,
+          session: session,
+          onOfferVirtualDesktop: () =>
+              unawaited(startRemoteDesktop(context, session, virtualOnly: true)),
+          listInstalledApps: () => installedRemoteApps(session),
+        );
       case _SessionMenu.newSession:
         _addSession();
       case _SessionMenu.close:
@@ -899,6 +913,18 @@ class _SessionsScreenState extends State<SessionsScreen> {
               ),
               onPressed: _toggleTerminalFullWidth,
             ),
+          // On a desktop-sized window remote desktop gets a button of its
+          // own; on a phone it is in the menu, with everything else.
+          if (!narrow)
+            IconButton(
+              tooltip: l10n.sessionRemoteDesktop,
+              icon: const Icon(Icons.desktop_windows_outlined),
+              onPressed: closed || active.controller.isSshLostUnderMosh
+                  ? null
+                  : () => unawaited(
+                      startRemoteDesktop(context, active.controller),
+                    ),
+            ),
           if (!narrow)
             IconButton(
               tooltip: l10n.sessionSnippets,
@@ -968,6 +994,19 @@ class _SessionsScreenState extends State<SessionsScreen> {
                   value: _SessionMenu.tail,
                   enabled: !closed,
                   child: Text(l10n.sessionTailFile),
+                ),
+                // Both need the SSH side: a Mosh session whose SSH link has
+                // gone has nothing to carry a desktop or an X11 window.
+                const PopupMenuDivider(),
+                PopupMenuItem<_SessionMenu>(
+                  value: _SessionMenu.remoteDesktop,
+                  enabled: !closed && !active.controller.isSshLostUnderMosh,
+                  child: Text(l10n.sessionRemoteDesktop),
+                ),
+                PopupMenuItem<_SessionMenu>(
+                  value: _SessionMenu.appWindow,
+                  enabled: !closed && !active.controller.isSshLostUnderMosh,
+                  child: Text(l10n.sessionOpenAppWindow),
                 ),
                 if (narrow) ...[
                   const PopupMenuDivider(),
