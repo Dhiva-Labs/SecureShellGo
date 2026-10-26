@@ -845,6 +845,40 @@ picker that would fail.
 
 ---
 
+
+## Remote desktop (1.6)
+
+The design and its reasons are in `REMOTE_DESKTOP_PLAN.md`; this is where the
+pieces live.
+
+```
+screens/remote_desktop_launch.dart   "Remote desktop…": probe, chooser, virtual-desktop
+                                     setup, and the openers that tie the layers below
+screens/remote_desktop_screen.dart   the viewer: states, toolbar, input, Reconnect
+screens/remote_app_launcher.dart     "Open an app in a window" (X11 forwarding)
+widgets/remote_desktop/              compositor (GPU framebuffer), painter, cursor,
+                                     input controller, key bar, soft keyboard
+services/remote_desktop/
+  remote_screen_session.dart         the one interface the viewer draws from
+  csrd_*.dart                        CrossShell agent protocol, tiles, client, keymap
+  rfb_*.dart                         VNC client for Macs (Screen Sharing)
+  agent_*.dart                       probe, bundled-agent manifest, deploy, launch
+  virtual_desktop.dart               Xvfb desktops, kept or torn down with the viewer
+  remote_input*.dart                 pure input logic: scroll, moves, touch, text
+services/remote_app_runner.dart      one exec with x11-req per program
+```
+
+The agent is CrossShell's `crossshell-host`, bundled xz-compressed under
+`assets/agents/` with its hashes pinned in the committed `manifest.json`. It
+is uploaded to a sha256-named folder on the server, checked again before
+every launch, started in the user's session (`systemd-run --user` on Linux,
+a run-once interactive task on Windows) on 127.0.0.1 only, and reached
+through a `direct-tcpip` channel: no listening port anywhere, SSH the only
+authentication, the agent's token a second lock against other local users.
+
+Nothing of this runs until a remote desktop is opened: no probe at connect,
+no upload, no background work.
+
 ## Testing
 
 `flutter test` — no device or network server required.

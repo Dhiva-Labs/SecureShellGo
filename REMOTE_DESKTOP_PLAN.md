@@ -1,6 +1,6 @@
 # Remote desktop — plan
 
-Status: in progress, 2026-10-27. Target release: **1.6.0**.
+Status: built and verified end to end on 2026-10-27 (see "Verified" at the end). Target release: **1.6.0**.
 
 - SecureShell Go work is on `feature/remote-desktop`, branched from
   `release/1.5.0`. That release
@@ -426,3 +426,27 @@ Each workstream owns its files strictly.
 **Linux remote test target:** the LXD VM `snaptest` (Ubuntu 24.04, has
 Xvfb and xauth). Captures and input stay inside the VM. A private
 headless gnome-shell in that VM covers the Mutter path.
+
+## Verified (2026-10-27)
+
+**Linux VM (headless, `snaptest`).**
+- The chooser, the virtual-desktop setup and a live Xfce desktop all worked, both in the Linux build and in the Android release APK on an emulator.
+- From the phone, a tap opened a terminal on the remote desktop, and typed text ran there.
+- A desktop kept running survived a disconnect and an app reinstall, and was reattached.
+- Stopping it left nothing behind.
+- A desktop that was not kept was torn down when the viewer closed.
+
+**Windows laptop (real session).**
+- The agent was uploaded, launched into the interactive session and streamed the real desktop. This was view-only, with no input sent.
+- After stopping, no process and no scheduled task was left.
+
+**Size.**
+- All the Dart code adds 0.75 MB.
+- The xz-compressed agents add 4.3 MB.
+- Nothing extra runs until a remote desktop is opened.
+
+**Not verified.**
+- A real Mac, because there isn't one.
+- The arm64 agents.
+- Smart App Control actually blocking the agent.
+- Mutter capture of a real GNOME desktop over SSH. It was not run against this PC, because of the isolation rule.
