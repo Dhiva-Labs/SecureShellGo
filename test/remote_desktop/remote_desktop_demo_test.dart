@@ -215,7 +215,9 @@ Future<void> _waitFor(
 }
 
 Future<void> _shot(WidgetTester tester, String dir, String name) async {
-  await tester.pump();
+  // Let a dialog that just closed finish fading, so the shot shows the
+  // screen rather than the transition.
+  await _settle(tester, const Duration(milliseconds: 500));
   final ro = _boundary.currentContext!.findRenderObject()! as RenderRepaintBoundary;
   await tester.runAsync(() async {
     final image = await ro.toImage(pixelRatio: 1);
