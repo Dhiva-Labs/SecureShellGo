@@ -218,7 +218,9 @@ class AgentDeployer {
     }
 
     final installed = await AgentShell.run(
-        transport, layout.installCommand(directory, partName),
+        transport,
+        layout.installCommand(
+            directory, partName, bundle.manifest.agents.map((a) => a.sha256)),
         what: 'install the remote-desktop agent', timeout: const Duration(seconds: 30));
     final out = AgentShell.lines(installed.stdout);
     final mismatch = AgentShell.valueAfter(out, 'SSG-MISMATCH');
@@ -282,7 +284,7 @@ abstract class _Layout {
   String binaryPath(String directory);
   String sftpPath(String directory, String name);
   String prepareCommand();
-  String installCommand(String directory, String partName);
+  String installCommand(String directory, String partName, Iterable<String> keep);
 }
 
 class _LinuxLayout implements _Layout {
@@ -319,16 +321,35 @@ echo SSG-OK''', [directory, _base, RemotePath.join(_base, 'agent')]);
 
   /// chmod, hash, and only then rename over the installed name — so the
   /// installed name only ever holds a file that matched.
+  ///
+  /// Then agents this build does not carry, [keep] being the hashes it does,
+  /// are deleted: an upgrade of the app would otherwise leave every earlier
+  /// agent on the server, a few megabytes each. Only the hash-named folders
+  /// are touched, and not the other flavour's, which this build also
+  /// carries — desktop mode and virtual desktops would otherwise delete each
+  /// other's agent and upload it again every time. An agent still running
+  /// from a deleted folder carries on: the file goes when the process does.
   @override
-  String installCommand(String directory, String partName) => AgentShell.sh('''
+  String installCommand(
+          String directory, String partName, Iterable<String> keep) =>
+      AgentShell.sh('''
 d=\$1
 p="\$d/\$2"
+shift 2
+keep=" \$* "
 ${AgentShell.shHashFunction}
 chmod 700 "\$p" || { rm -f "\$p"; exit 1; }
 h=\$(ssg_hash "\$p")
 if [ "\$h" != ${binary.sha256} ]; then rm -f "\$p"; echo "SSG-MISMATCH \$h"; exit 1; fi
 mv -f "\$p" "\$d/${binary.installedName}" || { rm -f "\$p"; exit 1; }
-echo SSG-INSTALLED''', [directory, partName]);
+for o in "\${d%/*}"/*; do
+  n=\${o##*/}
+  case "\$keep" in *" \$n "*) continue ;; esac
+  [ \${#n} -eq 64 ] || continue
+  case "\$n" in *[!0-9a-f]*) continue ;; esac
+  rm -rf "\$o"
+done 2>/dev/null
+echo SSG-INSTALLED''', [directory, partName, ...keep]);
 }
 
 class _WindowsLayout implements _Layout {
@@ -361,8 +382,11 @@ if(Test-Path -LiteralPath \$f){'SSG-HAVE '+(SsgHash \$f)}
 'SSG-DIR '+\$d
 'SSG-OK\'''');
 
+  /// As on Linux: install only a file that matched, then delete agents this
+  /// build does not carry. One still running is locked and stays, quietly.
   @override
-  String installCommand(String directory, String partName) =>
+  String installCommand(
+          String directory, String partName, Iterable<String> keep) =>
       AgentShell.powershell('''
 ${AgentShell.psHashFunction}
 \$d=${AgentShell.psQuote(directory)}
@@ -370,6 +394,8 @@ ${AgentShell.psHashFunction}
 \$h=SsgHash \$p
 if(\$h -ne '${binary.sha256}'){Remove-Item -LiteralPath \$p -Force -ErrorAction SilentlyContinue;"SSG-MISMATCH \$h";exit 1}
 try{Move-Item -LiteralPath \$p -Destination (Join-Path \$d ${AgentShell.psQuote(binary.installedName)}) -Force -ErrorAction Stop}catch{Remove-Item -LiteralPath \$p -Force -ErrorAction SilentlyContinue;'SSG-MV-FAILED '+\$_.Exception.Message;exit 1}
+\$k=@(${keep.map((h) => "'$h'").join(',')})
+Get-ChildItem -LiteralPath (Split-Path \$d) -Directory -ErrorAction SilentlyContinue|?{\$_.Name -match '^[0-9a-f]{64}\$' -and \$k -notcontains \$_.Name}|Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
 'SSG-INSTALLED\'''');
 }
 

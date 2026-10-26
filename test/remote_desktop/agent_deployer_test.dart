@@ -232,6 +232,35 @@ void main() {
       expect(File(first.path).readAsBytesSync(), _x11Bytes);
     });
 
+    test('agents this build does not carry go; the other flavour stays',
+        () async {
+      final shell = LocalShellTransport();
+      final root = '${home.path}/.cache/secureshellgo/agent';
+      final older = '$root/${'a' * 64}';
+      final notAnAgent = '$root/notes';
+      Directory(older).createSync(recursive: true);
+      File('$older/crossshell-host').writeAsStringSync('an older agent');
+      Directory(notAnAgent).createSync(recursive: true);
+      final deployer = AgentDeployer(_bundle());
+      final probe =
+          _linuxProbe(home: home.path, sessions: [_graphical('wayland')]);
+
+      final full = await deployer.deploy(shell, probe,
+          purpose: AgentPurpose.desktop, files: LocalFiles());
+      final x11 = await deployer.deploy(shell, probe,
+          purpose: AgentPurpose.virtualDesktop, files: LocalFiles());
+      expect(full.binary, _full);
+      expect(Directory(older).existsSync(), isFalse);
+      expect(Directory(notAnAgent).existsSync(), isTrue);
+      expect(File(full.path).existsSync(), isTrue);
+      expect(File(x11.path).existsSync(), isTrue);
+
+      // Switching back is not an upload: each mode keeps the other's agent.
+      final again = await deployer.deploy(shell, probe,
+          purpose: AgentPurpose.desktop, files: LocalFiles());
+      expect(again.uploaded, isFalse);
+    });
+
     test('a transfer that arrives corrupted is deleted, not installed', () async {
       final shell = LocalShellTransport();
       final deployer = AgentDeployer(_bundle());
