@@ -141,6 +141,19 @@ String installCommandLine(PackageManager pm, List<String> packages) {
   };
 }
 
+/// Something other than a package that needs root: fixed scripts from this
+/// file only, never text from the server or the person.
+enum SetupStep {
+  /// Lets this account's programs run on after its last login ends, which
+  /// a virtual desktop kept running needs (`loginctl enable-linger`). Under
+  /// sudo it is the account that ran sudo, not root, that it is for.
+  keepRunning(r'loginctl enable-linger "${SUDO_USER:-$(id -un)}"');
+
+  const SetupStep(this.script);
+
+  final String script;
+}
+
 /// How an install gets the root it needs.
 enum Privilege {
   /// Signed in as root.
@@ -223,8 +236,15 @@ Future<SetupRun> runInstall(
   required List<String> packages,
   required Privilege privilege,
   String? password,
+  List<SetupStep> steps = const [],
 }) async {
-  final script = installScript(pm, packages);
+  if (packages.isEmpty && steps.isEmpty) {
+    throw ArgumentError('nothing to do');
+  }
+  final script = [
+    if (packages.isNotEmpty) installScript(pm, packages),
+    for (final step in steps) step.script,
+  ].join('\n');
   final command = switch (privilege) {
     Privilege.root => 'sh -c ${posixSingleQuote(script)}',
     Privilege.sudo => 'sudo -n sh -c ${posixSingleQuote(script)}',

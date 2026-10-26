@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
@@ -27,6 +28,57 @@ OsRelease _os(String id, [String like = '', String version = '']) =>
     OsRelease(id: id, idLike: like.split(' ').where((s) => s.isNotEmpty).toList(), versionId: version);
 
 void main() {
+  group('programs as root', () {
+    test('Chromium-based apps get no sandbox and a profile of their own', () {
+      expect(rootArgumentsFor('code'),
+          '--no-sandbox --user-data-dir="\$HOME/.config/Code (root)"');
+      expect(rootArgumentsFor('/snap/bin/code'), contains('--no-sandbox'));
+      expect(rootArgumentsFor('google-chrome-stable'), contains('google-chrome (root)'));
+      expect(rootArgumentsFor('gedit'), isNull);
+      expect(rootArgumentsFor('xclock'), isNull);
+    });
+
+    test('the arguments survive the shell the program is started by', () async {
+      final r = await Process.run('sh', [
+        '-c',
+        'set -- \${0+} ; HOME=/root; eval "set -- code \${1-} \$ARGS"; printf "%s|" "\$@"',
+      ], environment: {'ARGS': rootArgumentsFor('code')!});
+      expect(r.stdout, 'code|--no-sandbox|--user-data-dir=/root/.config/Code (root)|');
+    });
+  });
+
+  group('watching the program after the start', () {
+    test('a failure, with its own words', () {
+      final failed = VirtualDesktops.parseWatch(
+          'SSG-APP-EXITED 1\nSSG-LOG\nYou are trying to start Visual Studio Code as a super user\n');
+      expect(failed!.code, 1);
+      expect(failed.log, contains('super user'));
+    });
+
+    test('still running, ended well, or gone: nothing to say', () {
+      expect(VirtualDesktops.parseWatch('SSG-RUNNING\n'), isNull);
+      expect(VirtualDesktops.parseWatch('SSG-APP-EXITED 0\nSSG-LOG\n'), isNull);
+      expect(VirtualDesktops.parseWatch('SSG-GONE\n'), isNull);
+    });
+
+    test('through a real sh: a program that fails late is seen', () async {
+      final dir = Directory.systemTemp.createTempSync('ssgo-watch-');
+      addTearDown(() => dir.deleteSync(recursive: true));
+      final rt = '${dir.path}/rt';
+      Directory(rt).createSync();
+      File('$rt/session.log').writeAsStringSync('Could not resolve keysym XF86Foo\nboom: no display\n');
+      // The program gives up two seconds in.
+      unawaited(Future<void>.delayed(const Duration(seconds: 2),
+          () => File('$rt/app.exit').writeAsStringSync('1\n')));
+      final failed = await const VirtualDesktops().watchProgram(
+          LocalShellTransport(), rt,
+          within: const Duration(seconds: 6));
+      expect(failed!.code, 1);
+      expect(failed.log, contains('boom: no display'));
+      expect(failed.log, isNot(contains('keysym')));
+    });
+  });
+
   group('Xvfb install hints', () {
     test('per distribution, derivatives by ID_LIKE', () {
       String? cmd(OsRelease os) => xvfbInstallHint(os)?.command;

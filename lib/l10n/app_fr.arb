@@ -1269,7 +1269,6 @@
   "remoteDesktopVirtualSizeFit": "Cette fenêtre ({width}×{height})",
   "remoteDesktopVirtualKeep": "Continuer après ma déconnexion",
   "remoteDesktopVirtualKeepHint": "Reconnectez-vous plus tard depuis Bureau à distance. Il tourne jusqu'à ce que vous l'arrêtiez.",
-  "remoteDesktopVirtualLinger": "Sans lingering, le serveur l'arrête à la déconnexion. Exécutez {command} une fois sur le serveur pour l'autoriser.",
   "remoteDesktopVirtualStart": "Démarrer",
   "remoteDesktopVirtualNeedsCommand": "Saisissez un programme à lancer.",
   "remoteDesktopVirtualScreenTitle": "Bureau virtuel {display}",
@@ -1303,5 +1302,13 @@
   "remoteDesktopLaunchSetupNeeded": "Ce serveur a d'abord besoin d'un écran virtuel. SecureShell Go peut l'installer pour vous.",
   "remoteDesktopVirtualInstallDesktopButton": "Installer le bureau Xfce",
   "remoteDesktopVirtualProgramMissing": "{program} n'est pas installé sur le serveur.",
-  "remoteDesktopVirtualInstallProgram": "Installer {package}"
+  "remoteDesktopVirtualInstallProgram": "Installer {package}",
+  "remoteDesktopVirtualOrType": "Ou saisissez une commande",
+  "remoteDesktopVirtualRootNote": "{program} ne démarre pas en root tout seul ; SecureShell Go ajoute les options qu'il demande : sans bac à sable et avec son propre dossier de profil.",
+  "remoteDesktopVirtualLingerAsk": "Ce serveur arrête vos programmes à la déconnexion. Autoriser ce bureau à continuer ?",
+  "remoteDesktopVirtualLingerAllow": "Autoriser",
+  "remoteDesktopSetupLinger": "Garder les bureaux actifs après la déconnexion",
+  "remoteDesktopSetupLingerDetail": "Active le lingering pour votre compte, afin que ses programmes ne s'arrêtent pas à la déconnexion.",
+  "remoteDesktopProgramStopped": "Le programme s'est arrêté peu après son démarrage (code de sortie {code}).",
+  "remoteDesktopLaunchHelperNote": "La première fois, SecureShell Go copie un petit assistant (2 à 5 Mo) sur le serveur. Il ne tourne que pendant que vous l'utilisez."
 }

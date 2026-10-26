@@ -11,6 +11,40 @@ import 'agent_manifest.dart';
 import 'agent_probe.dart';
 import 'agent_shell.dart';
 
+// --------------------------------------------------------- programs as root
+
+/// Programs built on Chromium (VS Code and its forks, the Chromium-based
+/// browsers) that will not start as root unless told to run without their
+/// sandbox and with a profile folder of their own. Their own message says
+/// so ("add the argument --no-sandbox and specify an alternate user data
+/// directory"); a person signed in to a server as root should not have to
+/// learn that to open one.
+const Map<String, String> _chromiumPrograms = {
+  'code': 'Code',
+  'code-insiders': 'Code - Insiders',
+  'codium': 'VSCodium',
+  'vscodium': 'VSCodium',
+  'cursor': 'Cursor',
+  'google-chrome': 'google-chrome',
+  'google-chrome-stable': 'google-chrome',
+  'chromium': 'chromium',
+  'chromium-browser': 'chromium',
+  'brave-browser': 'BraveSoftware',
+  'microsoft-edge': 'microsoft-edge',
+  'microsoft-edge-stable': 'microsoft-edge',
+};
+
+/// What [command] needs added to start as root, or null when it needs
+/// nothing: [program] is its first word (see `programOf`), by path or name.
+/// The profile folder is a separate one, so a later run as an ordinary user
+/// does not find files root owns in its own.
+String? rootArgumentsFor(String program) {
+  final name = program.split('/').last;
+  final profile = _chromiumPrograms[name];
+  if (profile == null) return null;
+  return '--no-sandbox --user-data-dir="\$HOME/.config/$profile (root)"';
+}
+
 // ------------------------------------------------------------ install hints
 
 /// How to install something on the server, for the UI to offer to type into
@@ -600,6 +634,51 @@ class VirtualDesktops {
     }
     return VirtualDesktopSession(
         id: id, display: display, endpoint: endpoint, record: record);
+  }
+
+  /// Waits up to [within] for the program in a virtual desktop to fail.
+  ///
+  /// The launch already catches a program that fails at once; some take
+  /// longer to give up (a snap spends seconds just starting), and by then
+  /// the viewer is open on an empty screen. This keeps watching for a while
+  /// afterwards, in one exec. Returns the exit code and the end of the
+  /// program's output when it failed, or null when it is still running at
+  /// the end, ended well, or the desktop has gone.
+  Future<({int code, String log})?> watchProgram(
+    SessionTransport transport,
+    String runtimeDir, {
+    Duration within = const Duration(seconds: 30),
+  }) async {
+    final seconds = within.inSeconds < 1 ? 1 : within.inSeconds;
+    final result = await AgentShell.run(
+      transport,
+      AgentShell.sh('''
+rt=\$1
+i=0
+while [ \$i -lt $seconds ]; do
+  [ -d "\$rt" ] || { echo SSG-GONE; exit 0; }
+  if [ -s "\$rt/app.exit" ]; then
+    echo "SSG-APP-EXITED \$(cat "\$rt/app.exit")"
+    echo SSG-LOG
+    grep -v 'Could not resolve keysym' "\$rt/session.log" 2>/dev/null | tail -n 15
+    exit 0
+  fi
+  sleep 1
+  i=\$((i + 1))
+done
+echo SSG-RUNNING''', [runtimeDir]),
+      what: 'watch the program in the virtual desktop',
+      timeout: within + const Duration(seconds: 15),
+    );
+    return parseWatch(result.stdout);
+  }
+
+  /// [watchProgram]'s output. Public for its tests.
+  static ({int code, String log})? parseWatch(String output) {
+    final lines = AgentShell.lines(output);
+    final code = int.tryParse(AgentShell.valueAfter(lines, 'SSG-APP-EXITED ') ?? '');
+    if (code == null || code == 0) return null;
+    return (code: code, log: AgentShell.after(lines, 'SSG-LOG'));
   }
 
   /// Turns the launch script's output into an [AgentFailure], or returns

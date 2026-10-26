@@ -1269,7 +1269,6 @@
   "remoteDesktopVirtualSizeFit": "Dieses Fenster ({width}×{height})",
   "remoteDesktopVirtualKeep": "Nach dem Trennen weiterlaufen lassen",
   "remoteDesktopVirtualKeepHint": "Später über Remotedesktop wieder verbinden. Er läuft, bis du ihn beendest.",
-  "remoteDesktopVirtualLinger": "Ohne Lingering beendet der Server ihn beim Abmelden. Führe einmal {command} auf dem Server aus, um es zu erlauben.",
   "remoteDesktopVirtualStart": "Starten",
   "remoteDesktopVirtualNeedsCommand": "Gib ein Programm zum Ausführen ein.",
   "remoteDesktopVirtualScreenTitle": "Virtueller Desktop {display}",
@@ -1303,5 +1302,13 @@
   "remoteDesktopLaunchSetupNeeded": "Dieser Server braucht zuerst einen virtuellen Bildschirm. SecureShell Go kann ihn für dich installieren.",
   "remoteDesktopVirtualInstallDesktopButton": "Xfce-Desktop installieren",
   "remoteDesktopVirtualProgramMissing": "{program} ist auf dem Server nicht installiert.",
-  "remoteDesktopVirtualInstallProgram": "{package} installieren"
+  "remoteDesktopVirtualInstallProgram": "{package} installieren",
+  "remoteDesktopVirtualOrType": "Oder einen Befehl eingeben",
+  "remoteDesktopVirtualRootNote": "{program} startet als root nicht von selbst, daher ergänzt SecureShell Go die geforderten Optionen: ohne Sandbox und mit eigenem Profilordner.",
+  "remoteDesktopVirtualLingerAsk": "Dieser Server beendet deine Programme beim Abmelden. Soll dieser Desktop weiterlaufen dürfen?",
+  "remoteDesktopVirtualLingerAllow": "Erlauben",
+  "remoteDesktopSetupLinger": "Desktops nach dem Abmelden weiterlaufen lassen",
+  "remoteDesktopSetupLingerDetail": "Aktiviert Lingering für dein Konto, damit seine Programme beim Abmelden nicht beendet werden.",
+  "remoteDesktopProgramStopped": "Das Programm wurde kurz nach dem Start beendet (Exitcode {code}).",
+  "remoteDesktopLaunchHelperNote": "Beim ersten Mal kopiert SecureShell Go ein kleines Hilfsprogramm (2–5 MB) auf den Server. Es läuft nur, solange du es nutzt."
 }

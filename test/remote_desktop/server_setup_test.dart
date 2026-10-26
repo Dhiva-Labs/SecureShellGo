@@ -271,6 +271,19 @@ exec "$@"
       );
     });
 
+    test('a fixed step runs as the account that used sudo', () async {
+      File('$bin/loginctl').writeAsStringSync('#!/bin/sh\necho "\$*" > "\$FAKE_DIR/loginctl"\n');
+      Process.runSync('chmod', ['755', '$bin/loginctl']);
+      final run = await runInstall(_ProcessTransport({...env, 'SUDO_USER': 'dhiva'}),
+          pm: PackageManager.apt,
+          packages: const [],
+          privilege: Privilege.root,
+          steps: const [SetupStep.keepRunning]);
+      await run.done;
+      expect(File('${dir.path}/loginctl').readAsStringSync().trim(), 'enable-linger dhiva');
+      expect(File('${dir.path}/apt-calls').existsSync(), isFalse, reason: 'no packages');
+    });
+
     test('no sudo at all is refused before anything runs', () async {
       final transport = _ProcessTransport(env);
       await expectLater(

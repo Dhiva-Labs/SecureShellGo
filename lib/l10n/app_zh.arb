@@ -1269,7 +1269,6 @@
   "remoteDesktopVirtualSizeFit": "此窗口（{width}×{height}）",
   "remoteDesktopVirtualKeep": "断开连接后继续运行",
   "remoteDesktopVirtualKeepHint": "稍后可从“远程桌面”重新连接。它会一直运行，直到你停止它。",
-  "remoteDesktopVirtualLinger": "若未启用 lingering，服务器会在你注销时停止它。请在服务器上运行一次 {command} 以允许。",
   "remoteDesktopVirtualStart": "启动",
   "remoteDesktopVirtualNeedsCommand": "请输入要运行的程序。",
   "remoteDesktopVirtualScreenTitle": "虚拟桌面 {display}",
@@ -1303,5 +1302,13 @@
   "remoteDesktopLaunchSetupNeeded": "此服务器需要先有虚拟屏幕。SecureShell Go 可以为你安装。",
   "remoteDesktopVirtualInstallDesktopButton": "安装 Xfce 桌面",
   "remoteDesktopVirtualProgramMissing": "服务器上未安装 {program}。",
-  "remoteDesktopVirtualInstallProgram": "安装 {package}"
+  "remoteDesktopVirtualInstallProgram": "安装 {package}",
+  "remoteDesktopVirtualOrType": "或输入命令",
+  "remoteDesktopVirtualRootNote": "{program} 无法直接以 root 身份启动，因此 SecureShell Go 会添加它要求的选项：不使用沙盒，并使用单独的配置文件夹。",
+  "remoteDesktopVirtualLingerAsk": "此服务器会在你注销时停止你的程序。允许此桌面继续运行吗？",
+  "remoteDesktopVirtualLingerAllow": "允许",
+  "remoteDesktopSetupLinger": "注销后保持桌面运行",
+  "remoteDesktopSetupLingerDetail": "为你的账户开启 lingering，注销时不会停止其程序。",
+  "remoteDesktopProgramStopped": "程序启动后不久就停止了（退出代码 {code}）。",
+  "remoteDesktopLaunchHelperNote": "首次使用时，SecureShell Go 会将一个小型助手程序（2–5 MB）复制到服务器。它仅在你使用时运行。"
 }

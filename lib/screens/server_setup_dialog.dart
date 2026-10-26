@@ -13,13 +13,17 @@ class SetupItem {
   const SetupItem({
     required this.title,
     required this.detail,
-    required this.packages,
+    this.packages = const [],
+    this.steps = const [],
     this.required = true,
   });
 
   final String title;
   final String detail;
   final List<String> packages;
+
+  /// Things other than packages that need root.
+  final List<SetupStep> steps;
 
   /// False for something offered but not needed, which gets a checkbox.
   final bool required;
@@ -38,9 +42,14 @@ class ServerSetupBackend {
     required List<String> packages,
     required Privilege privilege,
     String? password,
+    List<SetupStep> steps = const [],
   }) =>
       runInstall(transport,
-          pm: pm, packages: packages, privilege: privilege, password: password);
+          pm: pm,
+          packages: packages,
+          privilege: privilege,
+          password: password,
+          steps: steps);
 }
 
 /// Asks to install [items] on the server and, on a click, installs them.
@@ -145,11 +154,16 @@ class _ServerSetupDialogState extends State<_ServerSetupDialog> {
           if (_chosen.contains(item)) ...item.packages,
       ];
 
+  List<SetupStep> get _steps => [
+        for (final item in widget.items)
+          if (_chosen.contains(item)) ...item.steps,
+      ];
+
   bool get _needsPassword => _privilege == Privilege.sudoPassword;
 
   bool get _canInstall =>
       _privilege != Privilege.none &&
-      _packages.isNotEmpty &&
+      (_packages.isNotEmpty || _steps.isNotEmpty) &&
       (!_needsPassword || _password.text.isNotEmpty);
 
   Future<void> _install() async {
@@ -174,6 +188,7 @@ class _ServerSetupDialogState extends State<_ServerSetupDialog> {
         packages: _packages,
         privilege: _privilege!,
         password: _needsPassword ? _password.text : null,
+        steps: _steps,
       );
       _run = run;
       _output = run.lines.listen((line) {
@@ -251,7 +266,11 @@ class _ServerSetupDialogState extends State<_ServerSetupDialog> {
             ..add(const SizedBox(height: 8))
             ..add(Text(l10n.remoteDesktopSetupNoSudo))
             ..add(const SizedBox(height: 6))
-            ..add(_Command(command: installCommandLine(widget.pm, _packages)));
+            ..add(_Command(
+                command: [
+              if (_packages.isNotEmpty) installCommandLine(widget.pm, _packages),
+              for (final step in _steps) 'sudo ${step.script.replaceAll(r'${SUDO_USER:-$(id -un)}', r'$USER')}',
+            ].join('\n')));
         } else if (_needsPassword) {
           body
             ..add(const SizedBox(height: 8))

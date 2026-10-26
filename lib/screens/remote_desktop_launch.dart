@@ -331,7 +331,7 @@ RemoteScreenOpener _virtualOpener(
       spec,
     );
     kept = desktop.record;
-    return _connect(
+    final handle = await _connect(
       l10n: l10n,
       session: session,
       endpoint: desktop.endpoint,
@@ -343,6 +343,24 @@ RemoteScreenOpener _virtualOpener(
       title: l10n.remoteDesktopVirtualScreenTitle(desktop.display),
       keepsRunning: desktop.keepsRunning,
     );
+    // A program that gives up a few seconds in would leave the viewer on an
+    // empty screen; end it with the program's own words instead.
+    unawaited(() async {
+      try {
+        final failed = await const VirtualDesktops()
+            .watchProgram(transport, desktop.endpoint.runtimeDir);
+        if (failed == null) return;
+        final detail = failed.log.trim();
+        await handle.session.close(
+          error: [l10n.remoteDesktopProgramStopped(failed.code), detail]
+              .where((t) => t.isNotEmpty)
+              .join('\n'),
+        );
+      } catch (_) {
+        // Watching is a courtesy; the desktop itself is unaffected.
+      }
+    }());
+    return handle;
   };
 }
 
@@ -628,6 +646,20 @@ class _ChooserState extends State<_Chooser> {
       }
     }
 
+    if (probe.isSupported) {
+      children.add(
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+          child: Text(
+            l10n.remoteDesktopLaunchHelperNote,
+            style: theme.textTheme.bodySmall?.copyWith(
+              color: theme.colorScheme.onSurfaceVariant,
+            ),
+          ),
+        ),
+      );
+    }
+
     return AlertDialog(
       title: Text(l10n.remoteDesktopLaunchTitle(widget.hostName)),
       contentPadding: const EdgeInsets.only(top: 12, bottom: 8),
@@ -769,14 +801,16 @@ class _VirtualDesktopDialogState extends State<_VirtualDesktopDialog> {
 
   Future<bool> _install(List<SetupItem> items) async {
     final pm = _pm;
-    if (pm == null) return false;
+    final packages = items.any((i) => i.packages.isNotEmpty);
+    if (pm == null && packages) return false;
     setState(() => _busy = true);
     try {
       return await showServerSetup(
         context,
         transport: widget.session.connection,
         hostName: widget.session.host.displayName,
-        pm: pm,
+        // Not used when nothing is to be installed from packages.
+        pm: pm ?? PackageManager.apt,
         items: items,
       );
     } finally {
@@ -796,6 +830,32 @@ class _VirtualDesktopDialogState extends State<_VirtualDesktopDialog> {
       ),
     ]);
     if (installed && mounted) {
+      setState(() => _busy = true);
+      await _reprobe();
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  /// The app typed or picked, when it is one that needs extra options to
+  /// start as root and this account is root: the note under the field says
+  /// what is added.
+  String? get _rootProgram {
+    if (_linux.uid != 0) return null;
+    final program = programOf(_command.text);
+    if (program == null || rootArgumentsFor(program) == null) return null;
+    return program.split('/').last;
+  }
+
+  Future<void> _allowKeepRunning() async {
+    final l10n = context.l10n;
+    final allowed = await _install([
+      SetupItem(
+        title: l10n.remoteDesktopSetupLinger,
+        detail: l10n.remoteDesktopSetupLingerDetail,
+        steps: const [SetupStep.keepRunning],
+      ),
+    ]);
+    if (allowed && mounted) {
       setState(() => _busy = true);
       await _reprobe();
       if (mounted) setState(() => _busy = false);
@@ -859,6 +919,7 @@ class _VirtualDesktopDialogState extends State<_VirtualDesktopDialog> {
     setState(() {
       _command.text = picked.command;
       _commandError = null;
+      _missing = null;
     });
   }
 
@@ -899,7 +960,11 @@ class _VirtualDesktopDialogState extends State<_VirtualDesktopDialog> {
         });
         if (!exists) return;
       }
-      content = VirtualAppContent(command);
+      final extra = _linux.uid == 0 && program != null && !command.contains('--no-sandbox')
+          ? rootArgumentsFor(program)
+          : null;
+      content = VirtualAppContent(extra == null ? command : '$command $extra',
+          label: program?.split('/').last);
     }
     final (w, h) = _size ?? sizes.first;
     Navigator.of(context).pop(
@@ -975,24 +1040,43 @@ class _VirtualDesktopDialogState extends State<_VirtualDesktopDialog> {
                 ),
               ),
               if (_session == null) ...[
+                // Picking from what the server has comes first: most people
+                // know the app they want, not the command that starts it.
+                Align(
+                  alignment: AlignmentDirectional.centerStart,
+                  child: FilledButton.tonalIcon(
+                    style: FilledButton.styleFrom(minimumSize: const Size(0, 44)),
+                    onPressed: _loadingApps || _busy ? null : _pickApp,
+                    icon: _loadingApps
+                        ? const SizedBox.square(
+                            dimension: 16,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const Icon(Icons.apps_outlined),
+                    label: Text(l10n.remoteAppInstalledApps),
+                  ),
+                ),
+                const SizedBox(height: 8),
                 TextField(
                   controller: _command,
-                  autofocus: _support.sessions.isEmpty,
                   decoration: InputDecoration(
-                    labelText: l10n.remoteAppCommandLabel,
+                    labelText: l10n.remoteDesktopVirtualOrType,
                     hintText: l10n.remoteAppCommandHint,
                     errorText: _commandError,
                   ),
-                  onChanged: (_) {
-                    if (_commandError != null || _missing != null) {
-                      setState(() {
-                        _commandError = null;
-                        _missing = null;
-                      });
-                    }
-                  },
+                  onChanged: (_) => setState(() {
+                    _commandError = null;
+                    _missing = null;
+                  }),
                   onSubmitted: (_) => unawaited(_start(sizes)),
                 ),
+                if (_rootProgram case final program?) ...[
+                  const SizedBox(height: 6),
+                  Text(
+                    l10n.remoteDesktopVirtualRootNote(program),
+                    style: theme.textTheme.bodySmall,
+                  ),
+                ],
                 if (_missing case final missing?) ...[
                   const SizedBox(height: 8),
                   Text(
@@ -1012,19 +1096,6 @@ class _VirtualDesktopDialogState extends State<_VirtualDesktopDialog> {
                     ),
                   ],
                 ],
-                Align(
-                  alignment: AlignmentDirectional.centerStart,
-                  child: TextButton.icon(
-                    onPressed: _loadingApps ? null : _pickApp,
-                    icon: _loadingApps
-                        ? const SizedBox.square(
-                            dimension: 16,
-                            child: CircularProgressIndicator(strokeWidth: 2),
-                          )
-                        : const Icon(Icons.apps_outlined),
-                    label: Text(l10n.remoteAppInstalledApps),
-                  ),
-                ),
               ],
               const SizedBox(height: 12),
               DropdownButtonFormField<(int, int)>(
@@ -1051,15 +1122,21 @@ class _VirtualDesktopDialogState extends State<_VirtualDesktopDialog> {
                 title: Text(l10n.remoteDesktopVirtualKeep),
                 subtitle: Text(l10n.remoteDesktopVirtualKeepHint),
               ),
-              if (_keep && _support.keepRunningNeedsLinger)
+              if (_keep && _support.keepRunningNeedsLinger) ...[
                 Text(
-                  l10n.remoteDesktopVirtualLinger(
-                    VirtualDesktopSupport.enableLingerCommand,
-                  ),
-                  style: theme.textTheme.bodySmall?.copyWith(
-                    color: theme.colorScheme.error,
+                  l10n.remoteDesktopVirtualLingerAsk,
+                  style: theme.textTheme.bodySmall,
+                ),
+                const SizedBox(height: 6),
+                Align(
+                  alignment: AlignmentDirectional.centerStart,
+                  child: FilledButton.tonal(
+                    style: FilledButton.styleFrom(minimumSize: const Size(0, 40)),
+                    onPressed: _busy ? null : () => unawaited(_allowKeepRunning()),
+                    child: Text(l10n.remoteDesktopVirtualLingerAllow),
                   ),
                 ),
+              ],
             ],
           ),
         ),

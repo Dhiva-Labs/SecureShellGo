@@ -1269,7 +1269,6 @@
   "remoteDesktopVirtualSizeFit": "このウィンドウ（{width}×{height}）",
   "remoteDesktopVirtualKeep": "切断後も実行し続ける",
   "remoteDesktopVirtualKeepHint": "後で「リモートデスクトップ」から再接続できます。停止するまで実行されます。",
-  "remoteDesktopVirtualLinger": "lingering が無効だと、サインアウト時にサーバーが停止します。許可するにはサーバーで一度 {command} を実行してください。",
   "remoteDesktopVirtualStart": "開始",
   "remoteDesktopVirtualNeedsCommand": "実行するプログラムを入力してください。",
   "remoteDesktopVirtualScreenTitle": "仮想デスクトップ {display}",
@@ -1303,5 +1302,13 @@
   "remoteDesktopLaunchSetupNeeded": "このサーバーにはまず仮想画面が必要です。SecureShell Go がインストールできます。",
   "remoteDesktopVirtualInstallDesktopButton": "Xfce デスクトップをインストール",
   "remoteDesktopVirtualProgramMissing": "{program} はサーバーにインストールされていません。",
-  "remoteDesktopVirtualInstallProgram": "{package} をインストール"
+  "remoteDesktopVirtualInstallProgram": "{package} をインストール",
+  "remoteDesktopVirtualOrType": "またはコマンドを入力",
+  "remoteDesktopVirtualRootNote": "{program} は root ではそのままでは起動しないため、SecureShell Go が必要なオプション（サンドボックスなし、専用のプロファイルフォルダー）を追加します。",
+  "remoteDesktopVirtualLingerAsk": "このサーバーはサインアウト時にプログラムを停止します。このデスクトップの実行を続けることを許可しますか？",
+  "remoteDesktopVirtualLingerAllow": "許可",
+  "remoteDesktopSetupLinger": "サインアウト後もデスクトップを実行し続ける",
+  "remoteDesktopSetupLingerDetail": "アカウントの lingering を有効にし、サインアウト時にプログラムが停止されないようにします。",
+  "remoteDesktopProgramStopped": "プログラムは起動後すぐに終了しました（終了コード {code}）。",
+  "remoteDesktopLaunchHelperNote": "初回は、SecureShell Go が小さなヘルパー（2～5 MB）をサーバーにコピーします。使用中だけ動作します。"
 }

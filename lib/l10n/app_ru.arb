@@ -1269,7 +1269,6 @@
   "remoteDesktopVirtualSizeFit": "Это окно ({width}×{height})",
   "remoteDesktopVirtualKeep": "Не останавливать после отключения",
   "remoteDesktopVirtualKeepHint": "Подключитесь к нему позже через «Удалённый рабочий стол». Он работает, пока вы его не остановите.",
-  "remoteDesktopVirtualLinger": "Без lingering сервер остановит его при выходе из системы. Чтобы разрешить, один раз выполните на сервере {command}.",
   "remoteDesktopVirtualStart": "Запустить",
   "remoteDesktopVirtualNeedsCommand": "Введите программу для запуска.",
   "remoteDesktopVirtualScreenTitle": "Виртуальный рабочий стол {display}",
@@ -1303,5 +1302,13 @@
   "remoteDesktopLaunchSetupNeeded": "Серверу сначала нужен виртуальный экран. SecureShell Go может установить его за вас.",
   "remoteDesktopVirtualInstallDesktopButton": "Установить рабочий стол Xfce",
   "remoteDesktopVirtualProgramMissing": "{program} не установлен на сервере.",
-  "remoteDesktopVirtualInstallProgram": "Установить {package}"
+  "remoteDesktopVirtualInstallProgram": "Установить {package}",
+  "remoteDesktopVirtualOrType": "Или введите команду",
+  "remoteDesktopVirtualRootNote": "{program} не запускается от root сам по себе, поэтому SecureShell Go добавляет нужные ему параметры: без песочницы и с отдельной папкой профиля.",
+  "remoteDesktopVirtualLingerAsk": "Этот сервер останавливает ваши программы при выходе из системы. Разрешить этому рабочему столу продолжать работу?",
+  "remoteDesktopVirtualLingerAllow": "Разрешить",
+  "remoteDesktopSetupLinger": "Не останавливать рабочие столы после выхода",
+  "remoteDesktopSetupLingerDetail": "Включает lingering для вашей учётной записи, чтобы её программы не останавливались при выходе.",
+  "remoteDesktopProgramStopped": "Программа остановилась вскоре после запуска (код выхода {code}).",
+  "remoteDesktopLaunchHelperNote": "В первый раз SecureShell Go копирует на сервер небольшой помощник (2–5 МБ). Он работает только пока вы им пользуетесь."
 }

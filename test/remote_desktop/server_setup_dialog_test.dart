@@ -18,6 +18,7 @@ class _Backend extends ServerSetupBackend {
 
   final Privilege privilegeIs;
   final List<({List<String> packages, Privilege privilege, String? password})> installs = [];
+  final List<SetupStep> steps = [];
 
   /// What the next install does: null succeeds.
   SetupFailure? Function(String? password)? outcome;
@@ -32,10 +33,12 @@ class _Backend extends ServerSetupBackend {
     required List<String> packages,
     required Privilege privilege,
     String? password,
+    List<SetupStep> steps = const [],
   }) async {
     installs.add((packages: packages, privilege: privilege, password: password));
+    this.steps.addAll(steps);
     final lines = StreamController<String>();
-    lines.add('Setting up ${packages.first}');
+    lines.add(packages.isEmpty ? 'Done' : 'Setting up ${packages.first}');
     unawaited(lines.close());
     final failure = outcome?.call(password);
     return SetupRun(
@@ -142,6 +145,19 @@ void main() {
     await tester.pumpAndSettle();
     expect(await result, isTrue);
     expect(backend.installs.map((i) => i.password), ['wrong', 'right horse']);
+  });
+
+  testWidgets('a step with no package: keep desktops running', (tester) async {
+    final backend = _Backend(Privilege.sudo);
+    final result = await _open(tester, backend, items: const [
+      SetupItem(title: 'Keep running', detail: 'linger', steps: [SetupStep.keepRunning]),
+    ]);
+    await tester.tap(find.text('Install'));
+    await tester.pump(const Duration(seconds: 1));
+    await tester.pumpAndSettle();
+    expect(await result, isTrue);
+    expect(backend.installs.single.packages, isEmpty);
+    expect(backend.steps, [SetupStep.keepRunning]);
   });
 
   testWidgets('no sudo: the command for an administrator, and no Install',

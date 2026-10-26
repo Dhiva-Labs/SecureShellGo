@@ -7291,15 +7291,6 @@
   "@remoteDesktopVirtualKeepHint": {
     "description": "Virtual desktop setup: explains the keep-running option."
   },
-  "remoteDesktopVirtualLinger": "Without lingering, the server stops it when you sign out. Run {command} on the server once to allow it.",
-  "@remoteDesktopVirtualLinger": {
-    "description": "Virtual desktop setup: warning that the server stops user programs at sign-out unless lingering is enabled. {command} is the command that enables it.",
-    "placeholders": {
-      "command": {
-        "type": "String"
-      }
-    }
-  },
   "remoteDesktopVirtualStart": "Start",
   "@remoteDesktopVirtualStart": {
     "description": "Virtual desktop setup: button that starts the virtual desktop."
@@ -7478,5 +7469,47 @@
         "type": "String"
       }
     }
+  },
+  "remoteDesktopVirtualOrType": "Or type a command",
+  "@remoteDesktopVirtualOrType": {
+    "description": "Virtual desktop setup: label of the command field, below the button that picks an installed app."
+  },
+  "remoteDesktopVirtualRootNote": "{program} does not start as root on its own, so SecureShell Go adds the options it asks for: no sandbox, and a profile folder of its own.",
+  "@remoteDesktopVirtualRootNote": {
+    "description": "Virtual desktop setup: shown when signed in as root and the app (VS Code, Chrome…) needs extra options to start as root. {program} is its name.",
+    "placeholders": {
+      "program": {
+        "type": "String"
+      }
+    }
+  },
+  "remoteDesktopVirtualLingerAsk": "This server stops your programs when you sign out. Allow this desktop to keep running?",
+  "@remoteDesktopVirtualLingerAsk": {
+    "description": "Virtual desktop setup: shown when keep-running is ticked but the server stops programs at sign-out."
+  },
+  "remoteDesktopVirtualLingerAllow": "Allow",
+  "@remoteDesktopVirtualLingerAllow": {
+    "description": "Virtual desktop setup: button that allows programs to keep running after sign-out."
+  },
+  "remoteDesktopSetupLinger": "Keep desktops running after sign-out",
+  "@remoteDesktopSetupLinger": {
+    "description": "Server setup dialog: item — let programs keep running after sign-out."
+  },
+  "remoteDesktopSetupLingerDetail": "Turns on lingering for your account, so its programs are not stopped when you sign out.",
+  "@remoteDesktopSetupLingerDetail": {
+    "description": "Server setup dialog: detail under the keep-running item."
+  },
+  "remoteDesktopProgramStopped": "The program stopped soon after it started (exit code {code}).",
+  "@remoteDesktopProgramStopped": {
+    "description": "Remote desktop: the program in a virtual desktop stopped soon after starting. {code} is its exit code.",
+    "placeholders": {
+      "code": {
+        "type": "int"
+      }
+    }
+  },
+  "remoteDesktopLaunchHelperNote": "The first time, SecureShell Go copies a small helper (2–5 MB) to the server. It runs only while you use it.",
+  "@remoteDesktopLaunchHelperNote": {
+    "description": "Remote desktop chooser: footnote about the helper the app copies to the server."
   }
 }

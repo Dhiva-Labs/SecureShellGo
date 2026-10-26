@@ -1269,7 +1269,6 @@
   "remoteDesktopVirtualSizeFit": "Esta janela ({width}×{height})",
   "remoteDesktopVirtualKeep": "Continuar em execução após desconectar",
   "remoteDesktopVirtualKeepHint": "Reconecte depois em Área de trabalho remota. Ela roda até você pará-la.",
-  "remoteDesktopVirtualLinger": "Sem lingering, o servidor a encerra quando você sai. Execute {command} uma vez no servidor para permitir.",
   "remoteDesktopVirtualStart": "Iniciar",
   "remoteDesktopVirtualNeedsCommand": "Digite um programa para executar.",
   "remoteDesktopVirtualScreenTitle": "Área de trabalho virtual {display}",
@@ -1303,5 +1302,13 @@
   "remoteDesktopLaunchSetupNeeded": "Este servidor precisa primeiro de uma tela virtual. O SecureShell Go pode instalá-la para você.",
   "remoteDesktopVirtualInstallDesktopButton": "Instalar a área de trabalho Xfce",
   "remoteDesktopVirtualProgramMissing": "{program} não está instalado no servidor.",
-  "remoteDesktopVirtualInstallProgram": "Instalar {package}"
+  "remoteDesktopVirtualInstallProgram": "Instalar {package}",
+  "remoteDesktopVirtualOrType": "Ou digite um comando",
+  "remoteDesktopVirtualRootNote": "{program} não inicia como root sozinho, então o SecureShell Go adiciona as opções que ele pede: sem sandbox e com uma pasta de perfil própria.",
+  "remoteDesktopVirtualLingerAsk": "Este servidor encerra seus programas quando você sai. Permitir que esta área de trabalho continue em execução?",
+  "remoteDesktopVirtualLingerAllow": "Permitir",
+  "remoteDesktopSetupLinger": "Manter as áreas de trabalho após sair",
+  "remoteDesktopSetupLingerDetail": "Ativa o lingering da sua conta, para que seus programas não sejam encerrados quando você sair.",
+  "remoteDesktopProgramStopped": "O programa parou logo após iniciar (código de saída {code}).",
+  "remoteDesktopLaunchHelperNote": "Na primeira vez, o SecureShell Go copia um pequeno auxiliar (2–5 MB) para o servidor. Ele só roda enquanto você usa."
 }

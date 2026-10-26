@@ -1269,7 +1269,6 @@
   "remoteDesktopVirtualSizeFit": "Esta ventana ({width}×{height})",
   "remoteDesktopVirtualKeep": "Seguir ejecutándose al desconectarme",
   "remoteDesktopVirtualKeepHint": "Vuelve a conectarte más tarde desde Escritorio remoto. Se ejecuta hasta que lo detengas.",
-  "remoteDesktopVirtualLinger": "Sin lingering, el servidor lo detiene al cerrar la sesión. Ejecuta {command} una vez en el servidor para permitirlo.",
   "remoteDesktopVirtualStart": "Iniciar",
   "remoteDesktopVirtualNeedsCommand": "Introduce un programa para ejecutar.",
   "remoteDesktopVirtualScreenTitle": "Escritorio virtual {display}",
@@ -1303,5 +1302,13 @@
   "remoteDesktopLaunchSetupNeeded": "Este servidor necesita primero una pantalla virtual. SecureShell Go puede instalarla por ti.",
   "remoteDesktopVirtualInstallDesktopButton": "Instalar el escritorio Xfce",
   "remoteDesktopVirtualProgramMissing": "{program} no está instalado en el servidor.",
-  "remoteDesktopVirtualInstallProgram": "Instalar {package}"
+  "remoteDesktopVirtualInstallProgram": "Instalar {package}",
+  "remoteDesktopVirtualOrType": "O escribe un comando",
+  "remoteDesktopVirtualRootNote": "{program} no se inicia como root por sí solo, así que SecureShell Go añade las opciones que pide: sin sandbox y con su propia carpeta de perfil.",
+  "remoteDesktopVirtualLingerAsk": "Este servidor detiene tus programas al cerrar la sesión. ¿Permitir que este escritorio siga ejecutándose?",
+  "remoteDesktopVirtualLingerAllow": "Permitir",
+  "remoteDesktopSetupLinger": "Mantener los escritorios tras cerrar sesión",
+  "remoteDesktopSetupLingerDetail": "Activa lingering para tu cuenta, para que sus programas no se detengan al cerrar la sesión.",
+  "remoteDesktopProgramStopped": "El programa se detuvo poco después de iniciarse (código de salida {code}).",
+  "remoteDesktopLaunchHelperNote": "La primera vez, SecureShell Go copia un pequeño asistente (2–5 MB) al servidor. Solo se ejecuta mientras lo usas."
 }

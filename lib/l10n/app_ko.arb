@@ -1269,7 +1269,6 @@
   "remoteDesktopVirtualSizeFit": "이 창 ({width}×{height})",
   "remoteDesktopVirtualKeep": "연결을 끊은 후에도 계속 실행",
   "remoteDesktopVirtualKeepHint": "나중에 원격 데스크톱에서 다시 연결하세요. 중지할 때까지 실행됩니다.",
-  "remoteDesktopVirtualLinger": "lingering이 없으면 로그아웃 시 서버가 중지합니다. 허용하려면 서버에서 {command}를 한 번 실행하세요.",
   "remoteDesktopVirtualStart": "시작",
   "remoteDesktopVirtualNeedsCommand": "실행할 프로그램을 입력하세요.",
   "remoteDesktopVirtualScreenTitle": "가상 데스크톱 {display}",
@@ -1303,5 +1302,13 @@
   "remoteDesktopLaunchSetupNeeded": "이 서버에는 먼저 가상 화면이 필요합니다. SecureShell Go가 대신 설치할 수 있습니다.",
   "remoteDesktopVirtualInstallDesktopButton": "Xfce 데스크톱 설치",
   "remoteDesktopVirtualProgramMissing": "{program}이(가) 서버에 설치되어 있지 않습니다.",
-  "remoteDesktopVirtualInstallProgram": "{package} 설치"
+  "remoteDesktopVirtualInstallProgram": "{package} 설치",
+  "remoteDesktopVirtualOrType": "또는 명령 입력",
+  "remoteDesktopVirtualRootNote": "{program}은(는) root로 그냥 시작되지 않으므로 SecureShell Go가 요구하는 옵션(샌드박스 없음, 전용 프로필 폴더)을 추가합니다.",
+  "remoteDesktopVirtualLingerAsk": "이 서버는 로그아웃 시 프로그램을 중지합니다. 이 데스크톱이 계속 실행되도록 허용할까요?",
+  "remoteDesktopVirtualLingerAllow": "허용",
+  "remoteDesktopSetupLinger": "로그아웃 후에도 데스크톱 계속 실행",
+  "remoteDesktopSetupLingerDetail": "계정의 lingering을 켜서 로그아웃 시 프로그램이 중지되지 않게 합니다.",
+  "remoteDesktopProgramStopped": "프로그램이 시작 직후 중지되었습니다(종료 코드 {code}).",
+  "remoteDesktopLaunchHelperNote": "처음에는 SecureShell Go가 작은 도우미(2–5MB)를 서버에 복사합니다. 사용하는 동안에만 실행됩니다."
 }
