@@ -6755,5 +6755,188 @@
   "fleetRunStatusStopped": "stopped",
   "@fleetRunStatusStopped": {
     "description": "Host status: stopped by the user."
+  },
+  "remoteDesktopConnecting": "Connecting…",
+  "@remoteDesktopConnecting": {
+    "description": "Remote desktop: status line while opening, before the opener reports any progress."
+  },
+  "remoteDesktopWaiting": "Waiting for the remote side. It may be showing a consent dialog that someone there has to approve.",
+  "@remoteDesktopWaiting": {
+    "description": "Remote desktop: shown under the status while the remote side is slow to answer, because it may be asking permission on its own screen."
+  },
+  "remoteDesktopCancel": "Cancel",
+  "@remoteDesktopCancel": {
+    "description": "Remote desktop: button that gives up opening the desktop and leaves the screen."
+  },
+  "remoteDesktopFailedTitle": "The remote desktop could not be opened",
+  "@remoteDesktopFailedTitle": {
+    "description": "Remote desktop: heading above the error when opening failed."
+  },
+  "remoteDesktopRetry": "Retry",
+  "@remoteDesktopRetry": {
+    "description": "Remote desktop: button that tries to open the desktop again after a failure."
+  },
+  "remoteDesktopEnded": "The remote desktop session ended",
+  "@remoteDesktopEnded": {
+    "description": "Remote desktop: heading shown when an open session has ended; the reason follows below it."
+  },
+  "remoteDesktopReconnect": "Reconnect",
+  "@remoteDesktopReconnect": {
+    "description": "Remote desktop: button that opens the desktop again after the session ended."
+  },
+  "remoteDesktopKeepsRunning": "The virtual desktop keeps running on the server.",
+  "@remoteDesktopKeepsRunning": {
+    "description": "Remote desktop: snackbar shown after leaving a virtual desktop that was set to keep running after disconnect."
+  },
+  "remoteDesktopCantTypeThat": "Some characters cannot be typed from this keyboard. Use Paste to remote instead.",
+  "@remoteDesktopCantTypeThat": {
+    "description": "Remote desktop: snackbar shown once when the on-screen keyboard produced a character that has no key (for example an accented letter). \"Paste to remote\" is the name of the toolbar button, remoteDesktopPasteToRemote."
+  },
+  "remoteDesktopPasteToRemote": "Paste to remote",
+  "@remoteDesktopPasteToRemote": {
+    "description": "Remote desktop: toolbar button and snackbar action that copies this device's clipboard text to the remote computer and pastes it there."
+  },
+  "remoteDesktopClipboardEmpty": "The clipboard is empty.",
+  "@remoteDesktopClipboardEmpty": {
+    "description": "Remote desktop: snackbar when Paste to remote is used with nothing on the clipboard."
+  },
+  "remoteDesktopFocusMode": "Focus mode",
+  "@remoteDesktopFocusMode": {
+    "description": "Remote desktop: tooltip of the title bar button that hides the title bar and toolbar so the remote screen fills the display."
+  },
+  "remoteDesktopExitFocusMode": "Show controls",
+  "@remoteDesktopExitFocusMode": {
+    "description": "Remote desktop: tooltip of the small floating button shown in focus mode that brings the title bar and toolbar back."
+  },
+  "remoteDesktopDisconnect": "Disconnect",
+  "@remoteDesktopDisconnect": {
+    "description": "Remote desktop: tooltip of the title bar button that ends the session and leaves the screen."
+  },
+  "remoteDesktopStats": "{fps} fps · {rtt} ms · {rate} KB/s",
+  "@remoteDesktopStats": {
+    "description": "Remote desktop: small readout under the title with frames per second, round-trip time in milliseconds and data rate in kilobytes per second. Keep the units short.",
+    "placeholders": {
+      "fps": {
+        "type": "int"
+      },
+      "rtt": {
+        "type": "int"
+      },
+      "rate": {
+        "type": "int"
+      }
+    }
+  },
+  "remoteDesktopStatsNoRtt": "{fps} fps · {rate} KB/s",
+  "@remoteDesktopStatsNoRtt": {
+    "description": "Remote desktop: the same readout before the first round-trip time has been measured.",
+    "placeholders": {
+      "fps": {
+        "type": "int"
+      },
+      "rate": {
+        "type": "int"
+      }
+    }
+  },
+  "remoteDesktopDisplay": "Display",
+  "@remoteDesktopDisplay": {
+    "description": "Remote desktop: tooltip of the toolbar menu that picks which of the remote computer's monitors to show."
+  },
+  "remoteDesktopDisplayItem": "{name} ({width}×{height})",
+  "@remoteDesktopDisplayItem": {
+    "description": "Remote desktop: one monitor in the display menu, with its name and size in pixels.",
+    "placeholders": {
+      "name": {
+        "type": "String"
+      },
+      "width": {
+        "type": "int"
+      },
+      "height": {
+        "type": "int"
+      }
+    }
+  },
+  "remoteDesktopDisplayNumbered": "Display {number}",
+  "@remoteDesktopDisplayNumbered": {
+    "description": "Remote desktop: name used for a monitor that has none, numbered from 1.",
+    "placeholders": {
+      "number": {
+        "type": "int"
+      }
+    }
+  },
+  "remoteDesktopQuality": "Quality",
+  "@remoteDesktopQuality": {
+    "description": "Remote desktop: tooltip of the toolbar menu that trades picture quality for speed."
+  },
+  "remoteDesktopQualityLossless": "Lossless",
+  "@remoteDesktopQualityLossless": {
+    "description": "Remote desktop: quality level, every pixel exact."
+  },
+  "remoteDesktopQualityBalanced": "Balanced",
+  "@remoteDesktopQualityBalanced": {
+    "description": "Remote desktop: quality level, compressed photos that sharpen once they stop moving."
+  },
+  "remoteDesktopQualitySpeed": "Speed",
+  "@remoteDesktopQualitySpeed": {
+    "description": "Remote desktop: quality level, the most compression for slow connections."
+  },
+  "remoteDesktopViewOnly": "View only (send no input)",
+  "@remoteDesktopViewOnly": {
+    "description": "Remote desktop: tooltip of the toolbar toggle that stops keyboard, mouse and touch input being sent to the remote computer."
+  },
+  "remoteDesktopViewOnlyLocked": "This session was started view-only and cannot send input",
+  "@remoteDesktopViewOnlyLocked": {
+    "description": "Remote desktop: tooltip of the disabled view-only toggle when the remote side started the session view-only."
+  },
+  "remoteDesktopClipboardSync": "Clipboard sync (remote to this device)",
+  "@remoteDesktopClipboardSync": {
+    "description": "Remote desktop: tooltip of the toolbar toggle that, when on, copies text copied on the remote computer to this device's clipboard."
+  },
+  "remoteDesktopActualSize": "Actual size (1:1)",
+  "@remoteDesktopActualSize": {
+    "description": "Remote desktop: tooltip of the toolbar button that shows one remote pixel per screen pixel, panning around, instead of fitting the whole screen."
+  },
+  "remoteDesktopFitToWindow": "Fit to window",
+  "@remoteDesktopFitToWindow": {
+    "description": "Remote desktop: tooltip of the toolbar button that scales the whole remote screen to fit."
+  },
+  "remoteDesktopShowKeyBar": "Show extra keys",
+  "@remoteDesktopShowKeyBar": {
+    "description": "Remote desktop: tooltip of the toolbar toggle that shows the row of extra keys (Esc, Ctrl, arrows, F-keys) under the screen."
+  },
+  "remoteDesktopHideKeyBar": "Hide extra keys",
+  "@remoteDesktopHideKeyBar": {
+    "description": "Remote desktop: tooltip of the same toggle while the row of extra keys is showing."
+  },
+  "remoteDesktopSwitchToDirect": "Switch to direct touch",
+  "@remoteDesktopSwitchToDirect": {
+    "description": "Remote desktop: tooltip of the touch-screen toggle, shown while in trackpad mode. Direct touch means a tap clicks exactly where the finger lands."
+  },
+  "remoteDesktopSwitchToTrackpad": "Switch to trackpad mode",
+  "@remoteDesktopSwitchToTrackpad": {
+    "description": "Remote desktop: tooltip of the touch-screen toggle, shown while in direct touch mode. Trackpad mode means the screen acts like a laptop touchpad moving a separate cursor."
+  },
+  "remoteDesktopReleaseKeyboard": "Stop sending keys to the remote (click the screen to resume)",
+  "@remoteDesktopReleaseKeyboard": {
+    "description": "Remote desktop: tooltip of the toolbar button that hands the keyboard back to this app. While the screen has focus every key, even Tab and Ctrl+W, goes to the remote computer."
+  },
+  "remoteDesktopFunctionKeys": "Function keys",
+  "@remoteDesktopFunctionKeys": {
+    "description": "Remote desktop: tooltip of the extra-keys button that opens a menu of F1 to F12."
+  },
+  "remoteDesktopShowKeyboard": "Show keyboard",
+  "@remoteDesktopShowKeyboard": {
+    "description": "Remote desktop: tooltip of the extra-keys button that raises the on-screen keyboard."
+  },
+  "remoteDesktopHideKeyboard": "Hide keyboard",
+  "@remoteDesktopHideKeyboard": {
+    "description": "Remote desktop: tooltip of the same button while the on-screen keyboard is up."
+  },
+  "remoteDesktopDismissNotice": "Dismiss",
+  "@remoteDesktopDismissNotice": {
+    "description": "Remote desktop: tooltip of the close button on a notice banner sent by the remote side."
   }
 }
