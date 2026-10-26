@@ -581,7 +581,7 @@ class VirtualDesktops {
     LinuxProbe probe,
     DeployedAgent agent,
     VirtualDesktopSpec spec, {
-    Duration timeout = const Duration(seconds: 20),
+    Duration timeout = const Duration(seconds: 45),
     DateTime? now,
   }) async {
     if (agent.os != AgentOs.linux || agent.binary.flavour != AgentFlavour.x11) {

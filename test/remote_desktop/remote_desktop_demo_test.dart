@@ -323,7 +323,16 @@ Future<void> _waitFor(
   final clock = Stopwatch()..start();
   while (finder.evaluate().isEmpty) {
     if (clock.elapsed > timeout) {
-      fail('timed out waiting for $finder');
+      // What the screen said instead, for the one reading the failure.
+      final dir = Platform.environment['SSGO_RD_DEMO_OUT'];
+      if (dir != null) await _shot(tester, dir, 'zz-timed-out');
+      final texts = find
+          .byType(Text)
+          .evaluate()
+          .map((e) => (e.widget as Text).data)
+          .whereType<String>()
+          .join(' | ');
+      fail('timed out waiting for $finder; on screen: $texts');
     }
     await _settle(tester, const Duration(milliseconds: 200));
   }
