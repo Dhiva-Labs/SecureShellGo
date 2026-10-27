@@ -5,6 +5,7 @@ import 'dart:io';
 import 'package:dartssh2/dartssh2.dart';
 import 'package:flutter/foundation.dart';
 
+import 'remote_desktop/virtual_desktop.dart' show appWindowCommandFor;
 import 'remote_exec.dart';
 import 'session_controller.dart';
 import 'shell_quote.dart';
@@ -487,7 +488,8 @@ class RemoteAppRunner extends ChangeNotifier {
 
     final SSHSession channel;
     try {
-      channel = await _openChannel(transport, wrapCommand(text), forwarder.config);
+      channel = await _openChannel(
+          transport, wrapCommand(appWindowCommandFor(text)), forwarder.config);
     } on SSHChannelRequestError catch (e) {
       if (e.message.toLowerCase().contains(refusedX11Request)) {
         _refusedOn = transport;

@@ -641,4 +641,19 @@ while :; do sleep 1; done
       });
     }
   });
+
+  group('appWindowCommandFor', () {
+    test('a Chromium-based program decides root on the server', () {
+      final cmd = appWindowCommandFor("'/snap/bin/code' --new-window");
+      expect(cmd, startsWith(r'if [ "$(id -u)" = 0 ]; then '));
+      expect(cmd, contains('--no-sandbox'));
+      expect(cmd, contains('--disable-gpu'));
+      expect(cmd, contains('else'));
+    });
+
+    test('others, and commands that are not a plain program, as typed', () {
+      expect(appWindowCommandFor('xeyes'), 'xeyes');
+      expect(appWindowCommandFor(r'FOO=1 code'), r'FOO=1 code');
+    });
+  });
 }

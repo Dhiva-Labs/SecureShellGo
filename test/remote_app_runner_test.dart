@@ -296,6 +296,30 @@ void main() {
       expect(rig.runner.apps, isEmpty);
     });
 
+    test('VS Code gets its GPU off, and as root its sandbox off too',
+        () async {
+      final rig = _Rig();
+      final app = await rig.runner.launch('code --new-window');
+      expect(app.command, 'code --new-window', reason: 'shown as typed');
+      // The command the channel runs, with `code` an echo of its arguments.
+      final bin = await Directory.systemTemp.createTemp('ssgo-code');
+      addTearDown(() => bin.delete(recursive: true));
+      final code = File('${bin.path}/code')
+        ..writeAsStringSync('#!/bin/sh\necho "\$*"\n');
+      await Process.run('chmod', ['+x', code.path]);
+      final script = await Process.run('sh', ['-c', rig.opened.single.command],
+          environment: {'PATH': '${bin.path}:${Platform.environment['PATH']}'});
+      expect(script.stdout, contains('--new-window --disable-gpu'));
+      final asRoot = (await Process.run('id', ['-u'])).stdout.trim() == '0';
+      expect(script.stdout.contains('--no-sandbox'), asRoot);
+    }, testOn: 'linux');
+
+    test('anything else is run as typed', () async {
+      final rig = _Rig();
+      await rig.runner.launch('xeyes -geometry 200x200');
+      expect(rig.opened.single.command, contains("'xeyes -geometry 200x200'"));
+    });
+
     test('the channel is told there is nothing to read on stdin', () async {
       final rig = _Rig();
       await rig.runner.launch('xeyes');

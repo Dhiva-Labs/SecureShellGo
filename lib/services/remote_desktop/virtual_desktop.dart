@@ -10,6 +10,7 @@ import 'agent_launcher.dart';
 import 'agent_manifest.dart';
 import 'agent_probe.dart';
 import 'agent_shell.dart';
+import 'server_setup.dart';
 
 // --------------------------------------------------------- programs as root
 
@@ -47,6 +48,21 @@ String? virtualDesktopArgumentsFor(String program, {required bool root}) {
     '--disable-gpu',
     if (root) '--no-sandbox --user-data-dir="\$HOME/.config/$profile (root)"',
   ].join(' ');
+}
+
+/// [command] as "Open an app in a window" runs it: a Chromium-based program
+/// gets what [virtualDesktopArgumentsFor] gives it, its GPU off (a forwarded
+/// display has no GL for it either) and, when the account turns out to be
+/// root, which only the server knows, its sandbox off and a profile of its
+/// own. Anything else is run as typed.
+String appWindowCommandFor(String command) {
+  final program = programOf(command);
+  if (program == null) return command;
+  final plain = virtualDesktopArgumentsFor(program, root: false);
+  if (plain == null) return command;
+  final root = virtualDesktopArgumentsFor(program, root: true)!;
+  return 'if [ "\$(id -u)" = 0 ]; then $command $root; '
+      'else $command $plain; fi';
 }
 
 /// Whether [program] is one that needs [virtualDesktopArgumentsFor] as root:
