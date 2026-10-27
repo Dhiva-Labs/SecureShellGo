@@ -473,6 +473,15 @@ jobs:
       # app's data folder on start-up, so both together prove the AOT
       # snapshot runs inside the confinement. The data folder lives under the
       # snap's own home, ~/snap/secureshellgo.
+      # Kept even when the confined run below fails: that run depends on the
+      # runner's graphics, and a snap is checked again on a real machine
+      # before it is published. The job still fails as before.
+      - name: Upload artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: snap-${{ matrix.arch }}
+          path: ${{ steps.build.outputs.snap }}
+          if-no-files-found: error
       - name: Install the snap and run it confined (Xvfb)
         timeout-minutes: 15
         env:
@@ -512,12 +521,6 @@ jobs:
           LIBGL_ALWAYS_SOFTWARE=1 xvfb-run -a -s "-screen 0 1280x800x24 -ac +extension GLX" bash "$RUNNER_TEMP/snap-smoke.sh"
 
       # Not published from here: the Snap Store upload is done by hand.
-      - name: Upload artifact
-        uses: actions/upload-artifact@v7
-        with:
-          name: snap-${{ matrix.arch }}
-          path: ${{ steps.build.outputs.snap }}
-          if-no-files-found: error
 
   # Gathers the desktop archives on every run, so the set is checked on pull
   # requests too, and attaches them to the release only for a `v*` tag.
