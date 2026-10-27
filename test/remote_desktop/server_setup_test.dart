@@ -136,6 +136,62 @@ void main() {
     });
   });
 
+  group('why the server refused X11', () {
+    const ubuntu = '#=ssg=osrelease\nNAME="Ubuntu"\nID=ubuntu\nID_LIKE=debian\n';
+
+    test('xauth missing, settings readable and on', () {
+      final check = parseX11ServerCheck(
+          'SSG-XAUTH=no\nSSG-X11FWD=yes\nSSG-SSHD=read\n$ubuntu');
+      expect(check.hasXauth, isFalse);
+      expect(check.forwardingAllowed, isTrue);
+      expect(check.pm, PackageManager.apt);
+      expect(SetupPackages.xauth(check.pm!), ['xauth']);
+    });
+
+    test('a no in a drop-in still counts the yes after it, for wording only',
+        () {
+      final check = parseX11ServerCheck(
+          'SSG-XAUTH=yes\nSSG-X11FWD=no\nSSG-X11FWD=YES\nSSG-SSHD=read\n$ubuntu');
+      expect(check.forwardingAllowed, isTrue);
+    });
+
+    test("no line at all is OpenSSH's default: off", () {
+      final check =
+          parseX11ServerCheck('SSG-XAUTH=yes\nSSG-SSHD=read\n$ubuntu');
+      expect(check.hasXauth, isTrue);
+      expect(check.forwardingAllowed, isFalse);
+    });
+
+    test('settings kept to root are unknown, not off', () {
+      final check =
+          parseX11ServerCheck('SSG-XAUTH=yes\n#=ssg=osrelease\nID=fedora\n');
+      expect(check.forwardingAllowed, isNull);
+      expect(check.pm, PackageManager.dnf);
+      expect(SetupPackages.xauth(check.pm!), ['xorg-x11-xauth']);
+    });
+
+    test('an unknown system has no package manager to offer', () {
+      expect(parseX11ServerCheck('SSG-XAUTH=no\n').pm, isNull);
+    });
+
+    test('every manager has an xauth package', () {
+      for (final pm in PackageManager.values) {
+        expect(SetupPackages.xauth(pm), isNotEmpty, reason: '$pm');
+      }
+    });
+
+    test('the check runs in a real sh and reads this machine', () async {
+      final check = await checkX11Server(_ProcessTransport(
+          {'PATH': Platform.environment['PATH'] ?? '/usr/bin:/bin'}));
+      final xauth = await Process.run('sh', ['-c', 'command -v xauth']);
+      expect(check.hasXauth,
+          File('/usr/bin/xauth').existsSync() || xauth.exitCode == 0);
+      if (!File('/etc/ssh/sshd_config').existsSync()) {
+        expect(check.forwardingAllowed, isNull);
+      }
+    }, testOn: 'linux');
+  });
+
   group('finding a missing program', () {
     test("command-not-found's one package", () {
       expect(

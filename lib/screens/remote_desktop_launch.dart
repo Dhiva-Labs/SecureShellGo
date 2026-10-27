@@ -121,6 +121,56 @@ Future<List<InstalledRemoteApp>> installedRemoteApps(
     (name: app.name, command: app.command),
 ];
 
+/// The launcher's "Fix it on the server", after the server refused X11
+/// forwarding: installs `xauth` when that is what is missing — the usual
+/// reason on a minimal server, and sshd looks for it again on the next
+/// request, so no reconnect — or says what an administrator has to change.
+/// True when it installed something.
+Future<bool> fixX11OnServer(
+  BuildContext context,
+  SessionController session,
+) async {
+  final l10n = context.l10n;
+  final check = await _whileChecking(
+      context, l10n, () => checkX11Server(session.connection));
+  if (check == null || !context.mounted) return false;
+  final pm = check.pm;
+  if (!check.hasXauth && pm != null) {
+    return showServerSetup(
+      context,
+      transport: session.connection,
+      hostName: session.host.displayName,
+      pm: pm,
+      items: [
+        SetupItem(
+          title: l10n.remoteAppSetupXauth,
+          detail: l10n.remoteAppSetupXauthDetail,
+          packages: SetupPackages.xauth(pm),
+        ),
+      ],
+    );
+  }
+  final body = !check.hasXauth
+      ? l10n.remoteAppXauthMissingBody
+      : check.forwardingAllowed == false
+          ? l10n.remoteAppX11OffBody
+          : l10n.remoteAppX11BlockedBody;
+  await showDialog<void>(
+    context: context,
+    builder: (context) => AlertDialog(
+      title: Text(l10n.remoteAppX11FixTitle),
+      content: Text(body, style: const TextStyle(height: 1.4)),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: Text(MaterialLocalizations.of(context).okButtonLabel),
+        ),
+      ],
+    ),
+  );
+  return false;
+}
+
 // ------------------------------------------------------------- checking
 
 /// Runs [work] behind a small modal "Checking…" that Cancel abandons.

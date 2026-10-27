@@ -96,7 +96,11 @@ class _Fixture {
   final List<String> opened = [];
 
   var virtualDesktops = 0;
-  var enabledX11 = 0;
+
+  /// "Fix it on the server": how often it was pressed, and whether it fixes
+  /// anything.
+  var fixes = 0;
+  var fixWorks = true;
 }
 
 const _phone = Size(400, 800);
@@ -107,7 +111,7 @@ Future<void> _pumpLauncher(
   _Fixture f, {
   Size size = _desktop,
   bool offerVirtualDesktop = true,
-  bool offerEnableX11 = true,
+  bool offerFix = true,
   Future<List<InstalledRemoteApp>> Function()? listInstalledApps,
   Locale? locale,
   ThemeData? theme,
@@ -132,7 +136,12 @@ Future<void> _pumpLauncher(
                 history: f.history,
                 onOfferVirtualDesktop:
                     offerVirtualDesktop ? () => f.virtualDesktops++ : null,
-                onEnableX11: offerEnableX11 ? () => f.enabledX11++ : null,
+                onFixServer: offerFix
+                    ? () async {
+                        f.fixes++;
+                        return f.fixWorks;
+                      }
+                    : null,
                 listInstalledApps: listInstalledApps,
               ),
               child: const Text('open'),
@@ -181,7 +190,7 @@ void main() {
 
       await _pumpLauncher(
         tester,
-        _Fixture(hostX11: false, hasForwarder: false),
+        _Fixture(hasForwarder: false),
         theme: AppTheme.themeFor(style, Brightness.dark),
       );
       expect(tester.takeException(), isNull);
@@ -469,51 +478,38 @@ void main() {
       expect(find.text('Run'), findsNothing);
     }
 
-    testWidgets('X11 forwarding off for the host', (tester) async {
-      final f = _Fixture(hostX11: false, hasForwarder: false);
+    testWidgets('X11 forwarding off for the host is no obstacle',
+        (tester) async {
+      final f = _Fixture(hostX11: false);
       await _pumpLauncher(tester, f);
 
-      await expectNoForm(tester);
-      expect(find.textContaining('X11 forwarding is off for this host'),
-          findsOneWidget);
-      expect(find.text('Turn on X11 forwarding for this host'), findsOneWidget);
-      expect(find.text('Open a virtual desktop instead'), findsOneWidget);
-      expect(find.text('Check again'), findsNothing);
+      expect(find.text("An app can't open in a window right now"),
+          findsNothing);
+      await _runCommand(tester, 'xeyes');
+      expect(f.opened, hasLength(1));
+      expect(f.programs.single.stdinClosed, isTrue);
     });
 
-    testWidgets('Turn on X11 forwarding closes the launcher, then asks for it',
+    testWidgets('nothing to offer when nothing is wired to it',
         (tester) async {
-      final f = _Fixture(hostX11: false, hasForwarder: false);
-      await _pumpLauncher(tester, f);
-
-      await tester.tap(find.text('Turn on X11 forwarding for this host'));
-      await tester.pumpAndSettle();
-
-      expect(f.enabledX11, 1);
-      expect(f.virtualDesktops, 0);
-      expect(find.text('Open an app in a window'), findsNothing);
-    });
-
-    testWidgets('no host switch to offer when nothing is wired to it',
-        (tester) async {
-      final f = _Fixture(hostX11: false, hasForwarder: false);
+      final f = _Fixture(hasForwarder: false);
       await _pumpLauncher(tester, f,
-          offerEnableX11: false, offerVirtualDesktop: false);
+          offerFix: false, offerVirtualDesktop: false);
       await expectNoForm(tester);
-      expect(find.text('Turn on X11 forwarding for this host'), findsNothing);
+      expect(find.text('Fix it on the server'), findsNothing);
       expect(find.text('Open a virtual desktop instead'), findsNothing);
     });
 
     testWidgets('Open a virtual desktop instead closes it, then offers one',
         (tester) async {
-      final f = _Fixture(hostX11: false, hasForwarder: false);
+      final f = _Fixture(hasForwarder: false);
       await _pumpLauncher(tester, f);
 
       await tester.tap(find.text('Open a virtual desktop instead'));
       await tester.pumpAndSettle();
 
       expect(f.virtualDesktops, 1);
-      expect(f.enabledX11, 0);
+      expect(f.fixes, 0);
       expect(find.text('Open an app in a window'), findsNothing);
     });
 
@@ -526,7 +522,7 @@ void main() {
       expect(find.textContaining('VcXsrv'), findsNothing);
       expect(find.text('Check again'), findsOneWidget);
       expect(find.text('Open a virtual desktop instead'), findsOneWidget);
-      expect(find.text('Turn on X11 forwarding for this host'), findsNothing);
+      expect(find.text('Fix it on the server'), findsNothing);
     });
 
     testWidgets('on Windows it says to install an X server', (tester) async {
@@ -571,7 +567,7 @@ void main() {
       expect(find.textContaining('no X server to draw'), findsOneWidget);
       expect(find.text('Open a virtual desktop instead'), findsOneWidget);
       expect(find.text('Check again'), findsNothing);
-      expect(find.text('Turn on X11 forwarding for this host'), findsNothing);
+      expect(find.text('Fix it on the server'), findsNothing);
     });
 
     testWidgets('SSH not up', (tester) async {
@@ -585,7 +581,7 @@ void main() {
       expect(find.text('Open a virtual desktop instead'), findsOneWidget);
     });
 
-    testWidgets('the server refusing X11, with the sshd_config hint',
+    testWidgets('the server refusing X11, with what to do about it',
         (tester) async {
       final f = _Fixture(
         open: (_, _, _) async =>
@@ -597,9 +593,10 @@ void main() {
       await _runCommand(tester, 'xeyes');
 
       await expectNoForm(tester);
-      expect(find.textContaining('X11Forwarding no'), findsOneWidget);
       expect(find.textContaining('xauth'), findsOneWidget);
+      expect(find.textContaining('X11 forwarding switched off'), findsOneWidget);
       expect(find.textContaining('permit-X11-forwarding'), findsNothing);
+      expect(find.text('Fix it on the server'), findsOneWidget);
       expect(find.text('Open a virtual desktop instead'), findsOneWidget);
       // The refused attempt is listed against its command, in words.
       expect(find.textContaining('Refused by the server', findRichText: true),
@@ -623,6 +620,51 @@ void main() {
       expect(find.textContaining('permit-X11-forwarding'), findsOneWidget);
       expect(find.textContaining('ask its CA'), findsOneWidget);
       expect(find.text('Open a virtual desktop instead'), findsOneWidget);
+      // Nothing on the server can fix the certificate.
+      expect(find.text('Fix it on the server'), findsNothing);
+    });
+
+    testWidgets('Fix it on the server, then the program runs after all',
+        (tester) async {
+      var refuse = true;
+      final launched = <String>[];
+      final f = _Fixture(open: (_, command, _) async {
+        if (refuse) {
+          throw SSHChannelRequestError('Failed to request x11 forwarding');
+        }
+        launched.add(command);
+        return ScriptedApp();
+      });
+      await _pumpLauncher(tester, f);
+      await _runCommand(tester, 'xeyes');
+      expect(find.text('Fix it on the server'), findsOneWidget);
+
+      refuse = false;
+      await tester.tap(find.text('Fix it on the server'));
+      await tester.pumpAndSettle();
+
+      expect(f.fixes, 1);
+      expect(launched, hasLength(1), reason: 'run again without being asked');
+      expect(launched.single, contains('xeyes'));
+      expect(_commandField, findsOneWidget);
+      expect(find.text('Fix it on the server'), findsNothing);
+    });
+
+    testWidgets('a fix that could not fix anything leaves the refusal',
+        (tester) async {
+      final f = _Fixture(
+        open: (_, _, _) async =>
+            throw SSHChannelRequestError('Failed to request x11 forwarding'),
+      )..fixWorks = false;
+      await _pumpLauncher(tester, f);
+      await _runCommand(tester, 'xeyes');
+
+      await tester.tap(find.text('Fix it on the server'));
+      await tester.pumpAndSettle();
+
+      expect(f.fixes, 1);
+      await expectNoForm(tester);
+      expect(find.text('Fix it on the server'), findsOneWidget);
     });
 
     testWidgets('the virtual desktop is offered after a refusal too',
@@ -665,6 +707,10 @@ void main() {
       await _pumpLauncher(tester, _Fixture(untrusted: false));
       expect(find.textContaining('This display cannot give the server limited '
           'access'), findsOneWidget);
+      expect(find.textContaining('Only open apps from servers you trust'),
+          findsOneWidget);
+      // Not the limited-access explanation too, which would contradict it.
+      expect(find.textContaining('as with ssh -X'), findsNothing);
     });
 
     testWidgets('is said once, not once per app', (tester) async {
@@ -752,8 +798,7 @@ void main() {
     };
     final states = <String, _Fixture Function()>{
       'with apps': () => _Fixture(untrusted: false),
-      'with the host switch off': () =>
-          _Fixture(hostX11: false, hasForwarder: false),
+      'with the host switch off': () => _Fixture(hostX11: false),
       'with no display': () => _Fixture(hasForwarder: false),
       'with no display on Windows': () => _Fixture(
             windows: true,

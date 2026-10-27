@@ -25,18 +25,18 @@ final ButtonStyle _rowButton =
 /// returns when it is closed; programs started from it carry on, and are
 /// listed again the next time it opens (see [RemoteAppRunner.of]).
 ///
-/// When a window cannot be opened — this device has no X server, the host has
-/// X11 forwarding off, the server refused it, the SSH connection is not up —
-/// the launcher says which in plain words, and offers what the caller wires:
+/// The host's X11 forwarding switch does not have to be on: each app asks for
+/// X11 on its own channel. When a window cannot be opened — this device has
+/// no X server, the server refused it, the SSH connection is not up — the
+/// launcher says which in plain words, and offers what the caller wires:
 ///
-///  * [onEnableX11] for the host with forwarding off: "save the host with it
-///    on, and reconnect". Forwarding is decided when a connection is made, so
-///    the launcher cannot do it itself.
+///  * [onFixServer] for a refusal: look at the server and fix what can be
+///    fixed from here (install `xauth`), or say what an administrator has to
+///    change. True when it fixed something; the launcher then runs the
+///    program it was asked for again.
 ///  * [onOfferVirtualDesktop], for every reason there is: the server's own
-///    desktop, which needs no X server here.
-///
-/// Both are called after the launcher has closed itself, so they are free to
-/// navigate. [listInstalledApps] adds an "Installed apps…" picker; leave it
+///    desktop, which needs no X server here. Called after the launcher has
+///    closed itself, so it is free to navigate. [listInstalledApps] adds an "Installed apps…" picker; leave it
 /// null where the server's applications cannot be listed.
 ///
 /// [runner] and [history] are for tests; the app uses [RemoteAppRunner.of] and
@@ -45,7 +45,7 @@ Future<void> openRemoteAppLauncher(
   BuildContext context, {
   required SessionController session,
   VoidCallback? onOfferVirtualDesktop,
-  VoidCallback? onEnableX11,
+  Future<bool> Function()? onFixServer,
   Future<List<InstalledRemoteApp>> Function()? listInstalledApps,
   RemoteAppRunner? runner,
   RemoteAppHistory? history,
@@ -55,7 +55,7 @@ Future<void> openRemoteAppLauncher(
     runner: runner ?? RemoteAppRunner.of(session),
     history: history ?? RemoteAppHistory.instance,
     onOfferVirtualDesktop: onOfferVirtualDesktop,
-    onEnableX11: onEnableX11,
+    onFixServer: onFixServer,
     listInstalledApps: listInstalledApps,
   );
   final size = MediaQuery.sizeOf(context);
@@ -102,7 +102,7 @@ class _LauncherBody extends StatefulWidget {
     required this.runner,
     required this.history,
     required this.onOfferVirtualDesktop,
-    required this.onEnableX11,
+    required this.onFixServer,
     required this.listInstalledApps,
   });
 
@@ -110,7 +110,7 @@ class _LauncherBody extends StatefulWidget {
   final RemoteAppRunner runner;
   final RemoteAppHistory history;
   final VoidCallback? onOfferVirtualDesktop;
-  final VoidCallback? onEnableX11;
+  final Future<bool> Function()? onFixServer;
   final Future<List<InstalledRemoteApp>> Function()? listInstalledApps;
 
   @override
@@ -124,6 +124,7 @@ class _LauncherBodyState extends State<_LauncherBody> {
   List<String> _recent = const [];
   var _launching = false;
   var _checking = false;
+  var _fixing = false;
 
   RemoteAppRunner get _runner => widget.runner;
   String get _hostId => widget.session.host.id;
@@ -157,6 +158,23 @@ class _LauncherBodyState extends State<_LauncherBody> {
     } finally {
       if (mounted) setState(() => _checking = false);
     }
+  }
+
+  /// The server refused X11: fix what can be fixed there, then try the
+  /// program again, which is still in the field.
+  Future<void> _fixServer() async {
+    final fix = widget.onFixServer;
+    if (fix == null || _fixing) return;
+    setState(() => _fixing = true);
+    bool fixed;
+    try {
+      fixed = await fix();
+    } finally {
+      if (mounted) setState(() => _fixing = false);
+    }
+    if (!fixed || !mounted) return;
+    _runner.forgetRefusal();
+    await _run();
   }
 
   Future<void> _run() async {
@@ -258,9 +276,9 @@ class _LauncherBodyState extends State<_LauncherBody> {
                         runner: _runner,
                         checking: _checking,
                         onCheckAgain: _check,
-                        onEnableX11: widget.onEnableX11 == null
-                            ? null
-                            : () => _leaveFor(widget.onEnableX11!),
+                        fixing: _fixing,
+                        onFixServer:
+                            widget.onFixServer == null ? null : _fixServer,
                         onOfferVirtualDesktop:
                             widget.onOfferVirtualDesktop == null
                                 ? null
@@ -416,7 +434,7 @@ class _SecurityNote extends StatelessWidget {
     final text = runner.isWindows
         ? l10n.remoteAppSecurityWindows
         : runner.trusted == true
-            ? '${l10n.remoteAppFullAccessWarning} ${l10n.remoteAppSecurityDesktop}'
+            ? '${l10n.remoteAppFullAccessWarning} ${l10n.remoteAppSecurityTrustedServers}'
             : l10n.remoteAppSecurityDesktop;
     final color =
         fullAccess ? theme.colorScheme.error : theme.colorScheme.onSurfaceVariant;
@@ -447,7 +465,8 @@ class _UnavailablePanel extends StatelessWidget {
     required this.runner,
     required this.checking,
     required this.onCheckAgain,
-    required this.onEnableX11,
+    required this.fixing,
+    required this.onFixServer,
     required this.onOfferVirtualDesktop,
   });
 
@@ -455,7 +474,8 @@ class _UnavailablePanel extends StatelessWidget {
   final RemoteAppRunner runner;
   final bool checking;
   final VoidCallback onCheckAgain;
-  final VoidCallback? onEnableX11;
+  final bool fixing;
+  final VoidCallback? onFixServer;
   final VoidCallback? onOfferVirtualDesktop;
 
   @override
@@ -469,7 +489,6 @@ class _UnavailablePanel extends StatelessWidget {
       RemoteAppAvailability.noLocalDisplay => runner.isWindows
           ? l10n.remoteAppUnavailableNoDisplayWindows
           : l10n.remoteAppUnavailableNoDisplay,
-      RemoteAppAvailability.hostX11Off => l10n.remoteAppUnavailableHostX11Off,
       RemoteAppAvailability.sshUnavailable => l10n.remoteAppUnavailableSsh,
       RemoteAppAvailability.serverRefused => runner.certificateBlocksX11
           ? l10n.remoteAppUnavailableRefusedCertificate
@@ -504,12 +523,13 @@ class _UnavailablePanel extends StatelessWidget {
             spacing: 8,
             runSpacing: 8,
             children: [
-              if (availability == RemoteAppAvailability.hostX11Off &&
-                  onEnableX11 != null)
+              if (availability == RemoteAppAvailability.serverRefused &&
+                  !runner.certificateBlocksX11 &&
+                  onFixServer != null)
                 FilledButton(
                   style: _rowButton,
-                  onPressed: onEnableX11,
-                  child: Text(l10n.remoteAppEnableX11),
+                  onPressed: fixing ? null : onFixServer,
+                  child: Text(l10n.remoteAppFixServer),
                 ),
               if (availability == RemoteAppAvailability.noLocalDisplay)
                 OutlinedButton(

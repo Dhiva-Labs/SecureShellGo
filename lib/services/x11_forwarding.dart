@@ -147,11 +147,21 @@ class X11Forwarder {
         'ssh -Y: they can see and control every window on this display.';
   }
 
-  /// The `x11-req` for the shell channel.
-  SSHX11Config get config => SSHX11Config(
-        authenticationCookie: _hex(fakeCookie),
-        screenNumber: display.screen,
-      );
+  bool _requested = false;
+
+  /// Whether [config] has been read: some channel has been, or is about to
+  /// be, given the fake cookie. Until then no `x11` channel the server opens
+  /// can be one this device asked for.
+  bool get requested => _requested;
+
+  /// The `x11-req` for a channel: the shell's, or one app's.
+  SSHX11Config get config {
+    _requested = true;
+    return SSHX11Config(
+      authenticationCookie: _hex(fakeCookie),
+      screenNumber: display.screen,
+    );
+  }
 
   /// Whether this platform can have a local X server to forward to: the
   /// desktop ones. Android has no X server to draw on.

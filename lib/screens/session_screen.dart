@@ -448,6 +448,7 @@ class _SessionsScreenState extends State<SessionsScreen> {
           session: session,
           onOfferVirtualDesktop: () =>
               unawaited(startRemoteDesktop(context, session, virtualOnly: true)),
+          onFixServer: () => fixX11OnServer(context, session),
           listInstalledApps: () => installedRemoteApps(session),
         );
       case _SessionMenu.newSession:

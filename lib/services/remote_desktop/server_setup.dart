@@ -93,6 +93,17 @@ abstract final class SetupPackages {
         PackageManager.pacman => ['xfce4'],
         PackageManager.apk => ['xfce4', 'xfce4-terminal', 'dbus-x11'],
       };
+
+  /// What sshd runs to give an X11-forwarded channel its display: without
+  /// it, sshd turns down every X11 request — the commonest reason "Open an
+  /// app in a window" is refused on a minimal server.
+  static List<String> xauth(PackageManager pm) => switch (pm) {
+        PackageManager.apt => ['xauth'],
+        PackageManager.dnf || PackageManager.yum => ['xorg-x11-xauth'],
+        PackageManager.zypper => ['xauth'],
+        PackageManager.pacman => ['xorg-xauth'],
+        PackageManager.apk => ['xauth'],
+      };
 }
 
 /// A package name as the managers above spell them: nothing a shell could
@@ -397,4 +408,72 @@ String? programOf(String command) {
   if (word.isEmpty || word.contains('=')) return null;
   if (!RegExp(r'^[A-Za-z0-9_./+ -]+$').hasMatch(word)) return null;
   return word;
+}
+
+/// Why a server turned down X11 forwarding, as far as can be told without
+/// root: whether it has `xauth`, and what its SSH server's configuration
+/// says about `X11Forwarding`.
+class X11ServerCheck {
+  const X11ServerCheck({
+    required this.hasXauth,
+    required this.forwardingAllowed,
+    this.pm,
+  });
+
+  /// Whether `xauth` is where sshd looks for it.
+  final bool hasXauth;
+
+  /// Whether a line in `/etc/ssh/sshd_config` or its `sshd_config.d` turns
+  /// `X11Forwarding` on; false when none does, which is OpenSSH's default
+  /// of off; null when the files could not be read (Fedora keeps them to
+  /// root). A hint for what to say, not the effective setting: a `Match`
+  /// block can still turn it off for one account.
+  final bool? forwardingAllowed;
+
+  /// How to install [hasXauth]'s missing package, or null for a system this
+  /// does not know.
+  final PackageManager? pm;
+}
+
+/// Looks at the server for [X11ServerCheck]'s answers. One exec, no root.
+Future<X11ServerCheck> checkX11Server(SessionTransport transport) async {
+  final result = await AgentShell.run(
+    transport,
+    AgentShell.sh(r'''
+if [ -x /usr/bin/xauth ] || command -v xauth >/dev/null 2>&1; then
+  echo SSG-XAUTH=yes
+else
+  echo SSG-XAUTH=no
+fi
+if [ -r /etc/ssh/sshd_config ]; then
+  for f in /etc/ssh/sshd_config /etc/ssh/sshd_config.d/*.conf; do
+    [ -r "$f" ] && sed -n 's/^[[:space:]]*[Xx]11[Ff]orwarding[[:space:]]\{1,\}\([A-Za-z]*\).*/SSG-X11FWD=\1/p' "$f"
+  done
+  echo SSG-SSHD=read
+fi
+echo '#=ssg=osrelease'
+cat /etc/os-release 2>/dev/null'''),
+    what: 'check the server for X11 forwarding',
+  );
+  return parseX11ServerCheck(result.stdout);
+}
+
+/// [checkX11Server]'s output, read. Public for its tests.
+X11ServerCheck parseX11ServerCheck(String stdout) {
+  final marker = stdout.indexOf('${AgentShell.marker}osrelease');
+  final head = marker < 0 ? stdout : stdout.substring(0, marker);
+  final os = marker < 0
+      ? const OsRelease()
+      : OsRelease.parse(stdout.substring(stdout.indexOf('\n', marker) + 1));
+  final lines = AgentShell.lines(head);
+  final values = [
+    for (final line in lines)
+      if (line.startsWith('SSG-X11FWD=')) line.substring(11).toLowerCase(),
+  ];
+  return X11ServerCheck(
+    hasXauth: lines.contains('SSG-XAUTH=yes'),
+    forwardingAllowed:
+        lines.contains('SSG-SSHD=read') ? values.contains('yes') : null,
+    pm: packageManagerFor(os),
+  );
 }

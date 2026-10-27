@@ -10,11 +10,14 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:secure_shell_go/l10n/app_localizations.dart';
 import 'package:secure_shell_go/models/app_settings.dart';
 import 'package:secure_shell_go/models/host.dart';
+import 'package:secure_shell_go/screens/remote_app_launcher.dart';
 import 'package:secure_shell_go/screens/remote_desktop_launch.dart';
 import 'package:secure_shell_go/services/input_profile.dart';
 import 'package:secure_shell_go/services/remote_exec.dart';
 import 'package:secure_shell_go/services/session_controller.dart';
+import 'package:secure_shell_go/services/ssh_forwarding_client.dart';
 import 'package:secure_shell_go/services/ssh_service.dart';
+import 'package:secure_shell_go/services/x11_forwarding.dart';
 import 'package:secure_shell_go/theme.dart';
 import 'package:secure_shell_go/widgets/terminal_fonts.dart';
 
@@ -165,6 +168,87 @@ void main() {
     timeout: const Timeout(Duration(minutes: 20)),
   );
 
+  // The window of a program on the server opens on this device, through X11
+  // forwarding, with the host's X11 switch left off. The server has no
+  // xauth, so the first try is refused; "Fix it on the server" installs it
+  // and runs the program again. "This device" is a private headless X
+  // display (SSGO_RD_DEMO_LOCAL_DISPLAY, say :77 from Xvfb), never the
+  // desktop this runs on, and SSGO_RD_DEMO_XWD screenshots it.
+  final localDisplay = env['SSGO_RD_DEMO_LOCAL_DISPLAY'];
+  testWidgets(
+    'Fresh server: an app in a window here, xauth installed in one click',
+    (tester) async {
+      final display = X11Display.parse(localDisplay!)!;
+      final forwarder = X11Forwarder(
+        display: display,
+        realCookie: () async => null,
+        untrustedCookie: () async => throw const X11UntrustedUnavailable(null),
+      );
+      final live = (await tester.runAsync(
+        () => _connect(fresh!, env['SSGO_RD_DEMO_FRESH_KEY'],
+            label: 'fresh-server',
+            forwarding: ShellForwarding(x11: forwarder, x11OnShell: false)),
+      ))!;
+      addTearDown(() => live.client.close());
+      final sudo = env['SSGO_RD_DEMO_FRESH_SUDO']!;
+      final l10n = await _app(tester, live.session, appWindow: true);
+      debugDisableShadows = false;
+
+      await tester.tap(find.text('Open an app in a window'));
+      await _waitFor(tester, find.byIcon(Icons.play_arrow));
+      await tester.enterText(find.byType(TextField).first, 'xeyes');
+      await _settle(tester, const Duration(milliseconds: 200));
+      await _shot(tester, out!, '18-window-launcher');
+      await tester.tap(find.byIcon(Icons.play_arrow));
+      await _waitFor(tester, find.text(l10n.remoteAppFixServer));
+      await _shot(tester, out, '19-window-refused');
+
+      await tester.tap(find.text(l10n.remoteAppFixServer));
+      await _waitFor(tester, find.text(l10n.remoteAppSetupXauth));
+      await tester.enterText(find.byType(TextField).last, sudo);
+      await _settle(tester, const Duration(milliseconds: 200));
+      await _shot(tester, out, '20-window-install-xauth');
+      await tester.tap(find.text(l10n.remoteDesktopSetupInstall));
+      await _waitFor(
+          tester,
+          find.textContaining(l10n.remoteAppStateRunning,
+              findRichText: true),
+          timeout: const Duration(minutes: 5));
+      await _settle(tester, const Duration(seconds: 4));
+      await _shot(tester, out, '21-window-running');
+
+      // The window itself, on "this device".
+      final window = (await tester.runAsync(() async {
+        final clock = Stopwatch()..start();
+        while (clock.elapsed < const Duration(seconds: 30)) {
+          final r = await Process.run('xdotool', ['search', '--name', 'xeyes'],
+              environment: {'DISPLAY': localDisplay});
+          if (r.exitCode == 0 && '${r.stdout}'.trim().isNotEmpty) return true;
+          await Future<void>.delayed(const Duration(milliseconds: 300));
+        }
+        return false;
+      }))!;
+      expect(window, isTrue, reason: 'no xeyes window on $localDisplay');
+      final xwd = env['SSGO_RD_DEMO_XWD'];
+      if (xwd != null) {
+        await tester.runAsync(() async {
+          await Future<void>.delayed(const Duration(seconds: 2));
+          final dump = '$out/22-window-on-this-device.xwd';
+          await Process.run(xwd, ['-root', '-display', localDisplay, '-out', dump]);
+          await Process.run('ffmpeg', ['-y', '-loglevel', 'error', '-i', dump,
+              '$out/22-window-on-this-device.png']);
+          File(dump).deleteSync();
+        });
+      }
+
+      await tester.tap(find.text(l10n.remoteAppStop));
+      await _settle(tester, const Duration(seconds: 3));
+      debugDisableShadows = true;
+    },
+    skip: none != null || fresh == null || localDisplay == null,
+    timeout: const Timeout(Duration(minutes: 8)),
+  );
+
   // Signed in as root, an app picked from the server's own list (VS Code by
   // default) opens in a virtual desktop: the options it needs as root are
   // added, and the app is seen.
@@ -266,7 +350,11 @@ final _mouse = InputProfile()
   ..notePointer(PointerDeviceKind.mouse)
   ..noteHardwareKey();
 
-Future<AppLocalizations> _app(WidgetTester tester, SessionController session) async {
+Future<AppLocalizations> _app(
+  WidgetTester tester,
+  SessionController session, {
+  bool appWindow = false,
+}) async {
   tester.view.physicalSize = const Size(1600, 1000);
   tester.view.devicePixelRatio = 1;
   addTearDown(tester.view.reset);
@@ -289,11 +377,22 @@ Future<AppLocalizations> _app(WidgetTester tester, SessionController session) as
             return Scaffold(
               appBar: AppBar(title: Text(session.host.displayName)),
               body: Center(
-                child: FilledButton.icon(
-                  icon: const Icon(Icons.desktop_windows_outlined),
-                  label: const Text('Open remote desktop'),
-                  onPressed: () => startRemoteDesktop(context, session),
-                ),
+                child: appWindow
+                    ? FilledButton.icon(
+                        icon: const Icon(Icons.open_in_new),
+                        label: const Text('Open an app in a window'),
+                        onPressed: () => openRemoteAppLauncher(
+                          context,
+                          session: session,
+                          onFixServer: () => fixX11OnServer(context, session),
+                          listInstalledApps: () => installedRemoteApps(session),
+                        ),
+                      )
+                    : FilledButton.icon(
+                        icon: const Icon(Icons.desktop_windows_outlined),
+                        label: const Text('Open remote desktop'),
+                        onPressed: () => startRemoteDesktop(context, session),
+                      ),
               ),
             );
           },
@@ -365,6 +464,7 @@ Future<_Live> _connect(
   String? keyPath, {
   required String label,
   String? fingerprint,
+  ShellForwarding? forwarding,
 }) async {
   final at = target.indexOf('@');
   final user = target.substring(0, at);
@@ -381,13 +481,22 @@ Future<_Live> _connect(
     22,
     timeout: const Duration(seconds: 10),
   );
-  final client = SSHClient(
-    socket,
-    username: user,
-    identities: SSHKeyPair.fromPem(key),
-    onVerifyHostKey: (type, presented) =>
-        fingerprint == null || String.fromCharCodes(presented) == fingerprint,
-  );
+  bool verify(String type, Uint8List presented) =>
+      fingerprint == null || String.fromCharCodes(presented) == fingerprint;
+  final client = forwarding == null
+      ? SSHClient(
+          socket,
+          username: user,
+          identities: SSHKeyPair.fromPem(key),
+          onVerifyHostKey: verify,
+        )
+      : ForwardingSSHClient(
+          socket,
+          username: user,
+          identities: SSHKeyPair.fromPem(key),
+          onVerifyHostKey: verify,
+          forwarding: forwarding,
+        );
   await client.authenticated;
   final connection = SshConnection(
     client: client,

@@ -387,6 +387,82 @@ void main() {
     });
   });
 
+  group('X11 kept off the shell: the host switch off', () {
+    X11Forwarder forwarder({Future<Socket> Function()? connect}) =>
+        X11Forwarder(
+          display: const X11Display(number: 0),
+          fakeCookie: Uint8List.fromList(List.filled(16, 0x22)),
+          connect: connect ?? () => throw StateError('no X server'),
+          realCookie: () async => null,
+          untrustedCookie: () async =>
+              throw const X11UntrustedUnavailable(null),
+        );
+
+    test('the shell asks for nothing; an app channel asks for x11', () async {
+      final f = forwarder();
+      final client = connect(
+        forwarding: ShellForwarding(x11: f, x11OnShell: false),
+      );
+      final shell = await client.shell();
+      expect(shell, isNot(isA<ShellSessionWithNotices>()),
+          reason: 'nothing to say: the person did not ask for X11 here');
+      await client.execute('xeyes', x11: f.config);
+
+      expect(peer.sessionRequests.first, ['pty-req', 'shell']);
+      expect(peer.sessionRequests.last, ['x11-req', 'exec']);
+      expect(peer.sentContaining('requestType: x11-req').single,
+          contains('x11AuthenticationCookie: ${'22' * 16}'));
+    });
+
+    test('nor does a shell kept in tmux', () async {
+      final client = connect(
+        forwarding: ShellForwarding(x11: forwarder(), x11OnShell: false),
+      );
+      await client.commandShell('tmux new -A -s main',
+          pty: const SSHPtyConfig());
+      expect(peer.sessionRequests.single, ['pty-req', 'exec']);
+    });
+
+    test('an x11 channel before any app asked is turned away unread',
+        () async {
+      var dialled = false;
+      final f = forwarder(connect: () async {
+        dialled = true;
+        throw StateError('must not be dialled');
+      });
+      final client = connect(
+        forwarding: ShellForwarding(x11: f, x11OnShell: false),
+      );
+      await client.shell();
+
+      final channel = peer.openChannel('x11');
+      peer.sendData(channel, _setup(List.filled(16, 0x22)));
+      await _eventually(() => peer
+          .sentContaining('SSH_Message_Channel_Close(recipientChannel: $channel')
+          .isNotEmpty);
+      expect(dialled, isFalse);
+      expect(f.requested, isFalse);
+    });
+
+    test('once an app asked, its windows reach the X server', () async {
+      final dialled = Completer<void>();
+      final f = forwarder(connect: () async {
+        if (!dialled.isCompleted) dialled.complete();
+        throw const SocketException('no X server here');
+      });
+      final client = connect(
+        forwarding: ShellForwarding(x11: f, x11OnShell: false),
+      );
+      await client.shell();
+      await client.execute('xeyes', x11: f.config);
+      expect(f.requested, isTrue);
+
+      final channel = peer.openChannel('x11');
+      peer.sendData(channel, _setup(List.filled(16, 0x22)));
+      await dialled.future.timeout(const Duration(seconds: 5));
+    });
+  });
+
   group('a shell kept in tmux or screen', () {
     // `SessionTransport.startCommandShell` opens the terminal as an exec
     // channel running tmux or screen. It is still the terminal, so it has

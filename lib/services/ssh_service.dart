@@ -377,14 +377,15 @@ abstract class SessionTransport {
 
   /// The forwarder that carries this connection's `x11` channels back to this
   /// device's X server — and holds the fake cookie a channel asking for X11
-  /// has to present — or null when the connection was made without X11
-  /// forwarding: the host had it off, or this device has no display.
+  /// has to present — or null when this device has no display, or the
+  /// connection is not a session's own (a jump hop, a transfer's).
   ///
+  /// There whether or not the host has X11 forwarding on, which only decides
+  /// whether the shell asks for it too ([ShellForwarding.x11OnShell]).
   /// Read-only, and decided once, when the connection was dialled (see
   /// [SshService.connect]). "Open an app in a window"
   /// (`remote_app_runner.dart`) reads it to put an `x11-req` on a single exec
-  /// channel and to tell the person which of those two it was; nothing else
-  /// has any use for it.
+  /// channel; nothing else has any use for it.
   X11Forwarder? get x11Forwarder => null;
 
   /// Sends one keep-alive and waits for the server's reply.
@@ -1426,9 +1427,13 @@ class SshService {
     // Android has no X server to draw on. The host form says so on the
     // switch, so a host carried over from a desktop is quietly left alone
     // here rather than warned about on every connect.
-    if (host.x11Forwarding && X11Forwarder.isSupportedPlatform) {
+    if (X11Forwarder.isSupportedPlatform) {
+      // Made for every connection, the switch on or off: "Open an app in a
+      // window" asks for X11 on that app's own channel, so it works without
+      // a trip to the host's settings and a reconnect. Only the switch puts
+      // it on the shell. Nothing is opened or read until it is used.
       x11 = _x11();
-      if (x11 == null) {
+      if (x11 == null && host.x11Forwarding) {
         notices.add('X11 forwarding is on for this host, but there is no X '
             'display on this device (DISPLAY is not set), so graphical '
             'programs cannot open windows here.');
@@ -1438,6 +1443,7 @@ class SshService {
     final forwarding = ShellForwarding(
       agent: forwardedAgent,
       x11: x11,
+      x11OnShell: host.x11Forwarding,
       notices: notices,
       certificate: identities.certificate,
     );

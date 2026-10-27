@@ -14,6 +14,7 @@ class ShellForwarding {
   const ShellForwarding({
     this.agent,
     this.x11,
+    this.x11OnShell = true,
     this.notices = const [],
     this.certificate,
   });
@@ -23,6 +24,17 @@ class ShellForwarding {
 
   /// Carries the server's `x11` channels to the local X server.
   final X11Forwarder? x11;
+
+  /// Whether the shell asks for [x11] too. False when the host has X11
+  /// forwarding off: the forwarder is there only for "Open an app in a
+  /// window", which asks for it on that app's own channel, so the person
+  /// gets a window in one click without the shell's programs being able to
+  /// open any.
+  final bool x11OnShell;
+
+  /// Whether the shell asks for anything, or has anything to say.
+  bool get asksOnShell =>
+      agent != null || (x11 != null && x11OnShell) || notices.isNotEmpty;
 
   /// Things to tell the person at the top of the shell, decided before it
   /// opened — X11 asked for on a device with no display, say.
@@ -87,8 +99,21 @@ class ForwardingSSHClient extends SSHClient {
   }) : super(
           onX11Forward: forwarding?.x11 == null
               ? null
-              : (channel) => unawaited(forwarding!.x11!.handle(channel)),
+              : (channel) => _onX11(forwarding!, channel),
         );
+
+  /// An `x11` channel the server opened. One for a forwarder kept off the
+  /// shell is turned away until something here has asked for X11 — no
+  /// channel was given the cookie before then, so nothing could have a
+  /// right to open one.
+  static void _onX11(ShellForwarding forwarding, SSHX11Channel channel) {
+    final forwarder = forwarding.x11!;
+    if (!forwarding.x11OnShell && !forwarder.requested) {
+      channel.destroy();
+      return;
+    }
+    unawaited(forwarder.handle(channel));
+  }
 
   final ShellForwarding? forwarding;
 
@@ -124,7 +149,7 @@ class ForwardingSSHClient extends SSHClient {
     Map<String, String>? environment,
   }) {
     final forwarding = this.forwarding;
-    if (forwarding == null || forwarding.isEmpty || x11 != null) {
+    if (forwarding == null || !forwarding.asksOnShell || x11 != null) {
       return super.shell(pty: pty, x11: x11, environment: environment);
     }
     return openForwardedShell(
@@ -151,7 +176,7 @@ class ForwardingSSHClient extends SSHClient {
     Map<String, String>? environment,
   }) {
     final forwarding = this.forwarding;
-    if (forwarding == null || forwarding.isEmpty) {
+    if (forwarding == null || !forwarding.asksOnShell) {
       return execute(command, pty: pty, environment: environment);
     }
     return openForwardedShell(
@@ -217,7 +242,7 @@ Future<SSHSession> openForwardedShell({
 }) async {
   var agent = forwarding.agent != null;
   var agentGranted = false;
-  final forwarder = forwarding.x11;
+  final forwarder = forwarding.x11OnShell ? forwarding.x11 : null;
   var x11 = forwarder?.config;
   final notices = [...forwarding.notices];
   if (forwarder != null) {

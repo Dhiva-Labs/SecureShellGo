@@ -139,12 +139,14 @@ French.
   to it later.
 - **Open an app in a window**: run one graphical program on the server and
   have its window open on this device's own desktop, through X11 forwarding
-  (Linux, or Windows with an X server such as VcXsrv or X410).
+  (Linux, or Windows with an X server such as VcXsrv or X410). No host
+  setting to turn on first, and a server missing `xauth` gets it installed
+  in one click.
 - **Macs** through their built-in Screen Sharing, over the same tunnel.
 - Mouse, keyboard and clipboard; on touch screens a trackpad mode and a
   direct mode, and a key bar with Ctrl, Alt, Super and Ctrl+Alt+Del.
 - Nothing runs on a server until you open a remote desktop on it. The agents
-  add about 4.5 MB to the app, and older ones the app left behind are
+  add about 5.7 MB to the app, and older ones the app left behind are
   removed from servers when a newer one is installed.
 
 ### Locked down

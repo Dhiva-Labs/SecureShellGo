@@ -93,14 +93,17 @@ void main() {
       expect(rig.runner.availability, RemoteAppAvailability.unsupportedDevice);
     });
 
-    test('a host with X11 off says so, so the person can turn it on', () {
-      final rig = _Rig(hostX11: false, hasForwarder: false);
-      expect(rig.runner.availability, RemoteAppAvailability.hostX11Off);
+    test('a host with X11 off still can: each app asks on its own channel',
+        () {
+      final rig = _Rig(hostX11: false);
+      expect(rig.runner.availability, RemoteAppAvailability.available);
     });
 
-    test('X11 on but no display on this device is its own reason', () {
-      final rig = _Rig(hostX11: true, hasForwarder: false);
-      expect(rig.runner.availability, RemoteAppAvailability.noLocalDisplay);
+    test('no display on this device is its own reason, switch on or off', () {
+      expect(_Rig(hostX11: true, hasForwarder: false).runner.availability,
+          RemoteAppAvailability.noLocalDisplay);
+      expect(_Rig(hostX11: false, hasForwarder: false).runner.availability,
+          RemoteAppAvailability.noLocalDisplay);
     });
 
     test('a closed connection is unavailable, not blamed on X11', () {
@@ -284,11 +287,11 @@ void main() {
     });
 
     test('launching where it cannot work says why', () async {
-      final rig = _Rig(hostX11: false, hasForwarder: false);
+      final rig = _Rig(hasForwarder: false);
       await expectLater(
         rig.runner.launch('xeyes'),
         throwsA(isA<RemoteAppUnavailable>().having(
-            (e) => e.reason, 'reason', RemoteAppAvailability.hostX11Off)),
+            (e) => e.reason, 'reason', RemoteAppAvailability.noLocalDisplay)),
       );
       expect(rig.runner.apps, isEmpty);
     });
@@ -398,6 +401,17 @@ void main() {
     test('bytes that are not UTF-8 do not break it', () {
       final tail = StderrTail()..add([0x68, 0xff, 0x69]);
       expect(tail.text, 'h�i');
+    });
+
+    test("sshd's note about a new .Xauthority is not the app's", () {
+      expect(
+          withoutSshdNotes('/usr/bin/xauth:  file /home/demo/.Xauthority does '
+              'not exist\nError: Can\'t open display\n'),
+          "Error: Can't open display\n");
+      expect(withoutSshdNotes('xauth:  file /root/.Xauthority does not exist'),
+          isEmpty);
+      expect(withoutSshdNotes('my app: file x does not exist\n'),
+          'my app: file x does not exist\n');
     });
   });
 
@@ -570,6 +584,30 @@ void main() {
         throwsA(isA<RemoteAppUnavailable>().having(
             (e) => e.reason, 'reason', RemoteAppAvailability.serverRefused)),
       );
+    });
+
+    test('once something is fixed there, the refusal is forgotten', () async {
+      var refuse = true;
+      final rig = _Rig(open: (_, _, _) async {
+        if (refuse) {
+          throw SSHChannelRequestError('Failed to request x11 forwarding');
+        }
+        return ScriptedApp();
+      });
+      await rig.runner.launch('xeyes');
+      expect(rig.runner.availability, RemoteAppAvailability.serverRefused);
+
+      var told = 0;
+      rig.runner.addListener(() => told++);
+      refuse = false;
+      rig.runner.forgetRefusal();
+      expect(told, 1);
+      expect(rig.runner.availability, RemoteAppAvailability.available);
+      rig.runner.forgetRefusal();
+      expect(told, 1, reason: 'nothing left to forget');
+
+      final app = await rig.runner.launch('xeyes');
+      expect(app.isActive, isTrue);
     });
 
     test('another refusal is the server\'s own words, not an X11 problem',

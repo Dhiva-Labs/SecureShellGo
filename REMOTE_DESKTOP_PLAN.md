@@ -291,7 +291,11 @@ What is left for 1.6:
 
 - **"Open an app in a window"**: one exec with `x11`, so no terminal is
   needed. It keeps a list of recent commands and can pick from the
-  remote's `.desktop` entries.
+  remote's `.desktop` entries. Every desktop connection carries a
+  forwarder, so the host's X11 switch only decides the shell; until an
+  app asks, `x11` channels are turned away. A refusal offers "Fix it on
+  the server", which installs `xauth` (sshd refuses X11 without it) and
+  runs the program again, or says what an administrator must change.
 - **A virtual-desktop offer** whenever there is no local X server:
   Android, Windows without an X server, or the server refusing
   `x11-req`.

@@ -26,11 +26,6 @@ enum RemoteAppAvailability {
   /// it names does not answer. On Windows, no VcXsrv or X410 is running.
   noLocalDisplay,
 
-  /// This connection was made without X11 forwarding. The host has the switch
-  /// off, and forwarding is decided when a connection is dialled, so turning
-  /// it on means reconnecting.
-  hostX11Off,
-
   /// There is no SSH connection to start anything on: the session is closed,
   /// or only its Mosh terminal is still up.
   sshUnavailable,
@@ -61,11 +56,9 @@ RemoteAppAvailability checkRemoteAppAvailability(
     return RemoteAppAvailability.sshUnavailable;
   }
   if (transport.x11Forwarder == null) {
-    // The forwarder is missing for one of two reasons, and the host's own
-    // switch (a snapshot taken when the connection was made) says which.
-    return transport.host.x11Forwarding
-        ? RemoteAppAvailability.noLocalDisplay
-        : RemoteAppAvailability.hostX11Off;
+    // Every connection on a desktop has one, the host's X11 switch on or
+    // off (that only decides the shell's): none means no display here.
+    return RemoteAppAvailability.noLocalDisplay;
   }
   return RemoteAppAvailability.available;
 }
@@ -181,6 +174,13 @@ class StderrTail {
   String get text => utf8.decode(_bytes, allowMalformed: true);
 }
 
+/// [stderr] without what sshd itself writes there while it sets up the
+/// forwarded display rather than anything the program said: the first time
+/// an account forwards X11, xauth reports the `.Xauthority` it is about to
+/// create. Shown as the app's error output, it read as a failure.
+String withoutSshdNotes(String stderr) => stderr.replaceAll(
+    RegExp(r'^\S*xauth: +file \S+ does not exist\r?\n?', multiLine: true), '');
+
 /// One program started with "Open an app in a window", and what became of it.
 ///
 /// Created and changed by [RemoteAppRunner] alone; a view reads it and is
@@ -223,8 +223,9 @@ class RemoteApp {
 
   final StderrTail _stderr = StderrTail();
 
-  /// The last of what the program wrote to stderr, about 8 KB.
-  String get stderrTail => _stderr.text;
+  /// The last of what the program wrote to stderr, about 8 KB, without
+  /// sshd's own notes about setting up the display (see [withoutSshdNotes]).
+  String get stderrTail => withoutSshdNotes(_stderr.text);
 
   /// Whether [stderrTail] begins part-way into the output.
   bool get stderrTruncated => _stderr.truncated;
@@ -347,6 +348,15 @@ class RemoteAppRunner extends ChangeNotifier {
   /// [probe] or the first launch.
   bool? get trusted =>
       identical(_trustedDecidedOn, session.connection) ? _trustedOnKnown : null;
+
+  /// Forgets that the server refused X11 on this connection, once something
+  /// has been done about it — `xauth` installed there, which sshd looks for
+  /// on each request — so the next Run asks again.
+  void forgetRefusal() {
+    if (_refusedOn == null) return;
+    _refusedOn = null;
+    notifyListeners();
+  }
 
   /// Whether a window can be opened now, and if not, why.
   RemoteAppAvailability get availability {
