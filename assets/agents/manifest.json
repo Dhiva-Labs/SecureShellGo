@@ -1,11 +1,12 @@
 {
   "v": 1,
-  "engine": "0.1.1",
+  "engine": "0.2.0",
   "agents": [
-    {"file": "crossshell-host-linux-x86_64", "os": "linux", "arch": "x86_64", "flavour": "full", "sha256": "17e23984cce59f4de79f130742dd268c375701745163fad6b0ceaebf2cfba0cb", "size": 4831768, "glibc": "2.30"},
-    {"file": "crossshell-host-linux-x86_64-x11", "os": "linux", "arch": "x86_64", "flavour": "x11", "sha256": "4e3a6b66fb34702da87d37fe19321a53610f45683425472aff18bc66b24873c8", "size": 3823160},
-    {"file": "crossshell-host-linux-aarch64-x11", "os": "linux", "arch": "aarch64", "flavour": "x11", "sha256": "5b5208b8c4becd506d3721a75c6bb7c4a4ac63da1d11a75b6d4254ad2ae3ec8d", "size": 3468216},
-    {"file": "crossshell-host-windows-x64.exe", "os": "windows", "arch": "x86_64", "flavour": "full", "sha256": "294070efbf1ad0592be2db60c4de959bdb34e7f8c2b20152d19b9de2ca5caeb0", "size": 1612288},
-    {"file": "crossshell-host-windows-arm64.exe", "os": "windows", "arch": "aarch64", "flavour": "full", "sha256": "8aa8f421ba955e54e5f2dc34aaee0714b2c28188ce794b98af2fae6606a2f87b", "size": 1267200}
+    {"file": "crossshell-host-linux-x86_64", "os": "linux", "arch": "x86_64", "flavour": "full", "sha256": "429ec3bf4c8f8de3124ed631bad197214017036c6e3fd1160b5ae80b5e7c08c5", "size": 4815704, "glibc": "2.30"},
+    {"file": "crossshell-host-linux-x86_64-x11", "os": "linux", "arch": "x86_64", "flavour": "x11", "sha256": "87bb246e0417a7c1a4018d91859c474ef17401cc88432d24475867a4e1455dbc", "size": 3803640},
+    {"file": "crossshell-host-linux-aarch64", "os": "linux", "arch": "aarch64", "flavour": "full", "sha256": "aff4350f0f4ee128e02176f9e7dc817f45bbe1e0a9dc3dac7f06f952c10b9929", "size": 4323808, "glibc": "2.30"},
+    {"file": "crossshell-host-linux-aarch64-x11", "os": "linux", "arch": "aarch64", "flavour": "x11", "sha256": "e209bba2cab0105c8733fe3d7154d43c92deba465fc422e01ab5c15299c0fda8", "size": 3472064},
+    {"file": "crossshell-host-windows-x64.exe", "os": "windows", "arch": "x86_64", "flavour": "full", "sha256": "a15b7ba80e45f03e7c30313a3efb4dbfdd5440ca981b4a4d8f90b5c211a7d745", "size": 1633280},
+    {"file": "crossshell-host-windows-arm64.exe", "os": "windows", "arch": "aarch64", "flavour": "full", "sha256": "ada852632ad32b927498e046f4647357708d199ebb54b62cd093e958c2069e23", "size": 1264640}
   ]
 }

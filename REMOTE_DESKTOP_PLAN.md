@@ -8,8 +8,8 @@ Status: built and verified end to end on 2026-10-27 (see "Verified" at the end).
   is still unmerged. It brings dartssh2 4.1 and already ships X11
   forwarding, so the feature has to sit on top of it. Rebase onto `main`
   once 1.5.0 merges.
-- CrossShell work is on `feature/ssgo-agent`, branched from CrossShell
-  `main`, and will be released as CrossShell engine 0.2.0.
+- CrossShell work merged to CrossShell `main` (PR #3) and was released as
+  CrossShell 0.2.0; `assets/agents/` holds that release's agents.
 
 ## Goal
 
