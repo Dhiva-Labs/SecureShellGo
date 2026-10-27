@@ -1,6 +1,13 @@
 secureshellgo (1.5.0~noble1) noble; urgency=medium
 
   * A major update; the full list is in CHANGELOG.md.
+  * Remote desktop: see and control a server's desktop (GNOME on Wayland,
+    X11 desktops, Windows, and Macs through Screen Sharing) over the SSH
+    connection already open. A small agent runs on the server for the
+    session only and listens on its loopback.
+  * Virtual desktops on headless Linux servers, optionally kept running,
+    with what they need installed in a click; or one program in its own
+    window on this device, through X11 forwarding.
   * The remote editor edits code like an IDE: detected indentation, Tab and
     auto-indent, comment and line shortcuts, per-file undo, and saves that
     never change bytes nobody edited.
@@ -17,7 +24,7 @@ secureshellgo (1.5.0~noble1) noble; urgency=medium
     Spanish, Russian, German, Korean and French.
   * Security fixes and hardening throughout; see CHANGELOG.md.
 
- -- Dhiva Labs <dhivakar1010@gmail.com>  Thu, 22 Oct 2026 12:00:00 +0530
+ -- Dhiva Labs <dhivakar1010@gmail.com>  Tue, 27 Oct 2026 13:30:00 +0530
 
 secureshellgo (1.4.4~noble1) noble; urgency=medium
 

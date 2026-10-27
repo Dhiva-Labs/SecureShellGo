@@ -34,3 +34,14 @@ tar-ignore = ".idea"
 tar-ignore = ".vscode"
 tar-ignore = ".DS_Store"
 tar-ignore = ".git"
+# Secrets and local machine files that git ignores but a source package
+# would otherwise carry: the Play upload keystore and its passwords, the
+# Android SDK path, and tool state. Never in a public upload.
+tar-ignore = "android/key.properties"
+tar-ignore = "*.jks"
+tar-ignore = "*.keystore"
+tar-ignore = "android/local.properties"
+tar-ignore = ".claude"
+tar-ignore = "*.iml"
+tar-ignore = "*.log"
+tar-ignore = "debian/files"
