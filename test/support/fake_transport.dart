@@ -1,0 +1,115 @@
+import 'dart:async';
+
+import 'package:dartssh2/dartssh2.dart';
+import 'package:secure_shell_go/models/host.dart';
+import 'package:secure_shell_go/services/ssh_service.dart';
+
+/// The do-nothing end of a [SessionTransport], for a suite's own fake to
+/// extend.
+///
+/// Every suite that needed a connection used to spell the whole interface
+/// out in an `implements` fake of its own — ten copies — so one new member
+/// meant ten edits in files nobody else was working in. Fakes extend this
+/// now and override only what their suite looks at; a member added to the
+/// interface gets its default here, once.
+class FakeTransportBase extends SessionTransport {
+  FakeTransportBase({Host? host}) : host = host ?? defaultHost;
+
+  static const Host defaultHost = Host(
+    id: 'h1',
+    label: 'Test box',
+    hostname: 'example.com',
+    port: 22,
+    username: 'dev',
+    authMethod: SshAuthMethod.password,
+  );
+
+  /// A password host as `dev`, for a fake standing in for one of several.
+  static Host hostFor({
+    String id = 'h1',
+    String label = 'Test box',
+    String hostname = 'example.com',
+  }) =>
+      Host(
+        id: id,
+        label: label,
+        hostname: hostname,
+        port: 22,
+        username: 'dev',
+        authMethod: SshAuthMethod.password,
+      );
+
+  @override
+  final Host host;
+
+  final Completer<void> _done = Completer<void>();
+
+  var closeCount = 0;
+  var pingCount = 0;
+
+  /// When the server last sent bytes, as far as a dead-link check is
+  /// concerned. A test moves it forward to make a quiet link look alive.
+  @override
+  DateTime? lastInboundAt;
+
+  @override
+  Future<void> get done => _done.future;
+
+  /// Closed once the session closed it, or once it went away on its own —
+  /// as dartssh2's `isClosed` is from the moment its `done` completes.
+  @override
+  bool get isClosed => closeCount > 0 || _done.isCompleted;
+
+  /// The transport going away underneath the session. With an error it is a
+  /// break; without one it is an orderly goodbye.
+  ///
+  /// Every channel still open on it ends first ([endChannels]), the way
+  /// dartssh2 ends them: normally, with no exit status. dartssh2 happens to
+  /// run its own listener on the transport first, so a session sees the
+  /// transport's death before its shell's — but nothing promises that, and
+  /// here the shell's comes first, so a session that relied on the order
+  /// would take a dead link for the user typing `exit`.
+  void drop([Object? error]) {
+    if (_done.isCompleted) return;
+    endChannels();
+    if (error == null) {
+      _done.complete();
+    } else {
+      _done.completeError(error);
+    }
+  }
+
+  @override
+  Future<SSHSession> startShell({
+    required int columns,
+    required int rows,
+    String terminalType = 'xterm-256color',
+  }) =>
+      throw UnimplementedError('the shell needs a real SSH channel');
+
+  @override
+  Future<SSHSession> startCommandShell(
+    String command, {
+    required int columns,
+    required int rows,
+    String terminalType = 'xterm-256color',
+  }) =>
+      throw UnimplementedError('the shell needs a real SSH channel');
+
+  @override
+  Future<SftpClient> openSftp() =>
+      throw UnimplementedError('tests inject a RemoteFileSystem instead');
+
+  @override
+  Future<SSHSession> execute(String command) =>
+      throw UnimplementedError('exec needs a real SSH channel');
+
+  @override
+  Future<void> ping() async => pingCount++;
+
+  /// Ends the channels a fake keeps open, for [drop]. Nothing by default.
+  void endChannels() {}
+
+  @override
+  void close() => closeCount++;
+}

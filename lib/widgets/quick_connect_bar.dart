@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../l10n/l10n.dart';
 import '../services/quick_connect_parser.dart';
 
 /// A compact `user@host` field on the host list screen for connecting
@@ -62,11 +63,11 @@ class _QuickConnectBarState extends State<QuickConnectBar> {
         textInputAction: TextInputAction.go,
         decoration: InputDecoration(
           isDense: true,
-          hintText: 'Quick connect: user@host or user@host:port',
+          hintText: context.l10n.quickConnectHint,
           prefixIcon: const Icon(Icons.bolt_outlined),
           errorText: _error,
           suffixIcon: IconButton(
-            tooltip: 'Connect',
+            tooltip: context.l10n.quickConnectConnect,
             icon: const Icon(Icons.arrow_forward),
             onPressed: _submit,
           ),

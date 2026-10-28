@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
+import '../l10n/l10n.dart';
 import '../models/host.dart';
 import '../services/credential_store.dart';
 import '../services/device_storage.dart';
@@ -105,6 +106,9 @@ class _FleetPushScreenState extends State<FleetPushScreen> {
   }
 
   void _startPush() {
+    // Looked up now, while this route is certainly mounted: the push outlives
+    // it (see `dispose`), and its uploads still need their error wording.
+    final l10n = context.l10n;
     final request = FleetPushRequest(
       hosts: widget.hosts,
       files: [
@@ -116,7 +120,7 @@ class _FleetPushScreenState extends State<FleetPushScreen> {
     );
     final service = FleetPushService(
       request: request,
-      openSessionLookup: _openSessionFor,
+      openSessionLookup: (hostId) => _openSessionFor(hostId, l10n),
       credentialLookup: widget.credentialStore.load,
       dialer: _dial,
     );
@@ -129,10 +133,10 @@ class _FleetPushScreenState extends State<FleetPushScreen> {
   /// The live session for [hostId], if there is more than one open on it —
   /// legitimate, see `SessionManager.liveForHost` — the first one, same
   /// order the host list's "already connected" dialog offers them in.
-  FleetOpenSession? _openSessionFor(String hostId) {
+  FleetOpenSession? _openSessionFor(String hostId, AppLocalizations l10n) {
     final live = widget.sessions.liveForHost(hostId);
     if (live.isEmpty) return null;
-    return _ManagedSessionUpload(live.first);
+    return _ManagedSessionUpload(live.first, l10n);
   }
 
   Future<FleetDialedConnection> _dial(
@@ -166,15 +170,15 @@ class _FleetPushScreenState extends State<FleetPushScreen> {
 
   Widget _buildSetup(BuildContext context) {
     final theme = Theme.of(context);
+    final l10n = context.l10n;
     return Scaffold(
-      appBar: AppBar(title: const Text('Push file…')),
+      appBar: AppBar(title: Text(l10n.fleetPushTitle)),
       body: SafeArea(
         child: ListView(
           padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
           children: [
             Text(
-              'Pushing to ${widget.hosts.length} '
-              'host${widget.hosts.length == 1 ? '' : 's'}',
+              l10n.fleetPushHostCount(widget.hosts.length),
               style: theme.textTheme.titleMedium,
             ),
             const SizedBox(height: 4),
@@ -187,7 +191,11 @@ class _FleetPushScreenState extends State<FleetPushScreen> {
             OutlinedButton.icon(
               onPressed: _pickFiles,
               icon: const Icon(Icons.attach_file),
-              label: Text(_files.isEmpty ? 'Choose files…' : 'Add more files…'),
+              label: Text(
+                _files.isEmpty
+                    ? l10n.fleetPushChooseFiles
+                    : l10n.fleetPushAddMoreFiles,
+              ),
             ),
             if (_pickError != null) ...[
               const SizedBox(height: 8),
@@ -197,9 +205,9 @@ class _FleetPushScreenState extends State<FleetPushScreen> {
               ),
             ],
             if (_files.isEmpty)
-              const Padding(
-                padding: EdgeInsets.symmetric(vertical: 12),
-                child: Text('No files chosen yet.'),
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 12),
+                child: Text(l10n.fleetPushNoFiles),
               )
             else
               for (final file in _files)
@@ -214,28 +222,32 @@ class _FleetPushScreenState extends State<FleetPushScreen> {
                   ),
                   subtitle: Text(RemotePath.formatBytes(file.size)),
                   trailing: IconButton(
-                    tooltip: 'Remove',
+                    tooltip: l10n.fleetPushRemoveFileTooltip,
                     icon: const Icon(Icons.close),
                     onPressed: () => _removeFile(file),
                   ),
                 ),
             const SizedBox(height: 20),
-            Text('Destination directory', style: theme.textTheme.titleSmall),
+            Text(
+              l10n.fleetPushDestinationLabel,
+              style: theme.textTheme.titleSmall,
+            ),
             const SizedBox(height: 8),
             TextField(
               controller: _destinationController,
-              decoration: const InputDecoration(
-                border: OutlineInputBorder(),
+              decoration: InputDecoration(
+                border: const OutlineInputBorder(),
                 hintText: '~',
-                helperText:
-                    'The same path on every selected host. "~" resolves to '
-                    'each host\'s own home directory.',
+                helperText: l10n.fleetPushDestinationHelper,
                 helperMaxLines: 2,
               ),
               onChanged: (_) => setState(() {}),
             ),
             const SizedBox(height: 20),
-            Text('If a file already exists', style: theme.textTheme.titleSmall),
+            Text(
+              l10n.fleetPushPolicyHeading,
+              style: theme.textTheme.titleSmall,
+            ),
             RadioGroup<FleetOverwritePolicy>(
               groupValue: _policy,
               onChanged: (value) {
@@ -246,7 +258,7 @@ class _FleetPushScreenState extends State<FleetPushScreen> {
                   for (final policy in FleetOverwritePolicy.values)
                     RadioListTile<FleetOverwritePolicy>(
                       value: policy,
-                      title: Text(policy.label),
+                      title: Text(_policyLabel(context.l10n, policy)),
                       dense: true,
                       contentPadding: EdgeInsets.zero,
                     ),
@@ -256,7 +268,7 @@ class _FleetPushScreenState extends State<FleetPushScreen> {
             const SizedBox(height: 24),
             FilledButton(
               onPressed: _canContinue ? _goToConfirm : null,
-              child: const Text('Next'),
+              child: Text(l10n.fleetPushNext),
             ),
           ],
         ),
@@ -266,12 +278,14 @@ class _FleetPushScreenState extends State<FleetPushScreen> {
 
   Widget _buildConfirm(BuildContext context) {
     final theme = Theme.of(context);
+    final l10n = context.l10n;
+    final back = MaterialLocalizations.of(context).backButtonTooltip;
     final destination = _destinationController.text.trim();
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Confirm push'),
+        title: Text(l10n.fleetPushConfirmTitle),
         leading: IconButton(
-          tooltip: 'Back',
+          tooltip: back,
           icon: const Icon(Icons.arrow_back),
           onPressed: () => setState(() => _step = _Step.setup),
         ),
@@ -281,22 +295,24 @@ class _FleetPushScreenState extends State<FleetPushScreen> {
           padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
           children: [
             Text(
-              'Push ${_files.length} file${_files.length == 1 ? '' : 's'} to '
-              '${widget.hosts.length} '
-              'host${widget.hosts.length == 1 ? '' : 's'} at "$destination"?',
+              l10n.fleetPushConfirmQuestion(
+                _files.length,
+                widget.hosts.length,
+                destination,
+              ),
               style: theme.textTheme.titleMedium,
             ),
             const SizedBox(height: 20),
-            Text('Files', style: theme.textTheme.titleSmall),
+            Text(l10n.fleetPushFilesHeading, style: theme.textTheme.titleSmall),
             const SizedBox(height: 4),
             for (final file in _files) Text('•  ${file.name}'),
             const SizedBox(height: 20),
-            Text('Hosts', style: theme.textTheme.titleSmall),
+            Text(l10n.fleetPushHostsHeading, style: theme.textTheme.titleSmall),
             const SizedBox(height: 4),
             for (final host in widget.hosts) Text('•  ${host.displayName}'),
             const SizedBox(height: 20),
             Text(
-              'If a file already exists: ${_policy.label}',
+              l10n.fleetPushPolicyLine(_policyLabel(l10n, _policy)),
               style: theme.textTheme.bodyMedium,
             ),
             const SizedBox(height: 28),
@@ -304,10 +320,13 @@ class _FleetPushScreenState extends State<FleetPushScreen> {
               children: [
                 OutlinedButton(
                   onPressed: () => setState(() => _step = _Step.setup),
-                  child: const Text('Back'),
+                  child: Text(back),
                 ),
                 const SizedBox(width: 12),
-                FilledButton(onPressed: _startPush, child: const Text('Push')),
+                FilledButton(
+                  onPressed: _startPush,
+                  child: Text(l10n.fleetPushStart),
+                ),
               ],
             ),
           ],
@@ -331,9 +350,13 @@ class _FleetPushScreenState extends State<FleetPushScreen> {
 /// uses, so a fleet push takes its turn behind whatever else that session is
 /// transferring and shows up on the same transfer panel.
 class _ManagedSessionUpload implements FleetOpenSession {
-  _ManagedSessionUpload(this._session);
+  _ManagedSessionUpload(this._session, this._l10n);
 
   final ManagedSession _session;
+
+  /// For the error wording of a failed or cancelled upload — taken from the
+  /// screen up front, since the push may outlive it.
+  final AppLocalizations _l10n;
 
   @override
   Future<RemoteFileSystem> sftp() => _session.controller.sftp();
@@ -377,12 +400,15 @@ class _ManagedSessionUpload implements FleetOpenSession {
           completer.complete();
         case TransferStatus.failed:
           completer.completeError(
-            SftpFailure(current.error ?? 'The upload failed.'),
+            SftpFailure(current.error ?? _l10n.fleetPushUploadFailed),
           );
         case TransferStatus.cancelled:
-          completer.completeError(const SftpFailure('Cancelled.'));
+          completer.completeError(
+            SftpFailure(_l10n.fleetPushUploadCancelled),
+          );
         case TransferStatus.queued:
         case TransferStatus.running:
+        case TransferStatus.interrupted:
           break;
       }
       unawaited(subscription.cancel());
@@ -447,17 +473,23 @@ class _FleetPushResultsScreenState extends State<FleetPushResultsScreen> {
     final anyFailed =
         _hostProgress.any((h) => h.status == FleetHostStatus.failed);
     final registry = widget.registry;
+    final l10n = context.l10n;
 
     return Scaffold(
       appBar: AppBar(
-        title: Text(running ? 'Pushing…' : service.summary),
+        title: Text(
+          running ? l10n.fleetPushRunningTitle : _summary(l10n, service),
+        ),
         actions: [
           if (running)
-            TextButton(onPressed: service.cancel, child: const Text('Cancel'))
+            TextButton(
+              onPressed: service.cancel,
+              child: Text(MaterialLocalizations.of(context).cancelButtonLabel),
+            )
           else if (anyFailed)
             TextButton(
               onPressed: service.retryFailedHosts,
-              child: const Text('Retry failed'),
+              child: Text(l10n.fleetPushRetryFailed),
             )
           else if (registry != null)
             TextButton(
@@ -465,7 +497,7 @@ class _FleetPushResultsScreenState extends State<FleetPushResultsScreen> {
                 registry.clear(service);
                 Navigator.of(context).maybePop();
               },
-              child: const Text('Done'),
+              child: Text(l10n.fleetPushDone),
             ),
         ],
       ),
@@ -476,7 +508,7 @@ class _FleetPushResultsScreenState extends State<FleetPushResultsScreen> {
               Padding(
                 padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
                 child: Text(
-                  service.summary,
+                  _summary(l10n, service),
                   style: Theme.of(context).textTheme.titleMedium,
                 ),
               ),
@@ -503,6 +535,7 @@ class _HostProgressTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final l10n = context.l10n;
     final icon = switch (host.status) {
       FleetHostStatus.queued => Icons.schedule,
       FleetHostStatus.running => Icons.sync,
@@ -526,7 +559,7 @@ class _HostProgressTile extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         mainAxisSize: MainAxisSize.min,
         children: [
-          Text(_subtitle(host)),
+          Text(_subtitle(l10n, host)),
           if (host.status == FleetHostStatus.running)
             const Padding(
               padding: EdgeInsets.only(top: 6),
@@ -545,7 +578,9 @@ class _HostProgressTile extends StatelessWidget {
             Padding(
               padding: const EdgeInsets.only(top: 2),
               child: Text(
-                '${file.name}: ${file.error ?? 'failed'}',
+                file.error == null
+                    ? l10n.fleetPushFileFailed(file.name)
+                    : l10n.fleetPushFileError(file.name, file.error!),
                 style: theme.textTheme.bodySmall
                     ?.copyWith(color: theme.colorScheme.error),
               ),
@@ -555,7 +590,7 @@ class _HostProgressTile extends StatelessWidget {
     );
   }
 
-  String _subtitle(FleetHostProgress host) {
+  String _subtitle(AppLocalizations l10n, FleetHostProgress host) {
     final total = host.files.length;
     final done = host.files
         .where((f) =>
@@ -563,11 +598,25 @@ class _HostProgressTile extends StatelessWidget {
             f.status == FleetFileStatus.skipped)
         .length;
     return switch (host.status) {
-      FleetHostStatus.queued => 'Waiting…',
-      FleetHostStatus.running => '$done of $total files',
-      FleetHostStatus.done => total == 1 ? 'Done' : '$total files done',
-      FleetHostStatus.failed => 'Failed',
-      FleetHostStatus.cancelled => 'Cancelled',
+      FleetHostStatus.queued => l10n.fleetPushStatusWaiting,
+      FleetHostStatus.running => l10n.fleetPushStatusProgress(done, total),
+      FleetHostStatus.done => l10n.fleetPushStatusDone(total),
+      FleetHostStatus.failed => l10n.fleetPushStatusFailed,
+      FleetHostStatus.cancelled => l10n.fleetPushStatusCancelled,
     };
   }
 }
+
+/// [FleetOverwritePolicy.label] in the screen's language: the enum lives in
+/// lib/services and stays English for anything that is not shown.
+String _policyLabel(AppLocalizations l10n, FleetOverwritePolicy policy) =>
+    switch (policy) {
+      FleetOverwritePolicy.overwrite => l10n.fleetPushPolicyOverwrite,
+      FleetOverwritePolicy.skipExisting => l10n.fleetPushPolicySkipExisting,
+      FleetOverwritePolicy.failOnExisting =>
+        l10n.fleetPushPolicyFailOnExisting,
+    };
+
+/// [FleetPushService.summary], "6 of 8 succeeded", in the screen's language.
+String _summary(AppLocalizations l10n, FleetPushService service) =>
+    l10n.fleetPushSummary(service.succeededCount, service.totalCount);

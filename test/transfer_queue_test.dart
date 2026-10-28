@@ -464,4 +464,288 @@ void main() {
     task.transferredBytes = 400;
     expect(task.progress, 1.0);
   });
+
+  group('interrupted by a dropped connection', () {
+    /// An executor that moves half the file, then waits for the test — the
+    /// connection dropping mid-transfer — and stops like a real one does
+    /// when it finds itself cancelled. [runs] counts how many times it was
+    /// started, per task id.
+    ({TransferQueue queue, Completer<void> gate, Map<String, int> runs})
+        build() {
+      final gate = Completer<void>();
+      final runs = <String, int>{};
+      late final TransferQueue queue;
+      queue = TransferQueue(
+        executor: (task, handle) async {
+          runs[task.id] = (runs[task.id] ?? 0) + 1;
+          handle.setTotal(100);
+          handle.report(50);
+          if (runs[task.id] == 1) {
+            await gate.future;
+            handle.throwIfCancelled();
+          }
+          handle.report(100);
+        },
+      );
+      return (queue: queue, gate: gate, runs: runs);
+    }
+
+    test('stops the moving one as interrupted, not cancelled', () async {
+      final harness = build();
+      addTearDown(harness.queue.dispose);
+      final moving = harness.queue
+          .enqueueDownload(remotePath: '/a', name: 'a');
+      final waiting = harness.queue
+          .enqueueDownload(remotePath: '/b', name: 'b');
+      await Future<void>.delayed(Duration.zero);
+
+      harness.queue.interruptAll();
+      harness.gate.complete();
+      await Future<void>.delayed(Duration.zero);
+      await Future<void>.delayed(Duration.zero);
+
+      expect(moving.status, TransferStatus.interrupted);
+      expect(waiting.status, TransferStatus.interrupted);
+      expect(moving.status.isActive, isTrue,
+          reason: 'still owed to the user, so closing the tab warns');
+      expect(moving.status.isFinished, isFalse);
+      expect(harness.runs, {moving.id: 1},
+          reason: 'nothing starts while the connection is gone');
+    });
+
+    test('goes back in the queue, in order, and completes', () async {
+      final harness = build();
+      addTearDown(harness.queue.dispose);
+      final first = harness.queue.enqueueDownload(remotePath: '/a', name: 'a');
+      final second =
+          harness.queue.enqueueDownload(remotePath: '/b', name: 'b');
+      await Future<void>.delayed(Duration.zero);
+      harness.queue.interruptAll();
+      harness.gate.complete();
+      await Future<void>.delayed(Duration.zero);
+
+      final order = <String>[];
+      final sub = harness.queue.changes.listen((tasks) {
+        for (final task in tasks) {
+          if (task.status == TransferStatus.running &&
+              (order.isEmpty || order.last != task.name)) {
+            order.add(task.name);
+          }
+        }
+      });
+      addTearDown(sub.cancel);
+
+      harness.queue.resumeInterrupted();
+      await harness.queue.changes.firstWhere(
+        (tasks) => tasks.every((t) => t.status.isFinished),
+      );
+
+      expect(first.status, TransferStatus.completed);
+      expect(second.status, TransferStatus.completed);
+      expect(harness.queue.tasks.map((t) => t.id), [first.id, second.id],
+          reason: 'the same rows, not new ones');
+      expect(harness.runs[first.id], 2);
+      expect(order, ['a', 'b']);
+    });
+
+    test('a transfer queued while disconnected waits for the connection',
+        () async {
+      final harness = build();
+      addTearDown(harness.queue.dispose);
+      harness.queue.interruptAll();
+
+      final task = harness.queue.enqueueDownload(remotePath: '/c', name: 'c');
+      await Future<void>.delayed(Duration.zero);
+      expect(task.status, TransferStatus.queued);
+      expect(harness.runs, isEmpty);
+
+      harness.gate.complete();
+      harness.queue.resumeInterrupted();
+      await harness.queue.changes.firstWhere(
+        (tasks) => tasks.every((t) => t.status.isFinished),
+      );
+      expect(task.status, TransferStatus.completed);
+    });
+
+    test('can still be cancelled, and is cancelled when the session ends',
+        () async {
+      final harness = build();
+      final a = harness.queue.enqueueDownload(remotePath: '/a', name: 'a');
+      final b = harness.queue.enqueueDownload(remotePath: '/b', name: 'b');
+      await Future<void>.delayed(Duration.zero);
+      harness.queue.interruptAll();
+      harness.gate.complete();
+      await Future<void>.delayed(Duration.zero);
+
+      harness.queue.cancel(a.id);
+      expect(a.status, TransferStatus.cancelled);
+
+      await harness.queue.dispose();
+      expect(b.status, TransferStatus.cancelled);
+    });
+
+    test('an executor that hands its work off ends cancelled', () async {
+      final queue = TransferQueue(
+        executor: (task, handle) async {
+          await Future<void>.delayed(Duration.zero);
+          throw const TransferHandedOff();
+        },
+      );
+      addTearDown(queue.dispose);
+      final task = queue.enqueueRemoteCopy(
+        remotePath: '/a',
+        destinationSessionId: 'session-1',
+        destinationPath: '/b',
+        name: 'a',
+      );
+      queue.interruptAll();
+      await queue.changes.firstWhere((_) => task.status.isFinished);
+
+      // Running it again would start a second copy of a job still going.
+      expect(task.status, TransferStatus.cancelled);
+    });
+
+    test('an executor can say it was cut off, and why', () async {
+      final queue = TransferQueue(
+        executor: (task, handle) async =>
+            throw const TransferInterrupted('Waiting for B to reconnect…'),
+      );
+      addTearDown(queue.dispose);
+      final task = queue.enqueueRemoteCopy(
+        remotePath: '/a',
+        destinationSessionId: 'session-1',
+        destinationPath: '/b',
+        name: 'a',
+      );
+      await queue.changes
+          .firstWhere((_) => task.status == TransferStatus.interrupted);
+
+      expect(task.error, 'Waiting for B to reconnect…');
+    });
+
+    group('resumed while the run it was cut off in is still unwinding', () {
+      // The reconnect lands while the executor is still stuck on the dead
+      // channel; it notices its cancel only afterwards, and its ending must
+      // not be the transfer's.
+      for (final (how, unwind) in <(String, Object)>[
+        ('cancelled', const TransferCancelled()),
+        ('interrupted', const TransferInterrupted()),
+        ('a channel error', StateError('channel closed')),
+      ]) {
+        test('runs again, however that run ends: $how', () async {
+          final gates = <Completer<void>>[];
+          final queue = TransferQueue(
+            executor: (task, handle) async {
+              final gate = Completer<void>();
+              gates.add(gate);
+              await gate.future;
+              if (gates.length == 1) throw unwind;
+            },
+          );
+          addTearDown(queue.dispose);
+          final task = queue.enqueueDownload(remotePath: '/a', name: 'a');
+          await Future<void>.delayed(Duration.zero);
+
+          queue.interruptAll();
+          queue.resumeInterrupted();
+          gates.single.complete();
+          await Future<void>.delayed(Duration.zero);
+          await Future<void>.delayed(Duration.zero);
+
+          expect(gates, hasLength(2), reason: 'run again, on the new link');
+          expect(task.status, TransferStatus.running);
+          gates.last.complete();
+          await queue.changes.firstWhere((_) => task.status.isFinished);
+          expect(task.status, TransferStatus.completed);
+          expect(queue.tasks.single.id, task.id);
+        });
+      }
+
+      test('waits again if the link drops again first', () async {
+        final gate = Completer<void>();
+        var runs = 0;
+        final queue = TransferQueue(
+          executor: (task, handle) async {
+            runs++;
+            await gate.future;
+            handle.throwIfCancelled();
+          },
+        );
+        addTearDown(queue.dispose);
+        final task = queue.enqueueDownload(remotePath: '/a', name: 'a');
+        await Future<void>.delayed(Duration.zero);
+
+        queue.interruptAll();
+        queue.resumeInterrupted();
+        queue.interruptAll();
+        gate.complete();
+        await Future<void>.delayed(Duration.zero);
+        await Future<void>.delayed(Duration.zero);
+
+        expect(task.status, TransferStatus.interrupted);
+        expect(runs, 1);
+      });
+
+      test('stays cancelled when the user cancels it meanwhile', () async {
+        final gate = Completer<void>();
+        var runs = 0;
+        final queue = TransferQueue(
+          executor: (task, handle) async {
+            runs++;
+            await gate.future;
+            handle.throwIfCancelled();
+          },
+        );
+        addTearDown(queue.dispose);
+        final task = queue.enqueueDownload(remotePath: '/a', name: 'a');
+        await Future<void>.delayed(Duration.zero);
+
+        queue.interruptAll();
+        queue.resumeInterrupted();
+        queue.cancel(task.id);
+        gate.complete();
+        await Future<void>.delayed(Duration.zero);
+        await Future<void>.delayed(Duration.zero);
+
+        expect(task.status, TransferStatus.cancelled);
+        expect(runs, 1);
+      });
+    });
+
+    test('only the ones picked are interrupted, resumed or failed', () async {
+      final release = Completer<void>();
+      final queue = TransferQueue(
+        executor: (task, handle) async {
+          await release.future;
+          handle.throwIfCancelled();
+        },
+      );
+      addTearDown(() {
+        if (!release.isCompleted) release.complete();
+        return queue.dispose();
+      });
+      final mine = queue.enqueueDownload(remotePath: '/a', name: 'a');
+      final copy = queue.enqueueRemoteCopy(
+        remotePath: '/b',
+        destinationSessionId: 'session-9',
+        destinationPath: '/b',
+        name: 'b',
+      );
+      await Future<void>.delayed(Duration.zero);
+
+      bool toNine(TransferTask t) => t.destinationSessionId == 'session-9';
+      queue.interruptWhere(toNine);
+      expect(mine.status, TransferStatus.running);
+      expect(copy.status, TransferStatus.interrupted);
+
+      queue.resumeInterrupted(test: toNine);
+      expect(copy.status, TransferStatus.queued);
+
+      queue.interruptWhere(toNine);
+      queue.failInterrupted(toNine, reason: 'closed');
+      expect(copy.status, TransferStatus.failed);
+      expect(copy.error, 'closed');
+      release.complete();
+    });
+  });
 }

@@ -3,9 +3,10 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 
-import '../models/host.dart';
+import '../l10n/l10n.dart';
 import '../services/host_store.dart';
 import '../services/quick_connect_parser.dart' show defaultQuickConnectUsername;
+import '../services/ssh_certificate.dart';
 import '../services/ssh_config_parser.dart';
 
 /// Reads `~/.ssh/config`, previews every concrete `Host` block it (and one
@@ -69,6 +70,36 @@ class _SshConfigImportScreenState extends State<SshConfigImportScreen> {
         }
       }
 
+      // A certificate is public, so unlike the key it is read in: the
+      // CertificateFile, or failing that the `-cert.pub` next to the
+      // IdentityFile, which is where ssh looks too. Kept only if it reads as
+      // a user certificate.
+      String? readCertificate(SshConfigHostEntry entry) {
+        final certificateFile = entry.certificateFile;
+        final identityFile = entry.identityFile;
+        final paths = [
+          ?certificateFile,
+          if (certificateFile == null && identityFile != null)
+            '$identityFile-cert.pub',
+        ];
+        for (final path in paths) {
+          try {
+            final expanded = path.replaceAll('%d', home);
+            final resolved = expanded.startsWith('~')
+                ? '$home${expanded.substring(1)}'
+                : File(expanded).isAbsolute
+                    ? expanded
+                    : '$home/$expanded';
+            final file = File(resolved);
+            if (!file.existsSync()) continue;
+            return SshCertificate.parse(file.readAsStringSync()).line;
+          } catch (_) {
+            // Unreadable, or not a user certificate: imported without one.
+          }
+        }
+        return null;
+      }
+
       final result = SshConfigParser.parse(contents, readInclude: readInclude);
       final existingHosts = await widget.hostStore.all();
 
@@ -90,6 +121,7 @@ class _SshConfigImportScreenState extends State<SshConfigImportScreen> {
               entry,
               entry.user ?? defaultQuickConnectUsername(),
             ),
+            certificate: readCertificate(entry),
           ),
       ];
 
@@ -117,15 +149,10 @@ class _SshConfigImportScreenState extends State<SshConfigImportScreen> {
     for (final candidate in chosen) {
       final entry = candidate.entry;
       await widget.hostStore.add(
-        Host(
+        entry.toHost(
           id: widget.hostStore.newId(),
-          label: entry.alias,
-          hostname: entry.hostname,
-          port: entry.port,
           username: candidate.resolvedUser,
-          authMethod: entry.identityFile != null
-              ? SshAuthMethod.privateKey
-              : SshAuthMethod.password,
+          certificate: candidate.certificate,
         ),
       );
     }
@@ -136,7 +163,7 @@ class _SshConfigImportScreenState extends State<SshConfigImportScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Import from ~/.ssh/config')),
+      appBar: AppBar(title: Text(context.l10n.sshConfigImportTitle)),
       body: _buildBody(),
       bottomNavigationBar: _buildImportBar(),
     );
@@ -145,6 +172,7 @@ class _SshConfigImportScreenState extends State<SshConfigImportScreen> {
   Widget? _buildImportBar() {
     if (_loading || _loadError != null || _configPath == null) return null;
     final selectedCount = _candidates.where((c) => c.selected).length;
+    final l10n = context.l10n;
     return SafeArea(
       child: Padding(
         padding: const EdgeInsets.all(12),
@@ -152,11 +180,10 @@ class _SshConfigImportScreenState extends State<SshConfigImportScreen> {
           onPressed: selectedCount == 0 || _importing ? null : _import,
           child: Text(
             _importing
-                ? 'Importing…'
+                ? l10n.sshConfigImportImporting
                 : selectedCount == 0
-                    ? 'Select servers to import'
-                    : 'Import $selectedCount server'
-                        '${selectedCount == 1 ? '' : 's'}',
+                    ? l10n.sshConfigImportSelectPrompt
+                    : l10n.sshConfigImportCount(selectedCount),
           ),
         ),
       ),
@@ -165,27 +192,28 @@ class _SshConfigImportScreenState extends State<SshConfigImportScreen> {
 
   Widget _buildBody() {
     if (_loading) return const Center(child: CircularProgressIndicator());
+    final l10n = context.l10n;
     if (_loadError != null) {
       return Center(
         child: Padding(
           padding: const EdgeInsets.all(24),
-          child: Text('Could not read ~/.ssh/config: $_loadError'),
+          child: Text(l10n.sshConfigImportReadError(_loadError!)),
         ),
       );
     }
     if (_configPath == null) {
-      return const Center(
+      return Center(
         child: Padding(
-          padding: EdgeInsets.all(24),
-          child: Text('No ~/.ssh/config file found on this machine.'),
+          padding: const EdgeInsets.all(24),
+          child: Text(l10n.sshConfigImportNoFile),
         ),
       );
     }
     if (_candidates.isEmpty) {
-      return const Center(
+      return Center(
         child: Padding(
-          padding: EdgeInsets.all(24),
-          child: Text('No importable servers found in ~/.ssh/config.'),
+          padding: const EdgeInsets.all(24),
+          child: Text(l10n.sshConfigImportEmpty),
         ),
       );
     }
@@ -195,8 +223,8 @@ class _SshConfigImportScreenState extends State<SshConfigImportScreen> {
         if (_warnings.isNotEmpty) _WarningsBanner(warnings: _warnings),
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: 8),
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.end,
+          child: Wrap(
+            alignment: WrapAlignment.end,
             children: [
               TextButton(
                 onPressed: () => setState(() {
@@ -204,7 +232,7 @@ class _SshConfigImportScreenState extends State<SshConfigImportScreen> {
                     c.selected = true;
                   }
                 }),
-                child: const Text('Select all'),
+                child: Text(l10n.sshConfigImportSelectAll),
               ),
               TextButton(
                 onPressed: () => setState(() {
@@ -212,7 +240,7 @@ class _SshConfigImportScreenState extends State<SshConfigImportScreen> {
                     c.selected = false;
                   }
                 }),
-                child: const Text('Select none'),
+                child: Text(l10n.sshConfigImportSelectNone),
               ),
             ],
           ),
@@ -236,16 +264,26 @@ class _SshConfigImportScreenState extends State<SshConfigImportScreen> {
                     Text(
                       '${candidate.resolvedUser}@${entry.hostname}:${entry.port}',
                     ),
-                    if (candidate.alreadySaved || entry.identityFile != null)
+                    if (candidate.alreadySaved ||
+                        entry.identityFile != null ||
+                        candidate.certificate != null ||
+                        entry.forwardAgent ||
+                        entry.forwardX11)
                       Padding(
                         padding: const EdgeInsets.only(top: 4),
                         child: Wrap(
                           spacing: 6,
+                          runSpacing: 4,
                           children: [
                             if (candidate.alreadySaved)
-                              const _Badge('already saved'),
+                              _Badge(l10n.sshConfigImportBadgeSaved),
                             if (entry.identityFile != null)
-                              const _Badge('uses key file'),
+                              _Badge(l10n.sshConfigImportBadgeKeyFile),
+                            if (candidate.certificate != null)
+                              _Badge(l10n.sshConfigImportBadgeCertificate),
+                            if (entry.forwardAgent)
+                              _Badge(l10n.sshConfigImportBadgeAgent),
+                            if (entry.forwardX11) const _Badge('X11'),
                           ],
                         ),
                       ),
@@ -265,11 +303,15 @@ class _ImportCandidate {
     required this.entry,
     required this.resolvedUser,
     required this.alreadySaved,
+    this.certificate,
   }) : selected = !alreadySaved;
 
   final SshConfigHostEntry entry;
   final String resolvedUser;
   final bool alreadySaved;
+
+  /// The certificate line read for this entry, if one was found.
+  final String? certificate;
   bool selected;
 }
 

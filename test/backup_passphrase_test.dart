@@ -1,7 +1,14 @@
+import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:secure_shell_go/l10n/l10n.dart';
+import 'package:secure_shell_go/screens/backup_screen.dart';
 import 'package:secure_shell_go/services/backup_passphrase.dart';
 
 void main() {
+  final en = lookupAppLocalizations(const Locale('en'));
+  String hintFor(String passphrase) =>
+      BackupPassphrase.strengthOf(passphrase).hintIn(en);
+
   group('the hard gate', () {
     test('is a minimum length and nothing else', () {
       expect(BackupPassphrase.minLength, greaterThanOrEqualTo(12));
@@ -70,22 +77,16 @@ void main() {
 
     test('every bucket has a label', () {
       for (final strength in PassphraseStrength.values) {
-        expect(strength.label, isNotEmpty);
+        expect(strength.labelIn(en), isNotEmpty);
       }
     });
   });
 
   group('hints', () {
     test('say what would actually help', () {
-      expect(BackupPassphrase.hintFor('abc'), contains('12'));
-      expect(
-        BackupPassphrase.hintFor('abcdefghijkl'),
-        contains('unrelated words'),
-      );
-      expect(
-        BackupPassphrase.hintFor(r'Tr0ub4dor&3-horse-battery!'),
-        'Strong.',
-      );
+      expect(hintFor('abc'), contains('12'));
+      expect(hintFor('abcdefghijkl'), contains('unrelated words'));
+      expect(hintFor(r'Tr0ub4dor&3-horse-battery!'), 'Strong.');
     });
 
     test('never claim an entropy figure they cannot know', () {
@@ -97,7 +98,7 @@ void main() {
         'abcdefghijkl',
         r'Tr0ub4dor&3-horse-battery!',
       ]) {
-        final hint = BackupPassphrase.hintFor(candidate);
+        final hint = hintFor(candidate);
         expect(hint, isNot(contains('bits')));
         expect(hint, isNot(contains('%')));
       }

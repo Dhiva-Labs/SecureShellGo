@@ -27,4 +27,19 @@ enum WindowSizeClass {
     if (width >= mediumBreakpoint) return WindowSizeClass.medium;
     return WindowSizeClass.compact;
   }
+
+  /// Material 3's compact *height*: below this, a window is a phone on its
+  /// side, however wide.
+  static const double compactHeightBreakpoint = 480;
+
+  /// Whether two panes fit side by side: wide enough for both, and tall
+  /// enough that each is still worth reading. A phone in landscape is wider
+  /// than a small tablet, but its 390dp, less an app bar and a soft keyboard,
+  /// leaves a terminal of a dozen lines; split in two, neither half is usable.
+  ///
+  /// The window's height, not what the soft keyboard leaves of it: a layout
+  /// that rearranged itself whenever the keyboard came up would move the
+  /// field being typed in.
+  static bool fitsSideBySide(double width, double height) =>
+      forWidth(width).isAtLeastMedium && height >= compactHeightBreakpoint;
 }

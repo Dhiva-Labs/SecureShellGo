@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../l10n/l10n.dart';
 import '../services/fuzzy_match.dart';
 
 enum PaletteItemKind { host, snippet, action }
@@ -156,9 +157,9 @@ class _CommandPaletteDialogState extends State<_CommandPaletteDialog> {
               child: TextField(
                 controller: _controller,
                 autofocus: true,
-                decoration: const InputDecoration(
-                  hintText: 'Connect to a host, run a snippet, or jump to…',
-                  prefixIcon: Icon(Icons.search),
+                decoration: InputDecoration(
+                  hintText: context.l10n.paletteHint,
+                  prefixIcon: const Icon(Icons.search),
                   border: InputBorder.none,
                 ),
                 // Redundant with the arrow-key handler's own Enter case:
@@ -175,7 +176,7 @@ class _CommandPaletteDialogState extends State<_CommandPaletteDialog> {
                   ? Padding(
                       padding: const EdgeInsets.all(24),
                       child: Text(
-                        'No matches',
+                        context.l10n.paletteNoMatches,
                         style: theme.textTheme.bodyMedium,
                       ),
                     )

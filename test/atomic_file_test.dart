@@ -88,7 +88,8 @@ void main() {
 
       expect(await file.exists(), isFalse);
       final aside = tempDir.listSync().whereType<File>().single;
-      expect(aside.path, startsWith('${file.path}.corrupt-'));
+      expect(aside.parent.path, tempDir.path);
+      expect(aside.uri.pathSegments.last, startsWith('store.json.corrupt-'));
       expect(await aside.readAsString(), 'unreadable but precious');
     });
 

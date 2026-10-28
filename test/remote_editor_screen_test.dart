@@ -5,11 +5,14 @@ import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:secure_shell_go/l10n/l10n.dart';
+import 'package:secure_shell_go/models/app_settings.dart';
 import 'package:secure_shell_go/models/remote_entry.dart';
 import 'package:secure_shell_go/screens/remote_editor_screen.dart';
 import 'package:secure_shell_go/services/settings_store.dart';
 import 'package:secure_shell_go/services/sftp_service.dart';
 import 'package:secure_shell_go/theme.dart';
+import 'package:secure_shell_go/widgets/editor_key_bar.dart';
 
 /// A remote filesystem with real contents, stat and chmod.
 ///
@@ -168,17 +171,27 @@ Future<void> pumpEditor(
   ScreenFs fs,
   List<String> paths, {
   TargetPlatform platform = TargetPlatform.android,
+  SettingsStore? settings,
+  Locale? locale,
 }) async {
-  final settings = SettingsStore(file: File('/nonexistent/settings.json'));
+  settings ??= SettingsStore(file: File('/nonexistent/settings.json'));
   await tester.pumpWidget(MaterialApp(
     theme: AppTheme.dark.copyWith(platform: platform),
+    // English, as a bare MaterialApp falls back to, unless a test asks for a
+    // language — then the delegates the app itself installs.
+    locale: locale,
+    localizationsDelegates:
+        locale == null ? null : AppLocalizations.localizationsDelegates,
+    supportedLocales: locale == null
+        ? const [Locale('en', 'US')]
+        : AppLocalizations.supportedLocales,
     home: Scaffold(
       body: Builder(
         builder: (context) => TextButton(
           onPressed: () => openRemoteEditor(
             context,
             filesystem: fs,
-            settingsStore: settings,
+            settingsStore: settings!,
             paths: paths,
             hostLabel: 'demo',
           ),
@@ -227,9 +240,9 @@ void main() {
 
     expect(find.text('nginx.conf'), findsOneWidget);
     expect(find.text('demo:/etc/nginx.conf'), findsOneWidget);
-    // Four lines, so a gutter numbered 1..4.
-    expect(find.text('1'), findsOneWidget);
-    expect(find.text('4'), findsOneWidget);
+    // Four lines, so a gutter numbered 1..4 (painted, and labelled for
+    // screen readers).
+    expect(find.bySemanticsLabel('Lines 1–4'), findsOneWidget);
     // The mode was picked from the file name.
     expect(find.textContaining('nginx / Apache conf'), findsOneWidget);
     expect(find.textContaining('LF'), findsOneWidget);
@@ -361,6 +374,38 @@ void main() {
     await tester.tap(find.byTooltip('Back'));
     await tester.pumpAndSettle();
     expect(find.text('open editor'), findsOneWidget);
+  });
+
+  testWidgets('speaks German with the German delegates', (tester) async {
+    final fs = ScreenFs()..put('/etc/nginx.conf', conf);
+    await pumpEditor(tester, fs, ['/etc/nginx.conf'],
+        locale: const Locale('de'));
+
+    expect(find.byTooltip('Keine Änderungen zu speichern'), findsOneWidget);
+    expect(find.byTooltip('No changes to save'), findsNothing);
+    expect(find.bySemanticsLabel('Zeilen 1–4'), findsOneWidget);
+    // Language names and line endings are not translated.
+    expect(find.textContaining('nginx / Apache conf'), findsOneWidget);
+    expect(find.textContaining('LF'), findsOneWidget);
+
+    await tester.enterText(find.byType(TextField).first, 'changed\n');
+    await tester.pumpAndSettle();
+    expect(find.byTooltip('Speichern (Ctrl+S)'), findsOneWidget);
+
+    // The guard on leaving, built from the ARB strings and Flutter's own
+    // German back button.
+    await tester.tap(find.byTooltip('Zurück'));
+    await tester.pumpAndSettle();
+    expect(find.text('Nicht gespeicherte Änderungen'), findsOneWidget);
+    expect(
+      find.text('„nginx.conf“ enthält Änderungen, die noch nicht auf dem '
+          'Server sind.'),
+      findsOneWidget,
+    );
+    await tester.tap(find.text('Verwerfen'));
+    await tester.pumpAndSettle();
+    expect(find.text('open editor'), findsOneWidget);
+    expect(fs.textAt('/etc/nginx.conf'), conf);
   });
 
   testWidgets('the find bar counts hits and steps through them',
@@ -523,7 +568,7 @@ void main() {
     // The status bar is the assertion target throughout: it is where the
     // active mode is actually reported, and matching on the bare label would
     // just as happily find the menu row that was tapped.
-    expect(find.text('Plain text · LF'), findsOneWidget);
+    expect(find.textContaining('Plain text · LF'), findsOneWidget);
 
     await tester.tap(find.byTooltip('More'));
     await tester.pumpAndSettle();
@@ -533,8 +578,8 @@ void main() {
     await tester.tap(find.text('SQL').last);
     await tester.pumpAndSettle();
 
-    expect(find.text('SQL · LF'), findsOneWidget);
-    expect(find.text('Plain text · LF'), findsNothing);
+    expect(find.textContaining('SQL · LF'), findsOneWidget);
+    expect(find.textContaining('Plain text · LF'), findsNothing);
   });
 
   // ------------------------------------------------ selection and clipboard
@@ -833,6 +878,276 @@ void main() {
       expect(find.text('⌘S'), findsOneWidget);
       expect(find.text('⇧⌘Z'), findsOneWidget);
       expect(find.text('Ctrl+S'), findsNothing);
+    });
+  });
+
+  group('coding like an IDE', () {
+    // `def main():\n` is 12 characters, so line 2 starts at 12 and its
+    // `pass` at 16.
+    const python = 'def main():\n    pass\n';
+
+    TextEditingController controllerOf(WidgetTester tester) =>
+        fieldOf(tester).controller!;
+
+    Future<void> press(WidgetTester tester, LogicalKeyboardKey key,
+        {bool shift = false}) async {
+      if (shift) await tester.sendKeyDownEvent(LogicalKeyboardKey.shiftLeft);
+      await tester.sendKeyEvent(key);
+      if (shift) await tester.sendKeyUpEvent(LogicalKeyboardKey.shiftLeft);
+      await tester.pumpAndSettle();
+    }
+
+    testWidgets('Tab indents by the file\'s own unit and keeps the keyboard',
+        (tester) async {
+      final fs = ScreenFs()..put('/srv/app.py', python);
+      await pumpEditor(tester, fs, ['/srv/app.py'],
+          platform: TargetPlatform.linux);
+      final controller = controllerOf(tester);
+      controller.selection = const TextSelection.collapsed(offset: 16);
+
+      await press(tester, LogicalKeyboardKey.tab);
+      expect(controller.text, 'def main():\n        pass\n');
+      expect(controller.selection, const TextSelection.collapsed(offset: 20));
+      expect(fieldOf(tester).focusNode!.hasFocus, isTrue,
+          reason: 'Tab is an edit here, not a jump to the next control');
+
+      await press(tester, LogicalKeyboardKey.tab, shift: true);
+      expect(controller.text, python);
+      expect(fieldOf(tester).focusNode!.hasFocus, isTrue);
+    });
+
+    testWidgets('Enter after a colon indents the next Python line',
+        (tester) async {
+      final fs = ScreenFs()..put('/srv/app.py', 'def main():');
+      await pumpEditor(tester, fs, ['/srv/app.py'],
+          platform: TargetPlatform.linux);
+      final controller = controllerOf(tester);
+      controller.selection = const TextSelection.collapsed(offset: 11);
+      await tester.showKeyboard(find.byType(TextField).first);
+
+      // What the platform sends for Return: the text with one `\n` in it.
+      tester.testTextInput.updateEditingValue(const TextEditingValue(
+        text: 'def main():\n',
+        selection: TextSelection.collapsed(offset: 12),
+      ));
+      await tester.pumpAndSettle();
+
+      expect(controller.text, 'def main():\n    ');
+      expect(controller.selection, const TextSelection.collapsed(offset: 16));
+    });
+
+    testWidgets('each open file keeps its own undo history', (tester) async {
+      final fs = ScreenFs()
+        ..put('/etc/nginx.conf', conf)
+        ..put('/etc/hosts', '127.0.0.1 localhost\n');
+      await pumpEditor(tester, fs, ['/etc/nginx.conf', '/etc/hosts'],
+          platform: TargetPlatform.linux);
+      await settleUndo(tester);
+
+      await tester.enterText(find.byType(TextField).first, 'rewritten\n');
+      await tester.pumpAndSettle();
+      await settleUndo(tester);
+
+      // Away and back: switching used to rebuild the field, and the
+      // history with it.
+      await tester.tap(find.widgetWithText(InkWell, 'hosts'));
+      await tester.pumpAndSettle();
+      expect(find.text('demo:/etc/hosts'), findsOneWidget);
+      await tester.tap(find.widgetWithText(InkWell, 'nginx.conf').first);
+      await tester.pumpAndSettle();
+      expect(find.text('demo:/etc/nginx.conf'), findsOneWidget);
+
+      expect(fieldOf(tester).focusNode!.hasFocus, isTrue,
+          reason: 'the keyboard follows the file to the front');
+
+      await chord(tester, LogicalKeyboardKey.keyZ);
+      expect(controllerOf(tester).text, conf);
+    });
+
+    testWidgets('a file with mixed line endings asks which to write',
+        (tester) async {
+      final fs = ScreenFs()..put('/etc/mixed.conf', 'a\r\nb\nc\r\n');
+      await pumpEditor(tester, fs, ['/etc/mixed.conf']);
+      await tester.enterText(find.byType(TextField).first, 'a\nb\nc\nd\n');
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byTooltip('Save (Ctrl+S)'));
+      await tester.pumpAndSettle();
+      expect(find.text('Mixed line endings'), findsOneWidget);
+      await tester.tap(find.text('Cancel'));
+      await tester.pumpAndSettle();
+      expect(fs.textAt('/etc/mixed.conf'), 'a\r\nb\nc\r\n',
+          reason: 'backing out writes nothing');
+      expect(fs.renamed, isEmpty);
+
+      await tester.tap(find.byTooltip('Save (Ctrl+S)'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('CRLF (Windows)'));
+      await tester.pumpAndSettle();
+      expect(fs.textAt('/etc/mixed.conf'), 'a\r\nb\r\nc\r\nd\r\n');
+      expect(find.textContaining('CRLF kept'), findsOneWidget);
+    });
+
+    testWidgets('a byte-order mark survives the round trip', (tester) async {
+      final fs = ScreenFs()..put('/srv/notes.txt', '\uFEFFhello\n');
+      await pumpEditor(tester, fs, ['/srv/notes.txt']);
+
+      expect(controllerOf(tester).text, 'hello\n',
+          reason: 'the mark is not in the text, where the caret could eat it');
+      expect(find.textContaining('UTF-8 BOM'), findsOneWidget);
+
+      await tester.enterText(find.byType(TextField).first, 'hello world\n');
+      await tester.pumpAndSettle();
+      await tester.tap(find.byTooltip('Save (Ctrl+S)'));
+      await tester.pumpAndSettle();
+
+      final bytes = fs.files['/srv/notes.txt']!;
+      expect(bytes.take(3), [0xEF, 0xBB, 0xBF]);
+      // Not `textAt`: `utf8.decode` drops a leading mark, so it would read
+      // the same with or without one.
+      expect(utf8.decode(bytes.sublist(3)), 'hello world\n');
+      expect(find.textContaining('BOM kept'), findsOneWidget);
+    });
+
+    testWidgets('Ctrl+S on an unedited file writes nothing', (tester) async {
+      final fs = ScreenFs()..put('/etc/nginx.conf', conf);
+      await pumpEditor(tester, fs, ['/etc/nginx.conf'],
+          platform: TargetPlatform.linux);
+
+      await chord(tester, LogicalKeyboardKey.keyS);
+      expect(fs.renamed, isEmpty);
+      expect(fs.modified['/etc/nginx.conf'], DateTime.utc(2026, 7, 31, 12));
+
+      // The same chord after an edit does save, so the above is not just a
+      // binding that never fires.
+      await tester.enterText(find.byType(TextField).first, 'edited\n');
+      await tester.pumpAndSettle();
+      await chord(tester, LogicalKeyboardKey.keyS);
+      expect(fs.renamed, hasLength(1));
+      expect(fs.textAt('/etc/nginx.conf'), 'edited\n');
+    });
+
+    testWidgets('the phone key bar edits through the same rules',
+        (tester) async {
+      final fs = ScreenFs()..put('/srv/app.py', python);
+      await pumpEditor(tester, fs, ['/srv/app.py']);
+      expect(find.byType(EditorKeyBar), findsOneWidget);
+      final controller = controllerOf(tester);
+
+      controller.selection = const TextSelection.collapsed(offset: 12);
+      await tester.tap(find.text('Tab'));
+      await tester.pumpAndSettle();
+      expect(controller.text, 'def main():\n        pass\n');
+
+      await tester.tap(find.byTooltip('Outdent'));
+      await tester.pumpAndSettle();
+      expect(controller.text, python);
+
+      // Brackets close themselves, as they do from a hardware keyboard.
+      controller.selection = TextSelection.collapsed(offset: python.length);
+      await tester.tap(find.text('('));
+      await tester.pumpAndSettle();
+      expect(controller.text, '$python()');
+      expect(controller.selection,
+          TextSelection.collapsed(offset: python.length + 1));
+    });
+
+    testWidgets('a desktop with a keyboard gets no key bar', (tester) async {
+      final fs = ScreenFs()..put('/srv/app.py', python);
+      await pumpEditor(tester, fs, ['/srv/app.py'],
+          platform: TargetPlatform.linux);
+      expect(find.byType(EditorKeyBar), findsNothing);
+    });
+
+    testWidgets('picking tabs changes what Tab inserts, not the file',
+        (tester) async {
+      final fs = ScreenFs()..put('/srv/app.py', python);
+      await pumpEditor(tester, fs, ['/srv/app.py'],
+          platform: TargetPlatform.linux);
+
+      await tester.tap(find.text('Spaces: 4'));
+      await tester.pumpAndSettle();
+      expect(find.text('Indentation'), findsOneWidget);
+      await tester.tap(find.text('Tabs'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Tabs'), findsOneWidget, reason: 'the status bar');
+      final controller = controllerOf(tester);
+      expect(controller.text, python,
+          reason: 'existing indentation is left exactly as it was');
+
+      controller.selection = TextSelection.collapsed(offset: python.length);
+      fieldOf(tester).focusNode!.requestFocus();
+      await tester.pump();
+      await press(tester, LogicalKeyboardKey.tab);
+      expect(controller.text, '$python\t');
+    });
+
+    testWidgets('mixed tabs and spaces are flagged where they break code',
+        (tester) async {
+      const broken = 'def main():\n\tif ready:\n        go()\n';
+      final fs = ScreenFs()
+        ..put('/srv/app.py', broken)
+        ..put('/etc/app.conf', broken);
+
+      await pumpEditor(tester, fs, ['/srv/app.py']);
+      expect(find.byIcon(Icons.warning_amber_rounded), findsOneWidget);
+
+      await tester.pumpWidget(const SizedBox());
+      await pumpEditor(tester, fs, ['/etc/app.conf']);
+      expect(find.byIcon(Icons.warning_amber_rounded), findsNothing,
+          reason: 'a config file reads the same either way');
+    });
+
+    testWidgets('a zoom is saved as the editor size for the next file',
+        (tester) async {
+      final dir = Directory.systemTemp.createTempSync('editor_zoom_test');
+      addTearDown(() => dir.deleteSync(recursive: true));
+      // Made, loaded and seeded on the real event loop: a store made on the
+      // test's fake clock chains its first write onto a future of that
+      // clock, which never moves while `runAsync` is waiting on it.
+      late final SettingsStore store;
+      await tester.runAsync(() async {
+        store = SettingsStore(file: File('${dir.path}/settings.json'));
+        await store.ensureLoaded();
+        await store.update((s) => s.copyWith(editorFontSize: 20));
+      });
+      addTearDown(store.dispose);
+
+      final fs = ScreenFs()..put('/etc/nginx.conf', conf);
+      await pumpEditor(tester, fs, ['/etc/nginx.conf'],
+          platform: TargetPlatform.linux, settings: store);
+      expect(fieldOf(tester).style!.fontSize, 20,
+          reason: 'opens at the editor size from Settings');
+
+      await chord(tester, LogicalKeyboardKey.equal);
+      expect(fieldOf(tester).style!.fontSize, 21);
+      expect(store.current.editorFontSize, 21);
+      expect(store.current.terminalFontSize, AppSettings.defaultFontSize,
+          reason: 'the terminal keeps its own size');
+
+      // A fresh editor, as for the next file opened.
+      await tester.pumpWidget(const SizedBox());
+      await pumpEditor(tester, fs, ['/etc/nginx.conf'],
+          platform: TargetPlatform.linux, settings: store);
+      expect(fieldOf(tester).style!.fontSize, 21);
+    });
+
+    testWidgets('Ctrl+= and Ctrl+- zoom the text, Ctrl+0 resets it',
+        (tester) async {
+      final fs = ScreenFs()..put('/etc/nginx.conf', conf);
+      await pumpEditor(tester, fs, ['/etc/nginx.conf'],
+          platform: TargetPlatform.linux);
+      double size() => fieldOf(tester).style!.fontSize!;
+      final start = size();
+
+      await chord(tester, LogicalKeyboardKey.equal);
+      await chord(tester, LogicalKeyboardKey.equal);
+      expect(size(), start + 2);
+      await chord(tester, LogicalKeyboardKey.minus);
+      expect(size(), start + 1);
+      await chord(tester, LogicalKeyboardKey.digit0);
+      expect(size(), start);
     });
   });
 }

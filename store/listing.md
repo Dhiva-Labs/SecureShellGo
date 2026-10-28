@@ -1,12 +1,13 @@
-# Play Console listing copy — SecureShell Go v1.1.0
+# Play Console listing copy — SecureShell Go 1.5.0
 
-Sourced from README.md and a read of `lib/` (services: `host_key_policy.dart`,
-`known_hosts_integrity.dart`, `credential_store.dart`, `secure_storage_backend.dart`,
-`session_keepalive.dart`, `session_foreground.dart`, `private_key_import.dart`,
-`download_plan.dart`, `upload_plan.dart`, `clipboard_paste.dart`,
-`layout_breakpoints.dart`) and `android/app/src/main/AndroidManifest.xml`, to
-make sure every claim below matches something the code actually does. Nothing
-here describes a feature that isn't implemented.
+Every claim below was checked against the code on `release/1.5.0`: `lib/`,
+`android/app/src/main/AndroidManifest.xml`, the Kotlin bridges in
+`android/app/src/main/kotlin/com/dhivalabs/secure_shell_go/`, `pubspec.yaml`,
+and the per-feature notes in `docs/changes/*.md`. The verification notes say
+where each one comes from. This is the Android listing, so features that
+exist only on Windows, Linux and macOS (agent sign-in, X11 forwarding,
+importing `~/.ssh/config`, uploading whole folders) are left out. They are in
+`store/microsoft-store-listing.md`.
 
 ---
 
@@ -16,7 +17,8 @@ here describes a feature that isn't implemented.
 ```
 SecureShell Go
 ```
-14 characters.
+14 characters. The same as the launcher label (`android:label` in the
+manifest).
 
 ---
 
@@ -24,111 +26,230 @@ SecureShell Go
 *(Play limit: 80 characters)*
 
 ```
-SSH terminal & SFTP client with strict host-key verification built in
+SSH and Mosh terminal, SFTP file browser, strict host-key verification
 ```
-69 characters. Leads with the two things the app is (terminal + SFTP client)
-and the one differentiator worth a scarce 80 characters (real host-key
-verification, not "trust it and hope"). No repeated keywords, no superlatives.
+70 characters. It names what the app is (terminal and file client, over SSH
+or Mosh) and the one thing that sets it apart: host keys are checked the way
+OpenSSH checks them. No superlatives, no repeated keywords.
 
 ---
 
 ## Full description
-*(Play limit: 4000 characters — this is 3782)*
+*(Play limit: 4000 characters. This is 3288.)*
 
 ```
-SecureShell Go is a fast, security-first SSH terminal and SFTP client for Android. Connect to your Linux servers, run a real interactive shell, and move files — all built around strict host-key verification instead of the "trust it and hope" approach a lot of mobile SSH apps take.
+SecureShell Go is an SSH terminal and SFTP file client for servers you run. It checks host keys the way OpenSSH does, keeps your sessions connected while you use other apps, and keeps what it stores on your phone. No account, no ads, no analytics.
 
-TERMINAL THAT FEELS LIKE A TERMINAL
-A full xterm-256color terminal (dartssh2 + xterm) with proper colors, resize handling and scrollback. An extra-keys bar puts Esc, Tab, a sticky Ctrl, arrow keys with long-press repeat, Ctrl+C/D/Z/L/R, and pipe/slash/tilde within thumb reach — every key is a full 48dp touch target with haptic feedback. Pinch to zoom the font size, and pick from five color schemes: Solarized Dark, Monokai, a retro green-phosphor look, black-on-white for daylight reading, or the default. Copy and paste uses the system clipboard, with a long-press selection toolbar, a dedicated Paste key, and a "Paste N lines?" guard so a careless multi-line paste can't flood your shell with commands you didn't mean to run. Connect a hardware keyboard and Ctrl+letter shortcuts pass straight through (Ctrl+C sends SIGINT), with Ctrl+Shift+C/V for copy and paste.
+TERMINAL
+• xterm-256color terminal, ten colour schemes, bundled JetBrains Mono font, pinch to zoom
+• Extra keys row: Esc, Tab, sticky Ctrl, arrows, Home/End/PgUp/PgDn, ^C ^D ^Z ^L ^R and Paste. It steps aside while a hardware keyboard is typing
+• Find in the scrollback, with match case and regular expressions
+• Long-press a web address to open or copy it
+• Record a session log, as plain text or exactly as received
+• A "Paste N lines?" check before a multi-line paste reaches the shell
 
-SECURITY THAT DOESN'T CUT CORNERS
-Every host key is checked the way OpenSSH checks it: trust-on-first-use, keyed on host, port and key type, with a SHA256 fingerprint shown so you can verify it out-of-band before accepting. If a host key ever changes, the connection is blocked outright with a full-screen warning and an explicit checkbox before you can override it — exactly what you want if that change means a machine-in-the-middle. The trust store behind all of this is sealed with an HMAC whose key lives in the Android Keystore, so a tampered or stripped file fails closed instead of silently letting a bad key through. Passwords, private keys and passphrases are never written in plain text — they live only in Keystore-encrypted secure storage.
+SESSIONS THAT STAY UP
+• A foreground service keeps sessions connected while you are in other apps
+• A dead connection is noticed and reconnected, also right after a switch between Wi-Fi and mobile data
+• Keep a host's shell in tmux or GNU screen, so a reconnect lands back in the same shell
+• Mosh: the app starts mosh-server over SSH and runs the terminal over UDP, through network changes and long sleeps. Nothing extra to install on the phone; the server needs mosh-server and its UDP ports open
 
-CONNECT THE WAY YOU ACTUALLY WORK
-Save hosts for one-tap connect, or quick-connect without saving anything. Authenticate with a password or a private key — OpenSSH, PKCS#1 RSA or ECDSA, with passphrase support — and import a .pem file directly, including AWS EC2 keys. Once connected, a quiet foreground service and 30-second keepalives hold your session open while you switch to other apps, and if the server does drop, you get a clean reconnect state instead of a zombie terminal.
+SIGN-IN
+• Password, private key (OpenSSH or PEM; RSA, ECDSA, ed25519; with passphrase) or keyboard-interactive, for servers that ask for a one-time code
+• OpenSSH user certificates
+• Generate an ed25519 key and install it on a server
+• Jump hosts, each hop checked against its own host key
+• A per-host switch for old routers and NAS boxes that only speak legacy algorithms
 
-FILES, WITHOUT LEAVING YOUR SESSION
-The SFTP browser shares the same live SSH session as the terminal, so switching between them never drops your shell. Downloads stream straight into your device's Downloads folder with flat memory usage — multi-gigabyte files are safe — plus progress, cancel, multi-select, and an "Open" action the moment a file lands. Download an entire folder and SecureShell Go walks it, counts and sizes it up front, then recreates its structure under Download/<folder>/. "Upload here" lets you pick any number of files and send them to whatever directory you're looking at, each with its own progress, cancel and retry, and a replace / keep both / skip prompt if a name is already taken. You can also share files into SecureShell Go from any other app's share menu — pick a saved host and folder and they upload, reusing a session you already have open instead of asking you to sign in again. Hidden-files toggle, directories-first sorting, breadcrumbs and pull-to-refresh round it out.
+SECURITY
+• Trust on first use, with the SHA256 fingerprint shown. A changed host key blocks the connection unless you acknowledge the change
+• Saved passwords and keys are encrypted under an Android Keystore key, never stored in plain text. The trusted-key store is sealed against tampering
+• Optional app lock with your fingerprint, face or screen lock
+• Encrypted backups (Argon2id, AES-256-GCM), saved wherever you choose
 
-BUILT FOR EVERY SCREEN
-Material 3 window-size-class layouts mean a side-by-side terminal and file browser on tablets, Samsung DeX windows and unfolded foldables, and a host grid on wide screens — with live relayout on resize or fold/unfold that never drops your connection. It's just as comfortable on a small phone in portrait or landscape.
+FILES
+• SFTP browser on the same connection as the terminal
+• Upload, download, whole-folder download, rename, delete, new folder, permissions, change owner, duplicate
+• Compress to .tar.gz or .zip and extract archives on the server; search the server by name or content
+• Copy between two servers, directly from one to the other or through the phone. Direct copies, compress and extract keep running on the server if the app closes
+• Share files into the app from any other app to upload them
+• Built-in editor with syntax colouring for 20 languages, find and replace, and a save that checks nobody changed the file first
+
+ACROSS YOUR SERVERS
+• Groups, colour tags, search, and quick connect with user@host:port
+• Snippets with {placeholders}
+• Run a command on many servers at once and see each one's output and exit code; push a file to many servers
+• Local, remote and dynamic (SOCKS5) port forwards, on localhost unless you choose otherwise
+• Server stats, a live log tail, systemd services and processes
+
+EVERY SCREEN
+Phones, tablets, foldables and Samsung DeX. On a foldable the terminal and files split at the hinge. With a mouse or trackpad you get split panes, right-click menus and keyboard shortcuts.
 
 Open source under the MIT licence.
 ```
 
-### Verification notes (why each claim is safe to publish)
-- **xterm-256color, colors, resize, scrollback** — `pubspec.yaml` depends on
-  `dartssh2` + `xterm`; `lib/theme.dart` defines the `TerminalTheme` used.
-- **Extra-keys bar, 48dp targets, haptics** — `lib/widgets/terminal_key_bar.dart`.
-- **Five color schemes** — `AppTheme.terminalThemeFor` in `lib/theme.dart`
-  switches on `TerminalColorScheme` (`classic`, `solarizedDark`, `monokai`,
-  `blackOnWhite`, `retroGreen`) — five, matching the copy exactly.
-- **"Paste N lines?" guard** — `lib/services/clipboard_paste.dart`
-  (`ClipboardPaste.needsConfirmation`).
-- **Hardware keyboard Ctrl passthrough** — README, consistent with the
-  terminal pane's key handling.
-- **TOFU host-key verification, SHA256 fingerprint, blocked-and-checkbox on
-  change** — `lib/services/host_key_policy.dart` (`HostKeyPolicy.evaluate`,
-  `HostKeyPromptKind.changed`) and `HostKeyPolicy.decodeFingerprint` (SHA256
-  format, byte-for-byte what `ssh-keygen -l` prints).
-- **HMAC-sealed trust store, Keystore-backed key, fail-closed on tamper** —
-  `lib/services/known_hosts_integrity.dart` (`KnownHostsIntegrityKey`,
-  `KnownHostsEnvelope`, `IntegrityVerdict.tampered`).
-- **Keystore-encrypted credentials, never plain text** —
-  `lib/services/credential_store.dart` +
-  `lib/services/secure_storage_backend.dart`
-  (`FlutterSecureStorageBackend` wraps `flutter_secure_storage`, i.e. Android
-  Keystore-backed `EncryptedSharedPreferences`).
-- **Password / private-key auth, OpenSSH / PKCS#1 RSA / ECDSA, passphrase,
-  .pem / AWS import** — `lib/services/private_key_import.dart`
-  (`classifyPrivateKeyPem`, explicitly documents PKCS#1 RSA as "what
-  `ssh-keygen -m PEM` and AWS EC2 both produce").
-- **Foreground service + 30s keepalives** —
-  `lib/services/session_keepalive.dart` (`interval = Duration(seconds: 30)`)
-  and `lib/services/session_foreground.dart`
-  (`SessionForegroundController`); manifest declares
-  `FOREGROUND_SERVICE` / `FOREGROUND_SERVICE_DATA_SYNC`.
-- **SFTP browser shares the live session** —
-  `lib/screens/file_browser_pane.dart` + `lib/services/sftp_service.dart`
-  reuse the connection from `session_controller.dart`.
-- **Streaming downloads, flat memory, folder download with counted/sized
-  plan** — `lib/services/download_plan.dart`
-  (`DirectoryDownloadPlan`, walked/counted/sized before any transfer).
-- **"Upload here", multi-file, collision prompt** —
-  `lib/services/upload_plan.dart` (`UploadCollisionAction`,
-  `UploadCollisionResponse`).
-- **Share-sheet upload target reusing an open session** —
-  `lib/screens/share_target_screen.dart`, `lib/services/share_intake.dart`,
-  manifest `SEND` / `SEND_MULTIPLE` intent filters, `singleTask` launch mode
-  (documented in the manifest specifically to make this work).
-- **Adaptive phone/tablet/DeX/fold layouts** —
-  `lib/services/layout_breakpoints.dart` (`WindowSizeClass`, Material 3
-  compact/medium/expanded thresholds).
-- **Android 6.0+** — `android/app/build.gradle.kts`:
-  `minSdk = maxOf(flutter.minSdkVersion, 23)` (API 23 = Android 6.0).
+### Verification notes
 
-Deliberately **not** claimed: "no root required" (true — nothing in the
-manifest, Kotlin bridges or Dart code touches root — but it's not a concern
-users of an SSH client are worried about, so asserting it would read as an
-odd, slightly defensive claim rather than a benefit); any performance
-superlative ("fastest", "best"); any claim about server-side software this
-app doesn't control.
+Terminal
+- **xterm-256color** — `dartssh2` and `xterm` in `pubspec.yaml`; the PTY is
+  requested as `xterm-256color` in `lib/services/ssh_service.dart`.
+- **Ten colour schemes** — `TerminalColorScheme` in
+  `lib/models/app_settings.dart`: SecureShell Go, Dracula, Solarized Dark,
+  Solarized Light, Nord, Gruvbox Dark, Monokai, One Dark, Black on white,
+  Retro green. Themes in `AppTheme.terminalThemeFor`, `lib/theme.dart`.
+- **Bundled JetBrains Mono** — `pubspec.yaml` `fonts:`;
+  `lib/widgets/terminal_fonts.dart` registers its OFL licence.
+- **Pinch to zoom** — `lib/screens/terminal_pane.dart`;
+  `docs/changes/terminal-options.md` ("as a pinch-zoom is").
+- **Extra keys row and its keys; hides while a hardware keyboard types** —
+  `lib/widgets/terminal_key_bar.dart` (esc, tab, ^C ^D ^Z ^L ^R, sticky Ctrl,
+  Paste, `| / - ~`, arrows, home, end, pgup, pgdn); `KeyBarMode` (Automatic,
+  Always, Never) in `app_settings.dart`; `docs/changes/layouts.md`.
+- **Find with match case and regex** — `lib/services/terminal_search.dart`,
+  `lib/widgets/terminal_find_bar.dart`.
+- **Long-press a link to open or copy it** —
+  `lib/services/terminal_links.dart` (`openableSchemes = {'http','https'}`),
+  `lib/screens/terminal_pane.dart` (`launchUrl`).
+- **Session log, plain or raw** — `lib/services/session_recorder.dart`,
+  `lib/widgets/session_log_actions.dart` (on Android it is kept in memory, up
+  to 32 MB, and saved through the system save screen when stopped).
+- **"Paste N lines?"** — `ClipboardPaste.needsConfirmation` in
+  `lib/services/clipboard_paste.dart`.
+
+Sessions that stay up
+- **Foreground service** — `SessionForegroundService.kt`; manifest types
+  `specialUse|dataSync`; `store/play-fgs-declaration.md`.
+- **Dead connection noticed and reconnected; network changes** —
+  `lib/services/session_keepalive.dart` (30 s keep-alives, three missed with
+  nothing else heard means dead), `lib/services/reconnect_policy.dart`,
+  `lib/services/network_watch.dart` and `NetworkWatchBridge.kt`
+  (`ACCESS_NETWORK_STATE`).
+- **tmux or GNU screen** — `Host.persistentSession`,
+  `lib/services/persistent_shell.dart`; `docs/changes/terminal-never-dies.md`.
+- **Mosh** — `lib/services/mosh/` (pure Dart client, AES-OCB in `ocb.dart`,
+  `mosh-server new` started over SSH in `mosh_bootstrap.dart`);
+  `docs/changes/mosh.md`. Needs `mosh-server` and open UDP ports on the
+  server; otherwise the terminal opens over SSH and says why.
+
+Sign-in
+- **Password / private key / keyboard-interactive** — `SshAuthMethod` in
+  `lib/models/host.dart`; `lib/services/login_prompt.dart`. Key formats in
+  `lib/services/private_key_import.dart`: OpenSSH, PEM PKCS#1 RSA and PEM EC,
+  plain or passphrase-protected. PKCS#8 and PuTTY `.ppk` are not supported,
+  so the copy says "OpenSSH or PEM" and nothing more.
+- **User certificates** — `lib/services/ssh_certificate.dart` (user
+  certificates only; host certificates are refused).
+- **ed25519 key generation and install** — `lib/services/ssh_keygen.dart`
+  (`generateEd25519`), `lib/services/public_key_push.dart` (the `ssh-copy-id`
+  steps: create `~/.ssh`, append the key if absent, fix permissions, check).
+- **Jump hosts** — `lib/services/jump_host_chain.dart` (up to 8 hops); each
+  hop is host-key checked in `lib/services/ssh_service.dart`.
+- **Legacy algorithms switch** — `Host.legacyAlgorithms`,
+  `lib/widgets/host_advanced_section.dart` ("Allow legacy algorithms");
+  `docs/changes/ssh-library.md`.
+
+Security
+- **TOFU, SHA256 fingerprint, changed key blocks until acknowledged** —
+  `lib/services/host_key_policy.dart`, `lib/widgets/host_key_dialog.dart`
+  ("Trust new key" needs the acknowledgement ticked).
+- **Credentials encrypted under a Keystore key** —
+  `lib/services/credential_store.dart`,
+  `lib/services/secure_storage_backend.dart` (`flutter_secure_storage` 10:
+  AES-GCM, with the key wrapped by an Android Keystore RSA key).
+- **Trusted-key store sealed** — `lib/services/known_hosts_integrity.dart`
+  (HMAC-SHA256; the key is in secure storage; a bad seal fails closed).
+- **App lock** — `AppLockBridge.kt` (BiometricPrompt with
+  `BIOMETRIC_STRONG or DEVICE_CREDENTIAL`), `USE_BIOMETRIC` in the manifest,
+  `lib/services/app_lock_controller.dart`.
+- **Encrypted backups saved anywhere** — `lib/services/backup_crypto.dart`
+  (Argon2id m=64 MiB, t=3, p=1; AES-256-GCM), `lib/screens/backup_screen.dart`
+  ("Save to…", "Save to Downloads"), `DocumentSaver.kt`.
+- **No account, ads or analytics** — no such dependency in `pubspec.yaml`;
+  no HTTP code in `lib/`.
+
+Files
+- **SFTP on the same connection** — `lib/screens/file_browser_pane.dart`,
+  `lib/services/sftp_service.dart`.
+- **Upload, download, folder download, rename, delete, new folder,
+  permissions, change owner, duplicate** — `lib/screens/file_browser_pane.dart`,
+  `lib/services/remote_file_ops.dart`, `lib/services/download_plan.dart`.
+- **Compress (.tar.gz, .zip), extract (.tar, .tar.gz/.tgz, .tar.xz/.txz,
+  .zip), search** — `lib/services/remote_file_ops.dart`,
+  `lib/screens/remote_search_screen.dart`.
+  Actions the server's tools cannot do are hidden.
+- **Server-to-server copy, direct or relayed; keeps running on the server**
+  — `lib/services/direct_remote_copy.dart`, `lib/services/remote_copy.dart`,
+  `lib/services/server_side_job.dart`.
+- **Share into the app** — `SEND`/`SEND_MULTIPLE` intent filters in the
+  manifest, `lib/services/share_intake.dart`,
+  `lib/screens/share_target_screen.dart`.
+- **Editor: 20 languages, find and replace, conflict-checked save** —
+  `syntaxModes` in `lib/services/syntax_highlighter.dart` (Shell, YAML, JSON,
+  Dart, Python, JavaScript/TypeScript, C/C++, Go, Rust, Java, Kotlin, Ruby,
+  PHP, HTML/XML, CSS, Markdown, INI/TOML, SQL, Dockerfile, nginx/Apache conf),
+  `lib/services/editor_search.dart`, `lib/services/editor_save.dart` (checks
+  size and modification time, writes a temporary file, verifies it, renames
+  it into place, keeps permissions).
+
+Across your servers
+- **Groups, colour tags, search, quick connect** —
+  `lib/services/host_grouping.dart`, `lib/widgets/host_color_dot.dart`,
+  `lib/services/quick_connect_parser.dart`.
+- **Snippets with `{placeholders}`** — `lib/services/snippet_placeholders.dart`.
+- **Run a command on many servers; push a file to many** —
+  `lib/services/fleet_exec_service.dart`, `lib/screens/fleet_run_screen.dart`,
+  `lib/services/fleet_push_service.dart`. Not limited to desktop.
+- **Port forwards on localhost by default** — `lib/services/tunnel_runtime.dart`,
+  `lib/services/socks5.dart`, `TunnelProfile.loopback = '127.0.0.1'` in
+  `lib/models/tunnel_profile.dart`.
+- **Stats, log tail, services and processes** —
+  `lib/services/server_probe.dart`, `lib/services/log_tail.dart`,
+  `lib/services/systemd_units.dart`, `lib/services/process_table.dart`.
+
+Every screen
+- **Hinge split** — `lib/services/display_hinge.dart`,
+  `lib/widgets/hinge_split.dart`.
+- **Split panes, right-click, shortcuts with a mouse or trackpad** —
+  `lib/services/input_profile.dart`, `lib/services/terminal_workspace.dart`
+  (up to 4 panes), `lib/widgets/session_shortcuts.dart`;
+  `docs/changes/layouts.md`.
+
+**Android version:** `minSdk = maxOf(flutter.minSdkVersion, 23)` in
+`android/app/build.gradle.kts`. With the Flutter SDK on the build machine
+(3.44.6, whose default is 24) that is **Android 7.0**, not the 6.0 the 1.1.0
+listing implied. Play shows the real minimum from the bundle, so the copy
+does not state it.
+
+### Deliberately not claimed
+
+- Anything that exists only on computers: agent sign-in, FIDO2 keys, X11
+  forwarding, `~/.ssh/config` import, folder upload, Windows Hello.
+- "Resumes transfers": an interrupted transfer starts again by itself after
+  a reconnect, but from the beginning (`transfer_queue.dart`
+  `resumeInterrupted`).
+- Customisable extra keys (the row is fixed; only when it shows can be set),
+  PuTTY or PKCS#8 keys, auto-starting tunnels, configurable keep-alive
+  interval.
+- Translations: the committed branch is English only.
+- Any performance or security superlative, and anything about server-side
+  software the app does not control.
 
 ---
 
-## What's new in 1.1.0
-*(Play limit: 500 characters — this is 406)*
+## What's new in 1.5.0
+*(Play limit: 500 characters. This is 479.)*
 
 ```
-1.1.0 makes moving files a first-class flow: an "Upload here" button to send multiple files at once, each with its own progress, cancel and retry; a replace / keep both / skip prompt on name collisions; whole-folder downloads that rebuild the server's structure locally; an "Open" action the moment a download finishes; and a share-sheet target so you can send files into SecureShell Go from any other app.
+1.5.0: Mosh. Two-factor (keyboard-interactive) sign-in, SSH certificates and agent forwarding. Dead connections are noticed and reconnected, and a host's shell can live in tmux or screen. Find in the terminal, open links, record session logs. Delete, rename, permissions, owner, compress, extract and search in the file browser. Run a command on many servers. Editor indentation and 7 more languages. Foldables split at the hinge. Backups can include host keys and save anywhere.
 ```
 
-Matches the actual 1.1.0 diff (`git show 396d335`, "Make moving files between
-phone and server a first-class flow"): multi-file upload with per-file
-progress/cancel/retry, collision prompts with apply-to-all, share-sheet
-intake (`SEND`/`SEND_MULTIPLE`), recursive folder download, and "Open" on
-finished downloads. 1.0.0 (`b8a4c00`) already had the terminal, SFTP browser,
-and single-file transfer; this release is specifically the transfer-UX pass.
+Sources, one per item: `docs/changes/mosh.md`; `login.md` (keyboard-interactive);
+`ssh-auth.md` (certificates, agent forwarding); `terminal-never-dies.md`
+(dead-link detection, tmux/screen); `terminal-options.md` (find, links,
+session logs); `file-browser.md` and `remote-ops.md` (file actions, commands
+on many servers); `editor.md` (indentation, seven new languages: C/C++, Go,
+Rust, Java, Kotlin, Ruby, PHP); `layouts.md` (hinge split); `standalone.md`
+(backups with host keys, "Save to…").
 
 ---
 
@@ -136,32 +257,27 @@ and single-file transfer; this release is specifically the transfer-UX pass.
 
 **Category: Tools**
 
-Rationale: SecureShell Go is a technical utility (SSH client + file
-transfer) aimed at developers/sysadmins, not a consumer app in
-Productivity, Communication, or Business. "Tools" is where Android's other
-terminal and remote-access apps (Termux, JuiceSSH, Termius) are listed, so
-it's also where the app's actual audience will look for it.
+SecureShell Go is a technical utility (SSH client and file transfer) for
+developers and sysadmins. Tools is where Android's other terminal and
+remote-access apps are listed, so it is where its audience looks.
 
-**Suggested tags** (pick from Play Console's own tag list at publish time —
-these are the closest matches to what the app does):
-- Developer tools / Productivity (secondary tag, if Play offers a second slot)
-- Anything Play's taxonomy has for "remote access" or "file manager" — the
-  app is both, so whichever of the two Play distinguishes is fair to add
-
-Avoid: "cloud", "backup", "VPN", "network scanner" — none of those describe
-what the app does, and adding them would be keyword stuffing, not tagging.
+**Tags:** pick from Play Console's own list at submission time. The closest
+matches to what the app does are anything Play has for remote access,
+terminal or developer tools, and file management. Avoid "cloud", "VPN",
+"backup" or "network scanner": none of them describes the app.
 
 ---
 
-## Left to the PM
+## Left to the owner
 
-- Play Console tag picker is a closed taxonomy that changes over time — pick
-  the actual tags from the live list at submission time rather than trusting
-  a name guessed here.
-- Content rating questionnaire, target audience, data-safety form (the app
-  transmits SSH/SFTP credentials only to the server the user configures, and
-  stores them locally via Android Keystore — no analytics/tracking SDKs are
-  in `pubspec.yaml` to declare, but that's a data-safety-form judgment call,
-  not a copy one).
-- Contact email / privacy policy URL for the listing.
-- Localization — this copy is US English only.
+- Pick the tags from the live list; Play's taxonomy changes.
+- Screenshots: the phone, 7-inch and 10-inch folders in
+  `store/graphics/screenshots/`. They were taken in July 2026, before 1.5,
+  so they need retaking.
+- Data safety: answers in `store/play-data-safety.md`.
+- Foreground service declaration: `store/play-fgs-declaration.md`.
+- Privacy policy URL:
+  `https://dhiva-labs.github.io/SecureShellGo/privacy-policy`.
+- Contact email: dhivakar1010@gmail.com.
+- Content rating questionnaire and target audience.
+- Localization: this copy is US English only.

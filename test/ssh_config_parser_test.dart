@@ -1,4 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:secure_shell_go/models/host.dart';
 import 'package:secure_shell_go/services/ssh_config_parser.dart';
 
 void main() {
@@ -131,6 +132,37 @@ Host myserver
   ServerAliveInterval 60
 ''');
     expect(result.entries.single.hostname, 'example.com');
+  });
+
+  test('a Match block ends the Host above it, and its directives go nowhere',
+      () {
+    final result = SshConfigParser.parse('''
+Host build
+  HostName build.example.com
+  User dev
+
+Match host build exec "test -n \$VPN"
+  ForwardAgent yes
+  ForwardX11 yes
+  User root
+  Port 2200
+  IdentityFile ~/.ssh/vpn_key
+
+Host other
+  ForwardAgent yes
+''');
+    final build = result.entries.firstWhere((e) => e.alias == 'build');
+    expect(build.forwardAgent, isFalse,
+        reason: 'ForwardAgent under Match is conditional, not the host\'s');
+    expect(build.forwardX11, isFalse);
+    expect(build.user, 'dev');
+    expect(build.port, 22);
+    expect(build.identityFile, isNull);
+    // The next Host starts a block of its own as usual.
+    expect(result.entries.firstWhere((e) => e.alias == 'other').forwardAgent,
+        isTrue);
+    expect(result.entries, hasLength(2));
+    expect(result.warnings.single, contains('Match'));
   });
 
   test('a directive before any Host block is ignored', () {
@@ -283,5 +315,83 @@ Host fromInclude
       result.warnings.any((w) => w.contains('*.internal.example.com')),
       isTrue,
     );
+  });
+
+  group('forwarding and certificates', () {
+    test('ForwardAgent, ForwardX11 and CertificateFile are read', () {
+      final entry = SshConfigParser.parse('''
+Host build
+  HostName build.example.com
+  ForwardAgent yes
+  ForwardX11 yes
+  CertificateFile ~/.ssh/id_ed25519-cert.pub
+''').entries.single;
+      expect(entry.forwardAgent, isTrue);
+      expect(entry.forwardX11, isTrue);
+      expect(entry.certificateFile, '~/.ssh/id_ed25519-cert.pub');
+    });
+
+    test('all off unless asked for', () {
+      final entry = SshConfigParser.parse('Host plain\n').entries.single;
+      expect(entry.forwardAgent, isFalse);
+      expect(entry.forwardX11, isFalse);
+      expect(entry.certificateFile, isNull);
+    });
+
+    test('ForwardAgent names an agent socket, or says no', () {
+      final entries = SshConfigParser.parse('''
+Host a
+  ForwardAgent ~/.1password/agent.sock
+Host b
+  ForwardAgent no
+Host c
+  ForwardAgent=Yes
+  ForwardX11 no
+''').entries;
+      expect(entries.map((e) => e.forwardAgent), [true, false, true]);
+      expect(entries.last.forwardX11, isFalse);
+    });
+
+    test('the first of several CertificateFile lines is the one kept', () {
+      final entry = SshConfigParser.parse('''
+Host ca
+  CertificateFile ~/.ssh/first-cert.pub
+  CertificateFile ~/.ssh/second-cert.pub
+''').entries.single;
+      expect(entry.certificateFile, '~/.ssh/first-cert.pub');
+    });
+
+    test('toHost carries them onto the saved host', () {
+      final entry = SshConfigParser.parse('''
+Host build
+  HostName build.example.com
+  Port 2200
+  IdentityFile ~/.ssh/id_ed25519
+  ForwardAgent yes
+  ForwardX11 yes
+''').entries.single;
+      final host = entry.toHost(
+        id: 'h1',
+        username: 'dev',
+        certificate: 'ssh-ed25519-cert-v01@openssh.com AAAA',
+      );
+      expect(host.label, 'build');
+      expect(host.hostname, 'build.example.com');
+      expect(host.port, 2200);
+      expect(host.username, 'dev');
+      expect(host.authMethod, SshAuthMethod.privateKey);
+      expect(host.agentForwarding, isTrue);
+      expect(host.x11Forwarding, isTrue);
+      expect(host.certificate, 'ssh-ed25519-cert-v01@openssh.com AAAA');
+    });
+
+    test('a host with no key file still signs in with a password', () {
+      final host = SshConfigParser.parse('Host p\n').entries.single.toHost(
+            id: 'h2',
+            username: 'dev',
+          );
+      expect(host.authMethod, SshAuthMethod.password);
+      expect(host.certificate, isNull);
+    });
   });
 }

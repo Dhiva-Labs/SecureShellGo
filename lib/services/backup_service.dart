@@ -1,12 +1,14 @@
 import 'dart:typed_data';
 
 import '../models/host.dart';
+import '../models/known_host.dart';
 import '../models/path_bookmark.dart';
 import 'backup_crypto.dart';
 import 'backup_payload.dart';
 import 'bookmark_store.dart';
 import 'credential_store.dart';
 import 'host_store.dart';
+import 'known_hosts_service.dart';
 import 'settings_store.dart';
 import 'snippet_store.dart';
 import 'tunnel_store.dart';
@@ -64,6 +66,7 @@ class BackupService {
     required this.bookmarkStore,
     required this.settingsStore,
     required this.credentialStore,
+    this.knownHosts,
   });
 
   /// The extension, and what the export screen names the file.
@@ -76,6 +79,10 @@ class BackupService {
   final SettingsStore settingsStore;
   final CredentialStore credentialStore;
 
+  /// Backs the "Include trusted host keys" option. Optional so a caller that
+  /// has none still gets backups, without that option.
+  final KnownHostsService? knownHosts;
+
   /// Builds the encrypted file.
   ///
   /// [includeCredentials] is the explicit opt-in. With it off — the default,
@@ -86,14 +93,19 @@ class BackupService {
   /// passphrase, which is the warning the export screen has to make
   /// unmissable.
   ///
+  /// [includeKnownHosts] is the second opt-in, for the trusted host keys —
+  /// off by default for the reason [BackupPayload] gives.
+  ///
   /// [useIsolate] is passed through to [BackupCrypto]; tests turn it off.
   Future<Uint8List> export({
     required String passphrase,
     required bool includeCredentials,
+    bool includeKnownHosts = false,
     bool useIsolate = true,
   }) async {
     final payload = await buildPayload(
       includeCredentials: includeCredentials,
+      includeKnownHosts: includeKnownHosts,
     );
     return BackupCrypto.encrypt(
       plaintext: payload.encode(),
@@ -106,6 +118,7 @@ class BackupService {
   /// what would be written without paying for the KDF.
   Future<BackupPayload> buildPayload({
     required bool includeCredentials,
+    bool includeKnownHosts = false,
   }) async {
     final hosts = await hostStore.all();
     final snippets = await snippetStore.all();
@@ -128,6 +141,11 @@ class BackupService {
       }
     }
 
+    final store = knownHosts;
+    final withKnownHosts = includeKnownHosts && store != null;
+    final trustedKeys =
+        withKnownHosts ? await store.all() : const <KnownHostKey>[];
+
     return BackupPayload(
       hosts: hosts,
       snippets: snippets,
@@ -136,6 +154,8 @@ class BackupService {
       settings: settingsStore.current,
       includesCredentials: includeCredentials,
       credentials: credentials,
+      includesKnownHosts: withKnownHosts,
+      knownHosts: trustedKeys,
       exportedAt: DateTime.now(),
     );
   }
@@ -191,9 +211,29 @@ class BackupService {
   /// passwords *are* saved does not wipe those passwords. Restoring a
   /// config-only backup is not a request to forget every password on the
   /// device, and treating it as one would be a spectacular way to lose data.
+  ///
+  /// ## Trusted host keys, in both modes
+  ///
+  /// Only when [trustKnownHosts] is set — the import screen's "Trust these
+  /// keys", which starts off, under the list of servers and fingerprints
+  /// [knownHostsToImport] found — and then only ever added, never replaced
+  /// or removed, even by [ImportMode.replace].
+  ///
+  /// Only servers this device has never trusted a key for are added, with
+  /// every key the backup has for them. A server this device already knows
+  /// keeps exactly the keys it has, *whatever the backup says about it* —
+  /// a different key, or another key type. This device checked those keys
+  /// itself, and a trusted key of a new type is as good as a replaced one
+  /// to someone in the middle: they present that type and get no warning.
+  /// Those servers are counted, so the import screen can say so.
+  ///
+  /// Each added key goes through [KnownHostsService.trust], which writes the
+  /// store sealed with this device's integrity key. Nothing in the backup
+  /// about how its own store was sealed is read, let alone trusted.
   Future<ImportResult> apply({
     required BackupPayload payload,
     required ImportMode mode,
+    bool trustKnownHosts = false,
   }) async {
     final existingHosts = await hostStore.all();
     final existingHostIds = {for (final h in existingHosts) h.id};
@@ -230,6 +270,11 @@ class BackupService {
             payload.tunnels,
             (t) => t.id,
           );
+
+    // Decided before any write, like everything above.
+    final store = knownHosts;
+    final hostKeys = await knownHostsToImport(payload);
+    final keysToAdd = trustKnownHosts ? hostKeys.toAdd : const <KnownHostKey>[];
 
     // --- nothing above this line has written anything ---
 
@@ -279,6 +324,18 @@ class BackupService {
       }
     }
 
+    for (final key in keysToAdd) {
+      await store!.trust(
+        KnownHostKey(
+          hostname: key.hostname,
+          port: key.port,
+          keyType: key.keyType,
+          fingerprint: key.fingerprint,
+          addedAt: key.addedAt,
+        ),
+      );
+    }
+
     return ImportResult(
       mode: mode,
       hosts: nextHosts.length,
@@ -288,7 +345,41 @@ class BackupService {
       credentialsRestored: payload.credentials.length,
       credentialsDropped: droppedCredentials,
       hostsNeedingCredentials: payload.hostsNeedingCredentials,
+      knownHostsAdded: keysToAdd.length,
+      knownHostsKept: hostKeys.serversKept,
+      knownHostsNotTrusted: trustKnownHosts ? 0 : hostKeys.toAdd.length,
+      knownHostsNotSaved: keysToAdd.isNotEmpty && store!.keyUnavailable,
     );
+  }
+
+  /// What [apply] would do with the backup's trusted host keys, for the
+  /// import screen to show before anything is written: the keys of servers
+  /// this device has never trusted (each server's, in the file's order, a
+  /// key listed twice once), and how many servers it already knows have
+  /// other keys in the file, which are left out.
+  Future<KnownHostsImport> knownHostsToImport(BackupPayload payload) async {
+    final store = knownHosts;
+    if (store == null || !payload.includesKnownHosts) {
+      return const KnownHostsImport(toAdd: [], serversKept: 0);
+    }
+    final toAdd = <KnownHostKey>[];
+    final seen = <String>{};
+    // Servers this device knows whose keys in the file say something it
+    // does not already trust: those are the ones worth telling about.
+    final kept = <String>{};
+    for (final key in payload.knownHosts) {
+      // A file listing one key twice adds it once, first entry wins.
+      if (!seen.add(key.id)) continue;
+      if (await store.isHostKnown(key.hostname, key.port)) {
+        final mine = await store.lookup(key.hostname, key.port, key.keyType);
+        if (mine?.fingerprint != key.fingerprint) {
+          kept.add(KnownHostKey.hostId(key.hostname, key.port));
+        }
+        continue;
+      }
+      toAdd.add(key);
+    }
+    return KnownHostsImport(toAdd: toAdd, serversKept: kept.length);
   }
 
   /// Every bookmark belonging to one of [hosts].
@@ -320,6 +411,19 @@ class BackupService {
   }
 }
 
+/// See [BackupService.knownHostsToImport].
+class KnownHostsImport {
+  const KnownHostsImport({required this.toAdd, required this.serversKept});
+
+  /// Keys for servers this device has never trusted a key for.
+  final List<KnownHostKey> toAdd;
+
+  /// Servers in the file this device already trusts a key for, and for
+  /// which the file has a key it does not trust: another key, or another
+  /// key type. Their keys in the file are not used.
+  final int serversKept;
+}
+
 /// What an [BackupService.apply] actually did, for the confirmation the
 /// import screen shows afterwards.
 class ImportResult {
@@ -332,6 +436,10 @@ class ImportResult {
     required this.credentialsRestored,
     required this.credentialsDropped,
     required this.hostsNeedingCredentials,
+    this.knownHostsAdded = 0,
+    this.knownHostsKept = 0,
+    this.knownHostsNotTrusted = 0,
+    this.knownHostsNotSaved = false,
   });
 
   final ImportMode mode;
@@ -350,4 +458,20 @@ class ImportResult {
 
   /// How many hosts will ask for a password or key on first connect.
   final int hostsNeedingCredentials;
+
+  /// Trusted host keys added from the file.
+  final int knownHostsAdded;
+
+  /// Servers this device already trusted a key for, whose different keys
+  /// in the file were left out.
+  final int knownHostsKept;
+
+  /// Keys for new servers left out because "Trust these keys" was not
+  /// ticked.
+  final int knownHostsNotTrusted;
+
+  /// The keys were added for this session only: the system keyring holding
+  /// the known-hosts integrity key could not be read, so nothing could be
+  /// sealed and written. See [KnownHostsService.keyUnavailable].
+  final bool knownHostsNotSaved;
 }

@@ -12,13 +12,6 @@ enum PassphraseStrength {
   weak,
   fair,
   strong;
-
-  String get label => switch (this) {
-        PassphraseStrength.tooShort => 'Too short',
-        PassphraseStrength.weak => 'Weak',
-        PassphraseStrength.fair => 'Fair',
-        PassphraseStrength.strong => 'Strong',
-      };
 }
 
 /// The passphrase rules for an encrypted backup.
@@ -71,16 +64,4 @@ class BackupPassphrase {
     if (score == 2) return PassphraseStrength.fair;
     return PassphraseStrength.weak;
   }
-
-  /// The line shown under the field. Says what would actually help rather
-  /// than just naming the bucket.
-  static String hintFor(String passphrase) =>
-      switch (strengthOf(passphrase)) {
-        PassphraseStrength.tooShort =>
-          'Use at least $minLength characters.',
-        PassphraseStrength.weak =>
-          'Weak. A few unrelated words are stronger than one long one.',
-        PassphraseStrength.fair => 'Fair. Longer is the easiest improvement.',
-        PassphraseStrength.strong => 'Strong.',
-      };
 }

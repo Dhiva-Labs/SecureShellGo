@@ -1,5 +1,8 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_localizations/flutter_localizations.dart';
+import 'package:intl/intl.dart';
 
+import '../l10n/l10n.dart';
 import '../models/app_settings.dart';
 import '../models/host.dart';
 import '../services/host_grouping.dart';
@@ -18,8 +21,10 @@ class HostListActions {
     required this.onDeleteGroup,
     required this.onConnect,
     required this.onHostMenu,
+    this.onHostContextMenu,
     this.onToggleSelect,
     this.onSelectAllInGroup,
+    this.onRunCommandInGroup,
   });
 
   final void Function(HostSection section) onToggleSection;
@@ -27,6 +32,11 @@ class HostListActions {
   final void Function(String group) onDeleteGroup;
   final void Function(Host host) onConnect;
   final void Function(Host host) onHostMenu;
+
+  /// A right-click on a host, at [at] in global coordinates: a menu at the
+  /// pointer rather than the sheet a long-press opens. Null falls back to
+  /// [onHostMenu].
+  final void Function(Host host, Offset at)? onHostContextMenu;
 
   /// Flips one host's checked state while selection mode is on. Null (the
   /// default) is what every existing caller gets, and is indistinguishable
@@ -38,6 +48,9 @@ class HostListActions {
   /// The group header's own checkbox: select (or clear) every host in that
   /// section at once.
   final void Function(HostSection section)? onSelectAllInGroup;
+
+  /// "Run command on group…" in a named group's menu. Null leaves it out.
+  final void Function(HostSection section)? onRunCommandInGroup;
 }
 
 /// Chooses and builds the saved-hosts list's per-section slivers.
@@ -68,6 +81,9 @@ class HostListPresentation {
     /// default, which renders identically to before this parameter existed.
     bool selectionMode = false,
     Set<String> selectedHostIds = const <String>{},
+    /// The text scale in force, so a grid cell grows with the text in it
+    /// instead of clipping it. 1.0 is the system default.
+    double textScale = 1.0,
   }) {
     final windowClass = WindowSizeClass.forWidth(width);
 
@@ -87,30 +103,22 @@ class HostListPresentation {
       ];
     }
 
-    final expandedLayout = windowClass == WindowSizeClass.expanded;
     return switch (style) {
+      // From medium width up, not only expanded: a tablet held upright is
+      // 600-840dp, and a one-column list there is a strip of rows each
+      // wider than a phone with nothing beside them.
       UiStyle.aurora => [
           for (final section in sections)
-            expandedLayout
-                ? _gridSection(
-                    section: section,
-                    collapsed: isCollapsed(section),
-                    searching: searching,
-                    connectingHostId: connectingHostId,
-                    actions: actions,
-                    selectionMode: selectionMode,
-                    selectedHostIds: selectedHostIds,
-                  )
-                : _listSection(
-                    section: section,
-                    collapsed: isCollapsed(section),
-                    dense: false,
-                    searching: searching,
-                    connectingHostId: connectingHostId,
-                    actions: actions,
-                    selectionMode: selectionMode,
-                    selectedHostIds: selectedHostIds,
-                  ),
+            _gridSection(
+              section: section,
+              collapsed: isCollapsed(section),
+              searching: searching,
+              connectingHostId: connectingHostId,
+              actions: actions,
+              selectionMode: selectionMode,
+              selectedHostIds: selectedHostIds,
+              textScale: textScale,
+            ),
         ],
       UiStyle.aws => [
           for (final section in sections)
@@ -183,16 +191,16 @@ Widget _sectionSliver({
 enum _HeaderVariant { aurora, aws, gcp, azure }
 
 // ---------------------------------------------------------------------------
-// Aurora + mobile: today's grouped header, either a one-column list or (
-// aurora, expanded width only) a 2-column card grid. Ported from
+// Aurora + mobile: today's grouped header, either a one-column list (any
+// style on a phone) or, for aurora from medium width up, a card grid. Ported from
 // `host_list_screen.dart`'s pre-wave-2 `_buildSection`/`_GroupHeader`/
 // `_buildListSliver`/`_buildGridSliver`/`_HostCard` byte-for-byte in
 // substance — only split into reusable pieces and renamed to avoid clashing
 // with the screen's own remaining private types.
 // ---------------------------------------------------------------------------
 
-/// The plain one-column list: aurora's own look at compact/medium width, and
-/// — regardless of [UiStyle] — the only thing a phone or a narrow split-
+/// The plain one-column list: azure's desktop idiom, and — regardless of
+/// [UiStyle] — the only thing a phone or a narrow split-
 /// screen window ever renders. A phone has no room for a table's columns or
 /// a card grid, and the point of wave 2's variants is structural, not
 /// colour, which mobile already gets from [AppTheme.themeFor] without any of
@@ -222,6 +230,9 @@ Widget _listSection({
       onDelete: section.isUngrouped
           ? null
           : () => actions.onDeleteGroup(section.group!),
+      onRunCommand: section.isUngrouped || actions.onRunCommandInGroup == null
+          ? null
+          : () => actions.onRunCommandInGroup!(section),
       selectionMode: selectionMode,
       selectedHostIds: selectedHostIds,
       onSelectAll: actions.onSelectAllInGroup,
@@ -243,13 +254,20 @@ Widget _listSection({
               ? () => actions.onToggleSelect?.call(host)
               : () => actions.onConnect(host),
           onMore: () => actions.onHostMenu(host),
+          onMoreAt: _contextMenu(actions, host),
         );
       },
     ),
   );
 }
 
-/// Aurora's expanded-width grid: unchanged from before wave 2.
+/// Aurora's grid, from medium width up.
+///
+/// Cards are capped at [_auroraCardMaxWidth] wide, so the column count
+/// follows the window — two on a tablet, three at 1366, four or five at
+/// 1920 — rather than two very wide cards at any size. Each cell is as tall
+/// as [_AuroraHostCard]'s content at the current text scale: a fixed 104
+/// left half of every card empty at normal text and would clip it at large.
 Widget _gridSection({
   required HostSection section,
   required bool collapsed,
@@ -258,6 +276,7 @@ Widget _gridSection({
   required HostListActions actions,
   bool selectionMode = false,
   Set<String> selectedHostIds = const <String>{},
+  double textScale = 1.0,
 }) {
   return _sectionSliver(
     header: _StyledGroupHeader(
@@ -271,6 +290,9 @@ Widget _gridSection({
       onDelete: section.isUngrouped
           ? null
           : () => actions.onDeleteGroup(section.group!),
+      onRunCommand: section.isUngrouped || actions.onRunCommandInGroup == null
+          ? null
+          : () => actions.onRunCommandInGroup!(section),
       selectionMode: selectionMode,
       selectedHostIds: selectedHostIds,
       onSelectAll: actions.onSelectAllInGroup,
@@ -279,11 +301,11 @@ Widget _gridSection({
     body: () => SliverPadding(
       padding: const EdgeInsets.all(12),
       sliver: SliverGrid(
-        gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-          crossAxisCount: 2,
+        gridDelegate: SliverGridDelegateWithMaxCrossAxisExtent(
+          maxCrossAxisExtent: _auroraCardMaxWidth,
           mainAxisSpacing: 12,
           crossAxisSpacing: 12,
-          mainAxisExtent: 104,
+          mainAxisExtent: _auroraCardHeight(textScale),
         ),
         delegate: SliverChildBuilderDelegate(
           (context, index) {
@@ -298,6 +320,7 @@ Widget _gridSection({
                   ? () => actions.onToggleSelect?.call(host)
                   : () => actions.onConnect(host),
               onMore: () => actions.onHostMenu(host),
+              onMoreAt: _contextMenu(actions, host),
             );
           },
           childCount: section.hosts.length,
@@ -306,6 +329,23 @@ Widget _gridSection({
     ),
   );
 }
+
+const double _auroraCardMaxWidth = 440;
+
+/// [target] with break opportunities after `@`, `.` and `:`.
+///
+/// `user@host.example.com` is one word to the line breaker, so a narrow row
+/// broke it wherever it ran out of room — `admin@nas.loca` then a lone `l`.
+/// Zero-width spaces after the separators let it wrap as `admin@` and
+/// `nas.local` instead. Display only: nothing copies or parses this string.
+String _breakableTarget(String target) =>
+    target.replaceAllMapped(RegExp(r'[@.:]'), (m) => '${m[0]}\u200B');
+
+/// [_AuroraHostCard]'s height: 12 + 12 of padding and a little slack, plus
+/// its three lines of text (name, target, last connected, with their gaps),
+/// which scale with the text and the padding does not.
+double _auroraCardHeight(double textScale) =>
+    28 + 58 * textScale.clamp(1.0, 3.0);
 
 // ---------------------------------------------------------------------------
 // AWS-inspired: a dense, single-line-per-host table with aligned columns —
@@ -333,6 +373,9 @@ Widget _awsSection({
       onDelete: section.isUngrouped
           ? null
           : () => actions.onDeleteGroup(section.group!),
+      onRunCommand: section.isUngrouped || actions.onRunCommandInGroup == null
+          ? null
+          : () => actions.onRunCommandInGroup!(section),
       selectionMode: selectionMode,
       selectedHostIds: selectedHostIds,
       onSelectAll: actions.onSelectAllInGroup,
@@ -353,6 +396,7 @@ Widget _awsSection({
               ? () => actions.onToggleSelect?.call(host)
               : () => actions.onConnect(host),
           onMore: () => actions.onHostMenu(host),
+          onMoreAt: _contextMenu(actions, host),
         );
       },
     ),
@@ -368,6 +412,7 @@ class _AwsHostRow extends StatelessWidget {
     required this.connecting,
     required this.onTap,
     required this.onMore,
+    this.onMoreAt,
     this.selectionMode = false,
     this.selected = false,
   });
@@ -376,6 +421,10 @@ class _AwsHostRow extends StatelessWidget {
   final bool connecting;
   final VoidCallback onTap;
   final VoidCallback onMore;
+
+  /// Right-click, with where it landed. See
+  /// [HostListActions.onHostContextMenu].
+  final void Function(Offset at)? onMoreAt;
   final bool selectionMode;
   final bool selected;
 
@@ -393,7 +442,9 @@ class _AwsHostRow extends StatelessWidget {
       color: Colors.transparent,
       child: GestureDetector(
         behavior: HitTestBehavior.opaque,
-        onSecondaryTap: connecting || selectionMode ? null : onMore,
+        onSecondaryTapUp: connecting || selectionMode
+            ? null
+            : (details) => _secondary(onMore, onMoreAt, details),
         child: InkWell(
           onTap: connecting ? null : onTap,
           onLongPress: connecting || selectionMode ? null : onMore,
@@ -446,7 +497,7 @@ class _AwsHostRow extends StatelessWidget {
                   child: Text(
                     host.lastConnectedAt == null
                         ? '—'
-                        : _formatLastConnected(host.lastConnectedAt!),
+                        : _formatLastConnected(context, host.lastConnectedAt!),
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: mutedStyle,
@@ -463,7 +514,8 @@ class _AwsHostRow extends StatelessWidget {
                               child: CircularProgressIndicator(strokeWidth: 2),
                             )
                           : IconButton(
-                              tooltip: 'More',
+                              tooltip: MaterialLocalizations.of(context)
+                                  .moreButtonTooltip,
                               padding: EdgeInsets.zero,
                               iconSize: 17,
                               visualDensity: VisualDensity.compact,
@@ -507,6 +559,9 @@ Widget _gcpSection({
       onDelete: section.isUngrouped
           ? null
           : () => actions.onDeleteGroup(section.group!),
+      onRunCommand: section.isUngrouped || actions.onRunCommandInGroup == null
+          ? null
+          : () => actions.onRunCommandInGroup!(section),
       selectionMode: selectionMode,
       selectedHostIds: selectedHostIds,
       onSelectAll: actions.onSelectAllInGroup,
@@ -538,6 +593,7 @@ Widget _gcpSection({
                   ? () => actions.onToggleSelect?.call(host)
                   : () => actions.onConnect(host),
               onMore: () => actions.onHostMenu(host),
+              onMoreAt: _contextMenu(actions, host),
             );
           },
           childCount: section.hosts.length,
@@ -555,6 +611,7 @@ class _GcpHostCard extends StatelessWidget {
     required this.connecting,
     required this.onTap,
     required this.onMore,
+    this.onMoreAt,
     this.selectionMode = false,
     this.selected = false,
   });
@@ -563,6 +620,10 @@ class _GcpHostCard extends StatelessWidget {
   final bool connecting;
   final VoidCallback onTap;
   final VoidCallback onMore;
+
+  /// Right-click, with where it landed. See
+  /// [HostListActions.onHostContextMenu].
+  final void Function(Offset at)? onMoreAt;
   final bool selectionMode;
   final bool selected;
 
@@ -571,7 +632,9 @@ class _GcpHostCard extends StatelessWidget {
     final theme = Theme.of(context);
     return GestureDetector(
       behavior: HitTestBehavior.opaque,
-      onSecondaryTap: connecting || selectionMode ? null : onMore,
+      onSecondaryTapUp: connecting || selectionMode
+          ? null
+          : (details) => _secondary(onMore, onMoreAt, details),
       child: Card(
         margin: EdgeInsets.zero,
         clipBehavior: Clip.antiAlias,
@@ -612,7 +675,10 @@ class _GcpHostCard extends StatelessWidget {
                         Padding(
                           padding: const EdgeInsets.only(top: 6),
                           child: Text(
-                            _formatLastConnected(host.lastConnectedAt!),
+                            _formatLastConnected(
+                              context,
+                              host.lastConnectedAt!,
+                            ),
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                             style: TextStyle(
@@ -637,7 +703,7 @@ class _GcpHostCard extends StatelessWidget {
                   )
                 else
                   IconButton(
-                    tooltip: 'More',
+                    tooltip: MaterialLocalizations.of(context).moreButtonTooltip,
                     icon: const Icon(Icons.more_vert, size: 20),
                     onPressed: onMore,
                     visualDensity: VisualDensity.compact,
@@ -665,6 +731,7 @@ class _StyledGroupHeader extends StatelessWidget {
     required this.onToggle,
     this.onRename,
     this.onDelete,
+    this.onRunCommand,
     this.selectionMode = false,
     this.selectedHostIds = const <String>{},
     this.onSelectAll,
@@ -676,6 +743,7 @@ class _StyledGroupHeader extends StatelessWidget {
   final VoidCallback? onToggle;
   final VoidCallback? onRename;
   final VoidCallback? onDelete;
+  final VoidCallback? onRunCommand;
 
   /// While true, [onSelectAll] is offered as a tristate checkbox in place of
   /// the collapse chevron's usual neighbour — checked when every host in
@@ -689,7 +757,7 @@ class _StyledGroupHeader extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
-    final rawName = section.group ?? 'Ungrouped';
+    final rawName = section.group ?? context.l10n.hostListUngrouped;
     final count = section.hosts.length;
 
     final EdgeInsets padding;
@@ -790,7 +858,11 @@ class _StyledGroupHeader extends StatelessWidget {
             color: scheme.onSurfaceVariant,
           ),
         ),
-        _GroupOverflowMenu(onRename: onRename, onDelete: onDelete),
+        _GroupOverflowMenu(
+          onRename: onRename,
+          onDelete: onDelete,
+          onRunCommand: onRunCommand,
+        ),
       ],
     );
 
@@ -808,38 +880,47 @@ class _StyledGroupHeader extends StatelessWidget {
 /// there is nothing to show, so the count column stays aligned whether or
 /// not a given section has the menu.
 class _GroupOverflowMenu extends StatelessWidget {
-  const _GroupOverflowMenu({this.onRename, this.onDelete});
+  const _GroupOverflowMenu({this.onRename, this.onDelete, this.onRunCommand});
 
   final VoidCallback? onRename;
   final VoidCallback? onDelete;
+  final VoidCallback? onRunCommand;
 
   @override
   Widget build(BuildContext context) {
-    if (onRename == null && onDelete == null) {
+    if (onRename == null && onDelete == null && onRunCommand == null) {
       return const SizedBox(width: 40);
     }
     return PopupMenuButton<_GroupMenuAction>(
-      tooltip: 'Group actions',
+      tooltip: context.l10n.hostListGroupActions,
       icon: const Icon(Icons.more_vert, size: 20),
       onSelected: (action) => switch (action) {
+        _GroupMenuAction.run => onRunCommand?.call(),
         _GroupMenuAction.rename => onRename?.call(),
         _GroupMenuAction.delete => onDelete?.call(),
       },
-      itemBuilder: (context) => const [
-        PopupMenuItem(
-          value: _GroupMenuAction.rename,
-          child: Text('Rename group'),
-        ),
-        PopupMenuItem(
-          value: _GroupMenuAction.delete,
-          child: Text('Delete group'),
-        ),
+      itemBuilder: (context) => [
+        if (onRunCommand != null)
+          PopupMenuItem(
+            value: _GroupMenuAction.run,
+            child: Text(context.l10n.hostListRunCommandOnGroup),
+          ),
+        if (onRename != null)
+          PopupMenuItem(
+            value: _GroupMenuAction.rename,
+            child: Text(context.l10n.hostGroupRename),
+          ),
+        if (onDelete != null)
+          PopupMenuItem(
+            value: _GroupMenuAction.delete,
+            child: Text(context.l10n.hostListDeleteGroup),
+          ),
       ],
     );
   }
 }
 
-enum _GroupMenuAction { rename, delete }
+enum _GroupMenuAction { run, rename, delete }
 
 // ---------------------------------------------------------------------------
 // Row/card widgets shared or nearly-shared across variants.
@@ -856,6 +937,7 @@ class _ListHostRow extends StatelessWidget {
     required this.dense,
     required this.onTap,
     required this.onMore,
+    this.onMoreAt,
     this.selectionMode = false,
     this.selected = false,
   });
@@ -865,19 +947,25 @@ class _ListHostRow extends StatelessWidget {
   final bool dense;
   final VoidCallback onTap;
   final VoidCallback onMore;
+
+  /// Right-click, with where it landed. See
+  /// [HostListActions.onHostContextMenu].
+  final void Function(Offset at)? onMoreAt;
   final bool selectionMode;
   final bool selected;
 
   @override
   Widget build(BuildContext context) {
-    // ListTile has no onSecondaryTap of its own, so wrap it: on desktop
-    // right-click opens the same action sheet long-press opens on touch
-    // devices. Behind the tile so the ink and hover effects still come from
-    // the tile itself, not a bare GestureDetector — same pattern as
-    // file_browser_pane.dart's _EntryTile.
+    // ListTile has no onSecondaryTap of its own, so wrap it: right-click
+    // opens the host's actions as a menu at the pointer, where long-press
+    // opens them as a sheet. Behind the tile so the ink and hover effects
+    // still come from the tile itself, not a bare GestureDetector — same
+    // pattern as file_browser_pane.dart's _EntryTile.
     return GestureDetector(
       behavior: HitTestBehavior.opaque,
-      onSecondaryTap: connecting || selectionMode ? null : onMore,
+      onSecondaryTapUp: connecting || selectionMode
+          ? null
+          : (details) => _secondary(onMore, onMoreAt, details),
       child: ListTile(
         contentPadding: EdgeInsets.symmetric(
           horizontal: 16,
@@ -895,11 +983,16 @@ class _ListHostRow extends StatelessWidget {
           mainAxisSize: MainAxisSize.min,
           children: [
             const SizedBox(height: 2),
-            Text(host.target),
+            Text(
+              _breakableTarget(host.target),
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+            ),
             if (host.lastConnectedAt != null)
               Text(
-                'Last connected '
-                '${_formatLastConnected(host.lastConnectedAt!)}',
+                context.l10n.hostListLastConnected(
+                  _formatLastConnected(context, host.lastConnectedAt!),
+                ),
                 style: TextStyle(
                   fontSize: 11,
                   color: Theme.of(context).colorScheme.onSurfaceVariant,
@@ -916,7 +1009,7 @@ class _ListHostRow extends StatelessWidget {
                 child: CircularProgressIndicator(strokeWidth: 2),
               )
             : IconButton(
-                tooltip: 'More',
+                tooltip: MaterialLocalizations.of(context).moreButtonTooltip,
                 icon: const Icon(Icons.more_vert),
                 onPressed: onMore,
               ),
@@ -935,6 +1028,7 @@ class _AuroraHostCard extends StatelessWidget {
     required this.connecting,
     required this.onTap,
     required this.onMore,
+    this.onMoreAt,
     this.selectionMode = false,
     this.selected = false,
   });
@@ -943,6 +1037,10 @@ class _AuroraHostCard extends StatelessWidget {
   final bool connecting;
   final VoidCallback onTap;
   final VoidCallback onMore;
+
+  /// Right-click, with where it landed. See
+  /// [HostListActions.onHostContextMenu].
+  final void Function(Offset at)? onMoreAt;
   final bool selectionMode;
   final bool selected;
 
@@ -951,7 +1049,9 @@ class _AuroraHostCard extends StatelessWidget {
     final theme = Theme.of(context);
     return GestureDetector(
       behavior: HitTestBehavior.opaque,
-      onSecondaryTap: connecting || selectionMode ? null : onMore,
+      onSecondaryTapUp: connecting || selectionMode
+          ? null
+          : (details) => _secondary(onMore, onMoreAt, details),
       child: Card(
         margin: EdgeInsets.zero,
         clipBehavior: Clip.antiAlias,
@@ -989,7 +1089,10 @@ class _AuroraHostCard extends StatelessWidget {
                         Padding(
                           padding: const EdgeInsets.only(top: 4),
                           child: Text(
-                            _formatLastConnected(host.lastConnectedAt!),
+                            _formatLastConnected(
+                              context,
+                              host.lastConnectedAt!,
+                            ),
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                             style: TextStyle(
@@ -1014,7 +1117,7 @@ class _AuroraHostCard extends StatelessWidget {
                   )
                 else
                   IconButton(
-                    tooltip: 'More',
+                    tooltip: MaterialLocalizations.of(context).moreButtonTooltip,
                     icon: const Icon(Icons.more_vert, size: 20),
                     onPressed: onMore,
                     visualDensity: VisualDensity.compact,
@@ -1071,24 +1174,65 @@ Widget _hostAvatar(
   );
 }
 
-/// `today at 14:32`, `26 Jul at 14:32` this year, `26 Jul 2024` before that —
-/// ported from `host_list_screen.dart`'s pre-wave-2 top-level function of the
-/// same name, used by every row/card variant above.
-String _formatLastConnected(DateTime time) {
+/// `today at 14:32`, `Jul 26 at 14:32` this year, `Jul 26, 2024` before
+/// that, in the current language — ported from `host_list_screen.dart`'s
+/// pre-wave-2 top-level function of the same name, used by every row/card
+/// variant above.
+String _formatLastConnected(BuildContext context, DateTime time) {
+  final l10n = context.l10n;
   final local = time.toLocal();
-  const months = [
-    'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
-    'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
-  ];
   final now = DateTime.now();
   final hh = local.hour.toString().padLeft(2, '0');
   final mm = local.minute.toString().padLeft(2, '0');
 
   if (local.year == now.year && local.month == now.month && local.day == now.day) {
-    return 'today at $hh:$mm';
+    return l10n.hostListLastConnectedToday('$hh:$mm');
   }
-  if (local.year == now.year) {
-    return '${local.day} ${months[local.month - 1]} at $hh:$mm';
+  final date = _formatDate(context, local, withYear: local.year != now.year);
+  if (local.year == now.year) return l10n.hostListLastConnectedOn(date, '$hh:$mm');
+  return date;
+}
+
+/// The month and day (and [withYear], the year) the way the current
+/// language writes them: `Jul 26`, `26. Juli`, `7月26日`.
+///
+/// `intl`'s calendar data is loaded, for every language at once, by
+/// [GlobalMaterialLocalizations] — the app installs it with its own
+/// translations. Without it, as in a widget test's bare MaterialApp, `intl`
+/// has none, not even for English, and throws; such a screen is in English
+/// anyway, so this writes the date the English way by hand.
+String _formatDate(
+  BuildContext context,
+  DateTime date, {
+  required bool withYear,
+}) {
+  if (MaterialLocalizations.of(context) is GlobalMaterialLocalizations) {
+    final locale = context.l10n.localeName;
+    return (withYear ? DateFormat.yMMMd(locale) : DateFormat.MMMd(locale))
+        .format(date);
   }
-  return '${local.day} ${months[local.month - 1]} ${local.year}';
+  const months = [
+    'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+    'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
+  ];
+  final monthDay = '${months[date.month - 1]} ${date.day}';
+  return withYear ? '$monthDay, ${date.year}' : monthDay;
+}
+
+/// The right-click handler for one host, when the screen has a menu for it.
+void Function(Offset at)? _contextMenu(HostListActions actions, Host host) {
+  final menu = actions.onHostContextMenu;
+  return menu == null ? null : (at) => menu(host, at);
+}
+
+void _secondary(
+  VoidCallback onMore,
+  void Function(Offset at)? onMoreAt,
+  TapUpDetails details,
+) {
+  if (onMoreAt != null) {
+    onMoreAt(details.globalPosition);
+  } else {
+    onMore();
+  }
 }

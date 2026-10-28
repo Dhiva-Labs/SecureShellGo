@@ -7,9 +7,9 @@ import 'package:dartssh2/dartssh2.dart';
 
 import '../models/host.dart';
 import '../models/known_host.dart';
-import '../models/remote_entry.dart';
 import 'remote_copy.dart';
 import 'remote_exec.dart';
+import 'server_side_job.dart';
 import 'remote_path.dart';
 import 'session_controller.dart';
 import 'sftp_service.dart';
@@ -141,7 +141,9 @@ class SSHDirectCopyUnavailable implements Exception {
 ///
 /// **What it costs.** While the exec runs, A holds a forwarded agent that
 /// will sign with the destination's key. Anyone with root on A can use it
-/// for that window, which is why the route is opt-in in the UI.
+/// for that window. The Direct option is ticked by default where it can run,
+/// since it keeps the bytes off this device, and can be unticked for any
+/// transfer where that window is not acceptable.
 ///
 /// **Verify, then move.** After exec exits 0 we `stat` the destination
 /// through our own SFTP session to B (which is separately authenticated on
@@ -160,6 +162,7 @@ Future<RemoteCopyOutcome> copyRemoteFileDirect({
   bool deleteSourceAfterVerify = false,
   TransferProgress? onProgress,
   CancelCheck? isCancelled,
+  DetachedRun? detached,
 }) async {
   if (destHost.authMethod == SshAuthMethod.password) {
     throw const SSHDirectCopyUnavailable(
@@ -169,35 +172,20 @@ Future<RemoteCopyOutcome> copyRemoteFileDirect({
     );
   }
 
-  final CredentialSSHAgent agent;
-  try {
-    agent = CredentialSSHAgent.forHost(
-      host: destHost,
-      credentials: destCredentials,
-    );
-  } on SSHAgentUnavailable catch (e) {
-    throw SSHDirectCopyUnavailable(
-      reason: switch (e.reason) {
-        SSHAgentUnavailableReason.passphraseNeeded =>
-          DirectCopyUnavailableReason.passphraseNeeded,
-        SSHAgentUnavailableReason.missingKey =>
-          DirectCopyUnavailableReason.missingKey,
-        SSHAgentUnavailableReason.unusableKey =>
-          DirectCopyUnavailableReason.missingKey,
-      },
-      message: e.message,
-    );
-  }
+  // Not needed — and not asked for, so an encrypted key does not prompt —
+  // when picking up a job an earlier run of the app already started.
+  final resuming = detached?.resuming ?? false;
+  final agent = resuming ? null : _agentFor(destHost, destCredentials);
 
   final directory = RemotePath.parent(destinationPath);
   final finalName = RemotePath.basename(destinationPath);
-  final tempName = _defaultTemporaryName(finalName);
+  final tempName = _defaultTemporaryName(finalName, stamp: detached?.stamp);
   final tempRemotePath = RemotePath.join(directory, tempName);
 
   if (isCancelled?.call() ?? false) throw const TransferCancelled();
 
-  _ForwardedExec? exec;
   var published = false;
+  var leftRunning = false;
 
   try {
     final batch = _sftpBatch(
@@ -207,37 +195,20 @@ Future<RemoteCopyOutcome> copyRemoteFileDirect({
       overwrite: overwrite,
     );
 
-    final pinned = await _pinDestinationKey(source, destHost, destinationHostKey);
+    final pinned = resuming
+        ? null
+        : await _pinDestinationKey(source, destHost, destinationHostKey);
     if (isCancelled?.call() ?? false) throw const TransferCancelled();
-    final command = _sourceSftpCommand(destHost, pinned);
 
-    exec = await _openForwardedExec(source, agent, command);
-    final session = exec.session;
-
-    // Feed the batch script. Close stdin so `sftp -b -` sees EOF.
-    session.stdin.add(Uint8List.fromList(utf8.encode(batch)));
-    unawaited(session.stdin.close());
-
-    final stderrBytes = <int>[];
-    final stderrDone =
-        session.stderr.listen(stderrBytes.addAll).asFuture<void>();
-    // stdout carries only the sftp banner (silenced by `-q`) — drain to
-    // avoid backing up.
-    unawaited(session.stdout.drain<void>());
-
-    // Poll for cancellation while the exec runs. sftp on A owns the byte
-    // pipe; the only lever we have is to close the channel, which is what
-    // `session.close()` does.
-    final exit = await _awaitExit(
-      session,
+    final (:exit, stderr: stderrText) = await _runSourceSftp(
+      source: source,
+      agent: agent,
+      destHost: destHost,
+      pinned: pinned,
+      batch: batch,
+      detached: detached,
       isCancelled: isCancelled,
     );
-    await stderrDone;
-    final stderrText = utf8.decode(stderrBytes, allowMalformed: true).trim();
-    // The exec is over; everything below runs on our own trusted SFTP to A
-    // and B. Hang up the transfer's connection now rather than holding a
-    // second login on the source open across the verification.
-    exec.close();
 
     if (isCancelled?.call() ?? false) {
       await _cleanupTemporary(destinationFs, tempRemotePath);
@@ -299,14 +270,20 @@ Future<RemoteCopyOutcome> copyRemoteFileDirect({
       destinationPath: destinationPath,
       sourceDeleted: false,
     );
+  } on ServerJobLeftRunning {
+    leftRunning = true;
+    rethrow;
   } finally {
-    // Idempotent: the happy path already hung up as soon as the exec ended.
-    exec?.close();
+    // A job left running is still writing the temp; it and its job folder
+    // are the next run's to deal with.
+    if (detached != null && !leftRunning) {
+      unawaited(_cleanupJob(source, detached.jobId));
+    }
     // Best-effort cleanup: any exit that did not verify a landed file
     // should leave no temp behind on the destination. `_cleanupTemporary`
     // above handles the known-failure cases; this catches surprise throws
     // between the exec and the rename.
-    if (!published) {
+    if (!published && !leftRunning) {
       // The sftp batch removes the temp with `-rm` on the target path, but
       // only reaches that line when the put succeeded. Anything earlier —
       // a network drop mid-put, an exec killed by cancel — leaves the temp.
@@ -351,6 +328,288 @@ Future<int?> _awaitExit(
 
 const Object _poll = Object();
 
+/// Runs a direct copy's source-side `sftp` as a background job on the
+/// source server, so it finishes whether or not this app is still there —
+/// see `server_side_job.dart`. A copy given none runs it attached to an
+/// exec channel, as before.
+class DetachedRun {
+  const DetachedRun({
+    required this.jobId,
+    required this.stamp,
+    this.resuming = false,
+    this.onLaunched,
+    this.isAbandoned,
+    this.pollInterval = const Duration(seconds: 2),
+  });
+
+  final String jobId;
+
+  /// Names the destination temp file or staging folder. Persisted with the
+  /// job, so a resumed run finds what the job wrote.
+  final int stamp;
+
+  /// The job was started by an earlier run of the app: follow it to the end
+  /// and finish the copy, but do not start it again.
+  final bool resuming;
+
+  /// Called as soon as the job exists on the source — the point from which
+  /// it outlives this app — so the caller can remember it.
+  final Future<void> Function()? onLaunched;
+
+  /// Whether a cancel came from the session going away (its tab closed, its
+  /// connection dropped) rather than from the user. The job is then left to
+  /// finish on its own instead of being stopped.
+  final bool Function()? isAbandoned;
+
+  final Duration pollInterval;
+}
+
+/// This app stopped following a server-side copy — its session closed or
+/// dropped — while the copy carries on on the source. Not a failure: the
+/// job is picked up again the next time the source is opened.
+class ServerJobLeftRunning implements Exception {
+  const ServerJobLeftRunning();
+
+  @override
+  String toString() =>
+      'Still running on the source server; it will finish there.';
+}
+
+CredentialSSHAgent _agentFor(Host destHost, SshCredentials credentials) {
+  try {
+    return CredentialSSHAgent.forHost(host: destHost, credentials: credentials);
+  } on SSHAgentUnavailable catch (e) {
+    throw SSHDirectCopyUnavailable(
+      reason: switch (e.reason) {
+        SSHAgentUnavailableReason.passphraseNeeded =>
+          DirectCopyUnavailableReason.passphraseNeeded,
+        SSHAgentUnavailableReason.missingKey =>
+          DirectCopyUnavailableReason.missingKey,
+        SSHAgentUnavailableReason.unusableKey =>
+          DirectCopyUnavailableReason.missingKey,
+      },
+      message: e.message,
+    );
+  }
+}
+
+/// Runs [batch] through `sftp` on the source, attached or as a job, and
+/// returns its exit code and what it said. [agent] and [pinned] are null
+/// only when resuming a job, which needs neither.
+Future<({int? exit, String stderr})> _runSourceSftp({
+  required SessionController source,
+  required CredentialSSHAgent? agent,
+  required Host destHost,
+  required List<String>? pinned,
+  required String batch,
+  required DetachedRun? detached,
+  CancelCheck? isCancelled,
+}) {
+  if (detached != null) {
+    return _runDetached(
+      source: source,
+      agent: agent,
+      destHost: destHost,
+      pinned: pinned,
+      batch: batch,
+      run: detached,
+      isCancelled: isCancelled,
+    );
+  }
+  return _runAttached(
+    source: source,
+    agent: agent!,
+    command: _sourceSftpCommand(destHost, pinned!),
+    batch: batch,
+    isCancelled: isCancelled,
+  );
+}
+
+Future<({int? exit, String stderr})> _runAttached({
+  required SessionController source,
+  required CredentialSSHAgent agent,
+  required String command,
+  required String batch,
+  CancelCheck? isCancelled,
+}) async {
+  final exec = await _openForwardedExec(source, agent, command);
+  try {
+    final session = exec.session;
+    // Feed the batch script. Close stdin so `sftp -b -` sees EOF.
+    session.stdin.add(Uint8List.fromList(utf8.encode(batch)));
+    unawaited(session.stdin.close());
+
+    final stderrBytes = <int>[];
+    final stderrDone =
+        session.stderr.listen(stderrBytes.addAll).asFuture<void>();
+    unawaited(session.stdout.drain<void>());
+
+    // Poll for cancellation while the exec runs. sftp on A owns the byte
+    // pipe; the only lever we have is to close the channel, which is what
+    // `session.close()` does.
+    final exit = await _awaitExit(session, isCancelled: isCancelled);
+    await stderrDone;
+    return (
+      exit: exit,
+      stderr: utf8.decode(stderrBytes, allowMalformed: true).trim(),
+    );
+  } finally {
+    // Everything after the exec runs on our own trusted SFTP to A and B; no
+    // reason to hold a second login on the source open across it.
+    exec.close();
+  }
+}
+
+/// Starts the job (unless resuming), then follows it to its end over the
+/// source's ordinary session.
+///
+/// The agent-forwarded connection is held only until `sftp` has signed in
+/// to the destination — the launch script says so, or this app's agent has
+/// answered the sign request — so the source can use the destination key
+/// for seconds rather than for the length of the transfer.
+Future<({int? exit, String stderr})> _runDetached({
+  required SessionController source,
+  required CredentialSSHAgent? agent,
+  required Host destHost,
+  required List<String>? pinned,
+  required String batch,
+  required DetachedRun run,
+  CancelCheck? isCancelled,
+}) async {
+  if (!run.resuming) {
+    final signed = Completer<void>();
+    final watcher = _SignWatchingAgent(agent!, () {
+      if (!signed.isCompleted) signed.complete();
+    });
+    final exec = await _openForwardedExec(
+      source,
+      watcher,
+      ServerSideJob.launchCommand(
+        jobId: run.jobId,
+        destHost: destHost,
+        pinnedKnownHosts: pinned!,
+      ),
+    );
+    try {
+      final session = exec.session;
+      session.stdin.add(Uint8List.fromList(utf8.encode(batch)));
+      unawaited(session.stdin.close());
+      unawaited(session.stdout.drain<void>());
+      unawaited(session.stderr.drain<void>());
+      // From here the job exists on the source and outlives this app.
+      await run.onLaunched?.call();
+
+      await Future.any<void>([
+        session.done,
+        signed.future.then((_) => Future<void>.delayed(_signInGrace)),
+      ]).timeout(const Duration(seconds: 90), onTimeout: () {});
+      final launchExit = session.exitCode;
+      if (launchExit != null && launchExit != 0) {
+        throw SSHDirectCopyUnavailable(
+          reason: DirectCopyUnavailableReason.execFailed,
+          message: 'The source server could not start the transfer '
+              '(exit $launchExit).',
+        );
+      }
+    } finally {
+      exec.close();
+    }
+  }
+
+  while (true) {
+    if (isCancelled?.call() ?? false) {
+      if (run.isAbandoned?.call() ?? false) throw const ServerJobLeftRunning();
+      try {
+        await RemoteExec.run(
+          source.connection,
+          ServerSideJob.cancelCommand(run.jobId),
+        );
+      } catch (_) {
+        // The source is unreachable; nothing more this app can do to stop it.
+      }
+      throw const TransferCancelled();
+    }
+
+    final ServerJobStatus status;
+    try {
+      final result = await RemoteExec.run(
+        source.connection,
+        ServerSideJob.statusCommand(run.jobId),
+      );
+      status = ServerSideJob.parseStatus(result.stdout);
+    } catch (_) {
+      // This app's session to the source is gone or struggling. The job is
+      // not, and it is picked up again the next time the source is opened.
+      if (source.connection.isClosed) throw const ServerJobLeftRunning();
+      await _waitUnlessCancelled(run.pollInterval, isCancelled);
+      continue;
+    }
+
+    switch (status.state) {
+      case ServerJobState.finished:
+        return (exit: status.exitCode, stderr: status.log);
+      case ServerJobState.gone:
+        return (
+          exit: -1,
+          stderr: 'The transfer stopped on the source server before it '
+              'finished — was the server restarted? ${status.log}'.trim(),
+        );
+      case ServerJobState.running:
+        await _waitUnlessCancelled(run.pollInterval, isCancelled);
+    }
+  }
+}
+
+/// How long after the agent signs before the forwarded connection is let
+/// go: the destination's answer to the signature is one round trip away.
+const Duration _signInGrace = Duration(seconds: 2);
+
+Future<void> _waitUnlessCancelled(
+  Duration total,
+  CancelCheck? isCancelled,
+) async {
+  const step = Duration(milliseconds: 200);
+  var waited = Duration.zero;
+  while (waited < total) {
+    if (isCancelled?.call() ?? false) return;
+    await Future<void>.delayed(step);
+    waited += step;
+  }
+}
+
+/// Removes a finished job's folder on the source. Best effort: a leftover
+/// is a few bytes under ~/.cache.
+Future<void> _cleanupJob(SessionController source, String jobId) async {
+  try {
+    if (source.connection.isClosed) return;
+    await RemoteExec.run(
+      source.connection,
+      ServerSideJob.cleanupCommand(jobId),
+    );
+  } catch (_) {
+    // See above.
+  }
+}
+
+/// Passes every request to [_inner] and reports when it has answered a sign
+/// request — the moment `sftp` on the source has what it needs to sign in.
+class _SignWatchingAgent implements SSHAgentHandler {
+  _SignWatchingAgent(this._inner, this._onSigned);
+
+  final SSHAgentHandler _inner;
+  final void Function() _onSigned;
+
+  /// SSH_AGENTC_SIGN_REQUEST; the request starts with its message type.
+  static const int _signRequest = 13;
+
+  @override
+  Future<Uint8List> handleRequest(Uint8List request) async {
+    final reply = await _inner.handleRequest(request);
+    if (request.isNotEmpty && request.first == _signRequest) _onSigned();
+    return reply;
+  }
+}
+
 /// One transfer's exec on the source, plus the connection it owns.
 ///
 /// The connection exists for this exec and nothing else can reach it, so
@@ -386,7 +645,7 @@ class _ForwardedExec {
 /// on the source server.
 Future<_ForwardedExec> _openForwardedExec(
   SessionController source,
-  CredentialSSHAgent agent,
+  SSHAgentHandler agent,
   String command,
 ) async {
   SessionTransport? transport;
@@ -663,8 +922,8 @@ String _sourceSftpCommand(Host destHost, List<String> pinnedKnownHosts) {
 }
 
 /// `notes.md` → `.notes.md.ssg-part-1738000000000`, matching relay.
-String _defaultTemporaryName(String finalName) {
-  final stamp = DateTime.now().millisecondsSinceEpoch;
+String _defaultTemporaryName(String finalName, {int? stamp}) {
+  stamp ??= DateTime.now().millisecondsSinceEpoch;
   final head = finalName.length > 200 ? finalName.substring(0, 200) : finalName;
   return '.$head.ssg-part-$stamp';
 }
@@ -690,26 +949,31 @@ String _sftpQuote(String s) => '"${s.replaceAll('"', r'\"')}"';
 /// is B, over an SSH connection A opened using the forwarded agent.
 ///
 /// **Destination naming.** `sftp put -r local remote` in OpenSSH creates the
-/// remote directory at that exact path (it does not append `basename(local)`).
-/// So the caller passes the final desired path — including any
-/// [RemotePath.deduplicate] renaming for keep-both — and we ensure the parent
-/// exists via our trusted SFTP to B (so a nested destination like
-/// `/srv/team/uploads/Documents` does not fail on a missing `/srv/team`),
-/// clear an overwrite target via [removeRemoteDirectoryTree], then let the
-/// source-side `sftp` create it fresh.
+/// remote directory at that exact path (it does not append `basename(local)`)
+/// as long as nothing is there yet. So the caller passes the final desired
+/// path — including any [RemotePath.deduplicate] renaming for keep-both — and
+/// we ensure the parent exists via our trusted SFTP to B (so a nested
+/// destination like `/srv/team/uploads/Documents` does not fail on a missing
+/// `/srv/team`), then let the source-side `sftp` create it fresh.
+///
+/// **Replace.** An overwrite does not clear the target first. `put -r` writes
+/// into a hidden sibling that does not exist yet (see
+/// [StagedDirectoryReplace]), the verification below runs against that, and
+/// only then is it swapped in for the folder it replaces. A cancel, a failed
+/// exec or a mismatched count removes the staging folder and leaves the
+/// original exactly as it was.
 ///
 /// **Verification.** After the exec exits cleanly we walk the destination
-/// tree over our own SFTP session to B (through [_directoryFileCount] and
-/// [_directoryTotalSize]) and confirm both the file count and the summed
-/// bytes match what the source reports for its side. That is the safety chain
-/// [copyRemoteDirectory] runs per-file, applied to the whole batch here —
-/// the direct path has no per-file receipts to check.
+/// tree over our own SFTP session to B (through [measureRemoteTree]) and
+/// confirm both the file count and the summed bytes match what the source
+/// reports for its side. That is the safety chain [copyRemoteDirectory] runs
+/// per-file, applied to the whole batch here — the direct path has no
+/// per-file receipts to check.
 ///
 /// **Move semantics.** [deleteSourceAfterVerify] deletes the source tree only
-/// after both counts on B match A. Any failure leaves the source untouched
-/// and, when possible, the destination alone — a botched replace does not
-/// take the pre-existing tree with it, since the tree was already gone before
-/// `put -r` began.
+/// after both counts on B match A, and for a replace only after the swap. Any
+/// failure before then leaves the source untouched, and the destination as
+/// it was.
 Future<RemoteCopyOutcome> copyRemoteDirectoryDirect({
   required SessionController source,
   required Host destHost,
@@ -722,6 +986,7 @@ Future<RemoteCopyOutcome> copyRemoteDirectoryDirect({
   bool deleteSourceAfterVerify = false,
   TransferProgress? onProgress,
   CancelCheck? isCancelled,
+  DetachedRun? detached,
 }) async {
   if (destHost.authMethod == SshAuthMethod.password) {
     throw const SSHDirectCopyUnavailable(
@@ -731,40 +996,32 @@ Future<RemoteCopyOutcome> copyRemoteDirectoryDirect({
     );
   }
 
-  final CredentialSSHAgent agent;
-  try {
-    agent = CredentialSSHAgent.forHost(
-      host: destHost,
-      credentials: destCredentials,
-    );
-  } on SSHAgentUnavailable catch (e) {
-    throw SSHDirectCopyUnavailable(
-      reason: switch (e.reason) {
-        SSHAgentUnavailableReason.passphraseNeeded =>
-          DirectCopyUnavailableReason.passphraseNeeded,
-        SSHAgentUnavailableReason.missingKey =>
-          DirectCopyUnavailableReason.missingKey,
-        SSHAgentUnavailableReason.unusableKey =>
-          DirectCopyUnavailableReason.missingKey,
-      },
-      message: e.message,
-    );
-  }
+  final resuming = detached?.resuming ?? false;
+  final agent = resuming ? null : _agentFor(destHost, destCredentials);
 
   if (isCancelled?.call() ?? false) throw const TransferCancelled();
 
-  // Before anything below touches the destination: an overwrite clears the
-  // target tree, and a host-key refusal must not arrive after that.
-  final pinned = await _pinDestinationKey(source, destHost, destinationHostKey);
+  // Before anything below touches the destination: a host-key refusal must
+  // arrive before any write to B, the parent mkdir included.
+  final pinned = resuming
+      ? null
+      : await _pinDestinationKey(source, destHost, destinationHostKey);
   if (isCancelled?.call() ?? false) throw const TransferCancelled();
 
-  // Prepare the destination shape via our own trusted SFTP to B:
-  // - clear an overwrite target so `put -r` gets a fresh mkdir
-  // - ensure the destination's parent exists so put -r does not fail
-  //   on a missing intermediate directory
-  if (overwrite) {
-    await removeRemoteDirectoryTree(destinationFs, destinationDirectory);
-  }
+  final replace = overwrite
+      ? StagedDirectoryReplace(
+          destinationFs,
+          destinationDirectory,
+          stamp: detached?.stamp,
+        )
+      : null;
+  // Where `put -r` writes: beside the folder a replace is for, or straight
+  // into a free name. Either way nothing is there yet, which is what makes
+  // `put -r` create it rather than nest the source inside it.
+  final root = replace?.staging ?? destinationDirectory;
+
+  // Ensure the destination's parent exists via our own trusted SFTP to B,
+  // so put -r does not fail on a missing intermediate directory.
   final destParent = RemotePath.parent(destinationDirectory);
   try {
     await destinationFs.mkdir(destParent);
@@ -776,8 +1033,10 @@ Future<RemoteCopyOutcome> copyRemoteDirectoryDirect({
   final sourceParent = RemotePath.parent(sourceDirectory);
   final sourceName = RemotePath.basename(sourceDirectory);
 
-  _ForwardedExec? exec;
-  var published = false;
+  // Until the tree is verified — and, for a replace, until the swap takes
+  // charge of it — every exit takes what `put -r` wrote with it.
+  var discardRoot = true;
+  var leftRunning = false;
 
   try {
     // The sftp batch: cd to the source parent so `put -r <name> <dest>`
@@ -787,92 +1046,86 @@ Future<RemoteCopyOutcome> copyRemoteDirectoryDirect({
     final batch = _sftpDirectoryBatch(
       localSourceParent: sourceParent,
       localSourceName: sourceName,
-      remoteDestination: destinationDirectory,
+      remoteDestination: root,
     );
 
-    final command = _sourceSftpCommand(destHost, pinned);
+    final (:exit, stderr: stderrText) = await _runSourceSftp(
+      source: source,
+      agent: agent,
+      destHost: destHost,
+      pinned: pinned,
+      batch: batch,
+      detached: detached,
+      isCancelled: isCancelled,
+    );
 
-    exec = await _openForwardedExec(source, agent, command);
-    final session = exec.session;
-
-    session.stdin.add(Uint8List.fromList(utf8.encode(batch)));
-    unawaited(session.stdin.close());
-
-    final stderrBytes = <int>[];
-    final stderrDone =
-        session.stderr.listen(stderrBytes.addAll).asFuture<void>();
-    unawaited(session.stdout.drain<void>());
-
-    final exit = await _awaitExit(session, isCancelled: isCancelled);
-    await stderrDone;
-    final stderrText = utf8.decode(stderrBytes, allowMalformed: true).trim();
-    // Nothing below needs the source-side `sftp` any more; the walk that
-    // verifies the tree runs over our own trusted SFTP sessions.
-    exec.close();
-
-    if (isCancelled?.call() ?? false) {
-      // A cancel mid-put leaves whatever partial tree A had time to write.
-      // Blow it away so a subsequent retry lands in a fresh directory.
-      await removeRemoteDirectoryTree(destinationFs, destinationDirectory);
-      throw const TransferCancelled();
-    }
-
-    if (exit != 0) {
-      await removeRemoteDirectoryTree(destinationFs, destinationDirectory);
-      throw _classifyFailure(exit ?? -1, stderrText);
-    }
+    // A cancel or a failure mid-put leaves whatever partial tree A had time
+    // to write; the `finally` below removes it, so a retry lands fresh.
+    if (isCancelled?.call() ?? false) throw const TransferCancelled();
+    if (exit != 0) throw _classifyFailure(exit ?? -1, stderrText);
 
     // Whole-batch verification: file counts and byte totals on both sides
     // must line up. There is no per-file receipt on the direct path; this
     // is the safety chain of copyRemoteFile, applied at the batch level.
     final sourceSftp = await source.sftp();
-    final destCount = await _directoryFileCount(destinationFs, destinationDirectory);
-    final sourceCount = await _directoryFileCount(sourceSftp, sourceDirectory);
-    if (destCount != sourceCount) {
+    final landed = await measureRemoteTree(destinationFs, root);
+    final original = await measureRemoteTree(sourceSftp, sourceDirectory);
+    if (landed.files != original.files) {
       throw RemoteCopyFailure(
         'The copy on the destination server has a different number of files '
         'than the source. The original was not changed.',
-        details: 'source has $sourceCount files, destination has $destCount',
+        details: 'source has ${original.files} files, destination has '
+            '${landed.files}',
       );
     }
-    final destBytes =
-        await _directoryTotalSize(destinationFs, destinationDirectory);
-    final sourceBytes = await _directoryTotalSize(sourceSftp, sourceDirectory);
-    if (destBytes != sourceBytes) {
+    if (landed.bytes != original.bytes) {
       throw RemoteCopyFailure(
         'The copy on the destination server is a different size than the '
         'source. The original was not changed.',
-        details:
-            'source is $sourceBytes bytes, destination is $destBytes bytes',
+        details: 'source is ${original.bytes} bytes, destination is '
+            '${landed.bytes} bytes',
       );
     }
 
-    published = true;
-    onProgress?.call(destBytes);
+    if (replace != null) {
+      // The last point a cancel can stop the replace.
+      if (isCancelled?.call() ?? false) throw const TransferCancelled();
+    }
+    // Verified. From here the tree is the user's — or, for a replace, the
+    // swap's to deal with, failure included.
+    discardRoot = false;
+    await replace?.swapIn();
+    onProgress?.call(landed.bytes);
 
     if (deleteSourceAfterVerify) {
       // Both counts already checked; nothing left to compare. Blow the
       // source tree away via our own trusted SFTP to A.
       await removeRemoteDirectoryTree(sourceSftp, sourceDirectory);
       return RemoteCopyOutcome(
-        bytesCopied: destBytes,
+        bytesCopied: landed.bytes,
         destinationPath: destinationDirectory,
         sourceDeleted: true,
       );
     }
 
     return RemoteCopyOutcome(
-      bytesCopied: destBytes,
+      bytesCopied: landed.bytes,
       destinationPath: destinationDirectory,
       sourceDeleted: false,
     );
+  } on ServerJobLeftRunning {
+    leftRunning = true;
+    rethrow;
   } finally {
-    // Idempotent: the happy path already hung up as soon as the exec ended.
-    exec?.close();
-    if (!published) {
-      // The verify block already cleaned up on the failure paths it can
-      // classify; this catches surprise throws between exec and verify.
-      unawaited(removeRemoteDirectoryTree(destinationFs, destinationDirectory));
+    if (detached != null && !leftRunning) {
+      unawaited(_cleanupJob(source, detached.jobId));
+    }
+    // Awaited, so a transfer reported as failed or cancelled has already
+    // taken its partial tree with it. For a replace that tree is the
+    // staging folder; the folder it was to replace was never touched. A job
+    // left running is still writing it.
+    if (discardRoot && !leftRunning) {
+      await removeRemoteDirectoryTree(destinationFs, root);
     }
   }
 }
@@ -892,54 +1145,4 @@ String _sftpDirectoryBatch({
         '${_sftpQuote(remoteDestination)}')
     ..writeln('bye');
   return buf.toString();
-}
-
-/// Walks [root] on [fs] and returns the number of plain files under it.
-///
-/// Symlinks and anything non-file are not counted, matching what
-/// [copyRemoteDirectory] moves — so a verify against a source tree containing
-/// symlinks does not flag them as missing on B.
-Future<int> _directoryFileCount(RemoteFileSystem fs, String root) async {
-  var count = 0;
-  final pending = <String>[root];
-  for (var index = 0; index < pending.length; index++) {
-    final List<RemoteEntry> entries;
-    try {
-      entries = await fs.list(pending[index]);
-    } catch (_) {
-      continue;
-    }
-    for (final entry in entries) {
-      if (entry.kind == RemoteEntryKind.file) {
-        count++;
-      } else if (entry.kind == RemoteEntryKind.directory) {
-        pending.add(RemotePath.join(pending[index], entry.name));
-      }
-    }
-  }
-  return count;
-}
-
-/// Walks [root] on [fs] and returns the sum of file sizes under it. Files
-/// whose size the server does not report contribute zero, so this is a
-/// comparison against the source computed the same way.
-Future<int> _directoryTotalSize(RemoteFileSystem fs, String root) async {
-  var total = 0;
-  final pending = <String>[root];
-  for (var index = 0; index < pending.length; index++) {
-    final List<RemoteEntry> entries;
-    try {
-      entries = await fs.list(pending[index]);
-    } catch (_) {
-      continue;
-    }
-    for (final entry in entries) {
-      if (entry.kind == RemoteEntryKind.file) {
-        total += entry.size ?? 0;
-      } else if (entry.kind == RemoteEntryKind.directory) {
-        pending.add(RemotePath.join(pending[index], entry.name));
-      }
-    }
-  }
-  return total;
 }

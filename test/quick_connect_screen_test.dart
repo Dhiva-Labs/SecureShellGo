@@ -13,6 +13,8 @@ import 'package:secure_shell_go/theme.dart';
 import 'package:secure_shell_go/services/session_manager.dart';
 import 'package:secure_shell_go/services/ssh_service.dart';
 
+import 'support/settle.dart';
+
 /// Hands back exactly one file, regardless of what is asked for — this
 /// screen's picker only ever calls [pickTextFile], so everything else either
 /// throws or answers empty, the same shape `fleet_push_screen_test.dart`
@@ -207,19 +209,6 @@ void main() {
   });
 
 
-  /// Real file I/O does not complete under the widget tester's fake clock, so
-  /// every tap that saves — and every assertion that reads the stores back —
-  /// has to run on the real event loop. Same reasoning as
-  /// `host_edit_screen_test.dart`, which hit this first.
-  Future<void> settleIo(WidgetTester tester, {int rounds = 40}) async {
-    for (var i = 0; i < rounds; i++) {
-      await tester.runAsync(
-        () => Future<void>.delayed(const Duration(milliseconds: 20)),
-      );
-      await tester.pump();
-    }
-  }
-
   Future<void> tapAndRun(
     WidgetTester tester,
     String label, {
@@ -228,7 +217,7 @@ void main() {
     await tester.runAsync(() => tester.tap(find.text(label)));
     await tester.pump();
     await settleIo(tester);
-    if (checks != null) await tester.runAsync(checks);
+    if (checks != null) await checkEventually(tester, checks);
     await tester.pump();
   }
 
@@ -326,6 +315,10 @@ void main() {
         expect(loaded?.password, 'hunter2');
       });
 
+      await settleUntil(
+        tester,
+        () => find.text('Saved to your host list.').evaluate().isNotEmpty,
+      );
       expect(find.text('Saved to your host list.'), findsOneWidget);
     });
 
@@ -339,6 +332,13 @@ void main() {
         expect(await hosts.all(), hasLength(1));
       });
 
+      await settleUntil(
+        tester,
+        () => find
+            .textContaining('Host saved, but its password was not')
+            .evaluate()
+            .isNotEmpty,
+      );
       // Reported calmly, not as a failure: no SnackBar, just an inline line.
       expect(find.textContaining('Host saved, but its password was not'),
           findsOneWidget);

@@ -27,6 +27,8 @@ void main() {
       expect(settings.themeBrightness, ThemeBrightness.dark);
       expect(settings.keepScreenAwake, isFalse);
       expect(settings.showHiddenFilesByDefault, isFalse);
+      expect(settings.diagnosticsLog, isFalse,
+          reason: 'the diagnostics log is opt-in');
     });
 
     test('clampFontSize keeps values inside min/max', () {
@@ -169,6 +171,89 @@ void main() {
     });
   });
 
+  group('the 1.5 settings', () {
+    test('a settings.json from before 1.5 reads as what the app did then',
+        () {
+      final restored = AppSettings.fromJson(const {
+        'terminalFontSize': 16,
+        'colorScheme': 'nord',
+      });
+      expect(restored.scrollbackLines, 10000);
+      expect(restored.cursorStyle, TerminalCursorStyle.block);
+      expect(restored.cursorBlink, isFalse);
+      expect(restored.bell, TerminalBell.vibrate);
+      expect(restored.terminalFont, TerminalFont.system);
+      expect(restored.keyBarMode, KeyBarMode.auto);
+      expect(restored.diagnosticsLog, isFalse,
+          reason: 'the diagnostics log is opt-in');
+      expect(restored.localeOverride, isNull);
+      expect(restored.editorFontSize, 16,
+          reason: 'the editor followed the terminal size until it had one');
+    });
+
+    test('every new field round-trips through JSON', () {
+      const settings = AppSettings(
+        scrollbackLines: 50000,
+        cursorStyle: TerminalCursorStyle.bar,
+        cursorBlink: true,
+        bell: TerminalBell.visual,
+        terminalFont: TerminalFont.jetBrainsMono,
+        keyBarMode: KeyBarMode.never,
+        editorFontSize: 18,
+        diagnosticsLog: true,
+        localeOverride: 'pt-BR',
+      );
+      final restored = AppSettings.fromJson(settings.toJson());
+      expect(restored.scrollbackLines, 50000);
+      expect(restored.cursorStyle, TerminalCursorStyle.bar);
+      expect(restored.cursorBlink, isTrue);
+      expect(restored.bell, TerminalBell.visual);
+      expect(restored.terminalFont, TerminalFont.jetBrainsMono);
+      expect(restored.keyBarMode, KeyBarMode.never);
+      expect(restored.editorFontSize, 18);
+      expect(restored.diagnosticsLog, isTrue);
+      expect(restored.localeOverride, 'pt-BR');
+    });
+
+    test('out-of-range or unknown values fall back instead of failing', () {
+      final restored = AppSettings.fromJson(const {
+        'scrollbackLines': 3,
+        'cursorStyle': 'blob',
+        'bell': 'klaxon',
+        'terminalFont': 'comic',
+        'keyBarMode': 'sometimes',
+        'editorFontSize': 400,
+        'localeOverride': ' ',
+      });
+      expect(restored.scrollbackLines, AppSettings.defaultScrollbackLines);
+      expect(restored.cursorStyle, TerminalCursorStyle.block);
+      expect(restored.bell, TerminalBell.vibrate);
+      expect(restored.terminalFont, TerminalFont.system);
+      expect(restored.keyBarMode, KeyBarMode.auto);
+      expect(restored.editorFontSize, AppSettings.maxEditorFontSize);
+      expect(restored.localeOverride, isNull);
+      expect(const AppSettings().copyWith(scrollbackLines: 7).scrollbackLines,
+          AppSettings.defaultScrollbackLines);
+    });
+
+    test('the language can be set and cleared, and copyWith keeps it', () {
+      final set = const AppSettings().withLocaleOverride('ja');
+      expect(set.localeOverride, 'ja');
+      expect(set.copyWith(cursorBlink: true).localeOverride, 'ja');
+      final cleared = set.withLocaleOverride(null);
+      expect(cleared.localeOverride, isNull);
+      expect(cleared.toJson().containsKey('localeOverride'), isFalse);
+      // Clearing it leaves everything else as it was.
+      final busy = const AppSettings(
+        bell: TerminalBell.off,
+        editorFontSize: 20,
+        appLockEnabled: true,
+      ).withLocaleOverride('de');
+      expect(busy.withLocaleOverride(null).toJson(),
+          {...busy.toJson()}..remove('localeOverride'));
+    });
+  });
+
   group('SettingsStore', () {
     test('a fresh store reads as defaults before and after loading', () {
       final store = SettingsStore(file: storeFile);
@@ -245,6 +330,8 @@ void main() {
       final store = SettingsStore(file: storeFile);
       await store.ensureLoaded();
       expect(store.current.terminalFontSize, AppSettings.defaultFontSize);
+      expect(store.current.diagnosticsLog, isFalse,
+          reason: 'an unreadable file must not turn logging on');
     });
 
     test('concurrent ensureLoaded calls share one load', () async {

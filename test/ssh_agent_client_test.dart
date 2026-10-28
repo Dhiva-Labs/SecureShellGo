@@ -1,8 +1,14 @@
+import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
+import 'package:crypto/crypto.dart' show sha256;
+import 'package:dartssh2/dartssh2.dart'
+    show SSHKeyPair, SSHRawSignature, SSHSignature;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:secure_shell_go/services/ssh_agent_client.dart';
+import 'package:secure_shell_go/services/ssh_keygen.dart';
+import 'package:secure_shell_go/services/windows_agent_pipe.dart';
 
 /// An SSH `string`: 4-byte big-endian length, then the bytes.
 List<int> _string(List<int> bytes) => [
@@ -335,6 +341,12 @@ void main() {
     });
   });
 
+  // Not on Windows. Serving a Unix-domain socket there took the whole
+  // GitHub-hosted runner off the network within seconds, x64 and arm64
+  // alike: the job ended as "the hosted runner lost communication with the
+  // server", with no log, after every timeout had passed. The app never
+  // opens one on Windows, where the agent is a named pipe, so this group
+  // tests nothing Windows runs.
   group('framing over a real socket', () {
     /// Serves [reply] over a unix socket, optionally split into chunks with a
     /// gap between them, and hands back a connector pointing at it.
@@ -447,5 +459,422 @@ void main() {
             .having((e) => e.kind, 'kind', SshAgentErrorKind.protocol)),
       );
     });
+  },
+      skip: Platform.isWindows
+          ? 'Unix-domain sockets take a Windows runner down'
+          : null);
+
+  group('SshAgentKeyIdentity, the sign-in adapter', () {
+    Uint8List signature(String type, [int length = 64]) => Uint8List.fromList(
+        [..._utf8String(type), ..._string(List<int>.filled(length, 9))]);
+
+    _FakeAgent signingWith(Uint8List signatureBlob) =>
+        _FakeAgent((_) => Uint8List.fromList([14, ..._string(signatureBlob)]));
+
+    SshAgentKeyIdentity identity(
+      _FakeAgent agent,
+      Uint8List blob, {
+      Uint8List? presentedBlob,
+      String? presentedType,
+    }) =>
+        SshAgentKeyIdentity(
+          SshAgentClient(connector: () async => agent),
+          SshAgentIdentity(keyBlob: blob, comment: 'me@laptop'),
+          presentedBlob: presentedBlob,
+          presentedType: presentedType,
+        );
+
+    test('an ed25519 key is probed first, shown as itself, signed by the agent',
+        () async {
+      final expected = signature('ssh-ed25519');
+      final agent = signingWith(expected);
+      final key = identity(agent, _ed25519Blob());
+
+      expect(key.type, 'ssh-ed25519');
+      expect(key.comment, 'me@laptop');
+      // A touch or a confirmation is not spent on a key the server refuses.
+      expect(key.shouldProbe, isTrue);
+      expect(key.toPublicKey().encode(), _ed25519Blob());
+
+      final challenge = Uint8List.fromList('session-and-request'.codeUnits);
+      final signed = await key.sign(challenge);
+      expect(signed.encode(), expected);
+      expect(
+        agent.requests.single,
+        SshAgentProtocol.encodeSignRequest(
+          keyBlob: _ed25519Blob(),
+          data: challenge,
+        ),
+      );
+    });
+
+    test('an RSA key is offered as rsa-sha2-256 and asks the agent for it',
+        () async {
+      final rsaBlob = Uint8List.fromList(
+          [..._utf8String('ssh-rsa'), ..._string([1, 0, 1]), ..._string([7])]);
+      final agent = signingWith(signature('rsa-sha2-256', 256));
+      final key = identity(agent, rsaBlob);
+
+      expect(key.type, 'rsa-sha2-256');
+      await key.sign(Uint8List.fromList([1]));
+      final sent = agent.requests.single;
+      expect(sent.sublist(sent.length - 4), [0, 0, 0, 2]);
+    });
+
+    test('an agent that still signs RSA with SHA-1 is refused with a reason',
+        () async {
+      final rsaBlob = Uint8List.fromList(_utf8String('ssh-rsa'));
+      final key = identity(signingWith(signature('ssh-rsa', 256)), rsaBlob);
+      await expectLater(
+        key.sign(Uint8List.fromList([1])),
+        throwsA(isA<SshAgentException>()
+            .having((e) => e.message, 'message', contains('SHA-1'))),
+      );
+    });
+
+    test('a FIDO2 sk-ed25519 key passes through untouched', () async {
+      final skBlob = Uint8List.fromList([
+        ..._utf8String('sk-ssh-ed25519@openssh.com'),
+        ..._string(List<int>.filled(32, 5)),
+        ..._utf8String('ssh:'),
+      ]);
+      // A security key's signature carries its flags and counter after the
+      // signature itself; none of that is this app's to touch.
+      final skSignature = Uint8List.fromList([
+        ..._utf8String('sk-ssh-ed25519@openssh.com'),
+        ..._string(List<int>.filled(64, 4)),
+        0x01,
+        0, 0, 0, 42,
+      ]);
+      final agent = signingWith(skSignature);
+      final key = identity(agent, skBlob);
+
+      expect(key.type, 'sk-ssh-ed25519@openssh.com');
+      expect((await key.sign(Uint8List.fromList([3]))).encode(), skSignature);
+      final sent = agent.requests.single;
+      expect(sent.sublist(sent.length - 4), [0, 0, 0, 0]);
+    });
+
+    test('an ECDSA security key keeps its own algorithm name', () {
+      final skBlob = Uint8List.fromList(
+          _utf8String('sk-ecdsa-sha2-nistp256@openssh.com'));
+      expect(identity(_FakeAgent((_) => Uint8List(0)), skBlob).type,
+          'sk-ecdsa-sha2-nistp256@openssh.com');
+    });
+
+    test('with a certificate, the certificate is shown and the key signs',
+        () async {
+      final certBlob = Uint8List.fromList(
+          [..._utf8String('ssh-ed25519-cert-v01@openssh.com'), 1, 2, 3]);
+      final agent = signingWith(signature('ssh-ed25519'));
+      final key = identity(
+        agent,
+        _ed25519Blob(),
+        presentedBlob: certBlob,
+        presentedType: 'ssh-ed25519-cert-v01@openssh.com',
+      );
+
+      expect(key.type, 'ssh-ed25519-cert-v01@openssh.com');
+      expect(key.toPublicKey().encode(), certBlob);
+      await key.sign(Uint8List.fromList([1]));
+      expect(
+        agent.requests.single,
+        SshAgentProtocol.encodeSignRequest(
+          keyBlob: _ed25519Blob(),
+          data: Uint8List.fromList([1]),
+        ),
+      );
+    });
+
+    test('an RSA certificate is offered as rsa-sha2-256-cert', () {
+      expect(agentPublicKeyAlgorithm('ssh-rsa-cert-v01@openssh.com'),
+          'rsa-sha2-256-cert-v01@openssh.com');
+      expect(SshAgentProtocol.flagsForKeyType('ssh-rsa-cert-v01@openssh.com'),
+          SshAgentProtocol.flagRsaSha2_256);
+      expect(agentPublicKeyAlgorithm('ecdsa-sha2-nistp256'),
+          'ecdsa-sha2-nistp256');
+    });
+
+    test('a declined signature is the agent\'s refusal, touch included',
+        () async {
+      final key = identity(
+        _FakeAgent((_) => Uint8List.fromList([5])),
+        _ed25519Blob(),
+      );
+      await expectLater(
+        key.sign(Uint8List.fromList([1])),
+        throwsA(isA<SshAgentException>()
+            .having((e) => e.kind, 'kind', SshAgentErrorKind.refused)
+            .having((e) => e.message, 'message', contains('not touched'))),
+      );
+    });
   });
+
+  group('ForwardedAgent, the agent a shell gets', () {
+    late SSHKeyPair hostKey;
+    late Uint8List hostBlob;
+    final osBlob = _ed25519Blob(1);
+    final osSignature = Uint8List.fromList(
+        [..._utf8String('ssh-ed25519'), ..._string(List<int>.filled(64, 8))]);
+
+    setUpAll(() {
+      hostKey = SSHKeyPair.fromPem(
+        SshKeygen.generateEd25519(comment: 'host').privateKeyPem,
+      ).single;
+      hostBlob = hostKey.toPublicKey().encode();
+    });
+
+    _FakeAgent osAgent({List<Uint8List>? blobs}) => _FakeAgent((request) {
+          if (request[0] == SshAgentProtocol.requestIdentities) {
+            return SshAgentProtocol.encodeIdentitiesAnswer([
+              for (final blob in blobs ?? [osBlob])
+                SshAgentIdentity(keyBlob: blob, comment: 'laptop'),
+            ]);
+          }
+          return SshAgentProtocol.encodeSignResponse(osSignature);
+        });
+
+    ForwardedAgent forwarded(_FakeAgent? os, {bool withHostKey = true}) =>
+        ForwardedAgent(
+          osAgent: os == null ? null : SshAgentClient(connector: () async => os),
+          keys: withHostKey ? [hostKey] : const [],
+          comment: 'ssgo:Box',
+        );
+
+    Future<List<SshAgentIdentity>> list(ForwardedAgent agent) async =>
+        SshAgentProtocol.decodeIdentitiesAnswer(await agent.handleRequest(
+            SshAgentProtocol.encodeRequestIdentities()));
+
+    test('lists this computer\'s agent and the host\'s own key', () async {
+      final identities = await list(forwarded(osAgent()));
+      expect(identities.map((i) => i.keyBlob), [osBlob, hostBlob]);
+      expect(identities.map((i) => i.comment), ['laptop', 'ssgo:Box']);
+    });
+
+    test('a key held in both is listed once', () async {
+      final identities = await list(forwarded(osAgent(blobs: [hostBlob])));
+      expect(identities, hasLength(1));
+    });
+
+    test('signs with the host\'s own key here, without the OS agent',
+        () async {
+      final os = osAgent();
+      final reply = await forwarded(os).handleRequest(
+        SshAgentProtocol.encodeSignRequest(
+          keyBlob: hostBlob,
+          data: Uint8List.fromList([1, 2, 3]),
+        ),
+      );
+      final signature = SshAgentProtocol.decodeSignResponse(reply);
+      expect(SSHSignature.getType(signature), 'ssh-ed25519');
+      expect(os.requests, isEmpty);
+    });
+
+    test('passes any other signature to the OS agent, flags and all',
+        () async {
+      final os = osAgent();
+      final request = SshAgentProtocol.encodeSignRequest(
+        keyBlob: osBlob,
+        data: Uint8List.fromList([4, 5]),
+        flags: SshAgentProtocol.flagRsaSha2_512,
+      );
+      final reply = await forwarded(os).handleRequest(request);
+      expect(os.requests.single, request);
+      expect(SshAgentProtocol.decodeSignResponse(reply), osSignature);
+    });
+
+    test('refuses everything but listing and signing', () async {
+      final os = osAgent();
+      final agent = forwarded(os);
+      // add identity, remove, remove all, lock, unlock, extension
+      // (session-bind@openssh.com among them).
+      for (final type in [17, 18, 19, 22, 23, 25, 27]) {
+        expect(await agent.handleRequest(Uint8List.fromList([type, 0, 0, 0, 0])),
+            [5], reason: 'message $type');
+      }
+      expect(os.requests, isEmpty,
+          reason: 'none of those may reach this computer\'s agent');
+    });
+
+    test('with no agent running, only the host\'s key is there', () async {
+      final agent = ForwardedAgent(
+        osAgent: SshAgentClient(
+          connector: () async => throw const SshAgentException(
+            SshAgentErrorKind.noAgent,
+            'No SSH agent found.',
+          ),
+        ),
+        keys: [hostKey],
+      );
+      expect((await list(agent)).single.keyBlob, hostBlob);
+      expect(
+        await agent.handleRequest(SshAgentProtocol.encodeSignRequest(
+          keyBlob: osBlob,
+          data: Uint8List.fromList([1]),
+        )),
+        [5],
+      );
+    });
+
+    test('with no keys at all it is an empty agent, not a broken one',
+        () async {
+      expect(await list(forwarded(null, withHostKey: false)), isEmpty);
+    });
+
+    test('a malformed or refused sign request is a plain failure', () async {
+      expect(await forwarded(osAgent()).handleRequest(Uint8List.fromList([13, 0])),
+          [5]);
+      final refusing = _FakeAgent((request) =>
+          request[0] == SshAgentProtocol.signRequest
+              ? Uint8List.fromList([5])
+              : SshAgentProtocol.encodeIdentitiesAnswer(const []));
+      expect(
+        await forwarded(refusing).handleRequest(SshAgentProtocol.encodeSignRequest(
+          keyBlob: osBlob,
+          data: Uint8List.fromList([1]),
+        )),
+        [5],
+      );
+      expect(await forwarded(osAgent()).handleRequest(Uint8List(0)), [5]);
+    });
+
+    test('an identities answer reads back as written', () {
+      final written = SshAgentProtocol.encodeIdentitiesAnswer([
+        SshAgentIdentity(keyBlob: osBlob, comment: 'a'),
+        SshAgentIdentity(keyBlob: hostBlob, comment: 'b'),
+      ]);
+      final read = SshAgentProtocol.decodeIdentitiesAnswer(written);
+      expect(read.map((i) => i.comment), ['a', 'b']);
+      expect(SSHRawSignature(osSignature).encode(), osSignature);
+    });
+  });
+
+  group('finding the agent on Windows', () {
+    late List<String> opened;
+    late bool askedPageant;
+
+    Future<SshAgentConnection> open(
+      Map<String, String> environment, {
+      Set<String> present = const {},
+      SshAgentConnection? pageant,
+    }) {
+      opened = [];
+      askedPageant = false;
+      return SshAgentClient.openWindowsAgent(
+        environment: environment,
+        openPipe: (path) async {
+          opened.add(path);
+          if (!present.contains(path)) {
+            throw const FileSystemException('The system cannot find the file');
+          }
+          return _NullConnection(path);
+        },
+        findPageant: () async {
+          askedPageant = true;
+          return pageant;
+        },
+      );
+    }
+
+    test('an SSH_AUTH_SOCK that is a file is never opened, and the search '
+        'goes on', () async {
+      final connection = await open(
+        {'SSH_AUTH_SOCK': r'C:\Users\me\.ssh\agent.sock'},
+        present: {SshAgentClient.openSshAgentPipe},
+      );
+      expect(opened, [SshAgentClient.openSshAgentPipe]);
+      expect((connection as _NullConnection).path,
+          SshAgentClient.openSshAgentPipe);
+    });
+
+    test('nor is a Cygwin-style socket path; Pageant is still found',
+        () async {
+      final pageant = _NullConnection('pageant');
+      final connection = await open(
+        {'SSH_AUTH_SOCK': '/tmp/ssh-XXXX/agent.1234'},
+        pageant: pageant,
+      );
+      expect(opened, [SshAgentClient.openSshAgentPipe]);
+      expect(connection, same(pageant));
+    });
+
+    test('an SSH_AUTH_SOCK that names a pipe comes first', () async {
+      const pipe = r'\\.\pipe\my-agent';
+      final connection =
+          await open({'SSH_AUTH_SOCK': pipe}, present: {pipe});
+      expect(opened, [pipe]);
+      expect((connection as _NullConnection).path, pipe);
+      expect(askedPageant, isFalse);
+    });
+
+    test('with none, says so, and why SSH_AUTH_SOCK was passed over',
+        () async {
+      await expectLater(
+        open({'SSH_AUTH_SOCK': r'C:\agent.sock'}),
+        throwsA(isA<SshAgentException>()
+            .having((e) => e.kind, 'kind', SshAgentErrorKind.noAgent)
+            .having((e) => e.details, 'details', contains('not a named pipe'))),
+      );
+      expect(askedPageant, isTrue);
+    });
+
+    test('pipe paths', () {
+      expect(SshAgentClient.isWindowsPipePath(r'\\.\pipe\openssh-ssh-agent'),
+          isTrue);
+      expect(SshAgentClient.isWindowsPipePath(r'\\.\PIPE\x'), isTrue);
+      expect(SshAgentClient.isWindowsPipePath(r'\\.\pipe\'), isFalse);
+      expect(SshAgentClient.isWindowsPipePath(r'\\.\pipe\a\b'), isFalse);
+      expect(SshAgentClient.isWindowsPipePath(r'C:\agent'), isFalse);
+      expect(SshAgentClient.isWindowsPipePath(r'\\server\pipe\x'), isFalse);
+    });
+  });
+
+  group("Pageant's pipe name, as PuTTY makes it", () {
+    test('"Pageant", NUL, zero-padded to a block of sixteen', () {
+      expect(pageantSuffixBlock(),
+          [...ascii.encode('Pageant'), ...List.filled(9, 0)]);
+    });
+
+    test('the user and a SHA-256 of the protected block as an SSH string',
+        () {
+      final block = Uint8List.fromList(List.generate(16, (i) => i * 7));
+      final digest = sha256OfSshString(block);
+      expect(
+        latin1.decode(pageantPipeName(
+          userName: ascii.encode('alice'),
+          protectedBlock: block,
+        )),
+        '\\\\.\\pipe\\pageant.alice.$digest',
+      );
+      expect(digest, hasLength(64));
+    });
+
+    test('the principal name is cut at its @, as PuTTY does', () {
+      expect(pageantUserName(ascii.encode('alice@corp.example')),
+          ascii.encode('alice'));
+      expect(pageantUserName(ascii.encode('bob')), ascii.encode('bob'));
+    });
+  });
+}
+
+/// SHA-256 of [bytes] behind a big-endian uint32 length, in hex — written
+/// out longhand here so the test does not just repeat the code.
+String sha256OfSshString(Uint8List bytes) {
+  final message = [
+    (bytes.length >> 24) & 0xff,
+    (bytes.length >> 16) & 0xff,
+    (bytes.length >> 8) & 0xff,
+    bytes.length & 0xff,
+    ...bytes,
+  ];
+  return sha256.convert(message).toString();
+}
+
+class _NullConnection implements SshAgentConnection {
+  _NullConnection(this.path);
+  final String path;
+  @override
+  Future<Uint8List> request(Uint8List payload) async => Uint8List(0);
+  @override
+  Future<void> close() async {}
 }

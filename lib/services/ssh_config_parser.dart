@@ -1,8 +1,10 @@
 /// Parses the subset of the OpenSSH client config grammar (`ssh_config(5)`)
 /// this app can usefully import: `Host` blocks, `HostName`, `User`, `Port`,
-/// `IdentityFile`, `ProxyJump`, and one level of `Include`. Everything else
-/// (`ServerAliveInterval`, `Compression`, `Match` blocks, ...) is silently
-/// ignored — this is an importer, not a reimplementation of ssh_config(5).
+/// `IdentityFile`, `CertificateFile`, `ForwardAgent`, `ForwardX11`,
+/// `ProxyJump`, and one level of `Include`. Everything else
+/// (`ServerAliveInterval`, `Compression`, ...) is silently ignored — this
+/// is an importer, not a reimplementation of ssh_config(5). A `Match` block
+/// ends the `Host` block before it and is skipped whole, with a warning.
 ///
 /// Pure Dart, no `dart:io`: [SshConfigParser.parse] takes the config text as
 /// a plain string and, for `Include`, calls back through [readInclude] for
@@ -13,6 +15,8 @@
 /// file on disk.
 library;
 
+import '../models/host.dart';
+
 /// One concrete (non-wildcard) `Host` block.
 class SshConfigHostEntry {
   const SshConfigHostEntry({
@@ -21,6 +25,9 @@ class SshConfigHostEntry {
     this.user,
     this.port = 22,
     this.identityFile,
+    this.certificateFile,
+    this.forwardAgent = false,
+    this.forwardX11 = false,
     this.proxyJump,
   });
 
@@ -37,6 +44,18 @@ class SshConfigHostEntry {
   /// "uses key file" badge and leave the actual key for the user to add.
   final String? identityFile;
 
+  /// Raw path text from `CertificateFile`. A certificate is public, so the
+  /// importer does read this one (see [toHost]); unlike the key, it is only
+  /// what the CA signed.
+  final String? certificateFile;
+
+  /// `ForwardAgent`: anything but `no` — `yes`, or the path of an agent
+  /// socket — forwards one.
+  final bool forwardAgent;
+
+  /// `ForwardX11 yes`.
+  final bool forwardX11;
+
   /// Raw `ProxyJump` target, e.g. `bastion` or `user@bastion:22`.
   ///
   /// Deliberately kept here rather than folded into a `Host` — wiring it to
@@ -45,6 +64,29 @@ class SshConfigHostEntry {
   /// this read it straight off the parse result rather than off any saved
   /// host.
   final String? proxyJump;
+
+  /// The host to save for this entry, signing in as [username] — the
+  /// entry's `User`, or the caller's default when it has none — with
+  /// [certificate], the text of the [certificateFile] if the caller could
+  /// read it.
+  Host toHost({
+    required String id,
+    required String username,
+    String? certificate,
+  }) =>
+      Host(
+        id: id,
+        label: alias,
+        hostname: hostname,
+        port: port,
+        username: username,
+        authMethod: identityFile != null || certificate != null
+            ? SshAuthMethod.privateKey
+            : SshAuthMethod.password,
+        agentForwarding: forwardAgent,
+        x11Forwarding: forwardX11,
+        certificate: certificate,
+      );
 }
 
 class SshConfigParseResult {
@@ -108,6 +150,19 @@ class SshConfigParser {
         continue;
       }
 
+      // A Match block is conditional — on the host, the user, a command
+      // that runs at connect time — which an import cannot evaluate. What
+      // follows it until the next Host belongs to the Match, not to the
+      // Host above it: `ForwardAgent yes` under `Match exec "on-vpn"` must
+      // not turn forwarding on for that host everywhere. So the Host block
+      // ends here, and the Match's directives are dropped.
+      if (lowerKeyword == 'match') {
+        finalizeDrafts();
+        warnings.add('Skipped a Match block ("${rest.trim()}"): its settings '
+            'apply only when its condition holds');
+        continue;
+      }
+
       if (lowerKeyword == 'include') {
         if (isIncluded) {
           // Non-recursive: an Include found inside an included file is
@@ -162,6 +217,20 @@ class SshConfigParser {
           for (final draft in drafts) {
             draft.identityFile = value;
           }
+        case 'certificatefile':
+          // Several may be listed, and ssh tries each; the first is the one
+          // a single saved host can carry.
+          for (final draft in drafts) {
+            draft.certificateFile ??= value;
+          }
+        case 'forwardagent':
+          for (final draft in drafts) {
+            draft.forwardAgent = value.toLowerCase() != 'no';
+          }
+        case 'forwardx11':
+          for (final draft in drafts) {
+            draft.forwardX11 = value.toLowerCase() == 'yes';
+          }
         case 'proxyjump':
           for (final draft in drafts) {
             draft.proxyJump = value;
@@ -215,6 +284,9 @@ class _Draft {
   String? user;
   int port = 22;
   String? identityFile;
+  String? certificateFile;
+  bool forwardAgent = false;
+  bool forwardX11 = false;
   String? proxyJump;
 
   SshConfigHostEntry toEntry() => SshConfigHostEntry(
@@ -223,6 +295,9 @@ class _Draft {
         user: user,
         port: port,
         identityFile: identityFile,
+        certificateFile: certificateFile,
+        forwardAgent: forwardAgent,
+        forwardX11: forwardX11,
         proxyJump: proxyJump,
       );
 }

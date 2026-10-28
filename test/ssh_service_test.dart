@@ -1,8 +1,10 @@
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:secure_shell_go/models/host.dart';
 import 'package:secure_shell_go/services/known_hosts_service.dart';
+import 'package:secure_shell_go/services/ssh_agent_client.dart';
 import 'package:secure_shell_go/services/ssh_service.dart';
 
 /// Exercises the paths that do not need a live SSH server: private key
@@ -287,22 +289,67 @@ void main() {
   });
 
   group('agent auth', () {
-    test('an agent host fails clearly instead of crashing', () async {
-      final error = await failure(
-        host(authMethod: SshAuthMethod.agent),
-        const SshCredentials(),
+    // A scripted agent, so the outcome does not hang on whether the machine
+    // running the suite has one of its own.
+    SshService withAgent(Uint8List Function(Uint8List request) reply) =>
+        SshService(
+          knownHosts: KnownHostsService(
+            file: File('${tempDir.path}/known_hosts.json'),
+          ),
+          agent: SshAgentClient(connector: () async => _ScriptedAgent(reply)),
+        );
+
+    Future<SshConnectionException> agentFailure(SshService service) async {
+      try {
+        final connection = await service.connect(
+          host: host(authMethod: SshAuthMethod.agent),
+          credentials: const SshCredentials(),
+          verifyHostKey: (_) async => true,
+          timeout: const Duration(seconds: 5),
+        );
+        connection.close();
+        fail('expected connect() to throw');
+      } on SshConnectionException catch (e) {
+        return e;
+      }
+    }
+
+    test('an agent holding no keys says so before dialling', () async {
+      final error = await agentFailure(
+        withAgent((_) => Uint8List.fromList([12, 0, 0, 0, 0])),
       );
-      // Either "no agent running" or the dartssh2 limitation, depending on
-      // whether the machine running the suite happens to have an agent — both
-      // are clear, and neither is a crash or a hang.
-      expect(error.message, isNotEmpty);
-      expect(
-        error.message,
-        anyOf(
-          contains('No SSH agent found'),
-          contains('SSH agent'),
+      expect(error.message, contains('holds no keys'));
+    });
+
+    test('no agent running says so before dialling', () async {
+      final service = SshService(
+        knownHosts: KnownHostsService(
+          file: File('${tempDir.path}/known_hosts.json'),
+        ),
+        agent: SshAgentClient(
+          connector: () async => throw const SshAgentException(
+            SshAgentErrorKind.noAgent,
+            'No SSH agent found. SSH_AUTH_SOCK is not set.',
+          ),
         ),
       );
+      final error = await agentFailure(service);
+      expect(error.message, startsWith('No SSH agent found'));
+    });
+
+    test('an agent with a key goes on to connect', () async {
+      final blob = Uint8List.fromList([
+        0, 0, 0, 11, ...'ssh-ed25519'.codeUnits,
+        0, 0, 0, 32, ...List.filled(32, 1),
+      ]);
+      final error = await agentFailure(withAgent((_) => Uint8List.fromList([
+            12, 0, 0, 0, 1,
+            0, 0, 0, blob.length, ...blob,
+            0, 0, 0, 2, ...'me'.codeUnits,
+          ])));
+      // Port 1 on loopback: the identities were ready, so the failure is
+      // the socket's, not the agent's.
+      expect(error.message, contains('Connection refused'));
     });
   });
 
@@ -373,4 +420,16 @@ Future<Map<String, String>> _generateKeys(Directory dir) async {
     result[entry.key] = await File(path).readAsString();
   }
   return result;
+}
+
+class _ScriptedAgent implements SshAgentConnection {
+  _ScriptedAgent(this._reply);
+
+  final Uint8List Function(Uint8List request) _reply;
+
+  @override
+  Future<Uint8List> request(Uint8List payload) async => _reply(payload);
+
+  @override
+  Future<void> close() async {}
 }

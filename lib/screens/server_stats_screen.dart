@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
+import '../l10n/l10n.dart';
 import '../services/remote_path.dart';
 import '../services/server_probe.dart';
 import '../services/session_controller.dart';
@@ -75,7 +76,10 @@ class _ServerStatsScreenState extends State<ServerStatsScreen>
           crossAxisAlignment: CrossAxisAlignment.start,
           mainAxisSize: MainAxisSize.min,
           children: [
-            const Text('Server stats', style: TextStyle(fontSize: 16)),
+            Text(
+              context.l10n.statsTitle,
+              style: const TextStyle(fontSize: 16),
+            ),
             Text(
               widget.session.host.displayName,
               style: TextStyle(
@@ -87,7 +91,7 @@ class _ServerStatsScreenState extends State<ServerStatsScreen>
         ),
         actions: [
           IconButton(
-            tooltip: 'Refresh now',
+            tooltip: context.l10n.statsRefreshTooltip,
             icon: _poller.isRefreshing
                 ? const SizedBox(
                     width: 18,
@@ -150,7 +154,7 @@ class _WholePanelState extends StatelessWidget {
             const Icon(Icons.monitor_heart_outlined, size: 40),
             const SizedBox(height: 12),
             Text(
-              error ?? 'No readings yet.',
+              error ?? context.l10n.statsNoReadings,
               textAlign: TextAlign.center,
               style: TextStyle(
                 color: Theme.of(context).colorScheme.onSurfaceVariant,
@@ -188,16 +192,25 @@ class _StaleBanner extends StatelessWidget {
           const SizedBox(width: 10),
           Expanded(
             child: Text(
-              age == null
-                  ? message
-                  : '$message Showing the reading from '
-                      '${_formatAge(age)} ago.',
+              age == null ? message : _staleMessage(context.l10n, age),
               style: const TextStyle(fontSize: 12.5),
             ),
           ),
         ],
       ),
     );
+  }
+
+  /// The error, then how old the reading still on screen is: seconds under
+  /// a minute, minutes under an hour, hours after that.
+  String _staleMessage(AppLocalizations l10n, Duration age) {
+    if (age.inMinutes < 1) {
+      return l10n.statsStaleSecondsAgo(message, age.inSeconds);
+    }
+    if (age.inHours < 1) {
+      return l10n.statsStaleMinutesAgo(message, age.inMinutes);
+    }
+    return l10n.statsStaleHoursAgo(message, age.inHours);
   }
 }
 
@@ -251,9 +264,10 @@ class _Card extends StatelessWidget {
 /// disk, its load and its kernel, and says one quiet line about the one
 /// thing it could not answer.
 class _Unknown extends StatelessWidget {
-  const _Unknown(this.what);
+  const _Unknown(this.message);
 
-  final String what;
+  /// The whole sentence, e.g. "Could not read memory on this server."
+  final String message;
 
   @override
   Widget build(BuildContext context) {
@@ -264,7 +278,7 @@ class _Unknown extends StatelessWidget {
         const SizedBox(width: 8),
         Expanded(
           child: Text(
-            'Could not read $what on this server.',
+            message,
             style: TextStyle(
               fontSize: 12.5,
               color: Theme.of(context).colorScheme.onSurfaceVariant,
@@ -277,10 +291,40 @@ class _Unknown extends StatelessWidget {
 }
 
 class _Row extends StatelessWidget {
-  const _Row(this.label, this.value);
+  const _Row(this.label, this.value, {this.labelWidth = 96});
 
   final String label;
   final String value;
+
+  /// Shared by every row of a card, so the values line up.
+  final double labelWidth;
+
+  static const _labelStyle = TextStyle(fontSize: 12.5);
+
+  /// The label column for [labels]: wide enough for the widest one on a
+  /// single line ("Betriebszeit" and "Temps d'activité" need more than the
+  /// English did), never under 96, and never more than 45% of [maxWidth] —
+  /// past that a label wraps between words rather than starving the values.
+  static double labelWidthFor(
+    BuildContext context,
+    Iterable<String> labels,
+    double maxWidth,
+  ) {
+    final style = DefaultTextStyle.of(context).style.merge(_labelStyle);
+    var widest = 0.0;
+    for (final label in labels) {
+      final painter = TextPainter(
+        text: TextSpan(text: label, style: style),
+        textDirection: Directionality.of(context),
+        textScaler: MediaQuery.textScalerOf(context),
+        maxLines: 1,
+      )..layout();
+      if (painter.width > widest) widest = painter.width;
+      painter.dispose();
+    }
+    final cap = maxWidth.isFinite ? maxWidth * 0.45 : double.infinity;
+    return (widest + 12).clamp(96.0, cap < 96 ? 96.0 : cap);
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -290,11 +334,10 @@ class _Row extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           SizedBox(
-            width: 96,
+            width: labelWidth,
             child: Text(
               label,
-              style: TextStyle(
-                fontSize: 12.5,
+              style: _labelStyle.copyWith(
                 color: Theme.of(context).colorScheme.onSurfaceVariant,
               ),
             ),
@@ -320,26 +363,46 @@ class _IdentityCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final uptime = stats.uptime;
     final cpuCount = stats.cpuCount;
+    final l10n = context.l10n;
     return _Card(
-      title: 'SYSTEM',
+      title: l10n.statsCardSystem,
       icon: Icons.dns_outlined,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          if (stats.hostname != null) _Row('Hostname', stats.hostname!),
-          if (stats.kernel != null)
-            _Row('Kernel', stats.kernel!)
-          else
-            const _Unknown('the kernel version'),
-          if (uptime != null)
-            _Row('Uptime', formatUptime(uptime))
-          else
-            const _Unknown('the uptime'),
-          if (cpuCount != null)
-            _Row('CPUs', '$cpuCount')
-          else
-            const _Unknown('the processor count'),
-        ],
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final width = _Row.labelWidthFor(
+            context,
+            [
+              if (stats.hostname != null) l10n.statsHostname,
+              if (stats.kernel != null) l10n.statsKernel,
+              if (uptime != null) l10n.statsUptime,
+              if (cpuCount != null) l10n.statsCpus,
+            ],
+            constraints.maxWidth,
+          );
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              if (stats.hostname != null)
+                _Row(l10n.statsHostname, stats.hostname!, labelWidth: width),
+              if (stats.kernel != null)
+                _Row(l10n.statsKernel, stats.kernel!, labelWidth: width)
+              else
+                _Unknown(l10n.statsKernelUnknown),
+              if (uptime != null)
+                _Row(
+                  l10n.statsUptime,
+                  formatUptime(uptime, l10n: l10n),
+                  labelWidth: width,
+                )
+              else
+                _Unknown(l10n.statsUptimeUnknown),
+              if (cpuCount != null)
+                _Row(l10n.statsCpus, '$cpuCount', labelWidth: width)
+              else
+                _Unknown(l10n.statsCpusUnknown),
+            ],
+          );
+        },
       ),
     );
   }
@@ -354,28 +417,29 @@ class _LoadCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final load = stats.load;
+    final l10n = context.l10n;
     return _Card(
-      title: 'LOAD AVERAGE',
+      title: l10n.statsCardLoad,
       icon: Icons.speed_outlined,
       child: load == null
-          ? const _Unknown('the load average')
+          ? _Unknown(l10n.statsLoadUnknown)
           : Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Row(
                   children: [
                     _LoadValue(
-                      label: '1 min',
+                      label: l10n.statsLoadWindow(1),
                       value: load.one,
                       cpus: stats.cpuCount,
                     ),
                     _LoadValue(
-                      label: '5 min',
+                      label: l10n.statsLoadWindow(5),
                       value: load.five,
                       cpus: stats.cpuCount,
                     ),
                     _LoadValue(
-                      label: '15 min',
+                      label: l10n.statsLoadWindow(15),
                       value: load.fifteen,
                       cpus: stats.cpuCount,
                     ),
@@ -396,7 +460,7 @@ class _LoadCard extends StatelessWidget {
                   Padding(
                     padding: const EdgeInsets.only(top: 4),
                     child: Text(
-                      'One-minute load, this session only',
+                      l10n.statsLoadHistoryCaption,
                       style: TextStyle(
                         fontSize: 11,
                         color: Theme.of(context).colorScheme.onSurfaceVariant,
@@ -456,16 +520,19 @@ class _MemoryCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final memory = this.memory;
+    final l10n = context.l10n;
     return _Card(
-      title: 'MEMORY',
+      title: l10n.statsCardMemory,
       icon: Icons.memory_outlined,
       child: memory == null
-          ? const _Unknown('memory')
+          ? _Unknown(l10n.statsMemoryUnknown)
           : _UsageBar(
               used: memory.used,
               total: memory.total,
               fraction: memory.usedFraction,
-              footnote: '${RemotePath.formatBytes(memory.available)} available',
+              footnote: l10n.statsMemoryAvailable(
+                RemotePath.formatBytes(memory.available),
+              ),
             ),
     );
   }
@@ -479,17 +546,20 @@ class _DiskCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final disk = this.disk;
+    final l10n = context.l10n;
     return _Card(
-      title: 'DISK',
+      title: l10n.statsCardDisk,
       icon: Icons.storage_outlined,
       child: disk == null
-          ? const _Unknown('disk usage')
+          ? _Unknown(l10n.statsDiskUnknown)
           : _UsageBar(
               used: disk.used,
               total: disk.total,
               fraction: disk.usedFraction,
-              footnote: '${RemotePath.formatBytes(disk.available)} available '
-                  'on ${disk.mountPoint}',
+              footnote: l10n.statsDiskAvailable(
+                RemotePath.formatBytes(disk.available),
+                disk.mountPoint,
+              ),
             ),
     );
   }
@@ -511,6 +581,7 @@ class _UsageBar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final l10n = context.l10n;
     final fraction = this.fraction;
     // 90% is the point at which a full disk stops being a statistic and
     // becomes tonight's problem. Tertiary is the warm middle step between
@@ -535,17 +606,20 @@ class _UsageBar extends StatelessWidget {
               RemotePath.formatBytes(used),
               style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w600),
             ),
-            Text(
-              ' of ${RemotePath.formatBytes(total)}',
-              style: TextStyle(
-                fontSize: 13,
-                color: Theme.of(context).colorScheme.onSurfaceVariant,
+            // Takes the room left over, wrapping if a language's "of" is too
+            // long for a small phone, and keeps the percentage at the end.
+            Expanded(
+              child: Text(
+                ' ${l10n.statsUsageOfTotal(RemotePath.formatBytes(total))}',
+                style: TextStyle(
+                  fontSize: 13,
+                  color: Theme.of(context).colorScheme.onSurfaceVariant,
+                ),
               ),
             ),
-            const Spacer(),
             if (fraction != null)
               Text(
-                '${(fraction * 100).toStringAsFixed(0)}%',
+                l10n.statsUsagePercent((fraction * 100).toStringAsFixed(0)),
                 style: TextStyle(
                   fontSize: 13,
                   fontWeight: FontWeight.w600,
@@ -652,22 +726,26 @@ class SparklinePainter extends CustomPainter {
 /// "6h 46m", "10d 3h", "45m". Pure, and exported so a test can pin it.
 ///
 /// Days-and-hours or hours-and-minutes, never three units: the third one is
-/// never what the reader wanted to know.
-String formatUptime(Duration uptime) {
+/// never what the reader wanted to know. In [l10n]'s language, English when
+/// none is given.
+String formatUptime(Duration uptime, {AppLocalizations? l10n}) {
+  l10n ??= lookupAppLocalizations(const Locale('en'));
   final days = uptime.inDays;
   final hours = uptime.inHours % 24;
   final minutes = uptime.inMinutes % 60;
 
-  if (days > 0) return hours > 0 ? '${days}d ${hours}h' : '${days}d';
-  if (hours > 0) return minutes > 0 ? '${hours}h ${minutes}m' : '${hours}h';
-  if (minutes > 0) return '${minutes}m';
-  return 'less than a minute';
-}
-
-String _formatAge(Duration age) {
-  if (age.inMinutes < 1) return '${age.inSeconds}s';
-  if (age.inHours < 1) return '${age.inMinutes}m';
-  return '${age.inHours}h';
+  if (days > 0) {
+    return hours > 0
+        ? l10n.statsUptimeDaysHours(days, hours)
+        : l10n.statsUptimeDays(days);
+  }
+  if (hours > 0) {
+    return minutes > 0
+        ? l10n.statsUptimeHoursMinutes(hours, minutes)
+        : l10n.statsUptimeHours(hours);
+  }
+  if (minutes > 0) return l10n.statsUptimeMinutes(minutes);
+  return l10n.statsUptimeUnderMinute;
 }
 
 /// Pushes the stats screen for [session].

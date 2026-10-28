@@ -4,9 +4,11 @@
 ![Linux x64 | arm64](https://img.shields.io/badge/Linux-x64%20%7C%20arm64-informational?logo=linux&logoColor=white)
 ![Windows x64 | arm64](https://img.shields.io/badge/Windows-x64%20%7C%20arm64-informational?logo=windows&logoColor=white)
 
-A fast, security-first SSH terminal and SFTP client for Android. Connect to your
-Linux servers, run a real interactive shell, and transfer files — with strict
-host-key verification at the core.
+A fast, security-first SSH terminal and SFTP client for Android, Windows and
+Linux. Connect to your servers, run a real interactive shell, edit and transfer
+files — with strict host-key verification at the core. In English, Simplified
+Chinese, Japanese, Brazilian Portuguese, Spanish, Russian, German, Korean and
+French.
 
 ## Features
 
@@ -15,8 +17,11 @@ host-key verification at the core.
   resize handling, and scrollback
 - Extra-keys bar: Esc, Tab, Ctrl (sticky), arrows with long-press repeat,
   `^C ^D ^Z ^L ^R`, pipe/slash/tilde — all 48 dp touch targets with haptics
-- Pinch-to-zoom font size, five colour schemes (Solarized Dark, Monokai,
-  retro green-phosphor, black-on-white, default)
+- Pinch or Ctrl+= / Ctrl+− to zoom, ten colour schemes, the bundled
+  JetBrains Mono font, and a choice of cursor shape, blinking and bell
+- **Find** across the whole scrollback (case and regex), clickable links
+  (Ctrl+click, or long-press on touch), and a session log you can save to a
+  file
 - Copy & paste with the system clipboard: long-press selection toolbar,
   dedicated Paste key, and a "Paste N lines?" guard against accidental
   multi-line command floods
@@ -29,16 +34,24 @@ host-key verification at the core.
 - SHA256 fingerprints shown for out-of-band verification before you accept
 - A changed host key **blocks the connection** with a full-screen warning and
   requires an explicit, checkbox-gated override
-- The trust store is sealed with an HMAC whose key lives in the Android
-  Keystore — a tampered or stripped store fails closed and warns you
-- Passwords, private keys, and passphrases are stored only in
-  Keystore-encrypted secure storage, never in plain text
+- The trust store is sealed with an HMAC whose key lives in the platform's
+  protected storage — a tampered or stripped store fails closed and warns you
+- Passwords, private keys and passphrases are stored only in the Android
+  Keystore, Windows Data Protection or the Linux desktop keyring — never in
+  plain text
 
 ### Connections
 - Saved host manager: one-tap connect, last-connected timestamps,
   quick-connect without saving
 - Password and private-key auth (OpenSSH, PKCS#1 RSA, ECDSA; passphrase
   support) — import `.pem` key files directly, including AWS EC2 keys
+- Two-factor (keyboard-interactive) logins; sign in with ssh-agent, Pageant
+  or the Windows OpenSSH agent, security keys (`sk-ed25519`) included; and
+  OpenSSH user certificates
+- Per host: agent forwarding, X11 forwarding (desktop), and an "Allow legacy
+  algorithms" switch for old routers and NAS boxes
+- **Mosh**, built in: the terminal survives roaming between networks and long
+  sleeps, while files and tunnels stay on SSH
 - Sessions survive app switching: a quiet foreground service plus 30-second
   keepalives hold the connection while you use other apps
 - Clean reconnect states when a server drops — never a zombie terminal
@@ -58,6 +71,10 @@ host-key verification at the core.
 - **Share to SecureShell Go**: send files from any app's Share menu, pick a
   saved host and a folder, and they upload — reusing a session you already
   have open instead of asking you to sign in again
+- Rename, delete, new folder, permissions, change owner, duplicate,
+  compress and extract archives, and search on the server
+- **Direct server-to-server copies** that run on the source server and finish
+  even if the app is closed
 - Hidden-files toggle, dirs-first sorting, breadcrumbs, pull-to-refresh
 
 ### Desktop workspace
@@ -69,8 +86,9 @@ host-key verification at the core.
   across all of them
 - **Ctrl+K command palette** over hosts, snippets and actions; quick-connect
   bar for `user@host:port`; import servers from `~/.ssh/config`
-- Command snippets with `{placeholder}` prompts, per-host startup commands,
-  and ten terminal colour schemes
+- Command snippets with `{placeholder}` prompts and per-host startup commands
+- **Run a command on many servers** at once, with live per-host output, exit
+  codes, Stop, and re-run on the ones that failed
 
 ### Look and feel
 - Four UI styles — the app's own look, plus AWS-, Google Cloud- and
@@ -84,9 +102,12 @@ host-key verification at the core.
   the ones that failed
 
 ### Connections that stay up
-- Automatic reconnection with keep-alive: a dropped network or a laptop
-  waking from sleep restores the shell in the same tab, and a changed host
-  key aborts rather than reconnecting quietly
+- Automatic reconnection: a link that stops answering is noticed, and a
+  network change, waking from sleep or returning to the app restores the
+  session in the same tab, resuming interrupted transfers; a changed host key
+  aborts rather than reconnecting quietly
+- Optionally keep each shell in **tmux or screen** on the server, so a
+  reconnect lands back in the same shell, running job and all
 - **Jump hosts** (`ProxyJump`): reach a server through a bastion, with both
   hops verified against known-hosts independently
 - **Tunnel manager**: saved local, remote and dynamic (SOCKS5) port forwards
@@ -95,23 +116,55 @@ host-key verification at the core.
   or forget trusted host keys from Settings
 
 ### Editing and monitoring
-- **Built-in remote editor**: syntax highlighting for thirteen languages,
-  tabs, find and replace, and a save that re-checks the file first and
-  publishes through a verified temporary file, keeping the original's
-  permissions
+- **Built-in remote editor** that edits code like an IDE: detected tabs or
+  spaces, Tab/Shift+Tab, auto-indent (Python-aware), comment and move-line
+  shortcuts, visible whitespace, per-file undo, and a key bar on touch
+  screens; syntax highlighting for twenty languages, find and replace, and a
+  save that never changes bytes you did not edit (BOM and line endings kept)
+  and publishes through a verified temporary file, keeping permissions
 - Per-host path bookmarks and one transfer panel across every open session
 - Server stats (load, memory, disk, uptime), a live log viewer with filtering
   and severity highlighting, and a systemd service and process manager
 
+### Remote desktop and graphical apps
+- **See and control a server's desktop**, TeamViewer-style, from any device,
+  phones included: GNOME on Wayland, X11 desktops and Windows. The app copies
+  a small agent over the SSH connection you already have, starts it for the
+  session and stops it after; it listens on the server's loopback only and
+  is reached through the SSH tunnel, so no port is opened and SSH is the only
+  login. The person at the screen is told while it is being viewed.
+- **Virtual desktops on headless servers**: start a private screen (Xvfb)
+  running a desktop such as Xfce, or a single program, and use it from the
+  same viewer. Optionally keep it running after you disconnect and come back
+  to it later.
+- **Open an app in a window**: run one graphical program on the server and
+  have its window open on this device's own desktop, through X11 forwarding
+  (Linux, or Windows with an X server such as VcXsrv or X410). No host
+  setting to turn on first, and a server missing `xauth` gets it installed
+  in one click.
+- **Macs** through their built-in Screen Sharing, over the same tunnel.
+- Mouse, keyboard and clipboard; on touch screens a trackpad mode and a
+  direct mode, and a key bar with Ctrl, Alt, Super and Ctrl+Alt+Del.
+- Nothing runs on a server until you open a remote desktop on it. The agents
+  add about 5.7 MB to the app, and older ones the app left behind are
+  removed from servers when a newer one is installed.
+
 ### Locked down
-- Optional app lock behind your device's own authentication (Android)
+- Optional app lock behind your device's own authentication (Android) or
+  Windows Hello
+- An opt-in diagnostics log for bug reports, kept on the device with
+  passwords and keys removed
 - **Encrypted backup**: export hosts, groups, settings, snippets, tunnels and
   bookmarks to one passphrase-protected file — Argon2id and AES-256-GCM, with
-  saved passwords included only if you explicitly ask
+  saved passwords and trusted host keys included only if you ask — and save
+  it anywhere, cloud drives included
 
 ### Every screen size
 - Material 3 window-size-class layouts: side-by-side terminal + file browser
-  on tablets, Samsung DeX, and unfolded foldables; host grid on wide screens
+  on tablets, Samsung DeX, and unfolded foldables (split at the hinge, or
+  above and below in tabletop posture); host grid on wide screens
+- Laid out for the input in use: touch, mouse or hardware keyboard — the
+  extra keys row hides while you type on a keyboard
 - Live relayout on window resize and fold/unfold — the session stays connected
   through transitions
 - Comfortable on small phones (320 dp) in portrait and landscape
@@ -178,9 +231,9 @@ is uploaded.
 
 Credentials are handed to the desktop's own encrypted store (the Secret
 Service API — GNOME Keyring or KWallet) and never written anywhere in
-plaintext. If no such store is reachable, saving a credential fails
-rather than silently downgrading, so the app needs one present and
-unlocked:
+plaintext. A keyring this install has used before that is now locked makes
+saving fail with a prompt to unlock it, rather than silently downgrading. For
+the strongest protection, have one installed and unlocked:
 
 ```bash
 sudo apt install gnome-keyring
@@ -201,24 +254,35 @@ not connect this interface automatically:
 sudo snap connect secureshellgo:password-manager-service
 ```
 
-If you would rather not use the desktop keyring at all — a headless box,
-a minimal window manager, or a login keyring you never unlock — the app
-can protect credentials with an app passphrase instead, encrypting them
-into its own private file. It will offer this the first time saving to
-the keyring fails.
+On a machine that has never had a keyring — a headless box or a minimal
+window manager — the app encrypts credentials into its own private file
+instead, with a key kept beside it that only your user account can read.
+That protects them from other users, not from programs running as you, so
+install a keyring where you can.
 
 ## Privacy
 
-SecureShell Go collects nothing: no analytics, no ads, no account, and no
-Dhiva Labs server for anything to be sent to. Credentials stay on the device
-in the Android Keystore, and the only hosts the app connects to are the ones
-you configure. Full text: [Privacy policy](docs/privacy-policy.md).
+SecureShell Go collects nothing: no analytics, no ads, no account, no update
+check, and no Dhiva Labs server for anything to be sent to. Credentials stay
+on the device in the platform's protected storage, and the only hosts the app
+connects to are the ones you configure. Full text: [Privacy policy](docs/privacy-policy.md).
 
 ## Build from source
 
 ```bash
 flutter pub get
 flutter build apk --release
+```
+
+Remote desktop carries CrossShell's agents in `assets/agents/`, packed and
+committed, with their hashes pinned in `assets/agents/manifest.json`. To move to
+a new [CrossShell](https://github.com/Dhiva-Labs/CrossShell) release, download
+its `crossshell-host-*` assets and `crossshell-host-SHA256SUMS` (renamed to
+`SHA256SUMS`) into one folder and stage them; every file is checked against the
+sums first:
+
+```bash
+tool/stage_agents.sh path/to/that/folder
 ```
 
 Release builds are signed with the upload key named in

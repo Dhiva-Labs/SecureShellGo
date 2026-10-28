@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
+import '../l10n/l10n.dart';
 import '../services/tunnel_runtime.dart';
 
 /// The sessions screen's "something is listening" chip.
@@ -71,7 +72,7 @@ class _TunnelIndicatorState extends State<TunnelIndicator> {
     );
 
     return Tooltip(
-      message: count == 1 ? '1 tunnel running' : '$count tunnels running',
+      message: context.l10n.tunnelsRunning(count),
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 4),
         child: widget.onTap == null

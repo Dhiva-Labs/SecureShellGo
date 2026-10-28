@@ -532,6 +532,19 @@ class AppTheme {
   static Color editorMatchText(TerminalTheme theme) =>
       theme.searchHitForeground;
 
+  /// "Show whitespace": a leading tab and a leading space are tinted apart, so
+  /// a line indented with the other one stands out — the mixed indentation
+  /// that breaks Python and that a monospace font otherwise hides.
+  static Color editorIndentTab(TerminalTheme theme) =>
+      theme.blue.withValues(alpha: 0.16);
+
+  static Color editorIndentSpace(TerminalTheme theme) =>
+      theme.foreground.withValues(alpha: 0.05);
+
+  /// Whitespace at the end of a line, shown only with "Show whitespace" on.
+  static Color editorTrailingWhitespace(TerminalTheme theme) =>
+      theme.red.withValues(alpha: 0.22);
+
   /// Resolves a saved host's colour-tag id (`Host.colorLabel?.name`, the
   /// persisted shape) to the swatch it names, or null for no tag. Public —
   /// not just used by the host list and edit screen — so a later phase's

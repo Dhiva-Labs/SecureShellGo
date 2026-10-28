@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:secure_shell_go/l10n/l10n.dart';
 import 'package:secure_shell_go/screens/session_screen.dart';
 import 'package:secure_shell_go/services/transfer_queue.dart';
 
@@ -17,6 +18,8 @@ TransferTask saved(String name, {String? uri = 'content://downloads/0'}) {
 }
 
 void main() {
+  final english = lookupAppLocalizations(const Locale('en'));
+
   /// Puts [snackBar] up on a bare app and returns once it is all the way in.
   Future<void> show(WidgetTester tester, SnackBar snackBar) async {
     late BuildContext host;
@@ -42,6 +45,7 @@ void main() {
     // persistent unless it says otherwise — and a persistent bar's dismissal
     // timer fires and deliberately does nothing.
     final bar = buildDownloadSavedSnackBar(
+      english,
       batch: [saved('notes.txt')],
       onOpen: (_) {},
       onShowAll: () {},
@@ -55,6 +59,7 @@ void main() {
     await show(
       tester,
       buildDownloadSavedSnackBar(
+        english,
         batch: [saved('notes.txt')],
         onOpen: (task) => opened = task,
         onShowAll: () {},
@@ -72,6 +77,7 @@ void main() {
     await show(
       tester,
       buildDownloadSavedSnackBar(
+        english,
         batch: [saved('notes.txt')],
         onOpen: (_) {},
         onShowAll: () {},
@@ -95,6 +101,7 @@ void main() {
     await show(
       tester,
       buildDownloadSavedSnackBar(
+        english,
         batch: [saved('a.txt'), saved('b.txt')],
         onOpen: (_) {},
         onShowAll: () => showedAll = true,
@@ -118,6 +125,7 @@ void main() {
     await show(
       tester,
       buildDownloadSavedSnackBar(
+        english,
         batch: [saved('notes.txt', uri: null)],
         onOpen: (_) {},
         onShowAll: () {},

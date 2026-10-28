@@ -1,0 +1,292 @@
+[
+  {
+    "fields": {
+      "caps": 1,
+      "token": "a6ec3716a02db21601a716fd4aa85fb98151b6efd4520ea832a754a2839cca87",
+      "version": 1,
+      "viewer_name": "Pixel 9 — SecureShell Go"
+    },
+    "kind": "Hello",
+    "length": 75,
+    "offset": 0,
+    "type": 1
+  },
+  {
+    "fields": {
+      "caps": 1,
+      "displays": [
+        {
+          "height": 1600,
+          "index": 0,
+          "name": "Built-in Retina — eDP-1",
+          "primary": true,
+          "width": 2560,
+          "x": 0,
+          "y": 0
+        },
+        {
+          "height": 2160,
+          "index": 1,
+          "name": "DELL U2720Q",
+          "primary": false,
+          "width": 3840,
+          "x": -3840,
+          "y": -560
+        }
+      ],
+      "version": 1
+    },
+    "kind": "Welcome",
+    "length": 88,
+    "offset": 75,
+    "type": 2
+  },
+  {
+    "fields": {
+      "reason": "bad token"
+    },
+    "kind": "Reject",
+    "length": 16,
+    "offset": 163,
+    "type": 3
+  },
+  {
+    "fields": {
+      "display": 1,
+      "max_fps": 30,
+      "quality": 1,
+      "view_only": true
+    },
+    "kind": "Start",
+    "length": 9,
+    "offset": 179,
+    "type": 16
+  },
+  {
+    "fields": {
+      "display": 0,
+      "max_fps": 60,
+      "quality": 0
+    },
+    "kind": "SelectDisplay",
+    "length": 8,
+    "offset": 188,
+    "type": 17
+  },
+  {
+    "fields": {
+      "height": 1080,
+      "rects": [
+        {
+          "data": "00254a6f94b9de03",
+          "encoding": 0,
+          "encoding_name": "Raw",
+          "h": 1,
+          "w": 2,
+          "x": 0,
+          "y": 0
+        },
+        {
+          "data": "28b52ffd201081000000254a6f94b9de03284d7297bce1062b",
+          "encoding": 1,
+          "encoding_name": "Zstd",
+          "h": 2,
+          "w": 2,
+          "x": 2,
+          "y": 0
+        },
+        {
+          "data": "ffd8ffe000104a46494600010200000100010000ffc00011080008000803002200011101021101ffdb00430006040506050406060506070706080a100a0a09090a140e0f0c1017141818171416161a1d251f1a1b231c1616202c20232627292a29191f2d302d283025282928ffdb0043010707070a080a130a0a13281a161a2828282828282828282828282828282828282828282828282828282828282828282828282828282828282828282828282828ffc4001f0000010501010101010100000000000000000102030405060708090a0bffc400b5100002010303020403050504040000017d01020300041105122131410613516107227114328191a1082342b1c11552d1f02433627282090a161718191a25262728292a3435363738393a434445464748494a535455565758595a636465666768696a737475767778797a838485868788898a92939495969798999aa2a3a4a5a6a7a8a9aab2b3b4b5b6b7b8b9bac2c3c4c5c6c7c8c9cad2d3d4d5d6d7d8d9dae1e2e3e4e5e6e7e8e9eaf1f2f3f4f5f6f7f8f9faffc4001f0100030101010101010101010000000000000102030405060708090a0bffc400b51100020102040403040705040400010277000102031104052131061241510761711322328108144291a1b1c109233352f0156272d10a162434e125f11718191a262728292a35363738393a434445464748494a535455565758595a636465666768696a737475767778797a82838485868788898a92939495969798999aa2a3a4a5a6a7a8a9aab2b3b4b5b6b7b8b9bac2c3c4c5c6c7c8c9cad2d3d4d5d6d7d8d9dae2e3e4e5e6e7e8e9eaf2f3f4f5f6f7f8f9faffda000c03000001110211003f0059a2b88cc3a7a93f62b79cc56974fa734c22f2ca050c7032dbd5906dc1fbca7af1a1b358ff00a0a43ff84f4ffe35b67fe40abff61a9fff004be4ae82bc2c5e634f1583c3d78c1c54b9bddba7677d5df91377ddddb4becd9687266588c3d357a94f997338ed4dfc3182bfbf4a7ab8f2a76b7c3777be9fffd9",
+          "encoding": 2,
+          "encoding_name": "Jpeg",
+          "h": 8,
+          "w": 8,
+          "x": 8,
+          "y": 0
+        },
+        {
+          "data": "10203000",
+          "encoding": 3,
+          "encoding_name": "Fill",
+          "h": 64,
+          "w": 64,
+          "x": 0,
+          "y": 64
+        },
+        {
+          "data": "78016350f5ca9fb2f31eb3866fd1f43d0fd9b40132580659",
+          "encoding": 4,
+          "encoding_name": "Deflate",
+          "h": 2,
+          "w": 2,
+          "x": 4,
+          "y": 0
+        }
+      ],
+      "seq": 16909060,
+      "width": 1920
+    },
+    "kind": "Frame",
+    "length": 888,
+    "offset": 196,
+    "type": 32
+  },
+  {
+    "fields": {
+      "seq": 4294967295
+    },
+    "kind": "FrameAck",
+    "length": 9,
+    "offset": 1084,
+    "type": 33
+  },
+  {
+    "fields": {
+      "height": 2,
+      "hot_x": 1,
+      "hot_y": 0,
+      "rgba": "000b16212c37424d58636e79848f9aa5b0bbc6d1dce7f2fd",
+      "width": 3
+    },
+    "kind": "CursorShape",
+    "length": 37,
+    "offset": 1093,
+    "type": 34
+  },
+  {
+    "fields": {
+      "height": 0,
+      "hot_x": 0,
+      "hot_y": 0,
+      "rgba": "",
+      "width": 0
+    },
+    "kind": "CursorShape",
+    "length": 13,
+    "offset": 1130,
+    "type": 34
+  },
+  {
+    "fields": {
+      "x": -12,
+      "y": 70000
+    },
+    "kind": "CursorPos",
+    "length": 13,
+    "offset": 1143,
+    "type": 35
+  },
+  {
+    "fields": {
+      "displays": [
+        {
+          "height": 2160,
+          "index": 1,
+          "name": "DELL U2720Q",
+          "primary": false,
+          "width": 3840,
+          "x": -3840,
+          "y": -560
+        }
+      ]
+    },
+    "kind": "DisplaysChanged",
+    "length": 37,
+    "offset": 1156,
+    "type": 36
+  },
+  {
+    "fields": {
+      "x": 1919,
+      "y": -1
+    },
+    "kind": "PointerMove",
+    "length": 13,
+    "offset": 1193,
+    "type": 48
+  },
+  {
+    "fields": {
+      "button": 4,
+      "down": true
+    },
+    "kind": "PointerButton",
+    "length": 7,
+    "offset": 1206,
+    "type": 49
+  },
+  {
+    "fields": {
+      "dx": -120,
+      "dy": 360
+    },
+    "kind": "Scroll",
+    "length": 9,
+    "offset": 1213,
+    "type": 50
+  },
+  {
+    "fields": {
+      "code": 125,
+      "down": false
+    },
+    "kind": "Key",
+    "length": 8,
+    "offset": 1222,
+    "type": 51
+  },
+  {
+    "fields": {},
+    "kind": "ReleaseAll",
+    "length": 5,
+    "offset": 1230,
+    "type": 52
+  },
+  {
+    "fields": {
+      "text": "héllo\nwörld\t✓ 🦀"
+    },
+    "kind": "ClipboardText",
+    "length": 27,
+    "offset": 1235,
+    "type": 64
+  },
+  {
+    "fields": {
+      "value": 5124095576030430
+    },
+    "kind": "Ping",
+    "length": 13,
+    "offset": 1262,
+    "type": 80
+  },
+  {
+    "fields": {
+      "value": 9007199254740991
+    },
+    "kind": "Pong",
+    "length": 13,
+    "offset": 1275,
+    "type": 81
+  },
+  {
+    "fields": {
+      "level": 1,
+      "text": "Screen locked"
+    },
+    "kind": "Notice",
+    "length": 21,
+    "offset": 1288,
+    "type": 96
+  },
+  {
+    "fields": {
+      "level": 0,
+      "text": ""
+    },
+    "kind": "Notice",
+    "length": 8,
+    "offset": 1309,
+    "type": 96
+  }
+]

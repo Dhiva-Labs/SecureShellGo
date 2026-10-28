@@ -141,8 +141,10 @@ SecureStorageUnavailableException mapSecureStorageWriteError(
 ///    [write] turns that into [SecureStorageUnavailableException] rather
 ///    than falling back to an unprotected file — there is no such fallback
 ///    to fall back to.
-///  - **Windows**: DPAPI, via the Credential Manager (`CredWrite`/`CredRead`),
-///    keyed to the logged-in user.
+///  - **Windows**: DPAPI, keyed to the logged-in user, protecting a file
+///    (`flutter_secure_storage.dat`) in the app's roaming AppData folder.
+///    Not the Credential Manager: flutter_secure_storage_windows 4.x moved
+///    off it.
 ///  - **macOS**: the login Keychain, scoped to this app's own default
 ///    keychain-access group (no shared `keychain-access-groups` entitlement
 ///    is configured, because nothing here ever sets `kSecAttrAccessGroup`).

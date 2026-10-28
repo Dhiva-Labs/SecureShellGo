@@ -14,10 +14,15 @@ import 'device_storage.dart';
 import 'direct_remote_copy.dart';
 import 'download_announcer.dart';
 import 'download_plan.dart';
+import 'mosh/mosh_shell.dart';
+import 'persistent_shell.dart';
 import 'remote_copy.dart';
+import 'remote_exec.dart';
 import 'remote_path.dart';
 import 'session_keepalive.dart';
 import 'session_reconnect.dart';
+import 'session_recorder.dart';
+import 'server_side_job.dart';
 import 'sftp_service.dart';
 import 'ssh_service.dart';
 import 'transfer_queue.dart';
@@ -117,10 +122,18 @@ class SessionController {
     RemoteTargetResolver? resolveRemoteTarget,
     DestinationCredentialResolver? resolveDestinationCredentials,
     AgentForwardingConnector? connectWithAgentForwarding,
+    ServerJobStore? serverJobs,
     PeriodicScheduler keepaliveScheduler = Timer.periodic,
     ReconnectSupport? reconnect,
     ReconnectDelayScheduler reconnectScheduler = Timer.new,
+    DateTime Function() clock = DateTime.now,
+    this.scrollbackLines = 10000,
+    MoshStarter startMosh = MoshShell.start,
   })  : _connection = connection,
+        // ignore: prefer_initializing_formals
+        _startMosh = startMosh,
+        // ignore: prefer_initializing_formals
+        _clock = clock,
         _storage = storage ?? createDefaultDeviceStorage(),
         // ignore: prefer_initializing_formals
         _openFileSystem = openFileSystem,
@@ -131,6 +144,8 @@ class SessionController {
         // ignore: prefer_initializing_formals
         _connectWithAgentForwarding = connectWithAgentForwarding,
         // ignore: prefer_initializing_formals
+        _serverJobs = serverJobs,
+        // ignore: prefer_initializing_formals
         _keepaliveScheduler = keepaliveScheduler {
     transfers = TransferQueue(executor: _runTransfer);
     _startKeepalive();
@@ -140,6 +155,7 @@ class SessionController {
         support: reconnect,
         adopt: adoptTransport,
         scheduler: reconnectScheduler,
+        clock: clock,
       );
       _reconnector = reconnector;
       // Folded into this session's own change stream, so the banner in the
@@ -181,6 +197,33 @@ class SessionController {
   /// transfer falls back to the relay path rather than failing.
   final AgentForwardingConnector? _connectWithAgentForwarding;
 
+  /// Where direct copies running as jobs on the source server are
+  /// remembered, so they can be followed — and finished — after the app has
+  /// been closed. Null (the unit tests) runs direct copies attached to an
+  /// exec channel instead, as before. See `server_side_job.dart`.
+  final ServerJobStore? _serverJobs;
+
+  /// The server-side jobs this session is following, each with the task
+  /// following it: from the moment one is launched, or picked up, until it
+  /// is forgotten or handed off. What keeps `SessionManager` from starting a
+  /// second follower beside it — one that would report a copy the first had
+  /// finished as lost, or run its verify, swap or delete a second time.
+  final Map<String, String> _followedJobs = {};
+
+  /// Whether this session is following the server-side job [jobId]: a task
+  /// of its own is launching it, following it, or queued to pick it up.
+  bool isFollowingServerJob(String jobId) {
+    final taskId = _followedJobs[jobId];
+    if (taskId == null) return false;
+    return transfers.tasks.any((t) => t.id == taskId && t.status.isActive);
+  }
+
+  /// Called when this session stops following a server-side job that goes
+  /// on without it — its connection dropped, or its tab closed — so the job
+  /// can be picked up again as soon as both ends are open, including when
+  /// they already are again. Set by `SessionManager`.
+  void Function()? onServerJobHandedOff;
+
   /// Whether this session can copy files straight to another server.
   bool get canTransferToOtherSessions => _resolveRemoteTarget != null;
 
@@ -202,11 +245,16 @@ class SessionController {
   /// Not `final`: [SessionKeepalive.stop] is deliberately permanent, so a
   /// session that reconnects gets a *new* one bound to the new transport
   /// rather than trying to restart a schedule that has already been retired.
-  late SessionKeepalive _keepalive;
+  /// Null only until the constructor has started the first.
+  SessionKeepalive? _keepalive;
 
   /// Kept so the replacement keep-alive built by [adoptTransport] uses the
   /// same (possibly faked) clock the first one did.
   final PeriodicScheduler _keepaliveScheduler;
+
+  /// What "now" is, for the dead-link check and the reconnect schedule. A
+  /// test moves it by hand.
+  final DateTime Function() _clock;
 
   /// Rebuilds the transport when it dies unexpectedly, or null when this
   /// session was built without the means to — no credential store and no SSH
@@ -238,6 +286,25 @@ class SessionController {
 
   SSHSession? _shell;
   Future<SSHSession>? _shellOpening;
+
+  /// The terminal, when it runs over Mosh instead of an SSH shell channel —
+  /// see [_openMoshShell]. It outlives SSH drops: the transport below can
+  /// die and be replaced while this carries on.
+  MoshShell? _mosh;
+  final MoshStarter _startMosh;
+
+  /// The transport generation whose SSH connection was lost under a live
+  /// Mosh terminal; see [_markClosed].
+  int? _sshLostUnderMosh;
+
+  /// Counts [_resetShell]s, so a shell that finishes opening after the one
+  /// it was opened for has been reset can tell, and stand down.
+  var _shellEpoch = 0;
+
+  /// Whether the SSH connection is up — what stopping a `mosh-server` by
+  /// its pid, or starting another, needs.
+  bool get _sshUp => !_closed && _sshLostUnderMosh != _transportGeneration;
+
   Future<RemoteFileSystem>? _sftpOpening;
   RemoteFileSystem? _sftp;
 
@@ -255,13 +322,20 @@ class SessionController {
   /// `xterm`'s `Terminal` is pure Dart (`package:xterm/core.dart`), so this
   /// keeps `services/` free of Flutter: the view supplies the font, the theme
   /// and the gestures, and this supplies the bytes.
-  late final Terminal terminal = Terminal(
-    maxLines: 10000,
+  ///
+  /// A [RecordingTerminal], so a session log can copy what it shows; see
+  /// `session_recorder.dart`.
+  late final RecordingTerminal terminal = RecordingTerminal(
+    maxLines: scrollbackLines,
     platform: TerminalTargetPlatform.linux,
     onOutput: _sendToShell,
     onResize: _handleTerminalResize,
     onBell: () => onBell?.call(),
   );
+
+  /// Lines of history [terminal] keeps (Settings > Terminal > Scrollback),
+  /// fixed for the life of the session.
+  final int scrollbackLines;
 
   /// Set by the view, since a bell is haptics and a haptic is not a service.
   void Function()? onBell;
@@ -335,6 +409,31 @@ class SessionController {
   /// still up — which is what `exit` looks like from here. See [_markClosed].
   var _shellExitedCleanly = false;
 
+  /// Set once a persistent shell failed as it started — the wrapper refused
+  /// by a restricted shell, say — so that every shell this session opens
+  /// after it, a Restart's or a reconnect's, is the plain login shell rather
+  /// than the same failure again. See [persistentStartGrace].
+  var _persistentShellFailed = false;
+
+  /// How soon after opening a persistent shell an exit with an error status
+  /// counts as it failing to start, and is answered with the login shell.
+  /// Later than that it is a shell that ran and ended, and is left ended.
+  static const Duration persistentStartGrace = Duration(seconds: 3);
+
+  /// Why the shell ended while the connection stayed up, or null while it is
+  /// running (or has not started).
+  String? _shellEndedReason;
+
+  /// Which slot of its host this tab holds, for the name of the tmux or
+  /// screen session its shell lives in — see [persistentName]. Assigned by
+  /// `SessionManager` when it opens the tab, before any shell is.
+  int persistentSlot = 1;
+
+  /// The tmux or screen session this tab's shell lives in, when its host
+  /// keeps one ([Host.persistentSession]). The same for the life of the tab,
+  /// which is what makes a reconnect — or a Restart — land back in it.
+  String get persistentName => persistentSessionName(host, persistentSlot);
+
   Host get host => connection.host;
 
   /// Fires whenever the session's own state changes (connected → closed).
@@ -378,10 +477,17 @@ class SessionController {
   }
 
   /// True once the shell channel has been opened.
-  bool get hasShell => _shell != null;
+  bool get hasShell => _shell != null || _mosh != null;
+
+  /// True while the terminal carries on over Mosh but the SSH connection
+  /// under files, tunnels and commands is gone: being reconnected, or given
+  /// up on until the user or the network says to try again. The session is
+  /// not [isClosed] meanwhile — its terminal is fine.
+  bool get isSshLostUnderMosh =>
+      !_closed && _sshLostUnderMosh == _transportGeneration;
 
   /// Whether keep-alives are still being sent. Diagnostics and tests.
-  bool get isKeepaliveRunning => _keepalive.isRunning;
+  bool get isKeepaliveRunning => _keepalive?.isRunning ?? false;
 
   // ------------------------------------------------------------- reconnect
 
@@ -395,7 +501,13 @@ class SessionController {
 
   /// What the terminal area should say about the reconnection, or null when
   /// there is nothing to say.
-  String? get reconnectMessage => _reconnector?.message;
+  String? get reconnectMessage {
+    final message = _reconnector?.message;
+    if (message != null && _mosh != null && !_closed) {
+      return '$message The terminal carries on over Mosh.';
+    }
+    return message;
+  }
 
   /// True once reconnection has been tried and abandoned. Distinguishes "this
   /// session is gone and we did what we could" from "this session is gone".
@@ -408,6 +520,56 @@ class SessionController {
   void stopReconnecting() {
     _reconnector?.cancel();
     _notify();
+  }
+
+  /// Whether this session can rebuild its own transport at all — what puts a
+  /// Reconnect button on the disconnected banner.
+  bool get canReconnect => _reconnector != null && !_disposed;
+
+  /// Reconnects now: the Reconnect button. Works from any way of having been
+  /// disconnected — a schedule that gave up, a Stop, an orderly close, an
+  /// `exit` — because a person asked for it.
+  void reconnectNow() {
+    // SSH lost under a Mosh terminal is a dead transport too, with a
+    // terminal still on top of it.
+    if (!_closed && !isSshLostUnderMosh) return;
+    _reconnector?.retryNow();
+    _notify();
+  }
+
+  /// Something just happened that makes a dead link likely and a retry
+  /// worthwhile: the network changed or came back, the app came back into
+  /// view, the computer woke up. See `network_watch.dart`.
+  ///
+  /// A live session checks its link at once ([checkLink]) instead of waiting
+  /// up to a minute and a half for its keep-alives to notice. One waiting out
+  /// a backoff delay tries now. One that gave up only because the network was
+  /// not there starts again; one that stopped for any other reason — a
+  /// refused login, a changed host key, the user — stays stopped.
+  Future<void> networkCameBack() async {
+    if (_disposed) return;
+    _mosh?.networkChanged();
+    final reconnector = _reconnector;
+    // With SSH lost under Mosh there is no link to check — its keep-alive
+    // stopped with it — only a reconnect to resume, as for a closed session.
+    if (_closed || isSshLostUnderMosh) {
+      if (reconnector != null &&
+          (reconnector.isWaiting || reconnector.mayRetryOnNetwork)) {
+        reconnector.retryNow();
+        _notify();
+      }
+      return;
+    }
+    await checkLink();
+  }
+
+  /// Asks the server for one keep-alive now, and closes the session as a
+  /// dropped link (so it reconnects) when the answer does not come — see
+  /// [SessionKeepalive.probe]. True when the link is, or may be, alive.
+  Future<bool> checkLink() async {
+    final keepalive = _keepalive;
+    if (_closed || _disposed || keepalive == null) return false;
+    return keepalive.probe();
   }
 
   /// Takes over [next] as this session's transport, in place of the one that
@@ -439,20 +601,11 @@ class SessionController {
     // future completing — the socket underneath may still be half-open.
     _connection.close();
 
-    for (final subscription in _shellOutput) {
-      unawaited(subscription.cancel());
-    }
-    _shellOutput.clear();
-
     _connection = next;
     _transportGeneration++;
 
-    _shell = null;
-    _shellOpening = null;
-    _shellReady = null;
-    _shellStarted = false;
-    _shellError = null;
-    _shellExitedCleanly = false;
+    // A Mosh terminal never depended on the transport that died.
+    if (_mosh == null) _resetShell();
     // The old channels died with the old transport. Dropping the handles is
     // what makes the file browser's next call open a fresh one rather than
     // write into a closed channel.
@@ -465,8 +618,16 @@ class SessionController {
 
     _startKeepalive();
     _watchTransport();
+    // What the drop cut off goes back in the queue, in the order it was in,
+    // and runs on the new connection.
+    transfers.resumeInterrupted();
     _notify();
 
+    final mosh = _mosh;
+    if (mosh != null) {
+      unawaited(mosh.checkServer(next));
+      return;
+    }
     _writeToTerminal(
       '\r\n\x1b[2m── reconnected to ${host.displayName} ──\x1b[0m\r\n',
     );
@@ -474,31 +635,60 @@ class SessionController {
   }
 
   void _startKeepalive() {
+    // Never two at once. The one being replaced is normally stopped already
+    // — the drop that led here stopped it — but one that is not would be a
+    // timer nothing can reach any more, not even [dispose].
+    _keepalive?.stop();
+    final generation = _transportGeneration;
     _keepalive = SessionKeepalive(
       // Through the field rather than the value it holds today: a reconnect
       // replaces the transport, and a keep-alive still pinging the old one
       // would be pinging a socket nobody is listening on.
       ping: () => _connection.ping(),
       scheduler: _keepaliveScheduler,
-    )..start();
+      lastInbound: () => _connection.lastInboundAt,
+      onDead: () => _linkDead(generation),
+      clock: _clock,
+    )..start(pingNow: true);
+  }
+
+  /// The keep-alives say the link is dead though nothing below has noticed:
+  /// the socket is open and silent, and would stay that way until TCP gives
+  /// up. Closed as a dropped link, so the reconnect takes over, and the dead
+  /// transport is shut so whatever was waiting on it fails now rather than
+  /// in a quarter of an hour.
+  void _linkDead(int generation) {
+    if (generation != _transportGeneration) return;
+    final dead = _connection;
+    _markClosed(
+      'Connection lost: the server stopped answering.',
+      generation,
+      retryable: true,
+    );
+    dead.close();
   }
 
   /// Watches the current transport for its death, and classifies it.
   ///
-  /// The two branches are not cosmetic — they are what decides whether an
-  /// automatic reconnect is appropriate. `done` completing *normally* means
-  /// the far end said goodbye in an orderly way: the user typed `exit`, or an
-  /// administrator's idle policy closed the session, or the server is going
-  /// down. None of those want to be undone by a client that immediately dials
-  /// back. `done` completing with an *error* is the transport breaking
-  /// underneath a session nobody asked to end — a Wi-Fi handover, a closed
-  /// lid, a NAT mapping expiring — which is precisely the case reconnection
-  /// exists for.
+  /// `done` completing with an *error* is the transport breaking underneath a
+  /// session nobody asked to end — a Wi-Fi handover, a closed lid, a NAT
+  /// mapping expiring — which is precisely the case reconnection exists for.
+  ///
+  /// `done` completing *normally* means the far end closed the connection in
+  /// an orderly way. That is retried too: what does it while a shell is still
+  /// running is the server going down — a reboot, sshd restarting — and the
+  /// shell, above all a persistent one, is wanted back when it comes up. The
+  /// one orderly close that must not be dialled back is the user's own: an
+  /// `exit` ends the shell channel first, and [_markClosed] refuses then.
   void _watchTransport() {
     final generation = _transportGeneration;
     final transport = _connection;
     transport.done.then((_) {
-      _markClosed('Connection closed by the remote host.', generation);
+      _markClosed(
+        'Connection closed by the remote host.',
+        generation,
+        retryable: true,
+      );
     }).catchError((Object error) {
       _markClosed('Connection lost: $error', generation, retryable: true);
     });
@@ -513,16 +703,39 @@ class SessionController {
     // it just no longer speaks for this session. See [_transportGeneration].
     if (generation != _transportGeneration) return;
     if (_closed) return;
+    // The terminal is on Mosh and carries on without SSH, so the session is
+    // not closed: the terminal stays usable, and only files, tunnels and
+    // commands wait while the transport is rebuilt underneath.
+    if (_mosh != null && retryable && !_disposed) {
+      if (_sshLostUnderMosh == generation) return;
+      _sshLostUnderMosh = generation;
+      _keepalive?.stop();
+      if (_reconnector == null) {
+        transfers.cancelAll();
+      } else {
+        transfers.interruptAll();
+      }
+      _reconnector?.begin();
+      _notify();
+      return;
+    }
     _closed = true;
     _closeReason = reason;
     // Nothing left to keep alive. Stopping here rather than only in dispose()
     // matters for the background case: a drop that happens while the app is
     // in the background must not leave a timer pinging a dead socket until
     // the user comes back and pops the route.
-    _keepalive.stop();
-    // Anything still queued is now unrunnable; failing it loudly beats a
-    // progress bar that never moves again.
-    transfers.cancelAll();
+    _keepalive?.stop();
+    // Anything still queued or moving is now unrunnable — but it is not
+    // cancelled, because nobody cancelled it. It waits as interrupted, and
+    // goes back in the queue when [adoptTransport] has a connection again.
+    // A session that has no way to reconnect would only be keeping a
+    // promise it cannot keep, so there it ends now.
+    if (_reconnector == null) {
+      transfers.cancelAll();
+    } else {
+      transfers.interruptAll();
+    }
 
     // A shell that exited cleanly before the transport went is the user
     // leaving — `exit`, `logout`, Ctrl-D — and dialling their server back
@@ -533,16 +746,72 @@ class SessionController {
     // exactly like a network fault.
     if (retryable && !_disposed && !_shellExitedCleanly) {
       _reconnector?.begin();
+    } else if (_shellExitedCleanly && isReconnecting) {
+      // Begun when SSH dropped under a Mosh terminal the user has since
+      // left with `exit`. Left running, it would reconnect, find no
+      // terminal, and start a new mosh-server and shell for nobody.
+      _reconnector?.cancel();
     }
     _notify();
   }
 
-  /// Called by the terminal view when the shell channel itself ends, which can
-  /// happen (a plain `exit`) while the transport is still perfectly alive.
+  /// Called when the shell channel itself ends, which can happen (a plain
+  /// `exit`, a detach from tmux) while the transport is still perfectly
+  /// alive. What the "Shell ended — Restart" banner is built from.
   void reportShellEnded(String reason) {
     if (_closed) return;
     _closeReason ??= reason;
+    _shellEndedReason ??= reason;
     _notify();
+  }
+
+  /// True when the shell has gone — ended, or never opened — but the
+  /// connection under it has not. [restartShell] is the way out.
+  bool get hasShellEnded =>
+      !_closed && (_shellEndedReason != null || _shellError != null);
+
+  /// What to say about the shell that ended, or null while it runs.
+  String? get shellEndedReason =>
+      hasShellEnded ? (_shellEndedReason ?? _shellError) : null;
+
+  /// Opens a new shell on the same connection, after the last one ended.
+  ///
+  /// Same tab, same scrollback, with a rule across the buffer where the new
+  /// shell starts. On a host with a persistent session this re-attaches to
+  /// the tmux or screen session the last one left — a detach, not only an
+  /// exit, is what ends the channel there.
+  Future<void> restartShell() async {
+    if (_disposed || !hasShellEnded) return;
+    _resetShell();
+    _closeReason = null;
+    _notify();
+    _writeToTerminal('\r\n\x1b[2m── new shell ──\x1b[0m\r\n');
+    await ensureShell();
+  }
+
+  /// Forgets the shell channel — ended, failed or belonging to a transport
+  /// that has died — so [ensureShell] opens a fresh one.
+  void _resetShell() {
+    for (final subscription in _shellOutput) {
+      unawaited(subscription.cancel());
+    }
+    _shellOutput.clear();
+    try {
+      _shell?.close();
+    } catch (_) {
+      // Already gone.
+    }
+    _shell = null;
+    _shellOpening = null;
+    _shellEpoch++;
+    final mosh = _mosh;
+    _mosh = null;
+    if (mosh != null) unawaited(mosh.close(ssh: _sshUp ? connection : null));
+    _shellReady = null;
+    _shellStarted = false;
+    _shellError = null;
+    _shellExitedCleanly = false;
+    _shellEndedReason = null;
   }
 
   void _notify() {
@@ -555,11 +824,23 @@ class SessionController {
   ///
   /// The size is only honoured on the first call — the PTY is created there,
   /// and every later change flows through [SSHSession.resizeTerminal].
-  Future<SSHSession> shell({required int columns, required int rows}) {
+  ///
+  /// [command], when given, runs in place of the login shell — the tmux or
+  /// screen of a persistent session.
+  Future<SSHSession> shell({
+    required int columns,
+    required int rows,
+    String? command,
+  }) {
     final existing = _shell;
     if (existing != null) return Future<SSHSession>.value(existing);
-    return _shellOpening ??= connection
-        .startShell(columns: columns, rows: rows)
+    return _shellOpening ??= (command == null
+            ? connection.startShell(columns: columns, rows: rows)
+            : connection.startCommandShell(
+                command,
+                columns: columns,
+                rows: rows,
+              ))
         .then((session) {
       _shell = session;
       _notify();
@@ -585,10 +866,20 @@ class SessionController {
     );
 
     try {
-      final session = await shell(
-        columns: terminal.viewWidth,
-        rows: terminal.viewHeight,
-      );
+      final epoch = _shellEpoch;
+      if (host.transport == HostTransport.mosh &&
+          await _openMoshShell(epoch)) {
+        // Reset while it started: whatever opened since is in charge.
+        if (epoch != _shellEpoch) return;
+        _shellStarted = true;
+        _notify();
+        return;
+      }
+      final opened = await _openPersistentOrPlainShell();
+      final session = opened.session;
+      final transport = _connection;
+      final generation = _transportGeneration;
+      final openedAt = _clock();
 
       // Decoding through the chunked converter (rather than utf8.decode per
       // chunk) keeps multi-byte characters intact when they straddle a packet
@@ -609,13 +900,26 @@ class SessionController {
 
       unawaited(
         session.done.then((_) {
-          // Completing without an error means the channel was closed properly
-          // at the far end, which is what a shell that has *exited* does. The
-          // exit status may or may not have come with it (servers differ), so
-          // the status is used for the message and the orderliness for the
-          // decision — see [_markClosed].
-          _shellExitedCleanly = true;
+          // A shell of a transport since replaced is nobody's business now.
+          if (generation != _transportGeneration) return;
           final code = session.exitCode;
+          if (opened.persistent &&
+              code != null &&
+              code != 0 &&
+              !transport.isClosed &&
+              _clock().difference(openedAt) < persistentStartGrace) {
+            _fallBackFromPersistentShell(code);
+            return;
+          }
+          // dartssh2 completes `done` normally however a channel ends — the
+          // shell exiting, or the transport under it dying, which ends every
+          // channel on it without an error. So how it completed decides
+          // nothing, and neither may the order in which this and the
+          // transport's own `done` happen to run. A shell that exited either
+          // said so, with an exit status, or closed while its transport was
+          // still up; one that went down with its transport did neither.
+          // The status is used for the message too — see [_markClosed].
+          _shellExitedCleanly = code != null || !transport.isClosed;
           _handleShellEnded(
             code == null
                 ? 'Shell session ended.'
@@ -627,13 +931,193 @@ class SessionController {
       );
 
       _shellStarted = true;
-      _sendStartupCommand();
+      if (opened.fresh) _sendStartupCommand();
     } catch (e) {
       _shellError = e.toString();
       _shellStarted = true;
       _writeToTerminal('\r\n\x1b[31mFailed to open a shell: $e\x1b[0m\r\n');
     }
     _notify();
+  }
+
+  /// Opens the shell — inside tmux or screen when the host keeps a persistent
+  /// session — and says whether it is a new one, which is what decides
+  /// whether the startup command is typed into it.
+  ///
+  /// A persistent shell that cannot be started (the server refuses to run a
+  /// command, or this transport cannot ask it to) falls back to the plain
+  /// login shell with a line saying so: a shell that will not survive a drop
+  /// beats no shell.
+  Future<({SSHSession session, bool fresh, bool persistent})>
+      _openPersistentOrPlainShell() async {
+    final columns = terminal.viewWidth;
+    final rows = terminal.viewHeight;
+    final kind = host.persistentSession;
+    final command = _persistentShellFailed
+        ? null
+        : persistentShellCommand(kind, persistentName);
+    if (command == null) {
+      return (
+        session: await shell(columns: columns, rows: rows),
+        fresh: true,
+        persistent: false,
+      );
+    }
+
+    // Only worth a round trip when there is a startup command to decide
+    // about; see [persistentProbeCommand].
+    var fresh = false;
+    if (startupCommandPayload(host.startupCommand) != null) {
+      fresh = await _persistentShellIsNew(kind) ?? false;
+    }
+    try {
+      return (
+        session: await shell(columns: columns, rows: rows, command: command),
+        fresh: fresh,
+        persistent: true,
+      );
+    } catch (error) {
+      if (_closed) rethrow;
+      final why = error is UnimplementedError
+          ? 'this connection cannot start it'
+          : 'the server would not run it';
+      _writeToTerminal(
+        '\x1b[2m${kind.label} could not be started ($why), so this shell '
+        'will not survive a disconnect.\x1b[0m\r\n',
+      );
+      return (
+        session: await shell(columns: columns, rows: rows),
+        fresh: true,
+        persistent: false,
+      );
+    }
+  }
+
+  /// The persistent shell exited with status [code] as soon as it started:
+  /// what the server runs it with could not run it at all — a restricted
+  /// shell refusing `exec`, no `sh` on its path. (tmux or screen failing is
+  /// caught on the server already, by [persistentShellCommand].) The login
+  /// shell takes its place, with a line saying so, here and from now on.
+  ///
+  /// [code] is null under Mosh, which does not pass the exit status on.
+  void _fallBackFromPersistentShell(int? code) {
+    _persistentShellFailed = true;
+    final status = code == null ? '' : ' (exit status $code)';
+    _writeToTerminal(
+      '\r\n\x1b[2m${host.persistentSession.label} could not be started'
+      '$status, so this shell will not survive a disconnect.\x1b[0m\r\n',
+    );
+    _resetShell();
+    _notify();
+    unawaited(ensureShell());
+  }
+
+  /// Starts the terminal on Mosh, for a host whose terminal connection is set
+  /// to it. False, with a line in the terminal saying why, when Mosh cannot
+  /// be used here and an SSH shell should open instead.
+  ///
+  /// A persistent session's tmux or screen runs under `mosh-server` just as
+  /// it would under SSH, so a Mosh terminal can be re-attached too.
+  ///
+  /// [epoch] is the [_shellEpoch] this shell is for. Also true, having
+  /// opened nothing, when that shell was reset while this one started.
+  Future<bool> _openMoshShell(int epoch) async {
+    // The first Mosh frame clears the screen; a fallback overwrites the line.
+    _writeToTerminal('\x1b[2mStarting Mosh…\x1b[0m');
+    final kind = host.persistentSession;
+    // Not again once it has failed to start on this session: see
+    // [_persistentShellFailed].
+    final command = _persistentShellFailed
+        ? null
+        : persistentShellCommand(kind, persistentName);
+    var fresh = true;
+    if (command != null && startupCommandPayload(host.startupCommand) != null) {
+      fresh = await _persistentShellIsNew(kind) ?? false;
+    }
+    final MoshShell mosh;
+    try {
+      mosh = await _startMosh(
+        connection,
+        columns: terminal.viewWidth,
+        rows: terminal.viewHeight,
+        command: command,
+      );
+    } catch (error) {
+      if (epoch != _shellEpoch) return true;
+      if (_closed) rethrow;
+      _writeToTerminal(
+        '\r\x1b[K\x1b[2m${moshFallbackNotice(error)}\x1b[0m\r\n',
+      );
+      return false;
+    }
+    // Starting takes a UDP round trip or several, and SSH can drop
+    // meanwhile; a reconnect that lands first resets the shell and starts
+    // its own Mosh. This one, server and shell, must then go rather than
+    // run on beside it.
+    if (_disposed || epoch != _shellEpoch) {
+      unawaited(mosh.close(ssh: _sshUp ? connection : null));
+      return true;
+    }
+    if (epoch > 0) {
+      // Not this session's first shell: the screen holds what the last one
+      // left, and the line saying why it ended. The first Mosh frame clears
+      // the screen, so all of that goes up into the scrollback first —
+      // less the "Starting Mosh…" line, which has said its piece.
+      _writeToTerminal('\r\x1b[K${'\r\n' * terminal.viewHeight}');
+    }
+    final openedAt = _clock();
+    _mosh = mosh;
+    _shellOutput.add(mosh.output.listen(_writeToTerminal));
+    unawaited(mosh.done.then((exit) {
+      if (!identical(_mosh, mosh)) return;
+      _mosh = null;
+      // Ended while the SSH connection was also down: the session is now
+      // what it would have been without Mosh — closed, and reconnecting
+      // unless the user ended it.
+      if (_sshLostUnderMosh == _transportGeneration) {
+        if (exit.clean) _shellExitedCleanly = true;
+        _markClosed(
+          exit.clean ? 'Mosh session ended.' : 'Connection lost.',
+          _transportGeneration,
+          retryable: true,
+        );
+        return;
+      }
+      // The persistent shell ended the moment it started, which under
+      // Mosh — no exit status comes back — is all there is to go on; see
+      // [_fallBackFromPersistentShell].
+      if (command != null &&
+          exit.clean &&
+          _sshUp &&
+          !_disposed &&
+          _clock().difference(openedAt) < persistentStartGrace) {
+        _fallBackFromPersistentShell(null);
+        return;
+      }
+      if (exit.clean) _shellExitedCleanly = true;
+      reportShellEnded(exit.clean
+          ? 'Mosh session ended.'
+          : 'Mosh session ended: ${exit.reason}');
+    }));
+    if (fresh) _sendStartupCommand();
+    return true;
+  }
+
+  /// Whether the persistent shell about to open is a new one: true, false,
+  /// or null when the server could not say (treated as "not new").
+  Future<bool?> _persistentShellIsNew(PersistentSession kind) async {
+    final probe = persistentProbeCommand(kind, persistentName);
+    if (probe == null) return true;
+    try {
+      final result = await RemoteExec.run(
+        connection,
+        probe,
+        timeout: const Duration(seconds: 8),
+      );
+      return persistentProbeSaysNew(result.stdout);
+    } catch (_) {
+      return null;
+    }
   }
 
   /// Puts bytes on the screen, with the input tap held shut for the duration.
@@ -668,8 +1152,14 @@ class SessionController {
   /// channel.
   void _sendStartupCommand() {
     final payload = startupCommandPayload(host.startupCommand);
+    if (payload == null) return;
+    final mosh = _mosh;
+    if (mosh != null) {
+      mosh.write(payload);
+      return;
+    }
     final shell = _shell;
-    if (payload == null || shell == null) return;
+    if (shell == null) return;
     try {
       shell.write(Uint8List.fromList(utf8.encode(payload)));
     } catch (_) {
@@ -678,14 +1168,20 @@ class SessionController {
   }
 
   void _sendToShell(String data) {
+    final mosh = _mosh;
     final shell = _shell;
-    if (shell == null || _closed) return;
+    // A Mosh terminal takes keystrokes whatever SSH is doing.
+    if (mosh == null && (shell == null || _closed)) return;
     final payload = transformInput?.call(data) ?? data;
-    try {
-      shell.write(Uint8List.fromList(utf8.encode(payload)));
-    } catch (_) {
-      // Keystroke arrived after the channel closed; the disconnect banner is
-      // already on its way.
+    if (mosh != null) {
+      mosh.write(payload);
+    } else {
+      try {
+        shell!.write(Uint8List.fromList(utf8.encode(payload)));
+      } catch (_) {
+        // Keystroke arrived after the channel closed; the disconnect banner
+        // is already on its way.
+      }
     }
     // Announced after the local write, never instead of it: this session is
     // the one the user is typing in and it gets its keystroke whatever any
@@ -697,6 +1193,7 @@ class SessionController {
   void _handleTerminalResize(int width, int height, int pixelWidth,
       int pixelHeight) {
     if (!_initialSize.isCompleted) _initialSize.complete();
+    _mosh?.resize(width, height);
     if (_closed) return;
     try {
       // Propagate SIGWINCH so full-screen programs (vim, htop, less) reflow.
@@ -710,6 +1207,17 @@ class SessionController {
   /// Opens the SFTP subsystem, once, on the connection that is already
   /// authenticated. No second login, no second host-key prompt.
   Future<RemoteFileSystem> sftp() {
+    // The terminal is carrying on over Mosh, but the SSH connection under
+    // the files is gone until the reconnect brings it back.
+    if (isSshLostUnderMosh) {
+      return Future<RemoteFileSystem>.error(
+        SftpFailure(isReconnecting
+            ? 'The SSH connection dropped and is reconnecting; files will be '
+                'back with it.'
+            : 'The SSH connection dropped. Reconnect to browse files; the '
+                'terminal carries on over Mosh.'),
+      );
+    }
     final existing = _sftp;
     if (existing != null) return Future<RemoteFileSystem>.value(existing);
     if (_closed) {
@@ -758,7 +1266,7 @@ class SessionController {
     try {
       await client.absolute('.').timeout(sftpReadyTimeout);
     } catch (_) {
-      client.close();
+      closeQuietly(client.close);
       rethrow;
     }
     return SftpService(client);
@@ -940,6 +1448,76 @@ class SessionController {
     );
   }
 
+  /// Picks up a server-side copy an earlier run of the app started and
+  /// follows it to the end — verification, a replace's swap, a move's
+  /// delete — with [destinationSessionId] as the destination. See
+  /// [ServerJobRecord].
+  TransferTask resumeServerJob(
+    ServerJobRecord record, {
+    required String destinationSessionId,
+  }) {
+    final task = transfers.enqueueRemoteCopy(
+      remotePath: record.sourcePath,
+      name: record.name,
+      destinationSessionId: destinationSessionId,
+      destinationLabel: record.destinationLabel,
+      destinationPath: record.destinationPath,
+      overwrite: record.overwrite,
+      moveSource: record.moveSource,
+      totalBytes: record.totalBytes,
+      route: TransferRoute.direct,
+      isDirectoryTransfer: record.isDirectory,
+      serverJobId: record.jobId,
+      serverJobStamp: record.stamp,
+      resumingServerJob: true,
+    );
+    _followedJobs[record.jobId] = task.id;
+    return task;
+  }
+
+  /// How a direct copy runs: as a job on the source server when there is a
+  /// store to remember it in, attached to an exec channel when not.
+  DetachedRun? _serverJobFor(
+    TransferTask task,
+    SessionController target,
+    TransferHandle handle,
+  ) {
+    final jobs = _serverJobs;
+    if (jobs == null) return null;
+    final jobId = task.serverJobId ?? ServerSideJob.newId();
+    final stamp = task.serverJobStamp ?? DateTime.now().millisecondsSinceEpoch;
+    _followedJobs[jobId] = task.id;
+    final record = ServerJobRecord(
+      jobId: jobId,
+      stamp: stamp,
+      sourceHostId: host.id,
+      sourceLabel: host.displayName,
+      destinationHostId: target.host.id,
+      destinationLabel: task.destinationLabel ?? target.host.displayName,
+      sourcePath: task.remotePath,
+      destinationPath: task.destinationPath!,
+      name: task.name,
+      isDirectory: task.isDirectoryTransfer,
+      moveSource: task.moveSource,
+      overwrite: task.overwrite,
+      startedAt: DateTime.now(),
+      totalBytes: task.totalBytes,
+    );
+    return DetachedRun(
+      jobId: jobId,
+      stamp: stamp,
+      resuming: task.resumingServerJob,
+      onLaunched: () => jobs.save(record),
+      isAbandoned: () => handle.isAbandoned,
+    );
+  }
+
+  void _forgetServerJob(DetachedRun? run) {
+    if (run == null) return;
+    _followedJobs.remove(run.jobId);
+    unawaited(_serverJobs?.remove(run.jobId));
+  }
+
   /// The finished downloads that have not been announced to the user yet,
   /// given the queue's latest [tasks]. Empty when there is nothing new to
   /// say, or when the queue is still busy and the batch is not complete.
@@ -975,22 +1553,41 @@ class SessionController {
 
   Future<void> _runTransfer(TransferTask task, TransferHandle handle) async {
     if (_closed) {
+      if (canReconnect) throw const TransferInterrupted();
       throw const SftpFailure('The session has ended. Reconnect to transfer.');
     }
-    final sftp = await this.sftp();
-    handle.throwIfCancelled();
+    final generation = _transportGeneration;
+    try {
+      final sftp = await this.sftp();
+      handle.throwIfCancelled();
 
-    switch (task.direction) {
-      case TransferDirection.download:
-        await _runDownload(sftp, task, handle);
-      case TransferDirection.upload:
-        if (task.isDirectoryTransfer) {
-          await _runUploadDirectory(sftp, task, handle);
-        } else {
-          await _runUpload(sftp, task, handle);
-        }
-      case TransferDirection.serverToServer:
-        await _runRemoteCopy(sftp, task, handle);
+      switch (task.direction) {
+        case TransferDirection.download:
+          await _runDownload(sftp, task, handle);
+        case TransferDirection.upload:
+          if (task.isDirectoryTransfer) {
+            await _runUploadDirectory(sftp, task, handle);
+          } else {
+            await _runUpload(sftp, task, handle);
+          }
+        case TransferDirection.serverToServer:
+          await _runRemoteCopy(sftp, task, handle);
+      }
+    } on TransferCancelled {
+      rethrow;
+    } on TransferInterrupted {
+      rethrow;
+    } catch (_) {
+      // A channel error from a connection that has just gone is the drop,
+      // not anything about the file. The transport knows it is closed before
+      // the error reaches here, even when [_markClosed] has not run yet.
+      if (canReconnect &&
+          (_closed ||
+              generation != _transportGeneration ||
+              _connection.isClosed)) {
+        throw const TransferInterrupted();
+      }
+      rethrow;
     }
   }
 
@@ -1063,6 +1660,12 @@ class SessionController {
   /// Empty subdirectories on the source are mkdir'd on the destination so
   /// the shape of the tree is preserved — a `logs/` folder with nothing in
   /// it still lands.
+  ///
+  /// A top-level `Replace` at the collision prompt uploads into a hidden
+  /// sibling of the folder it replaces and swaps it in once every file has
+  /// landed and been counted (see [StagedDirectoryReplace]). The folder
+  /// being replaced is not touched before then, so a cancel, a failed file
+  /// or a dropped connection costs only the staging folder.
   Future<void> _runUploadDirectory(
     RemoteFileSystem sftp,
     TransferTask task,
@@ -1074,46 +1677,69 @@ class SessionController {
     handle.setTotal(tree.totalBytes);
     handle.throwIfCancelled();
 
-    if (task.overwrite) {
-      // A top-level `Replace` at the collision prompt licenses the wipe. The
-      // destination directory is torn down and rebuilt fresh, so nothing
-      // inside can collide with anything already there.
-      await removeRemoteDirectoryTree(sftp, remoteRoot);
-      handle.throwIfCancelled();
-    }
-    try {
-      await sftp.mkdir(remoteRoot);
-    } on SftpFailure {
-      // Already exists (nothing to overwrite) — proceed and let the writes
-      // fail loudly if it turns out we cannot use it.
-    }
+    final replace =
+        task.overwrite ? StagedDirectoryReplace(sftp, remoteRoot) : null;
+    // Where the tree is written: beside the folder a replace is for, or
+    // straight into a free name.
+    final root = replace?.staging ?? remoteRoot;
 
-    // Every subdirectory first, breadth-first order preserved by the walk,
-    // so empty folders survive and a per-file mkdir never races with an
-    // uncreated parent.
-    for (final relative in tree.directories) {
-      handle.throwIfCancelled();
-      final path = RemotePath.join(remoteRoot, relative);
+    if (replace != null) {
+      // A fresh name, so a refusal is a real one, and arrives before the
+      // folder being replaced has been touched.
+      await sftp.mkdir(root);
+    } else {
       try {
-        await sftp.mkdir(path);
+        await sftp.mkdir(root);
       } on SftpFailure {
-        // Already there is fine; a real failure surfaces on the file write.
+        // Already exists (nothing to overwrite) — proceed and let the writes
+        // fail loudly if it turns out we cannot use it.
       }
     }
 
-    var bytesMoved = 0;
-    for (final file in tree.files) {
-      handle.throwIfCancelled();
-      final remotePath = RemotePath.join(remoteRoot, file.relativePath);
-      final moved = await sftp.upload(
-        file.absolutePath,
-        remotePath,
-        onProgress: (bytes) => handle.report(bytesMoved + bytes),
-        isCancelled: () => handle.isCancelled,
-      );
-      bytesMoved += moved;
-      handle.report(bytesMoved);
-      handle.throwIfCancelled();
+    // Up to the swap, every exit — cancel, failure, a dropped connection —
+    // takes the staging folder with it. The swap cleans up after itself.
+    var discardStaging = replace != null;
+    try {
+      // Every subdirectory first, breadth-first order preserved by the walk,
+      // so empty folders survive and a per-file mkdir never races with an
+      // uncreated parent.
+      for (final relative in tree.directories) {
+        handle.throwIfCancelled();
+        final path = RemotePath.join(root, relative);
+        try {
+          await sftp.mkdir(path);
+        } on SftpFailure {
+          // Already there is fine; a real failure surfaces on the file write.
+        }
+      }
+
+      var bytesMoved = 0;
+      for (final file in tree.files) {
+        handle.throwIfCancelled();
+        final remotePath = RemotePath.join(root, file.relativePath);
+        final moved = await sftp.upload(
+          file.absolutePath,
+          remotePath,
+          onProgress: (bytes) => handle.report(bytesMoved + bytes),
+          isCancelled: () => handle.isCancelled,
+        );
+        bytesMoved += moved;
+        handle.report(bytesMoved);
+        handle.throwIfCancelled();
+      }
+
+      if (replace != null) {
+        await replace.verifyStaged(
+          files: tree.files.length,
+          bytes: bytesMoved,
+        );
+        // The last point a cancel can stop the replace.
+        handle.throwIfCancelled();
+        discardStaging = false;
+        await replace.swapIn();
+      }
+    } finally {
+      if (discardStaging) await replace!.discard();
     }
     handle.setDestination(remoteRoot);
   }
@@ -1153,6 +1779,36 @@ class SessionController {
     }
 
     final target = await resolve(destinationId);
+    try {
+      await _copyToTarget(sftp, target, task, handle);
+    } on TransferCancelled {
+      rethrow;
+    } on TransferInterrupted {
+      rethrow;
+    } catch (_) {
+      // The destination's connection dropping under the copy: it waits for
+      // that session to come back, the same as for this one. Not a direct
+      // copy run as a job on the source, though — that job is still going,
+      // and running the copy again would start a second one beside it.
+      final ranAsJob =
+          task.routeUsed == TransferRoute.direct && _serverJobs != null;
+      if (!ranAsJob && (target.isClosed || target.connection.isClosed)) {
+        throw TransferInterrupted(
+          'Waiting for ${task.destinationLabel ?? target.host.displayName} '
+          'to reconnect…',
+        );
+      }
+      rethrow;
+    }
+  }
+
+  Future<void> _copyToTarget(
+    RemoteFileSystem sftp,
+    SessionController target,
+    TransferTask task,
+    TransferHandle handle,
+  ) async {
+    final destinationPath = task.destinationPath!;
     final destination = await target.sftp();
     handle.throwIfCancelled();
 
@@ -1170,7 +1826,10 @@ class SessionController {
         fallbackReason =
             'no destination-credential resolver on this session';
       } else {
-        final destCreds = await resolveCreds(target.host.id);
+        // A job picked up from an earlier run is past sign-in already and
+        // needs no key; no saved credential must not send it down the relay.
+        final destCreds = await resolveCreds(target.host.id) ??
+            (task.resumingServerJob ? const SshCredentials() : null);
         handle.throwIfCancelled();
         if (destCreds == null) {
           fallbackReason = 'no saved credentials for the destination host';
@@ -1181,6 +1840,7 @@ class SessionController {
             SshConnection(:final hostKey) => hostKey,
             _ => null,
           };
+          final detached = _serverJobFor(task, target, handle);
           try {
             handle.setRouteUsed(TransferRoute.direct);
             outcome = task.isDirectoryTransfer
@@ -1196,6 +1856,7 @@ class SessionController {
                     deleteSourceAfterVerify: task.moveSource,
                     onProgress: handle.report,
                     isCancelled: () => handle.isCancelled,
+                    detached: detached,
                   )
                 : await copyRemoteFileDirect(
                     source: this,
@@ -1209,8 +1870,19 @@ class SessionController {
                     deleteSourceAfterVerify: task.moveSource,
                     onProgress: handle.report,
                     isCancelled: () => handle.isCancelled,
+                    detached: detached,
                   );
+            _forgetServerJob(detached);
+          } on ServerJobLeftRunning {
+            // The session is going away and the job is not: it stays
+            // remembered, and the next time both servers are open it is
+            // picked up and finished. Not something to run again from here,
+            // even after a reconnect — that would start a second copy.
+            if (detached != null) _followedJobs.remove(detached.jobId);
+            onServerJobHandedOff?.call();
+            throw const TransferHandedOff();
           } on SSHDirectCopyUnavailable catch (e) {
+            _forgetServerJob(detached);
             if (e.reason == DirectCopyUnavailableReason.hostKeyMismatch) {
               // Refuse: a relay from this device cannot honestly answer a
               // MITM-shaped signal seen on A→B, so surface it instead of
@@ -1218,6 +1890,10 @@ class SessionController {
               rethrow;
             }
             fallbackReason = e.message ?? e.reason.name;
+          } catch (_) {
+            // Failed or cancelled by the user: either way the job is over.
+            _forgetServerJob(detached);
+            rethrow;
           }
         }
       }
@@ -1307,7 +1983,7 @@ class SessionController {
     await _reconnectChanges?.cancel();
     await _reconnector?.dispose();
 
-    _keepalive.stop();
+    _keepalive?.stop();
     transfers.cancelAll();
     await transfers.dispose();
 
@@ -1334,8 +2010,19 @@ class SessionController {
     }
     _shell = null;
     _shellOpening = null;
-
-    connection.close();
+    // Says goodbye to mosh-server in its own time; the tab is gone either
+    // way. While SSH is up it stays open until then, so that a goodbye
+    // nobody answers — UDP that no longer gets through — can still stop
+    // mosh-server, which would otherwise keep it and its shell for ever.
+    final mosh = _mosh;
+    _mosh = null;
+    final ssh = connection;
+    if (mosh != null && _sshUp) {
+      unawaited(mosh.close(ssh: ssh).whenComplete(ssh.close));
+    } else {
+      if (mosh != null) unawaited(mosh.close());
+      ssh.close();
+    }
     _closed = true;
     await _arrivals.close();
     await _changes.close();

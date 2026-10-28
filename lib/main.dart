@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import 'l10n/l10n.dart';
 import 'models/app_settings.dart';
 import 'screens/host_list_screen.dart';
 import 'services/app_lock.dart';
@@ -11,11 +12,14 @@ import 'services/backup_service.dart';
 import 'services/bookmark_store.dart';
 import 'services/composite_secure_storage.dart';
 import 'services/credential_store.dart';
+import 'services/diagnostics_log.dart';
 import 'services/fleet_push_run_registry.dart';
 import 'services/host_store.dart';
+import 'services/input_profile.dart';
 import 'services/known_hosts_integrity.dart';
 import 'services/known_hosts_service.dart';
 import 'services/secret_vault.dart';
+import 'services/server_side_job.dart';
 import 'services/session_manager.dart';
 import 'services/settings_store.dart';
 import 'services/snippet_store.dart';
@@ -25,10 +29,18 @@ import 'services/tunnel_runtime.dart';
 import 'services/tunnel_store.dart';
 import 'theme.dart';
 import 'widgets/app_lock_gate.dart';
+import 'widgets/terminal_fonts.dart';
 import 'widgets/vault_passphrase_dialog.dart';
 
-void main() {
+// Framework errors, uncaught errors and uncaught async errors go to the
+// on-device diagnostics log, scrubbed of secrets, while its setting is on.
+// See diagnostics_log.dart.
+void main() => DiagnosticsLog.instance.runGuarded(_startApp);
+
+void _startApp() {
   WidgetsFlutterBinding.ensureInitialized();
+  // The bundled terminal font's licence, on the licences page.
+  TerminalFonts.registerLicence();
   SystemChrome.setSystemUIOverlayStyle(
     const SystemUiOverlayStyle(
       statusBarColor: Colors.transparent,
@@ -54,6 +66,9 @@ class _SecureShellGoAppState extends State<SecureShellGoApp> {
   // size, a collapsed group) does not repaint the whole app for nothing.
   UiStyle _uiStyle = UiStyle.aurora;
   ThemeBrightness _themeBrightness = ThemeBrightness.dark;
+
+  /// Settings' language, or null to follow the device.
+  String? _localeOverride;
   StreamSubscription<AppSettings>? _themeWatch;
 
   // Composition root. Services take their dependencies through constructors
@@ -121,8 +136,11 @@ class _SecureShellGoAppState extends State<SecureShellGoApp> {
     ),
   );
   late final HostStore _hostStore = HostStore();
-  late final CredentialStore _credentialStore =
-      CredentialStore(backend: _secureStorage);
+  // Watched by the diagnostics log, which learns each saved secret on the
+  // way past so it can keep it out of the log. Values pass through as-is.
+  late final CredentialStore _credentialStore = CredentialStore(
+    backend: DiagnosticsLog.instance.watchCredentialStorage(_secureStorage),
+  );
   late final SettingsStore _settingsStore = SettingsStore();
 
   // The open sessions. Built here, not by a route, because a session has to
@@ -153,6 +171,16 @@ class _SecureShellGoAppState extends State<SecureShellGoApp> {
   // runs, and the connect goes through the same `SshService` — and therefore
   // the same known-hosts check — that a hand-made connection does.
   late final SessionManager _sessions = SessionManager(
+    // Direct server-to-server copies run as jobs on the source server and
+    // are remembered here, so closing the app does not stop them — see
+    // `server_side_job.dart`.
+    serverJobs: ServerJobStore(),
+    // Network changes, coming back on screen and waking from sleep: when
+    // every session checks its link instead of waiting for keep-alives to
+    // notice — see `network_watch.dart`.
+    network: NetworkWatch.forPlatform(),
+    // Settings > Terminal > Scrollback, for each session as it opens.
+    scrollbackLines: () => _settingsStore.current.scrollbackLines,
     resolveDestinationCredentials: _credentialStore.load,
     connectWithAgentForwarding: (host, credentials) => _sshService.connect(
       host: host,
@@ -177,6 +205,9 @@ class _SecureShellGoAppState extends State<SecureShellGoApp> {
         host: host,
         credentials: credentials,
         verifyHostKey: verifyHostKey,
+        // No `answerPrompts`, on purpose: nobody is watching a reconnect, so
+        // a login prompt the saved password cannot answer has to fail the
+        // attempt rather than wait. See `ReconnectConnector`.
       ),
     ),
   );
@@ -260,6 +291,9 @@ class _SecureShellGoAppState extends State<SecureShellGoApp> {
   /// effect without the settings screen having to know the controller exists.
   StreamSubscription<AppSettings>? _settingsWatch;
 
+  /// Keeps the diagnostics log on or off with its setting.
+  StreamSubscription<AppSettings>? _diagnosticsWatch;
+
   // The encrypted backup/restore feature. Every store it touches is one that
   // already lives here, so this adds no new persistence — only a way to get
   // what is already persisted in and out as one file.
@@ -275,6 +309,7 @@ class _SecureShellGoAppState extends State<SecureShellGoApp> {
     bookmarkStore: BookmarkStore.instance,
     settingsStore: _settingsStore,
     credentialStore: _credentialStore,
+    knownHosts: _knownHosts,
   );
 
   late final TerminalWorkspace _workspace = TerminalWorkspace(
@@ -305,25 +340,30 @@ class _SecureShellGoAppState extends State<SecureShellGoApp> {
     // every cold start.
     _uiStyle = _settingsStore.current.uiStyle;
     _themeBrightness = _settingsStore.current.themeBrightness;
+    _localeOverride = _settingsStore.current.localeOverride;
     unawaited(
       _settingsStore.ensureLoaded().then((_) {
         if (!mounted) return;
         setState(() {
           _uiStyle = _settingsStore.current.uiStyle;
           _themeBrightness = _settingsStore.current.themeBrightness;
+          _localeOverride = _settingsStore.current.localeOverride;
         });
         unawaited(_appLock.start(_settingsStore.current));
       }),
     );
     _settingsWatch = _settingsStore.changes.listen(_appLock.applySettings);
+    _diagnosticsWatch = DiagnosticsLog.instance.follow(_settingsStore);
     _themeWatch = _settingsStore.changes.listen((settings) {
       if (settings.uiStyle == _uiStyle &&
-          settings.themeBrightness == _themeBrightness) {
+          settings.themeBrightness == _themeBrightness &&
+          settings.localeOverride == _localeOverride) {
         return;
       }
       setState(() {
         _uiStyle = settings.uiStyle;
         _themeBrightness = settings.themeBrightness;
+        _localeOverride = settings.localeOverride;
       });
     });
   }
@@ -340,6 +380,7 @@ class _SecureShellGoAppState extends State<SecureShellGoApp> {
     unawaited(_workspace.dispose());
     _fleetPushRegistry.dispose();
     unawaited(_settingsWatch?.cancel());
+    unawaited(_diagnosticsWatch?.cancel());
     unawaited(_themeWatch?.cancel());
     _appLock.dispose();
     _settingsStore.dispose();
@@ -351,16 +392,24 @@ class _SecureShellGoAppState extends State<SecureShellGoApp> {
     return MaterialApp(
       title: 'SecureShell Go',
       navigatorKey: _navigatorKey,
+      // The device's language unless Settings picks one; anything the app
+      // has no translation for falls back to English.
+      locale: localeForTag(_localeOverride),
+      localizationsDelegates: AppLocalizations.localizationsDelegates,
+      supportedLocales: AppLocalizations.supportedLocales,
       debugShowCheckedModeBanner: false,
       themeMode: AppTheme.themeModeFor(_themeBrightness),
       theme: AppTheme.themeFor(_uiStyle, Brightness.light),
       darkTheme: AppTheme.themeFor(_uiStyle, Brightness.dark),
       // `builder`, so the gate is inserted *above* the Navigator rather than
       // inside it. Nothing the app pushes can end up on top of the lock, and
-      // there is no lock route for a back gesture to pop.
-      builder: (context, child) => AppLockGate(
-        controller: _appLock,
-        child: child ?? const SizedBox.shrink(),
+      // there is no lock route for a back gesture to pop. The input profile
+      // goes there too, so every route and dialog can ask what is in hand.
+      builder: (context, child) => InputProfileScope(
+        child: AppLockGate(
+          controller: _appLock,
+          child: child ?? const SizedBox.shrink(),
+        ),
       ),
       home: HostListScreen(
         hostStore: _hostStore,

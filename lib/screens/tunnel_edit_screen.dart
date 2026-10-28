@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../l10n/l10n.dart';
 import '../models/host.dart';
 import '../models/tunnel_profile.dart';
 import '../services/tunnel_store.dart';
@@ -111,6 +112,7 @@ class _TunnelEditScreenState extends State<TunnelEditScreen> {
       _error = null;
     });
 
+    final l10n = context.l10n;
     final existing = widget.profile;
     final profile = TunnelProfile(
       id: existing?.id ?? widget.tunnelStore.newId(),
@@ -135,7 +137,7 @@ class _TunnelEditScreenState extends State<TunnelEditScreen> {
       if (!mounted) return;
       setState(() {
         _saving = false;
-        _error = 'Could not save this tunnel: $e';
+        _error = l10n.tunnelsSaveFailed('$e');
       });
     }
   }
@@ -152,17 +154,20 @@ class _TunnelEditScreenState extends State<TunnelEditScreen> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final l10n = context.l10n;
     final port = _listeningPort;
     final privileged =
         port != null && port > 0 && port < TunnelProfile.privilegedPortCeiling;
 
     return Scaffold(
       appBar: AppBar(
-        title: Text(widget.isEditing ? 'Edit tunnel' : 'New tunnel'),
+        title: Text(
+          widget.isEditing ? l10n.tunnelsEditTitle : l10n.tunnelsNewTitle,
+        ),
         actions: [
           TextButton(
             onPressed: _saving ? null : _save,
-            child: const Text('Save'),
+            child: Text(MaterialLocalizations.of(context).saveButtonLabel),
           ),
         ],
       ),
@@ -175,17 +180,19 @@ class _TunnelEditScreenState extends State<TunnelEditScreen> {
               TextFormField(
                 controller: _nameController,
                 textInputAction: TextInputAction.next,
-                decoration: const InputDecoration(
-                  labelText: 'Name',
-                  hintText: 'Postgres on the app box',
+                decoration: InputDecoration(
+                  labelText: l10n.tunnelsName,
+                  hintText: l10n.tunnelsNameHint,
                 ),
               ),
               const SizedBox(height: 16),
               DropdownButtonFormField<String>(
                 initialValue: _hostId,
-                decoration: const InputDecoration(
-                  labelText: 'Carried by',
-                  helperText: 'The saved host whose SSH connection carries it',
+                isExpanded: true,
+                decoration: InputDecoration(
+                  labelText: l10n.tunnelsCarriedBy,
+                  helperText: l10n.tunnelsCarriedByHelp,
+                  helperMaxLines: 3,
                 ),
                 items: [
                   for (final host in widget.hosts)
@@ -202,7 +209,7 @@ class _TunnelEditScreenState extends State<TunnelEditScreen> {
                 },
               ),
               const SizedBox(height: 20),
-              Text('Type', style: theme.textTheme.labelLarge),
+              Text(l10n.tunnelsType, style: theme.textTheme.labelLarge),
               const SizedBox(height: 8),
               RadioGroup<TunnelType>(
                 groupValue: _type,
@@ -216,9 +223,11 @@ class _TunnelEditScreenState extends State<TunnelEditScreen> {
                         value: type,
                         contentPadding: EdgeInsets.zero,
                         dense: true,
-                        title: Text('${type.label}  (ssh ${type.sshFlag})'),
+                        title: Text(
+                          '${type.labelIn(l10n)}  (ssh ${type.sshFlag})',
+                        ),
                         subtitle: Text(
-                          _describe(type),
+                          _describe(l10n, type),
                           style: theme.textTheme.bodySmall,
                         ),
                       ),
@@ -226,15 +235,15 @@ class _TunnelEditScreenState extends State<TunnelEditScreen> {
                 ),
               ),
               const Divider(height: 32),
-              ..._addressFields(theme),
+              ..._addressFields(theme, l10n),
               if (privileged) ...[
                 const SizedBox(height: 12),
                 _Warning(
                   icon: Icons.shield_outlined,
-                  message: 'Ports below '
-                      '${TunnelProfile.privilegedPortCeiling} are privileged. '
-                      'Unless this app is running with administrator rights, '
-                      'binding port $port will be refused by the system.',
+                  message: l10n.tunnelsPrivilegedPort(
+                    TunnelProfile.privilegedPortCeiling,
+                    port,
+                  ),
                 ),
               ],
               if (_error != null) ...[
@@ -252,115 +261,107 @@ class _TunnelEditScreenState extends State<TunnelEditScreen> {
     );
   }
 
-  String _describe(TunnelType type) => switch (type) {
-        TunnelType.local =>
-          'Listen here, and open each connection from the server.',
-        TunnelType.remote =>
-          'The server listens, and each connection comes back to this device.',
-        TunnelType.dynamic =>
-          'A SOCKS5 proxy here; the client picks the destination.',
+  String _describe(AppLocalizations l10n, TunnelType type) => switch (type) {
+        TunnelType.local => l10n.tunnelsDescribeLocal,
+        TunnelType.remote => l10n.tunnelsDescribeRemote,
+        TunnelType.dynamic => l10n.tunnelsDescribeDynamic,
       };
 
-  List<Widget> _addressFields(ThemeData theme) {
+  List<Widget> _addressFields(ThemeData theme, AppLocalizations l10n) {
     switch (_type) {
       case TunnelType.local:
         return [
-          _SectionLabel('Listen on this device', theme: theme),
+          _SectionLabel(l10n.tunnelsListenHere, theme: theme),
           _portField(
             controller: _localPortController,
-            label: 'Local port',
+            label: l10n.tunnelsLocalPort,
           ),
           const SizedBox(height: 8),
-          ..._bindToggle(theme),
+          ..._bindToggle(theme, l10n),
           const SizedBox(height: 20),
-          _SectionLabel('Forward to, from the server', theme: theme),
+          _SectionLabel(l10n.tunnelsForwardTo, theme: theme),
           _hostField(
             controller: _remoteHostController,
-            label: 'Destination host',
-            hint: 'db.internal or 10.0.0.5',
+            label: l10n.tunnelsDestinationHost,
+            hint: l10n.tunnelsDestinationHostHint('db.internal', '10.0.0.5'),
           ),
           const SizedBox(height: 12),
           _portField(
             controller: _remotePortController,
-            label: 'Destination port',
+            label: l10n.tunnelsDestinationPort,
           ),
         ];
 
       case TunnelType.dynamic:
         return [
-          _SectionLabel('SOCKS5 proxy on this device', theme: theme),
+          _SectionLabel(l10n.tunnelsSocksHere, theme: theme),
           _portField(
             controller: _localPortController,
-            label: 'Local port',
+            label: l10n.tunnelsLocalPort,
           ),
           const SizedBox(height: 8),
-          ..._bindToggle(theme),
+          ..._bindToggle(theme, l10n),
           const SizedBox(height: 12),
           Text(
-            'Point a browser or a command at this port and every connection '
-            'it makes is opened by the server instead. No destination to fill '
-            'in — the client names one each time.',
+            l10n.tunnelsSocksExplain,
             style: theme.textTheme.bodySmall?.copyWith(height: 1.35),
           ),
         ];
 
       case TunnelType.remote:
         return [
-          _SectionLabel('The server listens on', theme: theme),
+          _SectionLabel(l10n.tunnelsServerListens, theme: theme),
           _hostField(
             controller: _remoteHostController,
-            label: 'Bind address on the server',
-            hint: '127.0.0.1, or blank for every interface',
+            label: l10n.tunnelsServerBind,
+            hint: l10n.tunnelsServerBindHint(TunnelProfile.loopback),
             optional: true,
           ),
           const SizedBox(height: 12),
           _portField(
             controller: _remotePortController,
-            label: 'Port on the server',
+            label: l10n.tunnelsServerPort,
           ),
           const SizedBox(height: 12),
           Text(
-            'A blank bind address asks the server to listen on every '
-            'interface, which most servers refuse unless GatewayPorts is on.',
+            l10n.tunnelsGatewayPorts,
             style: theme.textTheme.bodySmall?.copyWith(height: 1.35),
           ),
           const SizedBox(height: 20),
-          _SectionLabel('Connections are handed to', theme: theme),
+          _SectionLabel(l10n.tunnelsHandedTo, theme: theme),
           _hostField(
             controller: _localHostController,
-            label: 'Address on this device',
+            label: l10n.tunnelsDeviceAddress,
             hint: TunnelProfile.loopback,
             optional: true,
           ),
           const SizedBox(height: 12),
           _portField(
             controller: _localPortController,
-            label: 'Port on this device',
+            label: l10n.tunnelsDevicePort,
           ),
         ];
     }
   }
 
-  List<Widget> _bindToggle(ThemeData theme) => [
+  List<Widget> _bindToggle(ThemeData theme, AppLocalizations l10n) => [
         SwitchListTile(
           value: _exposeToNetwork,
           contentPadding: EdgeInsets.zero,
           dense: true,
-          title: const Text('Allow other devices to use it'),
+          title: Text(l10n.tunnelsAllowOthers),
           subtitle: Text(
             _exposeToNetwork
-                ? 'Binding ${TunnelProfile.anyInterface}'
-                : 'Binding ${TunnelProfile.loopback} — this device only',
+                ? l10n.tunnelsBindingAll(TunnelProfile.anyInterface)
+                : l10n.tunnelsBindingLoopback(TunnelProfile.loopback),
             style: theme.textTheme.bodySmall,
           ),
           onChanged: (value) => setState(() => _exposeToNetwork = value),
         ),
         if (_exposeToNetwork)
-          const _Warning(
+          _Warning(
             icon: Icons.warning_amber_outlined,
-            message: 'This exposes the tunnel to your network: anything that '
-                'can reach this device can use it to reach the other end, '
-                'with no authentication of its own.',
+            message: l10n.tunnelsExposeWarning,
           ),
       ];
 
@@ -374,7 +375,7 @@ class _TunnelEditScreenState extends State<TunnelEditScreen> {
       inputFormatters: [FilteringTextInputFormatter.digitsOnly],
       textInputAction: TextInputAction.next,
       decoration: InputDecoration(labelText: label),
-      validator: validateTunnelPort,
+      validator: (value) => validateTunnelPort(value)?.textIn(context.l10n),
       // Repaints the privileged-port warning as the number is typed.
       onChanged: (_) => setState(() {}),
     );
@@ -394,7 +395,7 @@ class _TunnelEditScreenState extends State<TunnelEditScreen> {
       validator: optional
           ? null
           : (value) => (value?.trim().isEmpty ?? true)
-              ? 'Enter the address to forward to.'
+              ? context.l10n.tunnelsEnterAddress
               : null,
     );
   }
@@ -451,4 +452,33 @@ class _Warning extends StatelessWidget {
       ),
     );
   }
+}
+
+/// The tunnel screens' words for a tunnel type, in the app's language.
+extension TunnelTypeText on TunnelType {
+  String labelIn(AppLocalizations l10n) => switch (this) {
+        TunnelType.local => l10n.tunnelsTypeLocal,
+        TunnelType.remote => l10n.tunnelsTypeRemote,
+        TunnelType.dynamic => l10n.tunnelsTypeDynamic,
+      };
+}
+
+extension TunnelPortProblemText on TunnelPortProblem {
+  String textIn(AppLocalizations l10n) => switch (this) {
+        TunnelPortProblem.empty => l10n.tunnelsPortEmpty,
+        TunnelPortProblem.notANumber => l10n.tunnelsPortNotNumber,
+        TunnelPortProblem.zero => l10n.tunnelsPortZero,
+        TunnelPortProblem.outOfRange => l10n.tunnelsPortRange(1, 65535),
+      };
+}
+
+/// [TunnelProfile.displayName] and [TunnelProfile.portSummary], with the one
+/// word in either ("SOCKS5 on …") in the app's language.
+extension TunnelProfileText on TunnelProfile {
+  String summaryIn(AppLocalizations l10n) => type == TunnelType.dynamic
+      ? l10n.tunnelsSocksSummary('$localHost:$localPort')
+      : portSummary;
+
+  String displayNameIn(AppLocalizations l10n) =>
+      name.trim().isEmpty ? summaryIn(l10n) : name.trim();
 }
