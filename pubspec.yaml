@@ -143,15 +143,16 @@ flutter:
   # For details regarding fonts from package dependencies,
   # see https://flutter.dev/to/font-from-package
 
-# Microsoft Store packaging: build on Windows with `dart run msix:create`.
-# identity_name and publisher come from Partner Center (Product identity) and
-# must replace the placeholders before the first submission. `store: true`
-# leaves signing to the Store.
+# Microsoft Store packaging: built on Windows with `dart run msix:create` by
+# .github/workflows/store-msix.yml. identity_name, publisher and
+# publisher_display_name are the Partner Center product identity of
+# SecureShell Go (Store ID 9N8MC5KC6XXL) and must match it exactly.
+# `store: true` leaves signing to the Store.
 msix_config:
   display_name: SecureShell Go
-  publisher_display_name: Dhiva Labs
-  identity_name: REPLACE.WithPartnerCenterIdentityName
-  publisher: CN=REPLACE-WITH-PARTNER-CENTER-PUBLISHER-ID
+  publisher_display_name: Dhiva-Labs
+  identity_name: Dhiva-Labs.SecureShellGo
+  publisher: CN=0F69015A-AA5B-431D-970A-165099309E53
   msix_version: 1.5.0.0
   logo_path: store/graphics/icon-512.png
   capabilities: internetClient,privateNetworkClientServer
