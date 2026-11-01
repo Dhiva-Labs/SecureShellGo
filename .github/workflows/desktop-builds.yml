@@ -522,11 +522,216 @@ jobs:
 
       # Not published from here: the Snap Store upload is done by hand.
 
+  # The .rpm (Fedora, RHEL, openSUSE), the Arch package and the AppImage. The
+  # GitHub releases carry no .deb, so packaging/linux-distros/tree.sh lays out
+  # the PPA package's file tree from each architecture's archive above and
+  # every format is built from that one tree (the same binary as the
+  # archive). verify.sh installs each on the real distribution and starts it
+  # there under Xvfb until the window and the data folder appear: the .rpm on
+  # Fedora and openSUSE Tumbleweed, the Arch package on Arch (x64 only: Arch
+  # has no official arm64 image, so the arm64 package gets a static check),
+  # the AppImage on Fedora.
+  distros:
+    name: Other distros ${{ matrix.arch }}
+    needs: build-linux
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x64
+            deb_arch: amd64
+            runner: ubuntu-24.04
+          - arch: arm64
+            deb_arch: arm64
+            runner: ubuntu-24.04-arm
+    env:
+      NFPM_VERSION: '2.48.0'
+      APPIMAGETOOL_VERSION: '1.9.1'
+      ARCH: ${{ matrix.arch }}
+      DEB_ARCH: ${{ matrix.deb_arch }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Download the archive
+        uses: actions/download-artifact@v8
+        with:
+          name: SecureShellGo-linux-${{ matrix.arch }}
+          path: tarball
+
+      # nfpm is checked against its release's checksums file.
+      - name: Install nfpm and appimagetool
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          case "$(uname -m)" in
+            x86_64) nfpm_arch=x86_64; ai_arch=x86_64 ;;
+            aarch64) nfpm_arch=arm64; ai_arch=aarch64 ;;
+          esac
+          mkdir -p "$RUNNER_TEMP/bin"
+          cd "$RUNNER_TEMP/bin"
+          tarball="nfpm_${NFPM_VERSION}_Linux_${nfpm_arch}.tar.gz"
+          gh release download "v$NFPM_VERSION" -R goreleaser/nfpm -p "$tarball" -p checksums.txt
+          grep " $tarball\$" checksums.txt | sha256sum -c -
+          tar -xzf "$tarball" nfpm
+          gh release download "$APPIMAGETOOL_VERSION" -R AppImage/appimagetool \
+            -p "appimagetool-$ai_arch.AppImage" -O appimagetool
+          chmod +x appimagetool
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+
+      # The Flatpak job builds from the same cleaned tree (tar keeps modes and
+      # symlinks).
+      - name: Build the .rpm, Arch package and AppImage
+        run: |
+          VERSION="$(grep '^version:' pubspec.yaml | awk '{print $2}' | cut -d+ -f1)"
+          packaging/linux-distros/tree.sh "tarball/SecureShellGo-linux-$ARCH.tar.gz" "$RUNNER_TEMP/root"
+          VERSION="$VERSION" TREE_TARBALL="$RUNNER_TEMP/tree.tar.xz" \
+            packaging/linux-distros/pack.sh "$RUNNER_TEMP/root" "$DEB_ARCH" dist
+
+      - name: Install and run them on Fedora, openSUSE and Arch
+        timeout-minutes: 25
+        run: packaging/linux-distros/verify.sh dist "$DEB_ARCH"
+
+      - name: Upload the packages
+        uses: actions/upload-artifact@v7
+        with:
+          name: distros-${{ matrix.arch }}
+          path: |
+            dist/*.rpm
+            dist/*.pkg.tar.zst
+            dist/*.AppImage
+          if-no-files-found: error
+
+      - name: Upload the tree for the Flatpak
+        uses: actions/upload-artifact@v7
+        with:
+          name: tree-${{ matrix.arch }}
+          path: ${{ runner.temp }}/tree.tar.xz
+          if-no-files-found: error
+          retention-days: 3
+
+  # The AUR recipe for secureshellgo-bin (it repackages the release archives):
+  # PKGBUILD and .SRCINFO rendered with this build's checksums, built with
+  # makepkg, installed and checked with ldd on archlinux:latest. Pushing it to
+  # the AUR is done by hand.
+  aur:
+    name: AUR PKGBUILD
+    needs: build-linux
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Download the archives
+        uses: actions/download-artifact@v8
+        with:
+          pattern: SecureShellGo-linux-*
+          path: tarballs
+          merge-multiple: true
+
+      - name: Render and check the PKGBUILD
+        run: |
+          VERSION="$(grep '^version:' pubspec.yaml | awk '{print $2}' | cut -d+ -f1)"
+          VERSION="$VERSION" packaging/arch/aur.sh \
+            tarballs/SecureShellGo-linux-x64.tar.gz tarballs/SecureShellGo-linux-arm64.tar.gz dist
+
+      - name: Upload the recipe
+        uses: actions/upload-artifact@v7
+        with:
+          name: aur
+          path: dist/*-aur.tar.gz
+          if-no-files-found: error
+
+  # The Flatpak bundle, from the same tree as the .rpm, on the GNOME 51
+  # runtime. It is installed in the builder image, checked with ldd inside the
+  # sandbox and started under Xvfb until the window and the data folder
+  # appear. What the sandbox allows is in packaging/flatpak/README.md.
+  flatpak:
+    name: Flatpak ${{ matrix.arch }}
+    needs: distros
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 40
+    container:
+      image: ghcr.io/flathub-infra/flatpak-github-actions:gnome-51
+      options: --privileged
+    defaults:
+      run:
+        shell: bash
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x64
+            fp_arch: x86_64
+            runner: ubuntu-24.04
+          - arch: arm64
+            fp_arch: aarch64
+            runner: ubuntu-24.04-arm
+    env:
+      APP_ID: com.dhivalabs.secure_shell_go
+      FP_ARCH: ${{ matrix.fp_arch }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Download the tree
+        uses: actions/download-artifact@v8
+        with:
+          name: tree-${{ matrix.arch }}
+          path: ${{ runner.temp }}/tree
+
+      - name: Unpack the installed tree
+        id: v
+        run: |
+          mkdir -p packaging/flatpak/tree
+          tar -xJf "$RUNNER_TEMP/tree/tree.tar.xz" -C packaging/flatpak/tree
+          VERSION="$(grep '^version:' pubspec.yaml | awk '{print $2}' | cut -d+ -f1)"
+          echo "bundle=secureshellgo-$VERSION-$FP_ARCH.flatpak" >> "$GITHUB_OUTPUT"
+
+      - name: Build the Flatpak
+        uses: flatpak/flatpak-github-actions/flatpak-builder@v6
+        with:
+          manifest-path: packaging/flatpak/com.dhivalabs.secure_shell_go.yml
+          bundle: ${{ steps.v.outputs.bundle }}
+          arch: ${{ matrix.fp_arch }}
+          cache: false
+          artifact-name: flatpak-${{ matrix.arch }}
+
+      - name: Install the bundle and run it
+        timeout-minutes: 15
+        env:
+          BUNDLE: ${{ steps.v.outputs.bundle }}
+        run: |
+          for tool in flatpak xvfb-run dbus-run-session python3; do
+            printf '%-18s %s\n' "$tool" "$(command -v "$tool" || echo missing)"
+          done
+          flatpak install --system -y --noninteractive "./$BUNDLE"
+          flatpak info "$APP_ID"
+          # Every ELF file in the app finds its libraries inside the runtime;
+          # libsecret and GTK come from the GNOME runtime.
+          flatpak run --command=bash "$APP_ID" -c '
+            missing=0
+            for f in /app/lib/secureshellgo/secure_shell_go /app/lib/secureshellgo/lib/*.so; do
+              out="$(LD_LIBRARY_PATH=/app/lib/secureshellgo/lib ldd "$f")" || { echo "ldd failed on $f"; missing=1; continue; }
+              if printf "%s\n" "$out" | grep "not found"; then echo "  in $f"; missing=1; fi
+              echo "$f: ok"
+            done
+            echo "xauth in the runtime: $(command -v xauth || echo none)"
+            [ "$missing" = 0 ]'
+          export XDG_RUNTIME_DIR="$RUNNER_TEMP/xdg-runtime"
+          mkdir -p -m 700 "$XDG_RUNTIME_DIR"
+          export SMOKE_DATA_DIR="$HOME/.var/app/$APP_ID/data/com.dhivalabs.secure_shell_go"
+          xvfb-run -a -s "-screen 0 1280x800x24" dbus-run-session -- \
+            packaging/linux-distros/smoke.sh flatpak run "$APP_ID"
+
   # Gathers the desktop archives on every run, so the set is checked on pull
   # requests too, and attaches them to the release only for a `v*` tag.
   release:
     name: Attach release assets
-    needs: [build-linux, build-windows, build-macos]
+    needs: [build-linux, build-windows, build-macos, distros, aur, flatpak]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -539,16 +744,52 @@ jobs:
           path: dist
           merge-multiple: true
 
+      # The other Linux formats: .rpm, Arch package, AppImage, Flatpak and
+      # the AUR recipe. These carry the version in their names.
+      - name: Download the other Linux packages
+        uses: actions/download-artifact@v8
+        with:
+          pattern: distros-*
+          path: dist
+          merge-multiple: true
+
+      - name: Download the AUR recipe
+        uses: actions/download-artifact@v8
+        with:
+          name: aur
+          path: dist
+
+      - name: Download the Flatpak bundles
+        uses: actions/download-artifact@v8
+        with:
+          pattern: flatpak-*
+          path: dist
+          merge-multiple: true
+
+      - name: Checkout pubspec.yaml
+        uses: actions/checkout@v7
+        with:
+          sparse-checkout: pubspec.yaml
+          sparse-checkout-cone-mode: false
+          path: src
+
       - name: Check the release assets
         run: |
           ls -l dist
-          printf '%s\n' \
-            SecureShellGo-linux-arm64.tar.gz \
-            SecureShellGo-linux-x64.tar.gz \
-            SecureShellGo-macos.zip \
-            SecureShellGo-windows-arm64.zip \
-            SecureShellGo-windows-x64.zip \
-            | LC_ALL=C sort > expected.txt
+          VERSION="$(grep '^version:' src/pubspec.yaml | awk '{print $2}' | cut -d+ -f1)"
+          {
+            printf '%s\n' \
+              SecureShellGo-linux-arm64.tar.gz \
+              SecureShellGo-linux-x64.tar.gz \
+              SecureShellGo-macos.zip \
+              SecureShellGo-windows-arm64.zip \
+              SecureShellGo-windows-x64.zip \
+              "secureshellgo-bin-$VERSION-aur.tar.gz"
+            for a in x86_64 aarch64; do
+              printf '%s\n' "secureshellgo-$VERSION-1.$a.rpm" "secureshellgo-$VERSION-1-$a.pkg.tar.zst" \
+                "SecureShellGo-$VERSION-$a.AppImage" "secureshellgo-$VERSION-$a.flatpak"
+            done
+          } | LC_ALL=C sort > expected.txt
           ls dist | LC_ALL=C sort > found.txt
           if ! diff expected.txt found.txt; then
             echo "::error::the release assets are not the expected set"
