@@ -94,8 +94,12 @@ parts:
       craftctl default
       rm -rf build .dart_tool .flutter .pub-cache debian/.home \
         linux/flutter/ephemeral
+    # GTK 3 itself comes from the gnome extension's content snap. Staging
+    # libgtk-3-0 as well put Ubuntu's copies of it and its GL stack (libepoxy
+    # and friends) in front of the content snap's: under software GL on an
+    # amd64 machine EGL then fails, Flutter never draws a first frame and the
+    # window never maps.
     stage-packages:
-      - libgtk-3-0
       - libsecret-1-0
       - libssl3
 
