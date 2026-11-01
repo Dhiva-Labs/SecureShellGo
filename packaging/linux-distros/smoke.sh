@@ -7,24 +7,18 @@
 #   smoke.sh <command...>
 #
 # Needs a display and a session bus (xvfb-run -a dbus-run-session -- ...).
-# The window is looked up with xdotool where it is installed (the distribution
-# containers) and with x11-window.py otherwise (the Flatpak builder image).
+# The window is looked up with xdotool (only a mapped window counts).
 # SMOKE_DATA_DIR overrides where the data folder is expected (a Flatpak keeps
 # it under ~/.var/app/<id>).
 set -u
 
-here="$(cd "$(dirname "$0")" && pwd)"
 data="${SMOKE_DATA_DIR:-${XDG_DATA_HOME:-$HOME/.local/share}/com.dhivalabs.secure_shell_go}"
 log="$(mktemp)"
 "$@" > "$log" 2>&1 &
 pid=$!
 
 window_up() {
-  if command -v xdotool > /dev/null; then
-    xdotool search --onlyvisible --name '^SecureShell Go$' > /dev/null 2>&1
-  else
-    python3 "$here/x11-window.py" 'SecureShell Go'
-  fi
+  xdotool search --onlyvisible --name '^SecureShell Go$' > /dev/null 2>&1
 }
 
 for i in $(seq 1 90); do

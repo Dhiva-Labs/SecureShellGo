@@ -11,12 +11,15 @@ GNOME 51 runtime.
 The `flatpak` job in `.github/workflows/desktop-builds.yml` runs on x86_64
 and aarch64 in the `ghcr.io/flathub-infra/flatpak-github-actions:gnome-51`
 image. It unpacks the tree the `distros` job made into
-`packaging/flatpak/tree/` (git-ignored), builds the manifest and the bundle
-`secureshellgo-<version>-<arch>.flatpak`, installs it, checks every ELF file
-with `ldd` inside the sandbox, and starts the app under Xvfb until its
-window and its data folder (in `~/.var/app/com.dhivalabs.secure_shell_go`)
-appear (`packaging/linux-distros/smoke.sh`, the same check as for the
-other formats).
+`packaging/flatpak/tree/` (git-ignored) and builds the manifest and the
+bundle `secureshellgo-<version>-<arch>.flatpak`. The `flatpak-run` job then
+installs the bundle on a plain Ubuntu runner, with the runtime from Flathub
+as a user would, checks every ELF file with `ldd` inside the sandbox, and
+starts the app under Xvfb until its window and its data folder (in
+`~/.var/app/com.dhivalabs.secure_shell_go`) appear
+(`packaging/linux-distros/smoke.sh`, the same check as for the other
+formats). The builder image is not used for that run: GTK gets no GL context
+under its Xvfb, so Flutter never draws a first frame there.
 
 Install a bundle with (the GNOME 51 runtime comes from Flathub):
 
