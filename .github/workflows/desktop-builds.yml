@@ -583,10 +583,11 @@ jobs:
 
       # The Flatpak job builds from the same cleaned tree (tar keeps modes and
       # symlinks). The AppImage also carries the runner's libsecret
-      # (APPIMAGE_BUNDLE in distro.conf).
+      # (APPIMAGE_BUNDLE in distro.conf); patchelf points the plugin that
+      # needs it at that copy.
       - name: Build the .rpm, Arch package and AppImage
         run: |
-          sudo apt-get install -y libsecret-1-0
+          sudo apt-get install -y libsecret-1-0 patchelf
           VERSION="$(grep '^version:' pubspec.yaml | awk '{print $2}' | cut -d+ -f1)"
           packaging/linux-distros/tree.sh "tarball/SecureShellGo-linux-$ARCH.tar.gz" "$RUNNER_TEMP/root"
           VERSION="$VERSION" TREE_TARBALL="$RUNNER_TEMP/tree.tar.xz" \

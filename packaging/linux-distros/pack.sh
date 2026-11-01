@@ -237,15 +237,30 @@ if [ "${APPIMAGE:-0}" = 1 ]; then
   cp -a "$tree/." "$appdir/"
   [ -x "$appdir/$EXEC" ] || { echo "EXEC $EXEC is not an executable in the tree" >&2; exit 1; }
   # Libraries the app links that not every desktop has (APPIMAGE_BUNDLE,
-  # sonames): copied from the build machine into the app's lib/, which the
-  # runner's RUNPATH ($ORIGIN/lib) searches, so the plugins that need them
-  # find them already loaded.
+  # sonames): copied from the build machine into the app's lib/.
   for so in "${APPIMAGE_BUNDLE[@]}"; do
     src="$(ldconfig -p | awk -v so="$so" '$1 == so { print $NF; exit }')"
     [ -n "$src" ] || { echo "$so (APPIMAGE_BUNDLE) is not installed on this machine" >&2; exit 1; }
     cp -L "$src" "$appdir/$(dirname "$EXEC")/lib/$so"
     echo "bundled $src in the AppImage"
   done
+  # Flutter installs the plugin libraries as plain files, so they keep the
+  # build machine's RUNPATH, and the runner itself does not link the bundled
+  # libraries (only a plugin does): the loader looks for them along the
+  # plugin's RUNPATH, never the runner's. Plugins that need one search their
+  # own directory instead.
+  if [ "${#APPIMAGE_BUNDLE[@]}" -gt 0 ]; then
+    for f in "$appdir/$(dirname "$EXEC")"/lib/*.so; do
+      needed="$(objdump -p "$f" | awk '$1 == "NEEDED" { print $2 }')"
+      for so in "${APPIMAGE_BUNDLE[@]}"; do
+        if printf '%s\n' "$needed" | grep -Fx "$so" > /dev/null; then
+          patchelf --set-rpath '$ORIGIN' "$f"
+          echo "$(basename "$f") needs $so: RUNPATH set to \$ORIGIN"
+          break
+        fi
+      done
+    done
+  fi
 
   desktop="$appdir/$(basename "$DESKTOP")"
   cp "$tree/$DESKTOP" "$desktop"
