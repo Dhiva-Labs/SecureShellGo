@@ -3,6 +3,7 @@
 [![ARM64 builds](https://github.com/Dhiva-Labs/SecureShellGo/actions/workflows/desktop-builds.yml/badge.svg?branch=main)](https://github.com/Dhiva-Labs/SecureShellGo/actions/workflows/desktop-builds.yml)
 ![Linux x64 | arm64](https://img.shields.io/badge/Linux-x64%20%7C%20arm64-informational?logo=linux&logoColor=white)
 ![Windows x64 | arm64](https://img.shields.io/badge/Windows-x64%20%7C%20arm64-informational?logo=windows&logoColor=white)
+![Linux: deb | rpm | Arch | AppImage | Flatpak | Snap](https://img.shields.io/badge/Linux-deb%20%7C%20rpm%20%7C%20Arch%20%7C%20AppImage%20%7C%20Flatpak%20%7C%20Snap-informational?logo=linux&logoColor=white)
 
 A fast, security-first SSH terminal and SFTP client for Android, Windows and
 Linux. Connect to your servers, run a real interactive shell, edit and transfer
@@ -197,6 +198,31 @@ macOS builds are unsigned — there's no Apple Developer ID behind this
 project — so Gatekeeper will refuse to open the app and call it an
 "unidentified developer." Right-click the `.app`, choose **Open**, and
 confirm once; after that it launches normally.
+
+### Fedora, openSUSE, Arch, AppImage and Flatpak
+
+Releases from the next one on also carry these, for x64 (`x86_64`) and arm64
+(`aarch64`), all holding the same build as the `linux` archives:
+
+| Distribution | Asset | Install |
+|---|---|---|
+| Fedora, RHEL | `secureshellgo-<version>-1.x86_64.rpm` | `sudo dnf install ./secureshellgo-<version>-1.x86_64.rpm` |
+| openSUSE | the same `.rpm` | `sudo zypper install --allow-unsigned-rpm ./secureshellgo-<version>-1.x86_64.rpm` |
+| Arch, Manjaro, EndeavourOS | `secureshellgo-<version>-1-x86_64.pkg.tar.zst` | `sudo pacman -U ./secureshellgo-<version>-1-x86_64.pkg.tar.zst` |
+| Any Linux with GTK 3 | `SecureShellGo-<version>-x86_64.AppImage` | `chmod +x SecureShellGo-<version>-x86_64.AppImage && ./SecureShellGo-<version>-x86_64.AppImage` |
+| Any Linux with Flatpak | `secureshellgo-<version>-x86_64.flatpak` | `flatpak install --user ./secureshellgo-<version>-x86_64.flatpak` (the GNOME runtime comes from Flathub) |
+
+Replace `x86_64` with `aarch64` on ARM64. The `.rpm` and the Arch package
+install the same files as the PPA's `.deb` (`/opt/secureshellgo`, started as
+`secureshellgo`) and recommend a Secret Service provider the way it does. The
+`.rpm` is not signed, hence `--allow-unsigned-rpm` on openSUSE; check the
+files against the release page. The builds are made on Ubuntu 24.04 (glibc
+2.39), so use a current distribution: Fedora 40 or later, openSUSE
+Tumbleweed or current Arch, not RHEL 9 or openSUSE Leap 15; dnf and zypper
+refuse the `.rpm` where its glibc is too old. Each release also carries
+`secureshellgo-bin-<version>-aur.tar.gz`, the recipe for an AUR
+`secureshellgo-bin` package, which is not on the AUR yet. What the Flatpak's
+sandbox allows is in [packaging/flatpak/README.md](packaging/flatpak/README.md).
 
 ### Install on Ubuntu
 
