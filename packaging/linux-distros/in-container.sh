@@ -17,9 +17,9 @@ case "$MODE" in
     dnf -y -q install file findutils which procps-ng "${pkgs[@]}"
     ;;
   rpm-suse)
-    # xvfb-run needs awk; dbus-run-session is not in dbus-1 there, so it is
-    # asked for by path.
-    pkgs=(); [ -z "${GUI_CMD:-}" ] || pkgs=(xvfb-run gawk Mesa-dri dbus-1 /usr/bin/dbus-run-session "${extra[@]}")
+    # xvfb-run needs awk; dbus-run-session is not in dbus-1 there but in
+    # dbus-1-daemon.
+    pkgs=(); [ -z "${GUI_CMD:-}" ] || pkgs=(xvfb-run gawk Mesa-dri dbus-1 dbus-1-daemon "${extra[@]}")
     zypper -n -q --gpg-auto-import-keys refresh
     zypper -n -q install file findutils which procps "${pkgs[@]}"
     ;;
