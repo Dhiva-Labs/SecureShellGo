@@ -34,6 +34,7 @@ out="$(cd "$3" && pwd)"
 : "${NAME:?distro.conf must set NAME}"
 # Optional lists in distro.conf.
 [ -n "${EXCLUDE+x}" ] || EXCLUDE=()
+[ -n "${APPIMAGE_BUNDLE+x}" ] || APPIMAGE_BUNDLE=()
 [ -n "${RPM_RECOMMENDS+x}" ] || RPM_RECOMMENDS=()
 [ -n "${ARCH_OPTDEPENDS+x}" ] || ARCH_OPTDEPENDS=()
 NFPM="${NFPM:-nfpm}"
@@ -235,6 +236,16 @@ if [ "${APPIMAGE:-0}" = 1 ]; then
   mkdir -p "$appdir"
   cp -a "$tree/." "$appdir/"
   [ -x "$appdir/$EXEC" ] || { echo "EXEC $EXEC is not an executable in the tree" >&2; exit 1; }
+  # Libraries the app links that not every desktop has (APPIMAGE_BUNDLE,
+  # sonames): copied from the build machine into the app's lib/, which the
+  # runner's RUNPATH ($ORIGIN/lib) searches, so the plugins that need them
+  # find them already loaded.
+  for so in "${APPIMAGE_BUNDLE[@]}"; do
+    src="$(ldconfig -p | awk -v so="$so" '$1 == so { print $NF; exit }')"
+    [ -n "$src" ] || { echo "$so (APPIMAGE_BUNDLE) is not installed on this machine" >&2; exit 1; }
+    cp -L "$src" "$appdir/$(dirname "$EXEC")/lib/$so"
+    echo "bundled $src in the AppImage"
+  done
 
   desktop="$appdir/$(basename "$DESKTOP")"
   cp "$tree/$DESKTOP" "$desktop"
