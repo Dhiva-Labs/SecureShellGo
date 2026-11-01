@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>com.dhivalabs.secure_shell_go</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>MIT</project_license>
+  <name>SecureShell Go</name>
+  <summary>SSH terminal and SFTP client with strict host-key verification</summary>
+  <description>
+    <p>
+      SecureShell Go is a fast, security-first SSH terminal and SFTP client.
+      Run a real interactive xterm-256color shell and transfer files over SFTP,
+      with trust-on-first-use host-key verification at the core.
+    </p>
+    <p>
+      A changed host key blocks the connection outright, with SHA256
+      fingerprints shown for out-of-band verification and an explicit,
+      checkbox-gated override required to proceed. Passwords, private keys and
+      passphrases are kept only in encrypted secure storage.
+    </p>
+    <p>
+      Includes a saved host manager, password and private-key authentication,
+      and an SFTP file browser for uploads, downloads and whole-folder
+      transfers, alongside the terminal in the same session.
+    </p>
+  </description>
+  <launchable type="desktop-id">com.dhivalabs.secure_shell_go.desktop</launchable>
+  <url type="homepage">https://github.com/Dhiva-Labs/SecureShellGo</url>
+  <url type="bugtracker">https://github.com/Dhiva-Labs/SecureShellGo/issues</url>
+  <developer id="com.dhivalabs">
+    <name>Dhiva Labs</name>
+  </developer>
+  <content_rating type="oars-1.1"/>
+  <releases>
+    <release version="1.5.0" date="2026-10-28"/>
+    <release version="1.4.4" date="2026-08-07"/>
+  </releases>
+</component>
