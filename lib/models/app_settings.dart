@@ -174,6 +174,7 @@ class AppSettings {
     this.scrollbackLines = defaultScrollbackLines,
     this.cursorStyle = TerminalCursorStyle.block,
     this.cursorBlink = false,
+    this.copyOnSelect = false,
     this.bell = TerminalBell.vibrate,
     this.terminalFont = TerminalFont.system,
     this.keyBarMode = KeyBarMode.auto,
@@ -234,6 +235,11 @@ class AppSettings {
   /// Off by default, as the cursor has always been steady.
   final bool cursorBlink;
 
+  /// Text selected in the terminal with a mouse goes straight to the
+  /// clipboard, as in PuTTY. Off by default: a stray drag would otherwise
+  /// replace whatever was on the clipboard.
+  final bool copyOnSelect;
+
   final TerminalBell bell;
   final TerminalFont terminalFont;
   final KeyBarMode keyBarMode;
@@ -285,6 +291,7 @@ class AppSettings {
     int? scrollbackLines,
     TerminalCursorStyle? cursorStyle,
     bool? cursorBlink,
+    bool? copyOnSelect,
     TerminalBell? bell,
     TerminalFont? terminalFont,
     KeyBarMode? keyBarMode,
@@ -305,6 +312,7 @@ class AppSettings {
       scrollbackLines: _validScrollback(scrollbackLines ?? this.scrollbackLines),
       cursorStyle: cursorStyle ?? this.cursorStyle,
       cursorBlink: cursorBlink ?? this.cursorBlink,
+      copyOnSelect: copyOnSelect ?? this.copyOnSelect,
       bell: bell ?? this.bell,
       terminalFont: terminalFont ?? this.terminalFont,
       keyBarMode: keyBarMode ?? this.keyBarMode,
@@ -330,6 +338,7 @@ class AppSettings {
         scrollbackLines: scrollbackLines,
         cursorStyle: cursorStyle,
         cursorBlink: cursorBlink,
+        copyOnSelect: copyOnSelect,
         bell: bell,
         terminalFont: terminalFont,
         keyBarMode: keyBarMode,
@@ -355,6 +364,7 @@ class AppSettings {
         'scrollbackLines': scrollbackLines,
         'cursorStyle': cursorStyle.name,
         'cursorBlink': cursorBlink,
+        'copyOnSelect': copyOnSelect,
         'bell': bell.name,
         'terminalFont': terminalFont.name,
         'keyBarMode': keyBarMode.name,
@@ -405,6 +415,7 @@ class AppSettings {
         json['cursorStyle'] as String?,
       ),
       cursorBlink: json['cursorBlink'] as bool? ?? false,
+      copyOnSelect: json['copyOnSelect'] as bool? ?? false,
       bell: TerminalBell.fromName(json['bell'] as String?),
       terminalFont: TerminalFont.fromName(json['terminalFont'] as String?),
       keyBarMode: KeyBarMode.fromName(json['keyBarMode'] as String?),
