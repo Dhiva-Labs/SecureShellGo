@@ -25,6 +25,7 @@ import '../services/ssh_service.dart';
 import '../services/terminal_workspace.dart';
 import '../services/tunnel_runtime.dart';
 import '../theme.dart';
+import '../widgets/app_snack.dart';
 import '../widgets/command_palette.dart';
 import '../widgets/host_key_dialog.dart';
 import '../widgets/login_prompt_dialog.dart';
@@ -416,13 +417,20 @@ class _HostListScreenState extends State<HostListScreen> {
     } on SshConnectionException catch (e) {
       if (!mounted) return;
       setState(() => _connectingHostId = null);
-      await _showConnectError(e.message, details: e.details);
+      await _showConnectError(
+        e.message,
+        details: e.details,
+        onRetry: () => unawaited(_connect(host, view: view)),
+        onEdit: () => _editHost(host),
+      );
     } catch (e) {
       if (!mounted) return;
       setState(() => _connectingHostId = null);
       await _showConnectError(
         context.l10n.hostConnectUnexpectedError,
         details: e.toString(),
+        onRetry: () => unawaited(_connect(host, view: view)),
+        onEdit: () => _editHost(host),
       );
     }
   }
@@ -464,9 +472,17 @@ class _HostListScreenState extends State<HostListScreen> {
     );
   }
 
+  /// Says why a connection failed, and offers the two ways on from there.
+  ///
+  /// A wrong password and an unreachable server were both dead ends behind
+  /// a lone OK: the fix was in the host's form, a long-press and a menu away,
+  /// and trying again meant finding the row again. [onRetry] leads, because
+  /// a server still booting or a network just back needs nothing changed;
+  /// [onEdit] is for a password or an address that was wrong.
   Future<void> _showConnectError(
     String message, {
     String? details,
+    VoidCallback? onRetry,
     VoidCallback? onEdit,
   }) {
     return showDialog<void>(
@@ -504,10 +520,24 @@ class _HostListScreenState extends State<HostListScreen> {
                 },
                 child: Text(context.l10n.hostListEditHostButton),
               ),
-            FilledButton(
-              onPressed: () => Navigator.of(context).pop(),
-              child: Text(MaterialLocalizations.of(context).okButtonLabel),
-            ),
+            if (onRetry == null)
+              FilledButton(
+                onPressed: () => Navigator.of(context).pop(),
+                child: Text(MaterialLocalizations.of(context).okButtonLabel),
+              )
+            else ...[
+              TextButton(
+                onPressed: () => Navigator.of(context).pop(),
+                child: Text(MaterialLocalizations.of(context).okButtonLabel),
+              ),
+              FilledButton(
+                onPressed: () {
+                  Navigator.of(context).pop();
+                  onRetry();
+                },
+                child: Text(context.l10n.hostListTryAgain),
+              ),
+            ],
           ],
         );
       },
@@ -520,9 +550,7 @@ class _HostListScreenState extends State<HostListScreen> {
   Future<void> _copyTarget(Host host) async {
     await Clipboard.setData(ClipboardData(text: host.target));
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(context.l10n.hostListCopiedTarget(host.target))),
-    );
+    showReplacingSnack(context, context.l10n.hostListCopiedTarget(host.target));
   }
 
   /// Everything that can be done to one saved host, for the sheet a
@@ -618,23 +646,21 @@ class _HostListScreenState extends State<HostListScreen> {
     );
   }
 
-  /// A right-click on a host: the same actions as the sheet, as a menu where
-  /// the pointer is — a sheet sliding up from the bottom of a desktop window
-  /// is a long way from the row that was clicked. One line each; the sheet's
-  /// explanations are for the first time on a phone, not the hundredth with
-  /// a mouse.
-  Future<void> _showHostMenu(Host host, Offset at) async {
+  /// A right-click on a host, or its ⋮ clicked with a mouse: the same
+  /// actions as the sheet, as a menu at [anchor] in global coordinates —
+  /// where the pointer is, or the button's own rect — because a sheet
+  /// sliding up from the bottom of a desktop window is a long way from the
+  /// row that was clicked. One line each; the sheet's explanations are for
+  /// the first time on a phone, not the hundredth with a mouse.
+  Future<void> _showHostMenu(Host host, Rect anchor) async {
     final overlay =
         Overlay.of(context).context.findRenderObject()! as RenderBox;
-    final local = overlay.globalToLocal(at);
+    final local = overlay.globalToLocal(anchor.topLeft) & anchor.size;
     final theme = Theme.of(context);
     final actions = _hostActions(host);
     final chosen = await showMenu<_HostAction>(
       context: context,
-      position: RelativeRect.fromRect(
-        local & Size.zero,
-        Offset.zero & overlay.size,
-      ),
+      position: RelativeRect.fromRect(local, Offset.zero & overlay.size),
       items: [
         for (final action in actions) ...[
           if (action.destructive) const PopupMenuDivider(),
@@ -954,10 +980,9 @@ class _HostListScreenState extends State<HostListScreen> {
     if (confirmed != true) return;
     await widget.knownHosts.forgetHost(host.hostname, host.port);
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(context.l10n.hostListForgotKeys(host.displayName)),
-      ),
+    showReplacingSnack(
+      context,
+      context.l10n.hostListForgotKeys(host.displayName),
     );
   }
 
@@ -1454,8 +1479,8 @@ class _HostListScreenState extends State<HostListScreen> {
                     onDeleteGroup: _deleteGroup,
                     onConnect: _connect,
                     onHostMenu: _showHostActions,
-                    onHostContextMenu: (host, at) =>
-                        unawaited(_showHostMenu(host, at)),
+                    onHostContextMenu: (host, anchor) =>
+                        unawaited(_showHostMenu(host, anchor)),
                     onToggleSelect: _toggleHostSelected,
                     onSelectAllInGroup: _toggleSelectAllInGroup,
                     onRunCommandInGroup: (section) => unawaited(

@@ -11,6 +11,7 @@ import '../services/credential_store.dart';
 import '../services/device_storage.dart';
 import '../services/host_field_input.dart';
 import '../services/host_store.dart';
+import '../services/input_profile.dart';
 import '../services/public_key_push.dart';
 import '../services/session_manager.dart';
 import '../services/settings_store.dart';
@@ -18,6 +19,7 @@ import '../services/ssh_certificate.dart';
 import '../services/ssh_keygen.dart';
 import '../services/ssh_service.dart';
 import '../theme.dart';
+import '../widgets/app_snack.dart';
 import '../widgets/error_banner.dart';
 import '../widgets/host_advanced_section.dart';
 import '../widgets/host_certificate_field.dart';
@@ -91,6 +93,21 @@ class _HostEditScreenState extends State<HostEditScreen> {
   final _passphraseController = TextEditingController();
   final _passphraseFocusNode = FocusNode();
   final _startupCommandController = TextEditingController();
+
+  /// Holds focus for the screen itself when no field has it, so Ctrl+S still
+  /// reaches the shortcuts in [build]: before any field is clicked on a
+  /// touch-first device, and after an action has taken focus off the field
+  /// it was typed in.
+  final _screenFocus = FocusNode(debugLabel: 'host form', skipTraversal: true);
+
+  /// What the form held when it opened, or when it was last saved: the
+  /// yardstick for [_isDirty]. See [_snapshot].
+  late Object _pristine;
+
+  /// Whether the [PopScope] in [build] was last built for a changed form.
+  /// Typing does not rebuild this screen, so [_onTextEdited] compares against
+  /// this and rebuilds only when the answer flips.
+  bool _builtDirty = false;
 
   late final DeviceStorage _deviceStorage =
       widget.deviceStorage ?? createDefaultDeviceStorage();
@@ -179,6 +196,47 @@ class _HostEditScreenState extends State<HostEditScreen> {
     }
     unawaited(_loadGroupNames());
     unawaited(_loadJumpCandidates());
+    _pristine = _snapshot();
+    for (final controller in _textControllers) {
+      controller.addListener(_onTextEdited);
+    }
+  }
+
+  /// The form's text fields, which [_onTextEdited] listens to.
+  List<TextEditingController> get _textControllers => [
+        _labelController,
+        _hostController,
+        _portController,
+        _usernameController,
+        _passwordController,
+        _keyController,
+        _passphraseController,
+        _startupCommandController,
+      ];
+
+  /// Everything the form would save, as one value that compares equal only
+  /// when nothing in it has changed.
+  Object _snapshot() => (
+        _labelController.text,
+        _hostController.text,
+        _portController.text,
+        _usernameController.text,
+        _passwordController.text,
+        _keyController.text,
+        _passphraseController.text,
+        _startupCommandController.text,
+        _authMethod,
+        _selectedGroup,
+        _selectedColorLabel,
+        _jumpHostId,
+        _advanced,
+        _certificate,
+      );
+
+  bool get _isDirty => _snapshot() != _pristine;
+
+  void _onTextEdited() {
+    if (_isDirty != _builtDirty) setState(() {});
   }
 
   Future<void> _loadGroupNames() async {
@@ -214,9 +272,13 @@ class _HostEditScreenState extends State<HostEditScreen> {
     setState(() {
       _loadingCredentials = false;
       if (saved != null) {
+        // What was already saved is not an edit: unless something else was
+        // changed while it loaded, the form is as unchanged as it opened.
+        final edited = _isDirty;
         _passwordController.text = saved.password ?? '';
         _keyController.text = saved.privateKeyPem ?? '';
         _passphraseController.text = saved.passphrase ?? '';
+        if (!edited) _pristine = _snapshot();
       }
     });
   }
@@ -233,6 +295,7 @@ class _HostEditScreenState extends State<HostEditScreen> {
     _passphraseController.dispose();
     _passphraseFocusNode.dispose();
     _startupCommandController.dispose();
+    _screenFocus.dispose();
     super.dispose();
   }
 
@@ -335,18 +398,103 @@ class _HostEditScreenState extends State<HostEditScreen> {
   /// can act on a form the others would have refused. False means the form is
   /// not fit to act on and the caller stops.
   bool _prepare() {
-    if (_saving || _connecting) return false;
+    // Not while the saved credential is still loading: its field is a
+    // spinner until then, so nothing would validate it, and a Ctrl+S in that
+    // moment would save the host over its password with an empty one.
+    if (_saving || _connecting || _loadingCredentials) return false;
     // Before validation, so a pasted `host:2022` is already two fields by the
     // time the Port validator looks at it.
     _splitHostAndPort();
-    if (!(_formKey.currentState?.validate() ?? false)) return false;
-    FocusScope.of(context).unfocus();
+    final form = _formKey.currentState;
+    if (form == null) return false;
+    final invalid = form.validateGranularly();
+    if (invalid.isNotEmpty) {
+      _revealFirstInvalid(invalid);
+      return false;
+    }
+    // To the screen itself rather than out of it: that still closes the soft
+    // keyboard, and leaves Ctrl+S in reach for another try if this one fails.
+    _screenFocus.requestFocus();
     setState(() {
       _error = null;
       _errorDetails = null;
       _credentialNotice = null;
     });
     return true;
+  }
+
+  /// Scrolls the topmost field that failed validation into view.
+  ///
+  /// A refusal whose reason is off screen reads as a button that did
+  /// nothing: Save tapped at the foot of the form, with Host left empty at
+  /// its head, changed nothing the user could see.
+  void _revealFirstInvalid(Set<FormFieldState<Object?>> invalid) {
+    BuildContext? first;
+    var firstTop = double.infinity;
+    for (final field in invalid) {
+      final box = field.context.findRenderObject();
+      if (box is! RenderBox || !box.hasSize) continue;
+      final top = box.localToGlobal(Offset.zero).dy;
+      if (top < firstTop) {
+        firstTop = top;
+        first = field.context;
+      }
+    }
+    final target = first;
+    if (target == null) return;
+    // After the frame, once the error line validation has just added under
+    // the field is laid out: the field and its reason both have to show.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!target.mounted) return;
+      // Each policy scrolls only when the field is past its own edge, so
+      // between them a field above the view comes down to its top, one below
+      // comes up to its bottom, and one already in view stays where it is.
+      for (final policy in const [
+        ScrollPositionAlignmentPolicy.keepVisibleAtStart,
+        ScrollPositionAlignmentPolicy.keepVisibleAtEnd,
+      ]) {
+        unawaited(Scrollable.ensureVisible(
+          target,
+          alignmentPolicy: policy,
+          duration: const Duration(milliseconds: 250),
+          curve: Curves.easeOut,
+        ));
+      }
+    });
+  }
+
+  /// Asks before a back gesture or button throws a changed form away. The
+  /// barrier, like "Keep editing", keeps it: the answer that loses nothing.
+  Future<void> _confirmDiscard() async {
+    final discard = await showDialog<bool>(
+      context: context,
+      builder: (context) {
+        final l10n = context.l10n;
+        return AlertDialog(
+          title: Text(l10n.hostEditDiscardTitle),
+          content: Text(
+            l10n.hostEditDiscardBody,
+            style: const TextStyle(height: 1.35),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(false),
+              child: Text(l10n.editorUnsavedKeepEditing),
+            ),
+            FilledButton(
+              style: FilledButton.styleFrom(
+                backgroundColor: Theme.of(context).colorScheme.error,
+              ),
+              onPressed: () => Navigator.of(context).pop(true),
+              child: Text(l10n.editorUnsavedDiscard),
+            ),
+          ],
+        );
+      },
+    );
+    // A plain pop, which the PopScope in [build] does not stand in the way
+    // of: it only stops the back gestures and buttons that ask first.
+    if (discard == true && mounted) Navigator.of(context).pop();
   }
 
   /// Writes the host and its credential, and returns the host that was
@@ -373,8 +521,12 @@ class _HostEditScreenState extends State<HostEditScreen> {
       } else {
         await widget.credentialStore.save(host.id, _buildCredentials());
       }
+      _pristine = _snapshot();
       return host;
     } on SecureStorageUnavailableException catch (e) {
+      // Saved as far as it can be, and the notice below says what was not:
+      // leaving now throws away nothing that staying could keep.
+      _pristine = _snapshot();
       // Only the secret could not be protected, and an install with no
       // keyring at all no longer gets here — it encrypts the credential and
       // succeeds (see `composite_secure_storage.dart`). What is left is a
@@ -571,9 +723,7 @@ class _HostEditScreenState extends State<HostEditScreen> {
         );
       }
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(context.l10n.hostEditKeyInstalled)),
-      );
+      showReplacingSnack(context, context.l10n.hostEditKeyInstalled);
     } on PublicKeyPushFailure catch (e) {
       if (!mounted) return;
       await _showKeyImportError(null, e.message);
@@ -785,31 +935,75 @@ class _HostEditScreenState extends State<HostEditScreen> {
     );
   }
 
+  /// The plain save's name, shared by the app bar and the button below:
+  /// "Save host" for a new one, "Save changes" for an edit.
+  String get _saveLabel => widget.isEditing
+      ? context.l10n.hostEditSaveChanges
+      : context.l10n.hostSaveHost;
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final busy = _saving || _connecting;
+    final dirty = _builtDirty = _isDirty;
+    // Only where a keyboard is: a phone's own keyboard should not spring up
+    // over a form the user has not yet touched.
+    final keyboard = InputProfile.of(context).keyboard;
 
-    return Scaffold(
-      appBar: AppBar(
-        title: Text(
-          widget.isEditing
-              ? context.l10n.hostEditTitleEdit
-              : context.l10n.hostEditTitleAdd,
-        ),
-      ),
-      body: SafeArea(
-        child: AbsorbPointer(
-          absorbing: busy,
-          // A no-op on a phone (the constraint is already narrower than
-          // 600dp); on a tablet or DeX window it keeps the form from
-          // stretching edge to edge into unreadably long text fields.
-          child: Center(
-            child: ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 600),
-              child: Form(
-                key: _formKey,
-                child: _buildFormFields(theme, busy),
+    return PopScope(
+      // Asking only when there is something to lose, so a form opened and
+      // left untouched still goes back with the system gesture's animation.
+      canPop: !dirty,
+      onPopInvokedWithResult: (didPop, _) {
+        if (!didPop) unawaited(_confirmDiscard());
+      },
+      child: CallbackShortcuts(
+        bindings: <ShortcutActivator, VoidCallback>{
+          const SingleActivator(LogicalKeyboardKey.keyS, control: true):
+              () => unawaited(_save()),
+          const SingleActivator(LogicalKeyboardKey.keyS, meta: true):
+              () => unawaited(_save()),
+        },
+        child: Focus(
+          focusNode: _screenFocus,
+          // The Host field takes focus itself where there is a keyboard.
+          autofocus: !keyboard,
+          child: Scaffold(
+            appBar: AppBar(
+              title: Text(
+                widget.isEditing
+                    ? context.l10n.hostEditTitleEdit
+                    : context.l10n.hostEditTitleAdd,
+              ),
+              actions: [
+                // Where a form's commit usually is, so keeping a change does
+                // not mean scrolling a long form to its end. The buttons
+                // there stay, for the choices that connect as well.
+                IconButton(
+                  tooltip: _saveLabel,
+                  icon: const Icon(Icons.save_outlined),
+                  onPressed: busy ? null : () => unawaited(_save()),
+                ),
+              ],
+            ),
+            body: SafeArea(
+              child: AbsorbPointer(
+                absorbing: busy,
+                // A no-op on a phone (the constraint is already narrower than
+                // 600dp); on a tablet or DeX window it keeps the form from
+                // stretching edge to edge into unreadably long text fields.
+                // At the top rather than centred: the form is only as tall as
+                // its fields, and a taller window would float it mid-way.
+                child: Align(
+                  alignment: Alignment.topCenter,
+                  child: ConstrainedBox(
+                    constraints: const BoxConstraints(maxWidth: 600),
+                    child: Form(
+                      key: _formKey,
+                      child: _buildFormFields(theme, busy, keyboard),
+                    ),
+                  ),
+                ),
               ),
             ),
           ),
@@ -818,11 +1012,14 @@ class _HostEditScreenState extends State<HostEditScreen> {
     );
   }
 
-  Widget _buildFormFields(ThemeData theme, bool busy) {
+  Widget _buildFormFields(ThemeData theme, bool busy, bool keyboard) {
     final l10n = context.l10n;
-    return ListView(
+    // Every field built, not only those near the screen as a ListView would:
+    // a field scrolled far out of view was then not in the Form at all, so
+    // Save never validated it and there was nothing to scroll back to.
+    return SingleChildScrollView(
       padding: const EdgeInsets.fromLTRB(16, 16, 16, 32),
-      children: [
+      child: ListBody(children: [
         TextFormField(
           controller: _labelController,
           decoration: InputDecoration(
@@ -845,6 +1042,9 @@ class _HostEditScreenState extends State<HostEditScreen> {
               child: TextFormField(
                 controller: _hostController,
                 focusNode: _hostFocusNode,
+                // The one field every host needs, so typing can start as the
+                // form opens; see [build] for why only with a keyboard.
+                autofocus: keyboard,
                 decoration: InputDecoration(
                   labelText: l10n.hostEditHostLabel,
                   hintText: l10n.hostEditHostHint,
@@ -1081,6 +1281,9 @@ class _HostEditScreenState extends State<HostEditScreen> {
           autocorrect: false,
           enableSuggestions: false,
           textInputAction: TextInputAction.done,
+          // The last field a line of text goes in, so Enter here is the
+          // form's own submit, the same Save as Ctrl+S and the app bar's.
+          onFieldSubmitted: (_) => unawaited(_save()),
           style: const TextStyle(
             fontFamily: AppTheme.monoFontFamily,
             fontFamilyFallback: AppTheme.monoFontFamilyFallback,
@@ -1116,7 +1319,7 @@ class _HostEditScreenState extends State<HostEditScreen> {
             label: Text(l10n.hostEditConnectWithoutSaving),
           ),
         ),
-      ],
+      ]),
     );
   }
 
@@ -1128,8 +1331,7 @@ class _HostEditScreenState extends State<HostEditScreen> {
   Widget _buildSaveButtons(bool busy) {
     final l10n = context.l10n;
     final connectLabel = l10n.hostEditSaveAndConnect;
-    final saveLabel =
-        widget.isEditing ? l10n.hostEditSaveChanges : l10n.hostSaveHost;
+    final saveLabel = _saveLabel;
     final saveAndConnect = FilledButton.icon(
       onPressed: busy ? null : _saveAndConnect,
       icon: _saving || _connecting

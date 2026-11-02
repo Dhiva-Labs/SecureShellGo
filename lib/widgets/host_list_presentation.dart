@@ -6,6 +6,7 @@ import '../l10n/l10n.dart';
 import '../models/app_settings.dart';
 import '../models/host.dart';
 import '../services/host_grouping.dart';
+import '../services/input_profile.dart';
 import '../services/layout_breakpoints.dart';
 import 'host_color_dot.dart';
 
@@ -33,10 +34,11 @@ class HostListActions {
   final void Function(Host host) onConnect;
   final void Function(Host host) onHostMenu;
 
-  /// A right-click on a host, at [at] in global coordinates: a menu at the
-  /// pointer rather than the sheet a long-press opens. Null falls back to
-  /// [onHostMenu].
-  final void Function(Host host, Offset at)? onHostContextMenu;
+  /// The host's actions as a menu anchored to [anchor], in global
+  /// coordinates, rather than the sheet a long-press opens: where a
+  /// right-click landed (a rect of no size), or the ⋮ button itself when a
+  /// mouse clicked it. Null falls back to [onHostMenu].
+  final void Function(Host host, Rect anchor)? onHostContextMenu;
 
   /// Flips one host's checked state while selection mode is on. Null (the
   /// default) is what every existing caller gets, and is indistinguishable
@@ -422,9 +424,9 @@ class _AwsHostRow extends StatelessWidget {
   final VoidCallback onTap;
   final VoidCallback onMore;
 
-  /// Right-click, with where it landed. See
-  /// [HostListActions.onHostContextMenu].
-  final void Function(Offset at)? onMoreAt;
+  /// The menu, anchored where a right-click landed or to the ⋮ button a
+  /// mouse clicked. See [HostListActions.onHostContextMenu].
+  final void Function(Rect anchor)? onMoreAt;
   final bool selectionMode;
   final bool selected;
 
@@ -437,6 +439,8 @@ class _AwsHostRow extends StatelessWidget {
       fontFamily: 'monospace',
       color: scheme.onSurfaceVariant,
     );
+    final slot =
+        InputProfile.of(context).touch ? kMinInteractiveDimension : 28.0;
 
     return Material(
       color: Colors.transparent,
@@ -503,24 +507,28 @@ class _AwsHostRow extends StatelessWidget {
                     style: mutedStyle,
                   ),
                 ),
+                // One slot for the button, the spinner and the blank alike,
+                // so the columns line up down the table whichever a row has.
+                // 28 with a mouse is the console's density. On touch it is
+                // the 48 a finger needs: a fixed box clips the button's hit
+                // area to its own size, whatever padding the theme adds.
                 SizedBox(
-                  width: 28,
-                  height: 28,
+                  width: slot,
+                  height: slot,
                   child: selectionMode
                       ? null
                       : connecting
-                          ? const Padding(
-                              padding: EdgeInsets.all(5),
-                              child: CircularProgressIndicator(strokeWidth: 2),
+                          ? Padding(
+                              padding: EdgeInsets.all((slot - 18) / 2),
+                              child: const CircularProgressIndicator(
+                                strokeWidth: 2,
+                              ),
                             )
-                          : IconButton(
-                              tooltip: MaterialLocalizations.of(context)
-                                  .moreButtonTooltip,
-                              padding: EdgeInsets.zero,
+                          : _HostMoreButton(
+                              onMore: onMore,
+                              onMoreAt: onMoreAt,
                               iconSize: 17,
-                              visualDensity: VisualDensity.compact,
-                              icon: const Icon(Icons.more_vert),
-                              onPressed: onMore,
+                              flush: true,
                             ),
                 ),
               ],
@@ -621,9 +629,9 @@ class _GcpHostCard extends StatelessWidget {
   final VoidCallback onTap;
   final VoidCallback onMore;
 
-  /// Right-click, with where it landed. See
-  /// [HostListActions.onHostContextMenu].
-  final void Function(Offset at)? onMoreAt;
+  /// The menu, anchored where a right-click landed or to the ⋮ button a
+  /// mouse clicked. See [HostListActions.onHostContextMenu].
+  final void Function(Rect anchor)? onMoreAt;
   final bool selectionMode;
   final bool selected;
 
@@ -702,11 +710,11 @@ class _GcpHostCard extends StatelessWidget {
                     ),
                   )
                 else
-                  IconButton(
-                    tooltip: MaterialLocalizations.of(context).moreButtonTooltip,
-                    icon: const Icon(Icons.more_vert, size: 20),
-                    onPressed: onMore,
-                    visualDensity: VisualDensity.compact,
+                  _HostMoreButton(
+                    onMore: onMore,
+                    onMoreAt: onMoreAt,
+                    iconSize: 20,
+                    compact: true,
                   ),
               ],
             ),
@@ -948,9 +956,9 @@ class _ListHostRow extends StatelessWidget {
   final VoidCallback onTap;
   final VoidCallback onMore;
 
-  /// Right-click, with where it landed. See
-  /// [HostListActions.onHostContextMenu].
-  final void Function(Offset at)? onMoreAt;
+  /// The menu, anchored where a right-click landed or to the ⋮ button a
+  /// mouse clicked. See [HostListActions.onHostContextMenu].
+  final void Function(Rect anchor)? onMoreAt;
   final bool selectionMode;
   final bool selected;
 
@@ -1008,11 +1016,7 @@ class _ListHostRow extends StatelessWidget {
                 height: 20,
                 child: CircularProgressIndicator(strokeWidth: 2),
               )
-            : IconButton(
-                tooltip: MaterialLocalizations.of(context).moreButtonTooltip,
-                icon: const Icon(Icons.more_vert),
-                onPressed: onMore,
-              ),
+            : _HostMoreButton(onMore: onMore, onMoreAt: onMoreAt),
         onTap: connecting ? null : onTap,
         onLongPress: connecting || selectionMode ? null : onMore,
       ),
@@ -1038,9 +1042,9 @@ class _AuroraHostCard extends StatelessWidget {
   final VoidCallback onTap;
   final VoidCallback onMore;
 
-  /// Right-click, with where it landed. See
-  /// [HostListActions.onHostContextMenu].
-  final void Function(Offset at)? onMoreAt;
+  /// The menu, anchored where a right-click landed or to the ⋮ button a
+  /// mouse clicked. See [HostListActions.onHostContextMenu].
+  final void Function(Rect anchor)? onMoreAt;
   final bool selectionMode;
   final bool selected;
 
@@ -1116,11 +1120,11 @@ class _AuroraHostCard extends StatelessWidget {
                     ),
                   )
                 else
-                  IconButton(
-                    tooltip: MaterialLocalizations.of(context).moreButtonTooltip,
-                    icon: const Icon(Icons.more_vert, size: 20),
-                    onPressed: onMore,
-                    visualDensity: VisualDensity.compact,
+                  _HostMoreButton(
+                    onMore: onMore,
+                    onMoreAt: onMoreAt,
+                    iconSize: 20,
+                    compact: true,
                   ),
               ],
             ),
@@ -1219,20 +1223,75 @@ String _formatDate(
   return withYear ? '$monthDay, ${date.year}' : monthDay;
 }
 
-/// The right-click handler for one host, when the screen has a menu for it.
-void Function(Offset at)? _contextMenu(HostListActions actions, Host host) {
+/// The menu handler for one host, when the screen has a menu for it.
+void Function(Rect anchor)? _contextMenu(HostListActions actions, Host host) {
   final menu = actions.onHostContextMenu;
-  return menu == null ? null : (at) => menu(host, at);
+  return menu == null ? null : (anchor) => menu(host, anchor);
 }
 
 void _secondary(
   VoidCallback onMore,
-  void Function(Offset at)? onMoreAt,
+  void Function(Rect anchor)? onMoreAt,
   TapUpDetails details,
 ) {
   if (onMoreAt != null) {
-    onMoreAt(details.globalPosition);
+    onMoreAt(details.globalPosition & Size.zero);
   } else {
     onMore();
+  }
+}
+
+/// The ⋮ button on a host row or card.
+///
+/// A finger gets the sheet, whose rows explain themselves. A mouse gets the
+/// menu a right-click on the same row opens, dropped from the button: a
+/// sheet sliding up from the bottom of a desktop window is a long way from
+/// the row that was clicked.
+///
+/// [compact] and [flush] are the tighter desktop looks the grid cards and the
+/// AWS table use. Both are dropped on touch: either one takes the button
+/// below the 48dp a fingertip needs, whatever the theme pads it to.
+class _HostMoreButton extends StatelessWidget {
+  const _HostMoreButton({
+    required this.onMore,
+    this.onMoreAt,
+    this.iconSize,
+    this.compact = false,
+    this.flush = false,
+  });
+
+  final VoidCallback onMore;
+  final void Function(Rect anchor)? onMoreAt;
+  final double? iconSize;
+  final bool compact;
+  final bool flush;
+
+  /// Read when pressed rather than when built: the press is what says which
+  /// pointer is in hand, and a laptop with a touch screen has both.
+  void _press(BuildContext context) {
+    final menuAt = onMoreAt;
+    final box = context.findRenderObject();
+    if (menuAt != null &&
+        box is RenderBox &&
+        box.hasSize &&
+        InputProfile.of(context).pointer == PointerClass.mouse) {
+      menuAt(box.localToGlobal(Offset.zero) & box.size);
+    } else {
+      onMore();
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final touch = InputProfile.of(context).touch;
+    return IconButton(
+      tooltip: MaterialLocalizations.of(context).moreButtonTooltip,
+      padding: flush && !touch ? EdgeInsets.zero : null,
+      iconSize: iconSize,
+      visualDensity:
+          (compact || flush) && !touch ? VisualDensity.compact : null,
+      icon: const Icon(Icons.more_vert),
+      onPressed: () => _press(context),
+    );
   }
 }

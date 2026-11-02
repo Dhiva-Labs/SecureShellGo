@@ -7,7 +7,8 @@ import '../services/fleet_push_run_registry.dart';
 import '../services/fleet_push_service.dart';
 import '../services/transfer_hub.dart';
 import '../services/transfer_queue.dart';
-import 'transfer_panel.dart' show iconForDirection, transferSubtitle;
+import 'transfer_panel.dart'
+    show confirmCancelAllTransfers, iconForDirection, transferSubtitle;
 
 /// Rebuilds [builder] whenever [hub]'s merged list changes — the
 /// multi-session equivalent of `TransferQueueBuilder` in
@@ -117,9 +118,20 @@ Future<void> showTransferHubSheet(
                       const Spacer(),
                       if (anyActive)
                         TextButton(
-                          onPressed: () {
-                            for (final item in items) {
-                              if (!item.task.status.isActive) continue;
+                          onPressed: () async {
+                            // The rows on screen when the button was
+                            // pressed: those are what the count in the
+                            // question named.
+                            final active = [
+                              for (final item in items)
+                                if (item.task.status.isActive) item,
+                            ];
+                            final go = await confirmCancelAllTransfers(
+                              context,
+                              active.length,
+                            );
+                            if (!go) return;
+                            for (final item in active) {
                               hub.cancel(item.sessionId, item.task.id);
                             }
                           },

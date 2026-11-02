@@ -3,6 +3,39 @@
 Releases before 1.4.5 are described on the
 [Releases](https://github.com/Dhiva-Labs/SecureShellGo/releases) page.
 
+## Unreleased
+
+Smoother copy and paste in the terminal, and less in the way across the app.
+
+### Added
+- Copy on select (Settings › Terminal): text selected with a mouse goes straight to the clipboard. Off by default.
+- On Linux a middle click pastes, as in other terminals: the terminal's own selection when there is one, the clipboard otherwise.
+- A button to jump back to the latest output after scrolling up through the history.
+- A paste of several lines shows the lines before they run. With a keyboard it is a dialog that Enter confirms and Escape cancels.
+- The host form saves with Ctrl+S (⌘S on a Mac), has Save at the top, asks before throwing away changes and scrolls to the first field that needs fixing.
+- A failed connection offers Try again and Edit host.
+- The command palette also finds hosts by their address, and keeps the highlighted row in view.
+- Enter in the snippet picker's search runs the top match.
+- Ctrl+Shift+W closes the session in front, asking first as the Disconnect button does. Ctrl+Shift+N and Ctrl+Shift+P move between the panes of a split. On a Mac, ⌘ works in place of Ctrl for these and the other Ctrl+Shift shortcuts.
+- Enter or Space dismisses a server's login banner.
+
+### Changed
+- Selecting text with a mouse no longer brings up the Copy bar, which used to shrink the terminal and move the text being selected. Right-click, Ctrl+Shift+C and copy-on-select copy instead, and the selection stays highlighted after a copy.
+- On touch, the Copy bar floats over the terminal instead of resizing it, and moves to the top when the selection is near the bottom.
+- "Copied" and "Clipboard is empty" are a small note over the terminal instead of a snackbar across the bottom of the window.
+- Right-clicking a file opens a menu at the pointer instead of a sheet from the bottom; the host ⋮ button does the same with a mouse. Touch keeps the sheets.
+- Snackbars replace each other instead of queueing, and the ones that only repeated what is on screen are gone: "Downloading…", "Queued", a plain editor save.
+- Copy buttons in the host key and public key dialogs show "Copied" themselves, instead of a snackbar hidden behind the dialog.
+- Cancel all asks first when it would stop more than one transfer.
+- Opening a folder keeps the current listing on screen while the next one loads, instead of a full-screen spinner.
+- Quick connect focuses the password field and no longer opens a "Save this server?" dialog by itself; Save stays on the page.
+- The host ⋮ button is a full 48dp target on touch in every list style.
+- A dropped connection on screen is told by its banner alone; the red snackbar is kept for a session in the background.
+- With one session open there is a single Transfers button instead of two that showed the same thing.
+
+### Fixed
+- Closing the last session from its banner ("Shell ended", "Connection lost") left an empty window with no way back. It now asks first when transfers would be lost, and returns to the host list.
+
 ## 1.5.0 - Unreleased
 
 A major update: remote desktop and virtual desktops, an IDE-like file editor, Mosh, sign-in with agents, security keys and certificates, agent and X11 forwarding, a terminal that survives network changes and sleep, commands on many servers, new file actions, Windows Hello, translations into eight languages, and layouts for tablets, foldables, touch and mouse.

@@ -7,6 +7,7 @@ import '../l10n/l10n.dart';
 import '../models/known_host.dart';
 import '../services/known_hosts_service.dart';
 import '../theme.dart';
+import '../widgets/app_snack.dart';
 
 /// Lists every trusted host key and lets the user forget one.
 ///
@@ -73,9 +74,7 @@ class _KnownHostsScreenState extends State<KnownHostsScreen> {
   Future<void> _copyFingerprint(KnownHostKey key) async {
     await Clipboard.setData(ClipboardData(text: key.fingerprint));
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(context.l10n.knownHostsFingerprintCopied)),
-    );
+    showReplacingSnack(context, context.l10n.knownHostsFingerprintCopied);
   }
 
   @override

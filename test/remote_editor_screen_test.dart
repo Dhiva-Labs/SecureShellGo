@@ -292,7 +292,8 @@ void main() {
     expect(fs.renamed, hasLength(1));
     expect(fs.renamed.single, contains('.ssg-edit-'));
     expect(fs.renamed.single, endsWith('-> /etc/nginx.conf'));
-    expect(find.textContaining('Saved nginx.conf'), findsOneWidget);
+    // No toast: the dirty indicator going out says it, as below.
+    expect(find.byType(SnackBar), findsNothing);
     // Saved, so the dirty indicator is gone.
     expect(find.byTooltip('No changes to save'), findsOneWidget);
   });
@@ -985,7 +986,8 @@ void main() {
       await tester.tap(find.text('CRLF (Windows)'));
       await tester.pumpAndSettle();
       expect(fs.textAt('/etc/mixed.conf'), 'a\r\nb\r\nc\r\nd\r\n');
-      expect(find.textContaining('CRLF kept'), findsOneWidget);
+      expect(find.byType(SnackBar), findsNothing,
+          reason: 'the status bar already says CRLF');
     });
 
     testWidgets('a byte-order mark survives the round trip', (tester) async {
@@ -1006,7 +1008,8 @@ void main() {
       // Not `textAt`: `utf8.decode` drops a leading mark, so it would read
       // the same with or without one.
       expect(utf8.decode(bytes.sublist(3)), 'hello world\n');
-      expect(find.textContaining('BOM kept'), findsOneWidget);
+      expect(find.byType(SnackBar), findsNothing,
+          reason: 'the status bar already says UTF-8 BOM');
     });
 
     testWidgets('Ctrl+S on an unedited file writes nothing', (tester) async {

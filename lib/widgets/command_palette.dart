@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -70,6 +72,10 @@ class _CommandPaletteDialogState extends State<_CommandPaletteDialog> {
   List<PaletteItem> _visible = const [];
   int _selected = 0;
 
+  /// One per row position, so the highlighted row can be found and scrolled
+  /// to. Keyed by position rather than by item, so a new query reuses them.
+  final _rowKeys = <int, GlobalKey>{};
+
   @override
   void initState() {
     super.initState();
@@ -95,10 +101,41 @@ class _CommandPaletteDialogState extends State<_CommandPaletteDialog> {
 
   void _onQueryChanged() {
     setState(() {
-      final query = _controller.text.trim();
-      _visible = fuzzySort(query, widget.items, (item) => item.title);
+      _visible = _rank(_controller.text.trim());
       _selected = 0;
     });
+    // The highlight is back on the first row, so the list goes back to it.
+    if (_scrollController.hasClients) _scrollController.jumpTo(0);
+  }
+
+  /// [PaletteItem.title] matches first, then the rest by their subtitle — a
+  /// host's `user@host:port`, a snippet's command. An address is often what
+  /// someone remembers of a host they named long ago, but a name typed in
+  /// full should still find that host above another whose address happens
+  /// to contain the same letters.
+  List<PaletteItem> _rank(String query) {
+    if (query.isEmpty) return widget.items;
+    final scored = <(int, FuzzyMatch, int, PaletteItem)>[];
+    for (var i = 0; i < widget.items.length; i++) {
+      final item = widget.items[i];
+      final byTitle = FuzzyMatch.match(query, item.title);
+      if (byTitle != null) {
+        scored.add((0, byTitle, i, item));
+        continue;
+      }
+      final subtitle = item.subtitle;
+      final bySubtitle =
+          subtitle == null ? null : FuzzyMatch.match(query, subtitle);
+      if (bySubtitle != null) scored.add((1, bySubtitle, i, item));
+    }
+    scored.sort((a, b) {
+      final byField = a.$1.compareTo(b.$1);
+      if (byField != 0) return byField;
+      final byMatch = a.$2.compareTo(b.$2);
+      if (byMatch != 0) return byMatch;
+      return a.$3.compareTo(b.$3);
+    });
+    return [for (final entry in scored) entry.$4];
   }
 
   bool _handleKey(KeyEvent event) {
@@ -128,6 +165,46 @@ class _CommandPaletteDialogState extends State<_CommandPaletteDialog> {
       _selected = (_selected + delta) % _visible.length;
       if (_selected < 0) _selected += _visible.length;
     });
+    WidgetsBinding.instance.addPostFrameCallback((_) => _revealSelected());
+  }
+
+  /// Keeps the highlighted row on screen as the arrow keys move it, which
+  /// otherwise walked off the bottom of the list and out of sight.
+  ///
+  /// A row far enough off screen is not built at all — the wrap from the
+  /// first row to the last, say — so that one is first scrolled to roughly
+  /// where it must be, then revealed exactly once it exists.
+  void _revealSelected([int attempts = 3]) {
+    if (!mounted) return;
+    final row = _rowKeys[_selected]?.currentContext;
+    if (row != null) {
+      // Each policy scrolls only when the row is past its own edge, so
+      // between them a row below the view comes up to its bottom, one above
+      // comes down to its top, and one already in view stays where it is.
+      for (final policy in const [
+        ScrollPositionAlignmentPolicy.keepVisibleAtEnd,
+        ScrollPositionAlignmentPolicy.keepVisibleAtStart,
+      ]) {
+        unawaited(Scrollable.ensureVisible(row, alignmentPolicy: policy));
+      }
+      return;
+    }
+    if (attempts == 0 || !_scrollController.hasClients) return;
+    final position = _scrollController.position;
+    final last = _visible.length - 1;
+    position.jumpTo(
+      last <= 0
+          ? position.minScrollExtent
+          : position.minScrollExtent +
+              (position.maxScrollExtent - position.minScrollExtent) *
+                  _selected /
+                  last,
+    );
+    WidgetsBinding.instance
+      ..addPostFrameCallback((_) => _revealSelected(attempts - 1))
+      // A jump to where the list already was lays nothing out, and would
+      // leave the callback waiting on a frame nothing else has asked for.
+      ..ensureVisualUpdate();
   }
 
   void _activateSelected() {
@@ -188,6 +265,7 @@ class _CommandPaletteDialogState extends State<_CommandPaletteDialog> {
                         final item = _visible[index];
                         final selected = index == _selected;
                         return Material(
+                          key: _rowKeys.putIfAbsent(index, GlobalKey.new),
                           color: selected
                               ? theme.colorScheme.primary.withValues(
                                   alpha: 0.16,
