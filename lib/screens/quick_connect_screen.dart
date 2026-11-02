@@ -6,10 +6,12 @@ import '../models/host.dart';
 import '../services/credential_store.dart';
 import '../services/device_storage.dart';
 import '../services/host_store.dart';
+import '../services/input_profile.dart';
 import '../services/quick_connect_parser.dart';
 import '../services/session_manager.dart';
 import '../services/ssh_service.dart';
 import '../theme.dart';
+import '../widgets/app_snack.dart';
 import '../widgets/error_banner.dart';
 import '../widgets/host_key_dialog.dart';
 import '../widgets/login_prompt_dialog.dart';
@@ -66,9 +68,9 @@ class _QuickConnectScreenState extends State<QuickConnectScreen> {
   String? _error;
   String? _errorDetails;
 
-  /// Set once the connection succeeds — swaps the form for the "Save this
-  /// server?" offer ([QuickConnectSaveOffer]). The session itself is already
-  /// live by then regardless of what the user picks there.
+  /// Set once the connection succeeds — swaps the form for the page that
+  /// offers to save it ([QuickConnectSaveOffer]). The session itself is
+  /// already live by then regardless of what the user picks there.
   Host? _connectedHost;
   SshCredentials? _connectedCredentials;
 
@@ -231,6 +233,10 @@ class _QuickConnectScreenState extends State<QuickConnectScreen> {
             if (_authMethod == SshAuthMethod.password)
               TextFormField(
                 controller: _passwordController,
+                // Whatever the keyboard: the user has just typed `user@host`
+                // and pressed Enter, so one is already out, and the password
+                // is the only thing left between them and the server.
+                autofocus: true,
                 obscureText: _obscurePassword,
                 autocorrect: false,
                 enableSuggestions: false,
@@ -335,11 +341,13 @@ class _QuickConnectScreenState extends State<QuickConnectScreen> {
 /// widget in) — nothing in here can delay or block it; this only decides
 /// whether the host that got the user in is worth remembering.
 ///
-/// A dialog offering to save opens itself once, right after this first
-/// builds — "ask", per the report this screen exists to fix, rather than
-/// leaving a button for the user to notice on their own. Declining is just
-/// closing that dialog: no further prompting, and "Save this server" below
-/// stays available for anyone who changes their mind without reconnecting.
+/// Saving is asked about here, on the page, and never in a dialog of its own.
+/// One used to open by itself over this page, and had to be answered before
+/// Done could be reached — a second click between the user and the shell
+/// they had just connected to, for a question most of them were not asking.
+/// The offer is still said in words above the button, so it is not left for
+/// anyone to notice on their own. Done leads, and takes the keyboard's focus
+/// where there is one, so Enter goes straight on to the session.
 class QuickConnectSaveOffer extends StatefulWidget {
   const QuickConnectSaveOffer({
     super.key,
@@ -367,48 +375,14 @@ class QuickConnectSaveOffer extends StatefulWidget {
 class _QuickConnectSaveOfferState extends State<QuickConnectSaveOffer> {
   bool _saving = false;
   bool _saved = false;
-  bool _offered = false;
 
   /// One neutral line shown when the host saved but its secret did not —
   /// the same rule `host_edit_screen.dart`'s `_credentialNotice` follows: a
   /// host save that worked never reads as a failure.
   String? _credentialNotice;
 
-  @override
-  void initState() {
-    super.initState();
-    // Post-frame: showDialog needs this widget's own route already settled
-    // in the Navigator, which build() has not necessarily finished yet.
-    WidgetsBinding.instance.addPostFrameCallback((_) => _offerToSave());
-  }
-
-  Future<void> _offerToSave() async {
-    if (_offered || !mounted) return;
-    _offered = true;
-    final save = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        icon: const Icon(Icons.bookmark_add_outlined),
-        title: Text(context.l10n.quickConnectSaveTitle),
-        content: Text(context.l10n.quickConnectSaveBody(widget.host.target)),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(false),
-            child: Text(context.l10n.quickConnectNotNow),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.of(context).pop(true),
-            child: Text(context.l10n.hostSaveHost),
-          ),
-        ],
-      ),
-    );
-    if (save == true && mounted) await _saveHost();
-  }
-
   /// Turns the ephemeral host into a saved one — a fresh id, since `quick-`
-  /// ones never belong in [HostStore]. The one save path, reached from
-  /// either the dialog's "Save host" or the inline button below.
+  /// ones never belong in [HostStore].
   Future<void> _saveHost() async {
     if (_saving || _saved) return;
     setState(() {
@@ -440,11 +414,7 @@ class _QuickConnectSaveOfferState extends State<QuickConnectSaveOffer> {
     } catch (e) {
       if (!mounted) return;
       setState(() => _saving = false);
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(context.l10n.hostSaveFailedWithReason('$e')),
-        ),
-      );
+      showReplacingSnack(context, context.l10n.hostSaveFailedWithReason('$e'));
     }
   }
 
@@ -452,6 +422,16 @@ class _QuickConnectSaveOfferState extends State<QuickConnectSaveOffer> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final l10n = context.l10n;
+    // The app theme gives every FilledButton `Size.fromHeight(48)` — an
+    // infinite minimum width — so that buttons stacked in a column fill it.
+    // In a Row or a Wrap that is an infinite width constraint and layout
+    // fails for the whole subtree, which shows up as a page that renders its
+    // app bar and nothing else. Same override as `remote_directory_picker
+    // .dart` and `_SelectionBar` in `file_browser_pane.dart`.
+    final buttonStyle = FilledButton.styleFrom(
+      minimumSize: const Size(0, 44),
+      padding: const EdgeInsets.symmetric(horizontal: 18),
+    );
     return Padding(
       padding: const EdgeInsets.all(24),
       child: Column(
@@ -485,24 +465,15 @@ class _QuickConnectSaveOfferState extends State<QuickConnectSaveOffer> {
             spacing: 12,
             runSpacing: 8,
             children: [
-              TextButton(
+              FilledButton(
+                style: buttonStyle,
+                autofocus: InputProfile.of(context).keyboard,
                 onPressed: () => Navigator.of(context).pop(),
                 child: Text(l10n.quickConnectDone),
               ),
               if (!_saved)
-                FilledButton.icon(
-                  // The app theme gives every FilledButton
-                  // `Size.fromHeight(48)` — an infinite minimum width — so
-                  // that buttons stacked in a column fill it. In a Row or a
-                  // Wrap that is an infinite width constraint and layout
-                  // fails for the whole subtree, which shows up as a page
-                  // that renders its app bar and nothing else. Same override as
-                  // `remote_directory_picker.dart` and `_SelectionBar` in
-                  // `file_browser_pane.dart`.
-                  style: FilledButton.styleFrom(
-                    minimumSize: const Size(0, 44),
-                    padding: const EdgeInsets.symmetric(horizontal: 18),
-                  ),
+                FilledButton.tonalIcon(
+                  style: buttonStyle,
                   onPressed: _saving ? null : _saveHost,
                   icon: _saving
                       ? const SizedBox(

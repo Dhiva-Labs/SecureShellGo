@@ -1200,4 +1200,302 @@ void main() {
       expect(taken.readAsStringSync(), 'keep me');
     });
   });
+
+  group('selecting, copying and pasting', () {
+    /// What the app put on the clipboard, and what a paste reads from it.
+    String? clipboard;
+
+    void fakeClipboard(WidgetTester tester, {String? holding}) {
+      clipboard = holding;
+      tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+        SystemChannels.platform,
+        (call) async {
+          switch (call.method) {
+            case 'Clipboard.setData':
+              clipboard = (call.arguments as Map)['text'] as String?;
+            case 'Clipboard.getData':
+              return clipboard == null ? null : {'text': clipboard};
+            case 'Clipboard.hasStrings':
+              return {'value': clipboard != null};
+          }
+          return null;
+        },
+      );
+      addTearDown(() => tester.binding.defaultBinaryMessenger
+          .setMockMethodCallHandler(SystemChannels.platform, null));
+    }
+
+    /// Drags the mouse from [from] to [to] across the terminal's cells.
+    Future<void> mouseDrag(
+      WidgetTester tester,
+      CellOffset from,
+      CellOffset to,
+    ) async {
+      final mouse = await tester.startGesture(
+        centreOf(tester, from),
+        kind: PointerDeviceKind.mouse,
+        buttons: kPrimaryMouseButton,
+      );
+      await tester.pump();
+      await mouse.moveTo(centreOf(tester, to));
+      await tester.pump();
+      await mouse.up();
+      await tester.pump();
+    }
+
+    Future<void> ctrlShift(WidgetTester tester, LogicalKeyboardKey key) async {
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.shiftLeft);
+      await tester.sendKeyEvent(key);
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.shiftLeft);
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
+      await tester.pump();
+    }
+
+    testWidgets('a mouse selection brings no bar and leaves the terminal be',
+        (tester) async {
+      fakeClipboard(tester);
+      final (session, transport) = await pumpPane(
+        tester,
+        profile: profileOf(PointerDeviceKind.mouse, keyboard: true),
+      );
+      await print(tester, transport, 'hello world\r\n');
+      final rows = session.terminal.viewHeight;
+
+      await mouseDrag(tester, const CellOffset(0, 0), const CellOffset(4, 0));
+      await tester.pumpAndSettle();
+      expect(view(tester).controller!.selection, isNotNull);
+      expect(find.text('Selected'), findsNothing);
+      expect(session.terminal.viewHeight, rows);
+      // Nothing copied until asked: copy-on-select is off.
+      expect(clipboard, isNull);
+
+      await ctrlShift(tester, LogicalKeyboardKey.keyC);
+      await tester.pump();
+      expect(clipboard, 'hello');
+      // Said over the terminal, not in a snackbar, and the selection stays.
+      expect(find.text('Copied'), findsOneWidget);
+      expect(find.byType(SnackBar), findsNothing);
+      expect(view(tester).controller!.selection, isNotNull);
+      await tester.pump(const Duration(seconds: 2));
+      await tester.pumpAndSettle();
+      expect(find.text('Copied'), findsNothing);
+    });
+
+    testWidgets('copy-on-select copies a mouse selection as it is made',
+        (tester) async {
+      fakeClipboard(tester);
+      await use(tester, (s) => s.copyWith(copyOnSelect: true));
+      final (_, transport) = await pumpPane(
+        tester,
+        profile: profileOf(PointerDeviceKind.mouse, keyboard: true),
+      );
+      await print(tester, transport, 'hello world\r\n');
+
+      await mouseDrag(tester, const CellOffset(6, 0), const CellOffset(10, 0));
+      await tester.pump();
+      expect(clipboard, 'world');
+      expect(find.text('Copied'), findsOneWidget);
+
+      // A plain click selects nothing, so copies nothing.
+      clipboard = 'kept';
+      await tester.tapAt(
+        centreOf(tester, const CellOffset(2, 0)),
+        kind: PointerDeviceKind.mouse,
+      );
+      await tester.pump(const Duration(milliseconds: 400));
+      expect(clipboard, 'kept');
+    });
+
+    testWidgets('a long press brings the Copy bar, over the terminal',
+        (tester) async {
+      fakeClipboard(tester);
+      final (session, transport) = await pumpPane(tester);
+      await print(tester, transport, 'hello world\r\n');
+      final rows = session.terminal.viewHeight;
+
+      await tester.longPressAt(centreOf(tester, const CellOffset(1, 0)));
+      await tester.pumpAndSettle();
+      expect(find.text('Selected'), findsOneWidget);
+      // Floating: the shell keeps its size, so nothing moves.
+      expect(session.terminal.viewHeight, rows);
+      // At the bottom, away from a selection at the top.
+      final pane = tester.getRect(find.byType(TerminalPane));
+      expect(
+        tester.getCenter(find.text('Selected')).dy,
+        greaterThan(pane.center.dy),
+      );
+
+      await tester.tap(find.widgetWithText(FilledButton, 'Copy'));
+      await tester.pumpAndSettle();
+      expect(clipboard, 'hello');
+      // On touch a copy ends the selection, and the bar with it.
+      expect(view(tester).controller!.selection, isNull);
+      expect(find.text('Selected'), findsNothing);
+    });
+
+    testWidgets('the Copy bar moves to the top for a selection at the bottom',
+        (tester) async {
+      final (session, transport) = await pumpPane(tester);
+      final rows = session.terminal.viewHeight;
+      await print(tester, transport, '${'line\r\n' * (rows - 1)}last words');
+
+      await tester.longPressAt(centreOf(tester, CellOffset(1, rows - 1)));
+      await tester.pumpAndSettle();
+      final pane = tester.getRect(find.byType(TerminalPane));
+      expect(
+        tester.getCenter(find.text('Selected')).dy,
+        lessThan(pane.center.dy),
+      );
+    });
+
+    testWidgets('a middle click pastes the selection on Linux',
+        (tester) async {
+      fakeClipboard(tester, holding: 'from clipboard');
+      final (_, transport) = await pumpPane(
+        tester,
+        profile: profileOf(PointerDeviceKind.mouse, keyboard: true),
+      );
+      await print(tester, transport, 'echo hi\r\n');
+
+      // Nothing selected: the clipboard.
+      await tester.tapAt(
+        centreOf(tester, const CellOffset(2, 0)),
+        kind: PointerDeviceKind.mouse,
+        buttons: kMiddleMouseButton,
+      );
+      await tester.pumpAndSettle();
+      expect(transport.shell.typed.toString(), 'from clipboard');
+      expect(find.text('Select all'), findsNothing);
+
+      // Something selected: that, and it stays selected.
+      transport.shell.typed.clear();
+      await mouseDrag(tester, const CellOffset(0, 0), const CellOffset(3, 0));
+      await tester.tapAt(
+        centreOf(tester, const CellOffset(2, 1)),
+        kind: PointerDeviceKind.mouse,
+        buttons: kMiddleMouseButton,
+      );
+      await tester.pumpAndSettle();
+      expect(transport.shell.typed.toString(), 'echo');
+      expect(view(tester).controller!.selection, isNotNull);
+    }, variant: TargetPlatformVariant.only(TargetPlatform.linux));
+
+    testWidgets('a middle click pastes nothing on Windows', (tester) async {
+      fakeClipboard(tester, holding: 'from clipboard');
+      final (_, transport) = await pumpPane(
+        tester,
+        profile: profileOf(PointerDeviceKind.mouse, keyboard: true),
+      );
+      await tester.tapAt(
+        centreOf(tester, const CellOffset(2, 0)),
+        kind: PointerDeviceKind.mouse,
+        buttons: kMiddleMouseButton,
+      );
+      await tester.pumpAndSettle();
+      expect(transport.shell.typed.toString(), isEmpty);
+    }, variant: TargetPlatformVariant.only(TargetPlatform.windows));
+
+    testWidgets('a paste of several lines shows them first, in a dialog',
+        (tester) async {
+      fakeClipboard(tester, holding: 'cd /tmp\nrm -rf build\n');
+      final (_, transport) = await pumpPane(
+        tester,
+        profile: profileOf(PointerDeviceKind.mouse, keyboard: true),
+      );
+
+      await ctrlShift(tester, LogicalKeyboardKey.keyV);
+      await tester.pumpAndSettle();
+      expect(find.byType(AlertDialog), findsOneWidget);
+      expect(find.text('cd /tmp\nrm -rf build'), findsOneWidget);
+      expect(transport.shell.typed.toString(), isEmpty);
+
+      await tester.tap(find.text('Cancel'));
+      await tester.pumpAndSettle();
+      expect(transport.shell.typed.toString(), isEmpty);
+
+      await ctrlShift(tester, LogicalKeyboardKey.keyV);
+      await tester.pumpAndSettle();
+      // Paste has the focus, so Enter sends it.
+      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+      await tester.pumpAndSettle();
+      expect(transport.shell.typed.toString(), contains('rm -rf build'));
+    });
+
+    testWidgets('an empty clipboard is said over the terminal',
+        (tester) async {
+      fakeClipboard(tester);
+      await pumpPane(
+        tester,
+        profile: profileOf(PointerDeviceKind.mouse, keyboard: true),
+      );
+      await ctrlShift(tester, LogicalKeyboardKey.keyV);
+      await tester.pump();
+      expect(find.text('Clipboard is empty'), findsOneWidget);
+      expect(find.byType(SnackBar), findsNothing);
+      await tester.pump(const Duration(seconds: 3));
+      await tester.pumpAndSettle();
+    });
+
+    testWidgets('Settings has the copy-on-select switch, with a mouse',
+        (tester) async {
+      Future<void> pumpSection(InputProfile profile) =>
+          tester.pumpWidget(MaterialApp(
+            localizationsDelegates: AppLocalizations.localizationsDelegates,
+            supportedLocales: AppLocalizations.supportedLocales,
+            builder: (context, child) =>
+                InputProfileScope(profile: profile, child: child!),
+            home: Scaffold(
+              body: SingleChildScrollView(
+                child: TerminalOptionsSection(
+                  settings: const AppSettings(),
+                  apply: (_) async {},
+                ),
+              ),
+            ),
+          ));
+      await pumpSection(profileOf(PointerDeviceKind.mouse));
+      expect(find.text('Copy on select'), findsOneWidget);
+      await pumpSection(profileOf(PointerDeviceKind.touch));
+      expect(find.text('Copy on select'), findsNothing);
+    });
+
+    testWidgets('scrolled back, a button jumps to the latest output',
+        (tester) async {
+      final (session, transport) = await pumpPane(tester);
+      await print(
+        tester,
+        transport,
+        List.generate(200, (i) => 'line $i').join('\r\n'),
+      );
+      expect(find.byTooltip('Jump to the latest output'), findsNothing);
+
+      final pointer = TestPointer(1, PointerDeviceKind.mouse);
+      final at = tester.getCenter(find.byType(TerminalView));
+      await tester.sendEventToBinding(pointer.hover(at));
+      await tester.sendEventToBinding(pointer.scroll(const Offset(0, -800)));
+      await tester.pumpAndSettle();
+      expect(find.byTooltip('Jump to the latest output'), findsOneWidget);
+
+      await tester.tap(find.byTooltip('Jump to the latest output'));
+      await tester.pumpAndSettle();
+      expect(find.byTooltip('Jump to the latest output'), findsNothing);
+      // The newest line is on screen again.
+      expect(
+        tester
+            .state<TerminalViewState>(find.byType(TerminalView))
+            .renderTerminal
+            .getOffset(CellOffset(0, session.terminal.buffer.height - 1))
+            .dy,
+        lessThan(tester.getSize(find.byType(TerminalView)).height),
+      );
+    });
+
+    test('copy-on-select is saved, and off by default', () {
+      expect(const AppSettings().copyOnSelect, isFalse);
+      final on = const AppSettings().copyWith(copyOnSelect: true);
+      expect(AppSettings.fromJson(on.toJson()).copyOnSelect, isTrue);
+      expect(AppSettings.fromJson(const {'version': 1}).copyOnSelect, isFalse);
+    });
+  });
 }

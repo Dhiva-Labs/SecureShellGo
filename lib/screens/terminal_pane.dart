@@ -120,6 +120,7 @@ class _TerminalPaneState extends State<TerminalPane>
   late KeyBarMode _keyBarMode;
   late TerminalCursorStyle _cursorStyle;
   late bool _cursorBlink;
+  late bool _copyOnSelect;
   late TerminalBell _bell;
   late TerminalFont _font;
   StreamSubscription<AppSettings>? _settingsChanges;
@@ -198,9 +199,37 @@ class _TerminalPaneState extends State<TerminalPane>
   double? _pinchStartFontSize;
 
   /// Mirrors `_terminalController.selection != null`, kept as its own field
-  /// so the selection toolbar's slide-in only rebuilds on the edges (empty →
-  /// non-empty and back) rather than on every selection-extend notification.
+  /// so the selection toolbar only rebuilds on the edges (empty → non-empty
+  /// and back) rather than on every selection-extend notification.
   bool _hasSelection = false;
+
+  /// The selection was started by a finger or a pen, which is when the Copy
+  /// bar shows. A mouse has its right-click menu, Ctrl+Shift+C and
+  /// copy-on-select; a bar appearing while it drags is only in the way.
+  bool _touchSelection = false;
+
+  /// The Copy bar sits at the top of the terminal instead of the bottom,
+  /// so it never covers the end of the text being selected.
+  bool _selectionBarOnTop = false;
+
+  /// The kind of the last pointer to go down on the terminal: who started
+  /// the selection that follows.
+  PointerDeviceKind? _lastPointerKind;
+
+  /// The selection changed while the mouse button was down — a drag or a
+  /// double-click — so copy-on-select copies it when the button comes up.
+  bool _selectedDuringPress = false;
+
+  /// Scrolled up into the history, away from the newest output: the "jump
+  /// to the latest output" button shows. Typing scrolls back down by itself,
+  /// but reading a long log on a phone involves no typing.
+  bool _scrolledBack = false;
+
+  /// "Copied" and the like, shown over the terminal for a moment. Over the
+  /// terminal rather than a snackbar: a snackbar covers the key bar and the
+  /// prompt, and says nothing a moment's glance does not.
+  String? _notice;
+  Timer? _noticeTimer;
 
   @override
   bool get wantKeepAlive => true;
@@ -215,6 +244,7 @@ class _TerminalPaneState extends State<TerminalPane>
     _keyBarMode = settings.keyBarMode;
     _cursorStyle = settings.cursorStyle;
     _cursorBlink = settings.cursorBlink;
+    _copyOnSelect = settings.copyOnSelect;
     _bell = settings.bell;
     _font = settings.terminalFont;
     _settingsChanges = widget.settingsStore.changes.listen(_followSettings);
@@ -223,6 +253,7 @@ class _TerminalPaneState extends State<TerminalPane>
     _find.addListener(_handleFindChange);
     _recordingChanges = _terminal.recordingChanges.listen(_handleRecording);
     _terminalController.addListener(_handleSelectionChange);
+    _scrollController.addListener(_handleScroll);
     // The buffer belongs to the session and may already be full of a shell
     // this pane never opened; asking for it again is a no-op.
     widget.session.onBell = _handleBell;
@@ -244,6 +275,7 @@ class _TerminalPaneState extends State<TerminalPane>
     if (settings.keyBarMode == _keyBarMode &&
         settings.cursorStyle == _cursorStyle &&
         settings.cursorBlink == _cursorBlink &&
+        settings.copyOnSelect == _copyOnSelect &&
         settings.bell == _bell &&
         settings.terminalFont == _font) {
       return;
@@ -252,6 +284,7 @@ class _TerminalPaneState extends State<TerminalPane>
       _keyBarMode = settings.keyBarMode;
       _cursorStyle = settings.cursorStyle;
       _cursorBlink = settings.cursorBlink;
+      _copyOnSelect = settings.copyOnSelect;
       _bell = settings.bell;
       _font = settings.terminalFont;
     });
@@ -294,7 +327,68 @@ class _TerminalPaneState extends State<TerminalPane>
 
   void _handleSelectionChange() {
     final selected = _terminalController.selection != null;
-    if (selected != _hasSelection) setState(() => _hasSelection = selected);
+    if (selected && _clickPointer != null) _selectedDuringPress = true;
+    // Decided when a selection starts; extending it keeps the answer.
+    final touch = selected &&
+        (_hasSelection ? _touchSelection : _lastPointerWasTouch);
+    final onTop = touch && _selectionNearBottom();
+    if (selected == _hasSelection &&
+        touch == _touchSelection &&
+        onTop == _selectionBarOnTop) {
+      return;
+    }
+    setState(() {
+      _hasSelection = selected;
+      _touchSelection = touch;
+      _selectionBarOnTop = onTop;
+    });
+  }
+
+  void _handleScroll() {
+    if (!_scrollController.hasClients) return;
+    final position = _scrollController.position;
+    // More than a couple of lines up: a flick that stopped just short of the
+    // bottom is not reading the history.
+    final back = position.maxScrollExtent - position.pixels > 48;
+    if (back != _scrolledBack) setState(() => _scrolledBack = back);
+  }
+
+  void _jumpToLatest() {
+    if (!_scrollController.hasClients) return;
+    final position = _scrollController.position;
+    position.jumpTo(position.maxScrollExtent);
+  }
+
+  bool get _lastPointerWasTouch => switch (_lastPointerKind) {
+        PointerDeviceKind.touch ||
+        PointerDeviceKind.stylus ||
+        PointerDeviceKind.invertedStylus =>
+          true,
+        _ => false,
+      };
+
+  /// Whether the selection reaches down to where the Copy bar would sit at
+  /// the bottom — and starts clear of where it would sit at the top.
+  bool _selectionNearBottom() {
+    final range = _terminalController.selection?.normalized;
+    final view = _viewKey.currentState;
+    if (range == null ||
+        view == null ||
+        !view.mounted ||
+        !_scrollController.hasClients) {
+      return false;
+    }
+    try {
+      final lineHeight = view.renderTerminal.lineHeight;
+      final position = _scrollController.position;
+      final top = range.begin.y * lineHeight - position.pixels;
+      final bottom = (range.end.y + 1) * lineHeight - position.pixels;
+      // The bar and the gap around it.
+      const bar = 64.0;
+      return bottom > position.viewportDimension - bar && top > bar;
+    } catch (_) {
+      return false;
+    }
   }
 
   /// Applies a sticky Ctrl to what the key bar or the soft keyboard produced.
@@ -331,24 +425,31 @@ class _TerminalPaneState extends State<TerminalPane>
 
   // ------------------------------------------------------ clipboard actions
 
-  /// Copies the current selection, with the haptic tick + brief confirmation
-  /// the task asked for, then clears the selection — matching how a copy
-  /// ends on every other platform.
-  Future<void> _copySelection() async {
+  /// Copies the current selection, with a haptic tick and a brief "Copied".
+  ///
+  /// [clear] for the touch Copy bar, where a copy ends the selection as it
+  /// does everywhere on a phone. With a mouse or a keyboard the selection
+  /// stays highlighted, as in every desktop terminal, so it can still be
+  /// pasted with a middle click or copied again.
+  Future<void> _copySelection({bool clear = false}) async {
     final range = _terminalController.selection;
     if (range == null) return;
 
     final text = _terminal.buffer.getText(range);
     await Clipboard.setData(ClipboardData(text: text));
     HapticFeedback.lightImpact();
-    _terminalController.clearSelection();
+    if (clear) _terminalController.clearSelection();
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(context.l10n.terminalCopied),
-        duration: const Duration(seconds: 1),
-      ),
-    );
+    _showNotice(context.l10n.terminalCopied);
+  }
+
+  /// Shows [text] over the bottom of the terminal for a moment.
+  void _showNotice(String text, {Duration? duration}) {
+    _noticeTimer?.cancel();
+    setState(() => _notice = text);
+    _noticeTimer = Timer(duration ?? const Duration(milliseconds: 1200), () {
+      if (mounted) setState(() => _notice = null);
+    });
   }
 
   /// Extends the current selection to the whole scrollback — the same range
@@ -365,21 +466,41 @@ class _TerminalPaneState extends State<TerminalPane>
   }
 
   /// Reads the system clipboard and sends it to the shell as one write —
-  /// after a confirmation sheet if it looks like more than one command.
+  /// after a confirmation if it looks like more than one command.
   Future<void> _pasteFromClipboard() async {
     final data = await Clipboard.getData(Clipboard.kTextPlain);
     final text = data?.text;
     if (text == null || text.isEmpty) {
-      if (mounted) _snack(context.l10n.terminalClipboardEmpty);
+      if (mounted) {
+        _showNotice(
+          context.l10n.terminalClipboardEmpty,
+          duration: const Duration(seconds: 2),
+        );
+      }
       return;
     }
+    await _paste(text);
+  }
 
+  /// A middle click pastes, as it does everywhere on Linux: the terminal's
+  /// own selection when there is one — the nearest the app can get to X's
+  /// primary selection — and the clipboard otherwise. The selection stays,
+  /// so it can be pasted again.
+  Future<void> _pasteMiddleClick() async {
+    final range = _terminalController.selection;
+    final selected = range == null ? '' : _terminal.buffer.getText(range);
+    if (selected.isEmpty) return _pasteFromClipboard();
+    await _paste(selected, keepSelection: true);
+  }
+
+  Future<void> _paste(String text, {bool keepSelection = false}) async {
+    if (!mounted) return;
     if (ClipboardPaste.needsConfirmation(text)) {
       final confirmed = await _confirmMultilinePaste(text);
       if (!confirmed || !mounted) return;
     }
 
-    _terminalController.clearSelection();
+    if (!keepSelection) _terminalController.clearSelection();
     // `Terminal.paste` sends the text in one shot — wrapped in
     // bracketed-paste escapes if (and only if) the remote program declared
     // it supports them, otherwise identical to `textInput`. Either way it is
@@ -390,13 +511,63 @@ class _TerminalPaneState extends State<TerminalPane>
 
   /// "Paste 3 lines?" — running several unseen commands back to back is the
   /// classic terminal footgun, so a multi-line clip gets a confirmation
-  /// instead of running straight away. [ClipboardPaste] decides what counts
-  /// as multi-line; it is unit-tested on its own in `clipboard_paste_test`.
+  /// instead of running straight away, with the lines themselves to check.
+  /// [ClipboardPaste] decides what counts as multi-line; it is unit-tested on
+  /// its own in `clipboard_paste_test`.
+  ///
+  /// A dialog where there is no touch, answered with Enter or Escape; a sheet
+  /// within a thumb's reach on a phone.
   Future<bool> _confirmMultilinePaste(String text) async {
     final lines = ClipboardPaste.lineCount(text);
+    final l10n = context.l10n;
+    final theme = Theme.of(context);
+    final preview = _PastePreview(
+      text: text,
+      style: theme.textTheme.bodySmall?.copyWith(
+        fontFamily: TerminalFonts.familyFor(_font),
+        fontFamilyFallback: TerminalFonts.fallbackFor(_font),
+        height: 1.3,
+      ),
+    );
+    final body = Text(
+      l10n.terminalPasteLinesBody,
+      style: const TextStyle(height: 1.35),
+    );
+
+    if (!InputProfile.of(context).touch) {
+      final result = await showDialog<bool>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: Text(l10n.terminalPasteLinesTitle(lines)),
+          content: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 520),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [body, const SizedBox(height: 12), preview],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(false),
+              child: Text(MaterialLocalizations.of(context).cancelButtonLabel),
+            ),
+            FilledButton(
+              autofocus: true,
+              onPressed: () => Navigator.of(context).pop(true),
+              child: Text(l10n.terminalPaste),
+            ),
+          ],
+        ),
+      );
+      _focusNode.requestFocus();
+      return result ?? false;
+    }
+
     final result = await showModalBottomSheet<bool>(
       context: context,
-      backgroundColor: Theme.of(context).colorScheme.surfaceContainerHigh,
+      isScrollControlled: true,
+      backgroundColor: theme.colorScheme.surfaceContainerHigh,
       builder: (context) => SafeArea(
         child: Padding(
           padding: const EdgeInsets.fromLTRB(20, 20, 20, 12),
@@ -405,14 +576,13 @@ class _TerminalPaneState extends State<TerminalPane>
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(
-                context.l10n.terminalPasteLinesTitle(lines),
+                l10n.terminalPasteLinesTitle(lines),
                 style: Theme.of(context).textTheme.titleMedium,
               ),
               const SizedBox(height: 8),
-              Text(
-                context.l10n.terminalPasteLinesBody,
-                style: const TextStyle(height: 1.35),
-              ),
+              body,
+              const SizedBox(height: 12),
+              preview,
               const SizedBox(height: 20),
               Row(
                 children: [
@@ -428,7 +598,7 @@ class _TerminalPaneState extends State<TerminalPane>
                   Expanded(
                     child: FilledButton(
                       onPressed: () => Navigator.of(context).pop(true),
-                      child: Text(context.l10n.terminalPaste),
+                      child: Text(l10n.terminalPaste),
                     ),
                   ),
                 ],
@@ -516,9 +686,17 @@ class _TerminalPaneState extends State<TerminalPane>
   /// Right-click, where a mouse is in use: the selection toolbar's three
   /// actions, at the pointer, the way every desktop terminal offers them —
   /// with Open and Copy link first when the click was on an address, and
-  /// Find after. Touch keeps the toolbar that slides in under a long-press
+  /// Find after. Touch keeps the toolbar that appears with a long-press
   /// selection.
+  ///
+  /// xterm hands a middle click to this callback too; on Linux that pastes.
   Future<void> _showContextMenu(TapUpDetails details, CellOffset _) async {
+    if (_lastDownButtons & kMiddleMouseButton != 0) {
+      if (defaultTargetPlatform == TargetPlatform.linux) {
+        await _pasteMiddleClick();
+      }
+      return;
+    }
     if (_lastDownButtons & kSecondaryMouseButton == 0) return;
     final overlay =
         Overlay.of(context).context.findRenderObject()! as RenderBox;
@@ -683,10 +861,12 @@ class _TerminalPaneState extends State<TerminalPane>
   void _onLinkPointerDown(PointerDownEvent event) {
     _cancelLongPress();
     _linkPointers.add(event.pointer);
+    _lastPointerKind = event.kind;
     if (event.kind == PointerDeviceKind.mouse) {
       final primary = event.buttons & kPrimaryMouseButton != 0;
       _clickPointer = primary ? event.pointer : null;
       _clickStart = event.position;
+      _selectedDuringPress = false;
       return;
     }
     if (_linkPointers.length > 1) return;
@@ -715,7 +895,8 @@ class _TerminalPaneState extends State<TerminalPane>
   }
 
   /// Ctrl+click, where a mouse is in use, opens a link straight away. A
-  /// click that became a drag (selecting text) does not.
+  /// click that became a drag (selecting text) does not — with
+  /// copy-on-select on, that drag is copied as the button comes up.
   void _onLinkPointerUp(PointerUpEvent event) {
     final start = _clickStart;
     if (event.pointer == _clickPointer &&
@@ -724,6 +905,12 @@ class _TerminalPaneState extends State<TerminalPane>
         _linkModifierHeld) {
       final link = _linkAtGlobal(event.position);
       if (link != null) unawaited(_openLink(link));
+    }
+    if (event.pointer == _clickPointer &&
+        _copyOnSelect &&
+        _selectedDuringPress &&
+        _terminalController.selection != null) {
+      unawaited(_copySelection());
     }
     _onLinkPointerEnd(event);
   }
@@ -822,12 +1009,7 @@ class _TerminalPaneState extends State<TerminalPane>
   Future<void> _copyLink(TerminalLinkHit link) async {
     await Clipboard.setData(ClipboardData(text: link.text));
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(context.l10n.terminalLinkCopied),
-        duration: const Duration(seconds: 1),
-      ),
-    );
+    _showNotice(context.l10n.terminalLinkCopied);
   }
 
   // ------------------------------------------------------------------ find
@@ -1025,6 +1207,7 @@ class _TerminalPaneState extends State<TerminalPane>
     unawaited(_settingsChanges?.cancel());
     unawaited(_recordingChanges?.cancel());
     _bellQuiet?.cancel();
+    _noticeTimer?.cancel();
     _cancelLongPress();
     if (identical(_panes[widget.session], this)) _panes[widget.session] = null;
     // Before the controller: the highlights it disposes notify through it.
@@ -1034,6 +1217,7 @@ class _TerminalPaneState extends State<TerminalPane>
     _findFocus.dispose();
     _findText.dispose();
     _bellFlash.dispose();
+    _scrollController.removeListener(_handleScroll);
     _scrollController.dispose();
     _ownFocusNode?.dispose();
     _terminalController.removeListener(_handleSelectionChange);
@@ -1063,6 +1247,24 @@ class _TerminalPaneState extends State<TerminalPane>
     if (!keyBar) _ctrlSticky = false;
     final terminalTheme = AppTheme.terminalThemeFor(_colorScheme);
     final textStyle = _textStyle;
+    // Floats over the terminal rather than taking a row under it: a row
+    // would shrink the terminal, resize the shell and move the very text
+    // being selected. Only for a selection made by touch — see
+    // [_touchSelection].
+    final selectionBar = !closed && ready && _hasSelection && _touchSelection
+        ? ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 560),
+            child: _SelectionToolbar(
+              touch: input.touch,
+              onCopy: () => unawaited(_copySelection(clear: true)),
+              onSelectAll: _selectAll,
+              onPaste: () => unawaited(_pasteFromClipboard()),
+            ),
+          )
+        : null;
+    final barOnTop = selectionBar != null && _selectionBarOnTop;
+    final barAtBottom = selectionBar != null && !barOnTop;
+    final topOverlay = _find.isOpen || _terminal.isRecording;
 
     return Column(
       children: [
@@ -1172,7 +1374,7 @@ class _TerminalPaneState extends State<TerminalPane>
                       ),
                     ),
                   ),
-                if (_find.isOpen || _terminal.isRecording)
+                if (topOverlay || barOnTop)
                   Positioned(
                     top: 6,
                     left: 6,
@@ -1200,47 +1402,65 @@ class _TerminalPaneState extends State<TerminalPane>
                               ),
                             ),
                           ),
+                        if (barOnTop)
+                          Padding(
+                            padding: EdgeInsets.only(top: topOverlay ? 6 : 0),
+                            child: selectionBar,
+                          ),
                       ],
                     ),
                   ),
+                if (barAtBottom)
+                  Positioned(
+                    left: 8,
+                    right: 8,
+                    bottom: 8,
+                    child: Align(
+                      alignment: Alignment.bottomCenter,
+                      child: selectionBar,
+                    ),
+                  ),
+                if (_scrolledBack && ready)
+                  Positioned(
+                    right: 12,
+                    bottom: barAtBottom ? 64 : 12,
+                    child: IconButton.filledTonal(
+                      tooltip: context.l10n.terminalJumpToLatest,
+                      onPressed: _jumpToLatest,
+                      icon: const Icon(Icons.keyboard_double_arrow_down),
+                    ),
+                  ),
+                Positioned(
+                  left: 16,
+                  right: 16,
+                  bottom: barAtBottom ? 64 : 12,
+                  child: IgnorePointer(
+                    child: Center(
+                      child: AnimatedSwitcher(
+                        duration: const Duration(milliseconds: 150),
+                        child: _notice == null
+                            ? const SizedBox.shrink()
+                            : _TerminalNotice(
+                                key: ValueKey(_notice),
+                                text: _notice!,
+                              ),
+                      ),
+                    ),
+                  ),
+                ),
               ],
             ),
           ),
         ),
-        if (!closed && ready) ...[
-          // Slides in above the key bar while a selection is active. A fixed
-          // slim bar rather than one anchored to the selection's on-screen
-          // rectangle: xterm 4.x exposes the selected *range* (as buffer
-          // coordinates) through `TerminalController.selection` but not a
-          // screen-space rect for it — `RenderTerminal`, which does know
-          // where cells land on screen, is a package-internal render object
-          // with no public accessor. Anchoring against it would mean reaching
-          // past the package's public API into something that can change
-          // under us; a bar that always docks in the same place is the robust
-          // choice, and it is where a thumb already is after a long-press
-          // selection on a phone.
-          AnimatedSize(
-            duration: const Duration(milliseconds: 150),
-            alignment: Alignment.bottomCenter,
-            child: _hasSelection
-                ? _SelectionToolbar(
-                    touch: input.touch,
-                    onCopy: () => unawaited(_copySelection()),
-                    onSelectAll: _selectAll,
-                    onPaste: () => unawaited(_pasteFromClipboard()),
-                  )
-                : const SizedBox(width: double.infinity, height: 0),
+        if (!closed && ready && keyBar)
+          TerminalKeyBar(
+            onKey: (key, {bool ctrl = false, bool alt = false}) =>
+                _terminal.keyInput(key, ctrl: ctrl, alt: alt),
+            onText: _terminal.textInput,
+            ctrlActive: _ctrlSticky,
+            onToggleCtrl: _toggleCtrlSticky,
+            onPaste: () => unawaited(_pasteFromClipboard()),
           ),
-          if (keyBar)
-            TerminalKeyBar(
-              onKey: (key, {bool ctrl = false, bool alt = false}) =>
-                  _terminal.keyInput(key, ctrl: ctrl, alt: alt),
-              onText: _terminal.textInput,
-              ctrlActive: _ctrlSticky,
-              onToggleCtrl: _toggleCtrlSticky,
-              onPaste: () => unawaited(_pasteFromClipboard()),
-            ),
-        ],
       ],
     );
   }
@@ -1303,9 +1523,82 @@ class _RecordingBadge extends StatelessWidget {
   }
 }
 
-/// Copy / Select all / Paste, shown while the terminal has an active
-/// selection. See the slide-in site in [_TerminalPaneState.build] for why
-/// this is a fixed bar rather than one anchored to the selection itself.
+/// "Copied", "Clipboard is empty": a moment's word over the bottom of the
+/// terminal. Read out by a screen reader as it appears.
+class _TerminalNotice extends StatelessWidget {
+  const _TerminalNotice({super.key, required this.text});
+
+  final String text;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Semantics(
+      liveRegion: true,
+      child: Material(
+        color: scheme.inverseSurface,
+        elevation: 2,
+        borderRadius: BorderRadius.circular(16),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(Icons.check, size: 16, color: scheme.onInverseSurface),
+              const SizedBox(width: 6),
+              Flexible(
+                child: Text(
+                  text,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(color: scheme.onInverseSurface),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// The lines a multi-line paste would send, to check before they run: a
+/// screenful at most, scrolling for the rest.
+class _PastePreview extends StatelessWidget {
+  const _PastePreview({required this.text, this.style});
+
+  final String text;
+  final TextStyle? style;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return ConstrainedBox(
+      constraints: const BoxConstraints(maxHeight: 180),
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          color: scheme.surfaceContainerHighest,
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: scheme.outlineVariant),
+        ),
+        child: Scrollbar(
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.all(10),
+            child: SizedBox(
+              width: double.infinity,
+              child: Text(text.trimRight(), style: style),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Copy / Select all / Paste, floating over the terminal while a selection
+/// made by touch is active. A bar that always docks in one place rather
+/// than one anchored to the selection: it sits at the bottom, where a thumb
+/// already is after a long-press, unless the selection reaches down there.
 class _SelectionToolbar extends StatelessWidget {
   const _SelectionToolbar({
     required this.onCopy,
@@ -1357,7 +1650,10 @@ class _SelectionToolbar extends StatelessWidget {
     final theme = Theme.of(context);
     final l10n = context.l10n;
     return Material(
-      color: theme.colorScheme.primary.withValues(alpha: 0.12),
+      color: theme.colorScheme.surfaceContainerHigh,
+      elevation: 3,
+      borderRadius: BorderRadius.circular(14),
+      clipBehavior: Clip.antiAlias,
       child: SizedBox(
         height: touch ? 48 : 44,
         child: LayoutBuilder(

@@ -27,6 +27,7 @@ import '../services/sftp_service.dart';
 import '../services/transfer_queue.dart';
 import '../services/upload_plan.dart';
 import '../theme.dart';
+import '../widgets/app_snack.dart';
 import '../widgets/bookmark_sheet.dart';
 import '../widgets/remote_file_ops_dialogs.dart';
 import '../widgets/transfer_panel.dart';
@@ -135,9 +136,25 @@ class _FileBrowserPaneState extends State<FileBrowserPane>
   List<RemoteEntry> _entries = const [];
   final Set<String> _selected = {};
 
+  /// Only ever true for the first listing, when there is nothing yet to keep
+  /// on screen; see [_opening] for every folder change after that.
   bool _loading = true;
   bool _showHidden = false;
   SftpFailure? _failure;
+
+  /// The folder being opened, while its listing is still on the way.
+  ///
+  /// The folder being left stays on screen meanwhile, under the thin
+  /// progress line, instead of blanking to a spinner on every click: a list
+  /// that vanishes and comes back reads as a flicker, and throws away the
+  /// user's place when the next folder turns out not to open.
+  String? _opening;
+
+  /// Bumped by every listing asked for, so only the newest one lands. With
+  /// the old folder still on screen and still clickable, a second folder can
+  /// be opened before the first has answered, and the slower reply must not
+  /// overwrite the newer one.
+  int _listingRequest = 0;
 
   /// Watches for a share arriving on this session while the browser is
   /// already open — the pending request lives on the controller, not in an
@@ -287,7 +304,7 @@ class _FileBrowserPaneState extends State<FileBrowserPane>
     try {
       final sftp = await _client();
       final home = await sftp.home();
-      await _navigate(home, showSpinner: false);
+      await _navigate(home, showProgress: false);
     } on SftpFailure catch (e) {
       if (!mounted) return;
       setState(() {
@@ -306,10 +323,14 @@ class _FileBrowserPaneState extends State<FileBrowserPane>
     }
   }
 
-  Future<void> _navigate(String path, {bool showSpinner = true}) async {
-    if (showSpinner) {
+  /// Lists [path] and shows it. [showProgress] puts up the thin line under
+  /// the toolbar while the listing is on the way — see [_opening] — and is
+  /// off for a refresh, which redraws the folder already on screen.
+  Future<void> _navigate(String path, {bool showProgress = true}) async {
+    final request = ++_listingRequest;
+    if (showProgress) {
       setState(() {
-        _loading = true;
+        _opening = path;
         _failure = null;
       });
     }
@@ -317,27 +338,30 @@ class _FileBrowserPaneState extends State<FileBrowserPane>
     try {
       final sftp = await _client();
       final entries = await sftp.list(path);
-      if (!mounted) return;
+      if (!mounted || request != _listingRequest) return;
       setState(() {
         _path = RemotePath.normalize(path);
         _entries = entries;
         _selected.clear();
         _loading = false;
+        _opening = null;
         _failure = null;
       });
     } on SftpFailure catch (e) {
-      if (!mounted) return;
+      if (!mounted || request != _listingRequest) return;
       setState(() {
         _loading = false;
+        _opening = null;
         _failure = e;
         // Staying put on a failed navigation matters: a permission-denied
         // directory should leave the user where they were, with an
         // explanation, not on a blank screen with no way back.
       });
     } catch (e) {
-      if (!mounted) return;
+      if (!mounted || request != _listingRequest) return;
       setState(() {
         _loading = false;
+        _opening = null;
         _failure = SftpFailure(
           context.l10n.filesErrorOpenPath(path),
           details: e.toString(),
@@ -346,7 +370,11 @@ class _FileBrowserPaneState extends State<FileBrowserPane>
     }
   }
 
-  Future<void> _refresh() => _navigate(_path, showSpinner: false);
+  /// Lists the folder on screen again — or, while another one is being
+  /// opened, that one. Refreshing the folder being left would supersede the
+  /// open still on its way and put the user back where they had just left.
+  Future<void> _refresh() =>
+      _navigate(_opening ?? _path, showProgress: false);
 
   void _goUp() {
     final parent = RemotePath.parent(_path);
@@ -447,6 +475,10 @@ class _FileBrowserPaneState extends State<FileBrowserPane>
           final siblings = await sftp.list(RemotePath.parent(target));
           if (!mounted) return;
           setState(() {
+            // Lands over any folder still being opened by a click: the path
+            // typed is the newer request.
+            _listingRequest++;
+            _opening = null;
             _path = RemotePath.parent(target);
             _entries = siblings;
             _selected.clear();
@@ -462,6 +494,8 @@ class _FileBrowserPaneState extends State<FileBrowserPane>
       final entries = await sftp.list(target);
       if (!mounted) return;
       setState(() {
+        _listingRequest++;
+        _opening = null;
         _path = RemotePath.normalize(target);
         _entries = entries;
         _selected.clear();
@@ -612,13 +646,10 @@ class _FileBrowserPaneState extends State<FileBrowserPane>
 
       widget.session.queueDownload(entry, overwrite: overwrite);
     }
-
-    if (!mounted) return;
-    _snack(
-      entries.length == 1
-          ? context.l10n.transferDownloadingName(entries.first.name)
-          : context.l10n.transferQueuedDownloads(entries.length),
-    );
+    // No "Downloading…" toast: the transfer bar under the list and the badge
+    // in the app bar already say so, with progress, and a snackbar saying it
+    // again only covers the shell for four seconds. The bar's own "Saved to"
+    // is the message that matters, once there is one.
   }
 
   /// Returns the choice, and whether it applies to the rest of the batch.
@@ -768,14 +799,7 @@ class _FileBrowserPaneState extends State<FileBrowserPane>
       overwrite: overwrite,
       totalBytes: tree.totalBytes,
     );
-    _snack(
-      context.l10n.transferUploadingFolder(
-        tree.fileCount,
-        picked.name,
-        RemotePath.formatBytes(tree.totalBytes),
-        '$directory/$landingName',
-      ),
-    );
+    // Nothing to announce: the transfer bar shows the upload from here on.
   }
 
   /// Uploads [files] into the directory currently on screen, resolving name
@@ -820,7 +844,11 @@ class _FileBrowserPaneState extends State<FileBrowserPane>
           asName: upload.remoteName,
         );
       }
-      _snack(_uploadQueuedMessage(plan, directory));
+      // The transfer bar shows the uploads themselves. What it cannot show
+      // is the files the user chose to skip, so only that earns a snackbar.
+      if (plan.skipped.isNotEmpty) {
+        _snack(_uploadQueuedMessage(plan, directory));
+      }
     } on SftpFailure catch (e) {
       if (mounted) _snack(e.message, isError: true);
     }
@@ -1012,9 +1040,8 @@ class _FileBrowserPaneState extends State<FileBrowserPane>
     for (final file in plan.files) {
       widget.session.queuePlannedDownload(file);
     }
-    _snack(
-      context.l10n.transferDownloadingFolder(plan.fileCount, plan.rootName),
-    );
+    // The confirm just named the count and the folder, and the transfer bar
+    // takes it from here: a toast repeating both would only cover the shell.
   }
 
   Future<bool?> _confirmDirectoryDownload(
@@ -1519,8 +1546,13 @@ class _FileBrowserPaneState extends State<FileBrowserPane>
     }
     if (!mounted) return;
     if (outcome.succeeded && success != null) {
-      ScaffoldMessenger.of(context)
-          .showSnackBar(SnackBar(content: Text(success), action: action));
+      showReplacingSnackBar(
+        context,
+        // Not persistent, which a SnackBar with an action otherwise is: an
+        // extract's "Open" would hold the bottom of the window, over the
+        // shell, until something else replaced it.
+        SnackBar(content: Text(success), action: action, persist: false),
+      );
       return;
     }
     _snack(
@@ -1799,12 +1831,24 @@ class _FileBrowserPaneState extends State<FileBrowserPane>
       .where((e) => _selected.contains(e.path))
       .toList(growable: false);
 
+  /// Says [message] in place of whatever snackbar is up, rather than queued
+  /// behind it — see [showReplacingSnackBar].
+  ///
+  /// The pane's own Scaffold is nested, so this lands on the session
+  /// screen's and spans the whole window, over the shell: three deletes in a
+  /// row used to hold it there for twelve seconds. An error keeps the
+  /// default, longer duration and the error colour; anything else is gone in
+  /// three.
   void _snack(String message, {bool isError = false}) {
-    final theme = Theme.of(context);
-    ScaffoldMessenger.of(context).showSnackBar(
+    if (!isError) {
+      showReplacingSnack(context, message);
+      return;
+    }
+    showReplacingSnackBar(
+      context,
       SnackBar(
         content: Text(message),
-        backgroundColor: isError ? theme.colorScheme.error : null,
+        backgroundColor: Theme.of(context).colorScheme.error,
       ),
     );
   }
@@ -1816,11 +1860,17 @@ class _FileBrowserPaneState extends State<FileBrowserPane>
     await _sendToServer(chosen, move: move);
   }
 
-  Future<void> _showEntryActions(RemoteEntry entry) async {
-    // Read before the sheet is built, so the "another server" rows appear only
-    // when there is in fact another server open right now. Directories are
-    // first-class targets since Phase 12.5 — the folder-copy and folder-move
-    // paths handle them the same way the file paths do at this layer.
+  /// Everything that can be done to [entry] from its row, in order.
+  ///
+  /// The one list both the long-press sheet and the right-click menu are
+  /// drawn from, so the two can never offer different things, or the same
+  /// things in a different order. Read fresh each time, so the "another
+  /// server" rows appear only when there is in fact another server open right
+  /// now. Directories are first-class targets since Phase 12.5 — the
+  /// folder-copy and folder-move paths handle them the same way the file
+  /// paths do at this layer.
+  List<_EntryAction> _entryActions(RemoteEntry entry) {
+    final l10n = context.l10n;
     final canSend = (entry.kind == RemoteEntryKind.file ||
             entry.kind == RemoteEntryKind.directory) &&
         _destinations.isNotEmpty;
@@ -1835,19 +1885,163 @@ class _FileBrowserPaneState extends State<FileBrowserPane>
     final canCompress = real && kit.compressFormats.isNotEmpty;
     final canDuplicate = real && kit.canDuplicate;
     final canChown = real && kit.canChangeOwner;
+
+    return [
+      if (entry.isDownloadable)
+        _EntryAction(
+          icon: Icons.edit_note,
+          label: l10n.filesActionEdit,
+          subtitle: l10n.filesActionEditSubtitle,
+          highlight: true,
+          onSelected: () => unawaited(_edit(entry)),
+        ),
+      if (entry.isDownloadable)
+        _EntryAction(
+          icon: Icons.download,
+          label: l10n.filesDownload,
+          subtitle: l10n.filesActionDownloadSubtitle,
+          onSelected: () => unawaited(_download([entry])),
+        ),
+      // Same predicate as Edit and Download: a regular file the server will
+      // let us read. `tail -F` on a directory follows nothing, and the
+      // viewer's own readable check would only refuse it a round trip later.
+      if (entry.isDownloadable)
+        _EntryAction(
+          icon: Icons.subject,
+          label: l10n.filesActionTail,
+          subtitle: l10n.filesActionTailSubtitle,
+          onSelected: () => unawaited(_tail(entry)),
+        ),
+      if (entry.isNavigable)
+        _EntryAction(
+          icon: Icons.download_for_offline_outlined,
+          label: l10n.filesActionDownloadFolder,
+          subtitle: l10n.filesActionDownloadFolderSubtitle(entry.name),
+          onSelected: () => unawaited(_downloadDirectory(entry)),
+        ),
+      if (canSend) ...[
+        _EntryAction(
+          icon: Icons.drive_file_move_outlined,
+          label: isFolder
+              ? l10n.filesActionCopyFolderToServer
+              : l10n.filesActionCopyToServer,
+          subtitle: l10n.filesActionCopyToServerSubtitle,
+          onSelected: () => unawaited(_sendToServer([entry], move: false)),
+        ),
+        _EntryAction(
+          icon: Icons.drive_file_move_rtl_outlined,
+          label: isFolder
+              ? l10n.filesActionMoveFolderToServer
+              : l10n.filesActionMoveToServer,
+          subtitle: isFolder
+              ? l10n.filesActionMoveFolderToServerSubtitle
+              : l10n.filesActionMoveToServerSubtitle,
+          onSelected: () => unawaited(_sendToServer([entry], move: true)),
+        ),
+      ],
+      _EntryAction(
+        icon: Icons.drive_file_rename_outline,
+        label: l10n.filesActionRename,
+        keys: 'F2',
+        onSelected: () => unawaited(_rename(entry)),
+      ),
+      if (canChmod)
+        _EntryAction(
+          icon: Icons.lock_outline,
+          label: l10n.filesActionPermissions,
+          subtitle: l10n.filesActionPermissionsNow(
+            _octalMode(entry.permissions!),
+          ),
+          onSelected: () => unawaited(_editPermissions(entry)),
+        ),
+      if (canExtract)
+        _EntryAction(
+          icon: Icons.unarchive_outlined,
+          label: l10n.filesExtractAction,
+          subtitle: l10n.filesExtractActionSubtitle,
+          onSelected: () => unawaited(_extract(entry)),
+        ),
+      if (canCompress)
+        _EntryAction(
+          icon: Icons.archive_outlined,
+          label: l10n.filesCompressAction,
+          // One format or both: there are only the two.
+          subtitle: kit.compressFormats.length == 1
+              ? l10n.filesCompressActionSubtitleOne(
+                  kit.compressFormats.single.label,
+                )
+              : l10n.filesCompressActionSubtitleTwo(
+                  kit.compressFormats.first.label,
+                  kit.compressFormats.last.label,
+                ),
+          onSelected: () => unawaited(_compress([entry])),
+        ),
+      if (canDuplicate)
+        _EntryAction(
+          icon: Icons.control_point_duplicate,
+          label: l10n.filesDuplicateAction,
+          subtitle: l10n.filesDuplicateActionSubtitle(
+            RemoteFileCommands.copyName(
+              entry.name,
+              (name) => _entries.any((e) => e.name == name),
+              isDirectory: isFolder,
+            ),
+          ),
+          onSelected: () => unawaited(_duplicate([entry])),
+        ),
+      if (canChown)
+        _EntryAction(
+          icon: Icons.manage_accounts_outlined,
+          label: l10n.filesOwnerAction,
+          onSelected: () => unawaited(_changeOwner([entry])),
+        ),
+      if (entry.isDownloadable)
+        _EntryAction(
+          icon: Icons.checklist,
+          label: l10n.filesActionSelect,
+          onSelected: () => _toggleSelection(entry),
+        ),
+      _EntryAction(
+        icon: Icons.copy_all_outlined,
+        label: l10n.filesActionCopyPath,
+        subtitle: entry.path,
+        subtitleLines: 1,
+        onSelected: () => unawaited(_copyPath(entry)),
+      ),
+      // Last, and in the error colour, as on the host list: the one row here
+      // that cannot be taken back.
+      _EntryAction(
+        icon: Icons.delete_outline,
+        label: isFolder
+            ? l10n.filesActionDeleteFolder
+            : MaterialLocalizations.of(context).deleteButtonTooltip,
+        subtitle: isFolder
+            ? l10n.filesActionDeleteFolderSubtitle
+            : entry.kind == RemoteEntryKind.symlink
+                ? l10n.filesActionDeleteLinkSubtitle
+                : null,
+        keys: 'Del',
+        destructive: true,
+        onSelected: () => unawaited(_delete([entry])),
+      ),
+    ];
+  }
+
+  /// The colour an action's icon is drawn in, the same in the sheet and the
+  /// menu.
+  static Color? _actionColour(_EntryAction action, ThemeData theme) {
+    if (action.destructive) return theme.colorScheme.error;
+    if (action.highlight) return theme.colorScheme.primary;
+    return null;
+  }
+
+  /// [entry]'s actions as a sheet from the bottom of the window: what a
+  /// long-press opens, with a finger, and the rows are big enough to hit and
+  /// say what each one does.
+  Future<void> _showEntryActions(RemoteEntry entry) async {
+    final actions = _entryActions(entry);
     final keyboard = InputProfile.of(context).keyboard;
     final theme = Theme.of(context);
-
-    // The keys behind the rows that have one, where there is a hardware
-    // keyboard to press them on.
-    Widget? shortcut(String keys) => keyboard
-        ? Text(
-            keys,
-            style: theme.textTheme.bodySmall?.copyWith(
-              color: theme.colorScheme.onSurfaceVariant,
-            ),
-          )
-        : null;
 
     await showModalBottomSheet<void>(
       context: context,
@@ -1868,209 +2062,112 @@ class _FileBrowserPaneState extends State<FileBrowserPane>
               ),
             ),
             const Divider(height: 1),
-            if (entry.isDownloadable)
+            for (final action in actions)
               ListTile(
-                leading: Icon(Icons.edit_note,
-                    color: theme.colorScheme.primary),
-                title: Text(context.l10n.filesActionEdit),
-                subtitle: Text(context.l10n.filesActionEditSubtitle),
-                onTap: () {
-                  Navigator.of(context).pop();
-                  unawaited(_edit(entry));
-                },
-              ),
-            if (entry.isDownloadable)
-              ListTile(
-                leading: const Icon(Icons.download),
-                title: Text(context.l10n.filesDownload),
-                subtitle: Text(context.l10n.filesActionDownloadSubtitle),
-                onTap: () {
-                  Navigator.of(context).pop();
-                  unawaited(_download([entry]));
-                },
-              ),
-            // Same predicate as Edit and Download: a regular file the server
-            // will let us read. `tail -F` on a directory follows nothing, and
-            // the viewer's own readable check would only refuse it a round
-            // trip later.
-            if (entry.isDownloadable)
-              ListTile(
-                leading: const Icon(Icons.subject),
-                title: Text(context.l10n.filesActionTail),
-                subtitle: Text(context.l10n.filesActionTailSubtitle),
-                onTap: () {
-                  Navigator.of(context).pop();
-                  unawaited(_tail(entry));
-                },
-              ),
-            if (entry.isNavigable)
-              ListTile(
-                leading: const Icon(Icons.download_for_offline_outlined),
-                title: Text(context.l10n.filesActionDownloadFolder),
-                subtitle: Text(
-                  context.l10n.filesActionDownloadFolderSubtitle(entry.name),
+                leading: Icon(
+                  action.icon,
+                  color: _actionColour(action, theme),
                 ),
-                onTap: () {
-                  Navigator.of(context).pop();
-                  unawaited(_downloadDirectory(entry));
-                },
-              ),
-            if (canSend) ...[
-              ListTile(
-                leading: const Icon(Icons.drive_file_move_outlined),
                 title: Text(
-                  isFolder
-                      ? context.l10n.filesActionCopyFolderToServer
-                      : context.l10n.filesActionCopyToServer,
-                ),
-                subtitle: Text(context.l10n.filesActionCopyToServerSubtitle),
-                onTap: () {
-                  Navigator.of(context).pop();
-                  unawaited(_sendToServer([entry], move: false));
-                },
-              ),
-              ListTile(
-                leading: const Icon(Icons.drive_file_move_rtl_outlined),
-                title: Text(
-                  isFolder
-                      ? context.l10n.filesActionMoveFolderToServer
-                      : context.l10n.filesActionMoveToServer,
-                ),
-                subtitle: Text(
-                  isFolder
-                      ? context.l10n.filesActionMoveFolderToServerSubtitle
-                      : context.l10n.filesActionMoveToServerSubtitle,
-                ),
-                onTap: () {
-                  Navigator.of(context).pop();
-                  unawaited(_sendToServer([entry], move: true));
-                },
-              ),
-            ],
-            ListTile(
-              leading: const Icon(Icons.drive_file_rename_outline),
-              title: Text(context.l10n.filesActionRename),
-              trailing: shortcut('F2'),
-              onTap: () {
-                Navigator.of(context).pop();
-                unawaited(_rename(entry));
-              },
-            ),
-            if (canChmod)
-              ListTile(
-                leading: const Icon(Icons.lock_outline),
-                title: Text(context.l10n.filesActionPermissions),
-                subtitle: Text(
-                  context.l10n.filesActionPermissionsNow(
-                    _octalMode(entry.permissions!),
-                  ),
-                ),
-                onTap: () {
-                  Navigator.of(context).pop();
-                  unawaited(_editPermissions(entry));
-                },
-              ),
-            if (canExtract)
-              ListTile(
-                leading: const Icon(Icons.unarchive_outlined),
-                title: Text(context.l10n.filesExtractAction),
-                subtitle: Text(context.l10n.filesExtractActionSubtitle),
-                onTap: () {
-                  Navigator.of(context).pop();
-                  unawaited(_extract(entry));
-                },
-              ),
-            if (canCompress)
-              ListTile(
-                leading: const Icon(Icons.archive_outlined),
-                title: Text(context.l10n.filesCompressAction),
-                // One format or both: there are only the two.
-                subtitle: Text(
-                  kit.compressFormats.length == 1
-                      ? context.l10n.filesCompressActionSubtitleOne(
-                          kit.compressFormats.single.label,
-                        )
-                      : context.l10n.filesCompressActionSubtitleTwo(
-                          kit.compressFormats.first.label,
-                          kit.compressFormats.last.label,
-                        ),
-                ),
-                onTap: () {
-                  Navigator.of(context).pop();
-                  unawaited(_compress([entry]));
-                },
-              ),
-            if (canDuplicate)
-              ListTile(
-                leading: const Icon(Icons.control_point_duplicate),
-                title: Text(context.l10n.filesDuplicateAction),
-                subtitle: Text(
-                  context.l10n.filesDuplicateActionSubtitle(
-                    RemoteFileCommands.copyName(
-                      entry.name,
-                      (name) => _entries.any((e) => e.name == name),
-                      isDirectory: isFolder,
-                    ),
-                  ),
-                ),
-                onTap: () {
-                  Navigator.of(context).pop();
-                  unawaited(_duplicate([entry]));
-                },
-              ),
-            if (canChown)
-              ListTile(
-                leading: const Icon(Icons.manage_accounts_outlined),
-                title: Text(context.l10n.filesOwnerAction),
-                onTap: () {
-                  Navigator.of(context).pop();
-                  unawaited(_changeOwner([entry]));
-                },
-              ),
-            if (entry.isDownloadable)
-              ListTile(
-                leading: const Icon(Icons.checklist),
-                title: Text(context.l10n.filesActionSelect),
-                onTap: () {
-                  Navigator.of(context).pop();
-                  _toggleSelection(entry);
-                },
-              ),
-            ListTile(
-              leading: const Icon(Icons.copy_all_outlined),
-              title: Text(context.l10n.filesActionCopyPath),
-              subtitle: Text(entry.path, maxLines: 1, overflow: TextOverflow.ellipsis),
-              onTap: () {
-                Navigator.of(context).pop();
-                unawaited(_copyPath(entry));
-              },
-            ),
-            // Last, and in the error colour, as on the host list: the one row
-            // here that cannot be taken back.
-            ListTile(
-              leading:
-                  Icon(Icons.delete_outline, color: theme.colorScheme.error),
-              title: Text(
-                isFolder
-                    ? context.l10n.filesActionDeleteFolder
-                    : MaterialLocalizations.of(context).deleteButtonTooltip,
-                style: TextStyle(color: theme.colorScheme.error),
-              ),
-              subtitle: isFolder
-                  ? Text(context.l10n.filesActionDeleteFolderSubtitle)
-                  : entry.kind == RemoteEntryKind.symlink
-                      ? Text(context.l10n.filesActionDeleteLinkSubtitle)
+                  action.label,
+                  style: action.destructive
+                      ? TextStyle(color: theme.colorScheme.error)
                       : null,
-              trailing: shortcut('Del'),
-              onTap: () {
-                Navigator.of(context).pop();
-                unawaited(_delete([entry]));
-              },
-            ),
+                ),
+                subtitle: action.subtitle == null
+                    ? null
+                    : Text(
+                        action.subtitle!,
+                        maxLines: action.subtitleLines,
+                        overflow: action.subtitleLines == null
+                            ? null
+                            : TextOverflow.ellipsis,
+                      ),
+                // The keys behind the rows that have one, where there is a
+                // hardware keyboard to press them on.
+                trailing: keyboard && action.keys != null
+                    ? Text(
+                        action.keys!,
+                        style: theme.textTheme.bodySmall?.copyWith(
+                          color: theme.colorScheme.onSurfaceVariant,
+                        ),
+                      )
+                    : null,
+                onTap: () {
+                  Navigator.of(context).pop();
+                  action.onSelected();
+                },
+              ),
           ],
         ),
       ),
     );
+  }
+
+  /// [entry]'s actions as a menu at [globalPosition]: what a right-click
+  /// opens, the way every desktop file manager offers them.
+  ///
+  /// A sheet rising from the bottom of the window is a phone's answer, and
+  /// with a mouse it is the wrong one — it covers the terminal beside the
+  /// browser, and sends the pointer to the far end of the screen for an
+  /// action the user meant to take where they clicked. The rows are the
+  /// sheet's own, from [_entryActions], one line each.
+  Future<void> _showEntryMenu(RemoteEntry entry, Offset globalPosition) async {
+    final actions = _entryActions(entry);
+    final overlay =
+        Overlay.of(context).context.findRenderObject()! as RenderBox;
+    final at = overlay.globalToLocal(globalPosition);
+    final keyboard = InputProfile.of(context).keyboard;
+    final theme = Theme.of(context);
+
+    final chosen = await showMenu<_EntryAction>(
+      context: context,
+      position: RelativeRect.fromRect(
+        at & Size.zero,
+        Offset.zero & overlay.size,
+      ),
+      items: [
+        for (final action in actions) ...[
+          // Set apart, so a slip of the pointer off the row above is not a
+          // delete.
+          if (action.destructive) const PopupMenuDivider(),
+          PopupMenuItem<_EntryAction>(
+            value: action,
+            child: Row(
+              children: [
+                Icon(
+                  action.icon,
+                  size: 18,
+                  color: _actionColour(action, theme),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Text(
+                    action.label,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: action.destructive
+                        ? TextStyle(color: theme.colorScheme.error)
+                        : null,
+                  ),
+                ),
+                if (keyboard && action.keys != null) ...[
+                  const SizedBox(width: 24),
+                  Text(
+                    action.keys!,
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      color: theme.colorScheme.onSurfaceVariant,
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+        ],
+      ],
+    );
+    if (!mounted) return;
+    chosen?.onSelected();
   }
 
   // ------------------------------------------------------------------ build
@@ -2155,7 +2252,7 @@ class _FileBrowserPaneState extends State<FileBrowserPane>
                   ? () => unawaited(_openSearch())
                   : null,
             ),
-          if (_operationsInFlight > 0)
+          if (_operationsInFlight > 0 || _opening != null)
             const LinearProgressIndicator(minHeight: 2)
           else
             const Divider(height: 1),
@@ -2307,6 +2404,17 @@ class _FileBrowserPaneState extends State<FileBrowserPane>
           unawaited(_showEntryActions(entry));
         }
       },
+      onSecondaryTap: (details) {
+        if (_selecting) {
+          _toggleSelection(entry);
+        } else if (InputProfile.classify(details.kind) == PointerClass.touch) {
+          // A stylus's barrel button is a right-click too, but the stylus is
+          // held like a finger, and gets the finger's sheet.
+          unawaited(_showEntryActions(entry));
+        } else {
+          unawaited(_showEntryMenu(entry, details.globalPosition));
+        }
+      },
     );
 
     // Drag-to-tab only offers itself when there is somewhere to drag *to* — no
@@ -2365,6 +2473,8 @@ class _FileBrowserPaneState extends State<FileBrowserPane>
   }
 
   Widget _buildBody() {
+    // The first listing only: after that the folder on screen stays up while
+    // the next one loads — see [_opening].
     if (_loading) {
       return const Center(child: CircularProgressIndicator());
     }
@@ -2430,7 +2540,6 @@ Future<void> sendEntriesToSession(
   VoidCallback? onQueued,
 }) async {
   if (entries.isEmpty) return;
-  final messenger = ScaffoldMessenger.of(context);
   final l10n = context.l10n;
 
   // The bytes-bypass-this-device switch lives here rather than on the
@@ -2464,7 +2573,7 @@ Future<void> sendEntriesToSession(
   try {
     destinationFs = await destination.controller.sftp();
   } on SftpFailure catch (e) {
-    if (context.mounted) _showErrorSnack(messenger, e.message);
+    if (context.mounted) _showErrorSnack(context, e.message);
     return;
   }
   if (!context.mounted) return;
@@ -2485,18 +2594,21 @@ Future<void> sendEntriesToSession(
       ),
     );
   } on SftpFailure catch (e) {
-    if (context.mounted) _showErrorSnack(messenger, e.message);
+    if (context.mounted) _showErrorSnack(context, e.message);
     return;
   }
   if (plan.cancelled || !context.mounted) return;
 
   if (plan.isEmpty) {
     final theme = Theme.of(context);
-    messenger.showSnackBar(SnackBar(
-      content: Text(_nothingSentMessage(plan, l10n)),
-      backgroundColor:
-          plan.unsupported.isNotEmpty ? theme.colorScheme.error : null,
-    ));
+    showReplacingSnackBar(
+      context,
+      SnackBar(
+        content: Text(_nothingSentMessage(plan, l10n)),
+        backgroundColor:
+            plan.unsupported.isNotEmpty ? theme.colorScheme.error : null,
+      ),
+    );
     return;
   }
 
@@ -2531,26 +2643,32 @@ Future<void> sendEntriesToSession(
   }
 
   onQueued?.call();
-  messenger.showSnackBar(SnackBar(
-    content: Text(
-      _sentMessage(
-        l10n,
-        plan,
-        destination,
-        directory,
-        move: move,
-        route: chosenRoute,
-      ),
+  // The transfer bar and the app bar's badge show the copy itself, so a
+  // toast that only says it has started is one more thing over the shell.
+  // What they cannot show is what was left behind — skipped names, links
+  // that cannot be sent — and only that is worth a snackbar.
+  if (plan.skipped.isEmpty && plan.unsupported.isEmpty) return;
+  showReplacingSnack(
+    context,
+    _sentMessage(
+      l10n,
+      plan,
+      destination,
+      directory,
+      move: move,
+      route: chosenRoute,
     ),
-  ));
+  );
 }
 
-void _showErrorSnack(ScaffoldMessengerState messenger, String message) {
-  final theme = Theme.of(messenger.context);
-  messenger.showSnackBar(SnackBar(
-    content: Text(message),
-    backgroundColor: theme.colorScheme.error,
-  ));
+void _showErrorSnack(BuildContext context, String message) {
+  showReplacingSnackBar(
+    context,
+    SnackBar(
+      content: Text(message),
+      backgroundColor: Theme.of(context).colorScheme.error,
+    ),
+  );
 }
 
 /// Whether the direct path is eligible for [destination], and — when it
@@ -3695,6 +3813,45 @@ class _BarAction {
   final VoidCallback onSelected;
 }
 
+/// One thing that can be done to a row, for both of the ways a row offers
+/// them: the sheet a long-press opens and the menu a right-click opens.
+///
+/// Each carries everything either needs. The sheet shows [subtitle] under
+/// the label; the menu leaves it out, to keep to one line a row.
+class _EntryAction {
+  const _EntryAction({
+    required this.icon,
+    required this.label,
+    required this.onSelected,
+    this.subtitle,
+    this.subtitleLines,
+    this.keys,
+    this.highlight = false,
+    this.destructive = false,
+  });
+
+  final IconData icon;
+  final String label;
+  final String? subtitle;
+
+  /// Where the sheet cuts [subtitle] short — a path is better ellipsed than
+  /// wrapped onto a second line. Null lets it wrap.
+  final int? subtitleLines;
+
+  /// The key that does the same from the row, named where there is a
+  /// hardware keyboard to press it on.
+  final String? keys;
+
+  /// In the primary colour: the action a tap on the row most often means.
+  final bool highlight;
+
+  /// In the error colour, and set apart in the menu: the one that cannot be
+  /// taken back.
+  final bool destructive;
+
+  final VoidCallback onSelected;
+}
+
 /// The small chip that floats under the cursor while dragging a file (or
 /// several) toward another session's tab.
 ///
@@ -3797,6 +3954,7 @@ class _EntryTile extends StatelessWidget {
     required this.selecting,
     required this.onTap,
     required this.onLongPress,
+    required this.onSecondaryTap,
   });
 
   final RemoteEntry entry;
@@ -3804,6 +3962,10 @@ class _EntryTile extends StatelessWidget {
   final bool selecting;
   final VoidCallback onTap;
   final VoidCallback onLongPress;
+
+  /// A right-click, with where it landed and what made it: the menu it
+  /// opens is anchored to the pointer.
+  final GestureTapUpCallback onSecondaryTap;
 
   @override
   Widget build(BuildContext context) {
@@ -3814,13 +3976,13 @@ class _EntryTile extends StatelessWidget {
         : '${RemotePath.formatBytes(entry.size)}  ·  '
             '${_formatTime(entry.modified, locale)}';
 
-    // ListTile has no onSecondaryTap of its own, so wrap it: on desktop
-    // right-click opens the same action sheet long-press opens on touch
-    // devices. Behind the tile so the ink and hover effects still come
-    // from the tile itself, not a bare GestureDetector.
+    // ListTile has no onSecondaryTap of its own, so wrap it: a right-click
+    // opens the same actions long-press opens on touch devices, as a menu
+    // at the pointer. Behind the tile so the ink and hover effects still
+    // come from the tile itself, not a bare GestureDetector.
     return GestureDetector(
       behavior: HitTestBehavior.opaque,
-      onSecondaryTap: onLongPress,
+      onSecondaryTapUp: onSecondaryTap,
       child: ListTile(
         // Not dense: fat-finger comfort for a list of remote files matters
         // more here than screen density.

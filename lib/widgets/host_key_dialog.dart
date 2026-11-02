@@ -1,9 +1,9 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 
 import '../l10n/l10n.dart';
 import '../services/host_key_policy.dart';
 import '../theme.dart';
+import 'public_key_dialog.dart' show CopyFeedback;
 
 /// Shows the host key decision and returns true only on explicit acceptance.
 ///
@@ -227,40 +227,60 @@ class _FingerprintBlock extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(label, style: Theme.of(context).textTheme.bodySmall),
-        const SizedBox(height: 4),
-        InkWell(
-          onTap: () {
-            Clipboard.setData(ClipboardData(text: fingerprint));
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(content: Text(context.l10n.hostKeyFingerprintCopied)),
-            );
-          },
-          borderRadius: BorderRadius.circular(6),
-          child: Container(
-            width: double.infinity,
-            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-            decoration: BoxDecoration(
-              color: theme.colorScheme.surfaceContainerHighest,
-              borderRadius: BorderRadius.circular(6),
-              border: Border.all(color: color.withValues(alpha: 0.4)),
-            ),
-            child: SelectableText(
-              fingerprint,
-              style: TextStyle(
-                fontFamily: AppTheme.monoFontFamily,
-                fontFamilyFallback: AppTheme.monoFontFamilyFallback,
-                fontSize: 12.5,
-                color: color,
-                height: 1.3,
+    return CopyFeedback(
+      text: fingerprint,
+      builder: (context, copied, copy) => Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: Text(label, style: theme.textTheme.bodySmall),
+              ),
+              IconButton(
+                tooltip: copied
+                    ? context.l10n.commonCopied
+                    : MaterialLocalizations.of(context).copyButtonLabel,
+                onPressed: copy,
+                iconSize: 16,
+                padding: EdgeInsets.zero,
+                constraints: const BoxConstraints.tightFor(
+                  width: 32,
+                  height: 32,
+                ),
+                icon: Icon(
+                  copied ? Icons.check : Icons.copy_outlined,
+                  color: copied ? theme.colorScheme.primary : null,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 4),
+          InkWell(
+            onTap: copy,
+            borderRadius: BorderRadius.circular(6),
+            child: Container(
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+              decoration: BoxDecoration(
+                color: theme.colorScheme.surfaceContainerHighest,
+                borderRadius: BorderRadius.circular(6),
+                border: Border.all(color: color.withValues(alpha: 0.4)),
+              ),
+              child: SelectableText(
+                fingerprint,
+                style: TextStyle(
+                  fontFamily: AppTheme.monoFontFamily,
+                  fontFamilyFallback: AppTheme.monoFontFamilyFallback,
+                  fontSize: 12.5,
+                  color: color,
+                  height: 1.3,
+                ),
               ),
             ),
           ),
-        ),
-      ],
+        ],
+      ),
     );
   }
 }

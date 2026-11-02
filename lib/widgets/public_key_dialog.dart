@@ -1,8 +1,65 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
+import 'package:flutter/semantics.dart';
 import 'package:flutter/services.dart';
 
 import '../l10n/l10n.dart';
 import '../theme.dart';
+
+/// How long a copy control keeps saying "Copied" before it goes back to
+/// offering the copy again.
+const Duration copiedFeedbackDuration = Duration(seconds: 2);
+
+/// Puts [text] on the clipboard and lets its [builder] show that it happened.
+///
+/// For a copy control inside a dialog. A snackbar raised from there plays
+/// under the dialog's dimmed barrier, where it is hard to see, so the control
+/// itself answers: [builder] is handed `copied` (true for
+/// [copiedFeedbackDuration] after a copy) and the `copy` callback to wire to
+/// its tap. Pick the check icon and `commonCopied` while `copied` is true.
+class CopyFeedback extends StatefulWidget {
+  const CopyFeedback({super.key, required this.text, required this.builder});
+
+  final String text;
+  final Widget Function(BuildContext context, bool copied, VoidCallback copy)
+      builder;
+
+  @override
+  State<CopyFeedback> createState() => _CopyFeedbackState();
+}
+
+class _CopyFeedbackState extends State<CopyFeedback> {
+  Timer? _revert;
+  bool _copied = false;
+
+  Future<void> _copy() async {
+    await Clipboard.setData(ClipboardData(text: widget.text));
+    if (!mounted) return;
+    setState(() => _copied = true);
+    // The snackbar this replaces was announced; a label that merely changes
+    // is not, so say it once for a screen reader.
+    unawaited(SemanticsService.sendAnnouncement(
+      View.of(context),
+      context.l10n.commonCopied,
+      Directionality.of(context),
+    ));
+    _revert?.cancel();
+    _revert = Timer(copiedFeedbackDuration, () {
+      if (mounted) setState(() => _copied = false);
+    });
+  }
+
+  @override
+  void dispose() {
+    _revert?.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) =>
+      widget.builder(context, _copied, () => unawaited(_copy()));
+}
 
 /// Shows a freshly generated public key line with a one-tap copy.
 ///
@@ -54,14 +111,17 @@ Future<void> showGeneratedPublicKeyDialog(
         ),
       ),
       actions: [
-        TextButton(
-          onPressed: () {
-            Clipboard.setData(ClipboardData(text: publicKeyLine));
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(content: Text(context.l10n.publicKeyCopied)),
-            );
-          },
-          child: Text(MaterialLocalizations.of(context).copyButtonLabel),
+        CopyFeedback(
+          text: publicKeyLine,
+          builder: (context, copied, copy) => TextButton.icon(
+            onPressed: copy,
+            icon: Icon(copied ? Icons.check : Icons.copy_outlined, size: 18),
+            label: Text(
+              copied
+                  ? context.l10n.commonCopied
+                  : MaterialLocalizations.of(context).copyButtonLabel,
+            ),
+          ),
         ),
         FilledButton(
           onPressed: () => Navigator.of(context).pop(),

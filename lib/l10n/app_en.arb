@@ -1121,10 +1121,6 @@
   "@hostKeyFingerprint": {
     "description": "Host key dialog: label over the key's fingerprint. Keep SHA256."
   },
-  "hostKeyFingerprintCopied": "Fingerprint copied",
-  "@hostKeyFingerprintCopied": {
-    "description": "Host key dialog: snackbar after tapping a fingerprint."
-  },
   "hostKeyVerifiedNewKey": "I verified this new key with the server owner",
   "@hostKeyVerifiedNewKey": {
     "description": "Host key dialog: checkbox that must be ticked before a changed key can be trusted."
@@ -1218,10 +1214,6 @@
         "example": "Install public key on server…"
       }
     }
-  },
-  "publicKeyCopied": "Public key copied",
-  "@publicKeyCopied": {
-    "description": "Host form: snackbar after copying the public key."
   },
   "publicKeyDone": "Done",
   "@publicKeyDone": {
@@ -1428,6 +1420,14 @@
   "settingsCursorBlinkHelp": "Blinks while the terminal has the keyboard",
   "@settingsCursorBlinkHelp": {
     "description": "Settings > Terminal: subtitle of the blinking cursor switch."
+  },
+  "settingsCopyOnSelect": "Copy on select",
+  "@settingsCopyOnSelect": {
+    "description": "Settings > Terminal: switch that copies text to the clipboard as soon as it is selected with a mouse."
+  },
+  "settingsCopyOnSelectHelp": "Text you select with the mouse goes straight to the clipboard",
+  "@settingsCopyOnSelectHelp": {
+    "description": "Settings > Terminal: subtitle of the copy-on-select switch."
   },
   "settingsBell": "Bell",
   "@settingsBell": {
@@ -7539,5 +7539,42 @@
   "remoteDesktopVirtualClearApp": "Clear",
   "@remoteDesktopVirtualClearApp": {
     "description": "Virtual desktop setup: tooltip of the button that clears the app picked from the server's list."
+  },
+  "commonCopied": "Copied",
+  "@commonCopied": {
+    "description": "A copy button's label for a moment after it copied."
+  },
+  "hostListTryAgain": "Try again",
+  "@hostListTryAgain": {
+    "description": "Connection error dialog: button that connects to the same host again."
+  },
+  "hostEditDiscardTitle": "Discard changes?",
+  "@hostEditDiscardTitle": {
+    "description": "Host form: title of the confirmation when leaving with unsaved changes."
+  },
+  "hostEditDiscardBody": "Your changes to this host have not been saved.",
+  "@hostEditDiscardBody": {
+    "description": "Host form: body of the confirmation when leaving with unsaved changes."
+  },
+  "transferPanelCancelAllTitle": "{count, plural, =1{Cancel 1 transfer?} other{Cancel {count} transfers?}}",
+  "@transferPanelCancelAllTitle": {
+    "description": "Transfers: title of the confirmation before Cancel all.",
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "transferPanelCancelAllBody": "A cancelled transfer stops where it is and can't be resumed.",
+  "@transferPanelCancelAllBody": {
+    "description": "Transfers: body of the confirmation before Cancel all."
+  },
+  "transferPanelKeepTransfers": "Keep going",
+  "@transferPanelKeepTransfers": {
+    "description": "Transfers: button that closes the Cancel all confirmation and leaves transfers running."
+  },
+  "terminalJumpToLatest": "Jump to the latest output",
+  "@terminalJumpToLatest": {
+    "description": "Terminal: tooltip of the button that appears while scrolled up in the history and scrolls back down to the newest output."
   }
 }

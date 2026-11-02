@@ -18,6 +18,7 @@ import '../services/settings_store.dart';
 import '../services/sftp_service.dart';
 import '../services/syntax_highlighter.dart';
 import '../theme.dart';
+import '../widgets/app_snack.dart';
 import '../widgets/code_editor_field.dart';
 import '../widgets/editor_key_bar.dart';
 
@@ -415,7 +416,9 @@ class _RemoteEditorScreenState extends State<RemoteEditorScreen> {
         tab.savedText = text;
         tab.fingerprint = outcome.fingerprint;
       });
-      _snack(_savedMessage(tab, outcome));
+      // A plain save is already on screen: the unsaved dot in the title goes
+      // out. Only what the screen cannot show is worth a message.
+      if (outcome.permissionsLost) _snack(_savedMessage(tab, outcome));
     } on EditorSaveConflict catch (e) {
       if (!mounted) return;
       await _resolveConflict(tab, e);
@@ -1271,7 +1274,8 @@ class _RemoteEditorScreenState extends State<RemoteEditorScreen> {
 
   void _snack(String message, {bool isError = false}) {
     final theme = Theme.of(context);
-    ScaffoldMessenger.of(context).showSnackBar(
+    showReplacingSnackBar(
+      context,
       SnackBar(
         content: Text(message),
         backgroundColor: isError ? theme.colorScheme.error : null,

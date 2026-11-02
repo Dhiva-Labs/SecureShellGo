@@ -18,6 +18,7 @@ import '../services/transfer_hub.dart';
 import '../services/transfer_queue.dart';
 import '../services/tunnel_runtime.dart';
 import '../theme.dart';
+import '../widgets/app_snack.dart';
 import '../widgets/hinge_split.dart';
 import '../widgets/session_banners.dart';
 import '../widgets/session_log_actions.dart';
@@ -363,6 +364,31 @@ class _SessionsScreenState extends State<SessionsScreen> {
     _selectSession(id);
   }
 
+  /// The panes of a split that are showing a session, in the order they are
+  /// laid out: left to right, top to bottom.
+  List<WorkspacePane> _panesWithSessions() => [
+        for (final pane in _workspace.panes)
+          if (!pane.isEmpty) pane,
+      ];
+
+  /// Ctrl+Shift+N and Ctrl+Shift+P: the keyboard to the next or previous
+  /// pane, wrapping round, without changing what any pane shows — unlike
+  /// Ctrl+Tab, which brings a session with no pane into the focused one.
+  ///
+  /// An empty pane is passed over: there is no terminal in it to type into,
+  /// and focusing one would leave the keys going to the terminal the
+  /// highlight had just left. Focusing a pane is all it takes; the page it
+  /// shows puts the caret in its terminal as it becomes the active one.
+  void _cyclePane({required bool backwards}) {
+    final panes = _panesWithSessions();
+    if (panes.length < 2) return;
+    final at = panes.indexWhere((p) => p.id == _workspace.focusedPaneId);
+    final next = at < 0
+        ? (backwards ? panes.length - 1 : 0)
+        : (at + (backwards ? -1 : 1)) % panes.length;
+    _workspace.focusPane(panes[next].id);
+  }
+
   /// The terminal takes the whole width, or gives the files their side back.
   /// Going full width shows the terminal, whichever pane was last toggled
   /// to on a narrower screen — that is what the button says it does.
@@ -515,9 +541,7 @@ class _SessionsScreenState extends State<SessionsScreen> {
     if (source == null) {
       // The source session was closed between the drag starting and the drop
       // landing. Surface a message rather than dropping silently.
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-        content: Text(context.l10n.sessionTabDropClosed),
-      ));
+      showReplacingSnack(context, context.l10n.sessionTabDropClosed);
       return;
     }
 
@@ -541,10 +565,18 @@ class _SessionsScreenState extends State<SessionsScreen> {
   ///
   /// Only this session: the confirmation names it, the transfer count is its
   /// own, and every other tab carries on regardless of the answer.
+  ///
+  /// Every way of closing one comes through here — the app bar, a tab's ×,
+  /// Ctrl+Shift+W and the Close on a session's banner — so that none of them
+  /// can skip the question, or leave this screen up with nothing on it.
+  ///
+  /// A session that has already ended is closed without asking, unless it is
+  /// still holding transfers: a dropped connection that can reconnect keeps
+  /// its unfinished ones waiting, and closing the tab is what loses them.
   Future<void> _closeSession(ManagedSession entry) async {
-    if (!entry.isClosed) {
+    final transfers = entry.controller.transfers.activeCount;
+    if (!entry.isClosed || transfers > 0) {
       final l10n = context.l10n;
-      final transfers = entry.controller.transfers.activeCount;
       final question = transfers > 0
           ? l10n.sessionCloseQuestionTransfers(
               transfers, entry.host.displayName)
@@ -552,7 +584,9 @@ class _SessionsScreenState extends State<SessionsScreen> {
       final confirmed = await showDialog<bool>(
         context: context,
         builder: (context) => AlertDialog(
-          title: Text(l10n.sessionCloseTitle),
+          // There is nothing left to disconnect from on a session that has
+          // ended, so it is asked without the title and closed by name.
+          title: entry.isClosed ? null : Text(l10n.sessionCloseTitle),
           content: Text(
             SessionLogActions.isRecording(entry.controller)
                 ? l10n.sessionCloseWithLog(question)
@@ -565,7 +599,9 @@ class _SessionsScreenState extends State<SessionsScreen> {
             ),
             FilledButton(
               onPressed: () => Navigator.of(context).pop(true),
-              child: Text(l10n.sessionDisconnect),
+              child: Text(
+                entry.isClosed ? l10n.sessionCloseTab : l10n.sessionDisconnect,
+              ),
             ),
           ],
         ),
@@ -594,10 +630,14 @@ class _SessionsScreenState extends State<SessionsScreen> {
 
   /// One session's page, with the identity that lets it be moved rather than
   /// rebuilt. See [_pageKeys].
+  ///
+  /// [visible] is whether it is on screen at all — the tab in front, or any
+  /// pane of a split — where [active] is whether it has the keyboard.
   Widget _page(
     ManagedSession entry, {
     required SessionManager manager,
     required bool active,
+    required bool visible,
     required _Panes panes,
   }) {
     return _SessionPage(
@@ -606,8 +646,10 @@ class _SessionsScreenState extends State<SessionsScreen> {
       manager: manager,
       settingsStore: widget.settingsStore,
       active: active,
+      visible: visible,
       panes: panes,
       screenFocus: _screenFocus,
+      onClose: () => unawaited(_closeSession(entry)),
     );
   }
 
@@ -632,6 +674,7 @@ class _SessionsScreenState extends State<SessionsScreen> {
               entry,
               manager: manager,
               active: entry.id == manager.activeId,
+              visible: entry.id == manager.activeId,
               panes: panes,
             ),
           ),
@@ -676,6 +719,7 @@ class _SessionsScreenState extends State<SessionsScreen> {
                   entry,
                   manager: manager,
                   active: false,
+                  visible: false,
                   panes: panes,
                 ),
               ),
@@ -692,6 +736,8 @@ class _SessionsScreenState extends State<SessionsScreen> {
             // one pane, so at most one page is `active` — which is what puts
             // the caret in that terminal and keeps it out of the others.
             active: entry.id == focusedSessionId,
+            // Every pane is on screen, focused or not, and so is its banner.
+            visible: true,
             panes: panes,
           ),
         ),
@@ -707,7 +753,15 @@ class _SessionsScreenState extends State<SessionsScreen> {
 
     if (active == null) {
       // Only reachable for the frame between the last session closing and the
-      // pop landing.
+      // pop landing — [_closeSession] pops as the last one goes. Should one
+      // ever go some other way, this screen goes too rather than stay up
+      // blank: once, since a route already on its way out is not current.
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted || widget.sessions.isNotEmpty) return;
+        if (ModalRoute.of(context)?.isCurrent ?? false) {
+          Navigator.of(context).pop();
+        }
+      });
       return const Scaffold(body: SizedBox.shrink());
     }
 
@@ -813,14 +867,18 @@ class _SessionsScreenState extends State<SessionsScreen> {
               // stream, which this screen is already listening to.
               onToggle: _broadcast.toggle,
             ),
-          _TransferAction(
-            queue: active.controller.transfers,
-            onTap: () => showTransfersSheet(
-              context,
-              active.controller.transfers,
-              onOpen: active.controller.openDownload,
+          // Only from the second session on. With one open, every transfer
+          // is this session's, and "All transfers" beside it was the same
+          // list under the same badge twice.
+          if (entries.length > 1)
+            _TransferAction(
+              queue: active.controller.transfers,
+              onTap: () => showTransfersSheet(
+                context,
+                active.controller.transfers,
+                onOpen: active.controller.openDownload,
+              ),
             ),
-          ),
           if (workspaceOn)
             PopupMenuButton<_WorkspaceAction>(
               tooltip: l10n.sessionSplitTooltip,
@@ -853,6 +911,22 @@ class _SessionsScreenState extends State<SessionsScreen> {
           TransferHubAction(
             hub: _hub,
             onTap: () {
+              // The only transfer button while one session is open, so it
+              // opens that session's own list: the same transfers, but with
+              // the Open on a finished download that the merged list does not
+              // offer. A fleet push is shown only in the merged one, so
+              // while one is being held, that is still where this goes.
+              if (entries.length == 1 &&
+                  widget.fleetPushRegistry?.current == null) {
+                unawaited(
+                  showTransfersSheet(
+                    context,
+                    active.controller.transfers,
+                    onOpen: active.controller.openDownload,
+                  ),
+                );
+                return;
+              }
               // Captured before the sheet opens: once its banner is tapped,
               // the sheet itself is popped first, and a `Navigator` handle
               // stays valid across that in a way a `BuildContext` from
@@ -887,6 +961,7 @@ class _SessionsScreenState extends State<SessionsScreen> {
                     : l10n.sessionBackToTerminal,
                 SessionShortcuts.toggleFiles,
                 keyboard: input.keyboard,
+                platform: theme.platform,
               ),
               icon: Icon(
                 active.view == SessionView.terminal
@@ -906,6 +981,7 @@ class _SessionsScreenState extends State<SessionsScreen> {
                     : l10n.sessionTerminalFullWidth,
                 SessionShortcuts.toggleFullWidth,
                 keyboard: input.keyboard,
+                platform: theme.platform,
               ),
               icon: Icon(
                 _terminalFullWidth
@@ -947,22 +1023,28 @@ class _SessionsScreenState extends State<SessionsScreen> {
             itemBuilder: (context) {
               final recording =
                   SessionLogActions.isRecording(active.controller);
-              return [
-                PopupMenuItem<_SessionMenu>(
-                  value: _SessionMenu.find,
-                  child: Row(
+              // An item's label with its keys at the far end, where there is
+              // a keyboard to press them on.
+              Widget withKeys(Widget label, String keys) => Row(
                     children: [
-                      Expanded(child: Text(l10n.sessionFindInTerminal)),
+                      Expanded(child: label),
                       if (input.keyboard) ...[
                         const SizedBox(width: 24),
                         Text(
-                          'Ctrl+Shift+F',
+                          keys,
                           style: theme.textTheme.bodySmall?.copyWith(
                             color: theme.colorScheme.onSurfaceVariant,
                           ),
                         ),
                       ],
                     ],
+                  );
+              return [
+                PopupMenuItem<_SessionMenu>(
+                  value: _SessionMenu.find,
+                  child: withKeys(
+                    Text(l10n.sessionFindInTerminal),
+                    'Ctrl+Shift+F',
                   ),
                 ),
                 if (recording)
@@ -1014,15 +1096,27 @@ class _SessionsScreenState extends State<SessionsScreen> {
                   const PopupMenuDivider(),
                   PopupMenuItem<_SessionMenu>(
                     value: _SessionMenu.newSession,
-                    child: Text(l10n.sessionNew),
+                    child: withKeys(
+                      Text(l10n.sessionNew),
+                      SessionShortcuts.label(
+                        SessionShortcuts.newSession,
+                        platform: theme.platform,
+                      ),
+                    ),
                   ),
                   PopupMenuItem<_SessionMenu>(
                     value: _SessionMenu.close,
-                    child: Text(
-                      closed ? l10n.sessionCloseTab : l10n.sessionDisconnect,
-                      style: closed
-                          ? null
-                          : TextStyle(color: theme.colorScheme.error),
+                    child: withKeys(
+                      Text(
+                        closed ? l10n.sessionCloseTab : l10n.sessionDisconnect,
+                        style: closed
+                            ? null
+                            : TextStyle(color: theme.colorScheme.error),
+                      ),
+                      SessionShortcuts.label(
+                        SessionShortcuts.closeSession,
+                        platform: theme.platform,
+                      ),
                     ),
                   ),
                 ],
@@ -1038,12 +1132,18 @@ class _SessionsScreenState extends State<SessionsScreen> {
                 l10n.sessionNew,
                 SessionShortcuts.newSession,
                 keyboard: input.keyboard,
+                platform: theme.platform,
               ),
               icon: const Icon(Icons.add),
               onPressed: _addSession,
             ),
             IconButton(
-              tooltip: closed ? l10n.sessionCloseTab : l10n.sessionDisconnect,
+              tooltip: SessionShortcuts.tooltip(
+                closed ? l10n.sessionCloseTab : l10n.sessionDisconnect,
+                SessionShortcuts.closeSession,
+                keyboard: input.keyboard,
+                platform: theme.platform,
+              ),
               icon: Icon(closed ? Icons.close : Icons.power_settings_new),
               color: closed ? null : theme.colorScheme.error,
               onPressed: () => unawaited(_closeActive()),
@@ -1081,7 +1181,7 @@ class _SessionsScreenState extends State<SessionsScreen> {
     // terminal hands its own to the same actions before the shell can see
     // them — see `session_shortcuts.dart`.
     return Shortcuts(
-      shortcuts: SessionShortcuts.bindings,
+      shortcuts: SessionShortcuts.bindingsFor(theme.platform),
       child: Actions(
         actions: <Type, Action<Intent>>{
           NewSessionIntent: _SessionAction<NewSessionIntent>(
@@ -1099,6 +1199,15 @@ class _SessionsScreenState extends State<SessionsScreen> {
               _SessionAction<ToggleTerminalFullWidthIntent>(
             enabled: !split && roomForBoth,
             onInvoke: (_) => _toggleTerminalFullWidth(),
+          ),
+          CloseSessionIntent: _SessionAction<CloseSessionIntent>(
+            onInvoke: (_) => unawaited(_closeActive()),
+          ),
+          // Only while there is another pane to go to: otherwise the chord
+          // is the shell's, which reads it as plain Ctrl+N or Ctrl+P.
+          CyclePaneIntent: _SessionAction<CyclePaneIntent>(
+            enabled: split && _panesWithSessions().length > 1,
+            onInvoke: (intent) => _cyclePane(backwards: intent.backwards),
           ),
         },
         child: Focus(
@@ -1123,19 +1232,30 @@ class _SessionPage extends StatefulWidget {
     required this.manager,
     required this.settingsStore,
     required this.active,
+    required this.visible,
     required this.panes,
     required this.screenFocus,
+    required this.onClose,
   });
 
   final ManagedSession entry;
   final SessionManager manager;
   final SettingsStore settingsStore;
   final bool active;
+
+  /// On screen, whether or not it has the keyboard: the tab in front, or any
+  /// pane of a split. Its banners can be seen, so they speak for it.
+  final bool visible;
+
   final _Panes panes;
 
   /// The screen's resting place for the keyboard, under its shortcuts — see
   /// `_SessionsScreenState._screenFocus`.
   final FocusNode screenFocus;
+
+  /// Closes this session the way the app bar does — see
+  /// `_SessionsScreenState._closeSession` — for the Close on its banner.
+  final VoidCallback onClose;
 
   @override
   State<_SessionPage> createState() => _SessionPageState();
@@ -1252,13 +1372,16 @@ class _SessionPageState extends State<_SessionPage> {
     // is too short-lived a thing to be trusted with that.
     final reason = _session.takeDisconnectAnnouncement();
     if (reason == null) return;
+    // On screen, the banner above the terminal already says so, with the
+    // ways on from there; a red bar repeating it would only sit over the
+    // key bar. Taken all the same, so that the drop is not announced again
+    // the moment this tab goes to the back.
+    if (widget.visible) return;
     final theme = Theme.of(context);
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(
-          widget.active
-              ? reason
-              : context.l10n.sessionOnHost(widget.entry.host.displayName, reason),
+          context.l10n.sessionOnHost(widget.entry.host.displayName, reason),
         ),
         backgroundColor: theme.colorScheme.error,
       ),
@@ -1282,7 +1405,10 @@ class _SessionPageState extends State<_SessionPage> {
     final batch = _session.takeDownloadAnnouncement(tasks);
     if (batch.isEmpty) return;
 
-    ScaffoldMessenger.of(context).showSnackBar(
+    // In place of whatever is up, not behind it: a second batch landing a
+    // moment after the first makes the first one's news stale.
+    showReplacingSnackBar(
+      context,
       buildDownloadSavedSnackBar(
         context.l10n,
         batch: batch,
@@ -1307,15 +1433,10 @@ class _SessionPageState extends State<_SessionPage> {
     final noApp = context.l10n.transferPanelNoAppForFile;
     final opened = await _session.openDownload(task);
     if (!opened) {
-      messenger.showSnackBar(SnackBar(content: Text(noApp)));
+      messenger
+        ..hideCurrentSnackBar()
+        ..showSnackBar(SnackBar(content: Text(noApp)));
     }
-  }
-
-  /// The banner's "Close tab", on a session that has already ended: its log,
-  /// if one is still being kept, is saved first.
-  Future<void> _closeTab() async {
-    await SessionLogActions.stopBeforeClose(context, _session);
-    await widget.manager.close(widget.entry.id);
   }
 
   Widget _terminalPane() {
@@ -1353,7 +1474,7 @@ class _SessionPageState extends State<_SessionPage> {
       children: [
         SessionBanners(
           session: entry,
-          onCloseTab: () => unawaited(_closeTab()),
+          onCloseTab: widget.onClose,
         ),
         Expanded(
           child: switch (widget.panes) {
