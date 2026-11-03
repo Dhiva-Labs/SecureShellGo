@@ -62,7 +62,7 @@
   "hostListSessionsDropped": "{count, plural, one{{count} desconectada} other{{count} desconectadas}}",
   "hostListResume": "Reanudar",
   "hostListKeyringLocked": "No se pudo leer el llavero del sistema, así que mientras la app siga abierta no se pueden comprobar tus claves de host de confianza. Cada servidor te pedirá de nuevo que verifiques su clave, y las claves que aceptes no se guardarán hasta que se desbloquee el llavero y se reinicie la app.",
-  "hostListTrustStoreReset": "El almacén de claves de host de confianza no superó la comprobación de integridad y se restableció. Cada servidor te pedirá de nuevo que verifiques su clave: compara cada huella digital con la del propio servidor.",
+  "hostListTrustStoreReset": "No se pudieron confirmar en este dispositivo las claves de servidor guardadas, así que cada servidor le pedirá revisar su clave una vez más. Compare la huella con la del servidor antes de aceptarla.",
   "hostListDismiss": "Descartar",
   "hostListEmptyTitle": "Aún no hay hosts guardados",
   "hostListEmptyBody": "Agrega un servidor para conectarte con un toque la próxima vez. Las contraseñas y claves se guardan cifradas en este dispositivo.",

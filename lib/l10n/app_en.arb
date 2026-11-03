@@ -329,9 +329,9 @@
   "@hostListKeyringLocked": {
     "description": "Host list: security banner when the OS keyring holding the integrity key of the trusted host keys is locked."
   },
-  "hostListTrustStoreReset": "The trusted host-key store failed its integrity check and was reset. Every server will ask you to verify its key again — compare each fingerprint against the server itself.",
+  "hostListTrustStoreReset": "Your saved server keys couldn't be confirmed on this device, so each server will ask you to check its key once more. Compare the fingerprint with the server before you accept it.",
   "@hostListTrustStoreReset": {
-    "description": "Host list: security banner when the saved trusted host keys were found tampered with or corrupt and were discarded."
+    "description": "Host list: one-time notice when the saved trusted host keys could not be verified (changed outside the app, or corrupt) and were set aside, so each server asks to confirm its key again."
   },
   "hostListDismiss": "Dismiss",
   "@hostListDismiss": {

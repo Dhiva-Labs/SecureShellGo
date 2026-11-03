@@ -62,7 +62,7 @@
   "hostListSessionsDropped": "{count, plural, one{{count} coupée} other{{count} coupées}}",
   "hostListResume": "Reprendre",
   "hostListKeyringLocked": "Le trousseau système n'a pas pu être lu : vos clés d'hôte approuvées ne peuvent donc pas être vérifiées tant que l'application reste ouverte. Chaque serveur vous demandera de vérifier à nouveau sa clé, et les clés que vous accepterez ne seront pas enregistrées tant que le trousseau n'aura pas été déverrouillé et l'application redémarrée.",
-  "hostListTrustStoreReset": "Le stockage des clés d'hôte approuvées n'a pas passé le contrôle d'intégrité et a été réinitialisé. Chaque serveur vous demandera de vérifier à nouveau sa clé — comparez chaque empreinte à celle relevée sur le serveur lui-même.",
+  "hostListTrustStoreReset": "Les clés de serveur enregistrées n'ont pas pu être confirmées sur cet appareil : chaque serveur vous demandera de vérifier sa clé une nouvelle fois. Comparez l'empreinte avec celle du serveur avant de l'accepter.",
   "hostListDismiss": "Fermer",
   "hostListEmptyTitle": "Aucun hôte enregistré",
   "hostListEmptyBody": "Ajoutez un serveur pour vous y connecter d'un simple appui la prochaine fois. Les mots de passe et les clés sont stockés chiffrés sur cet appareil.",

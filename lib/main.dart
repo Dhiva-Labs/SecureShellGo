@@ -84,11 +84,17 @@ class _SecureShellGoAppState extends State<SecureShellGoApp> {
   // with no keyring at all gets a device-encrypted vault without being asked
   // rather than being refused the save.
   late final SecretVault _secretVault = SecretVault();
+
+  // Whether this device has ever reached a keyring: the credential store and
+  // the known-hosts seal both ask, to tell "locked for now" from "never had
+  // one". One instance, so what one of them learns the other knows.
+  late final SecureStorageState _storageState = SecureStorageState();
   late final SecureStorageBackend _secureStorage =
       CompositeSecureStorageBackend(
     keyring: _keyring,
     vault: _secretVault,
     keyringAvailable: _keyring.isAvailable,
+    state: _storageState,
     requestUnlockPassphrase: _promptVaultPassphrase,
   );
 
@@ -116,11 +122,15 @@ class _SecureShellGoAppState extends State<SecureShellGoApp> {
   // before the vault existed — no better, and no worse.
   //
   // `readOrThrow` so a locked keyring reads as "cannot tell", not as "no key
-  // yet" — the second would mint a new key over the real one.
+  // yet" — the second would mint a new key over the real one. A device that
+  // has never reached a keyring has no key to protect, so its store is kept
+  // unsealed rather than forgotten on every launch.
   late final KnownHostsService _knownHosts = KnownHostsService(
     integrityKey: KnownHostsIntegrityKey(
       _keyring,
       readOrThrow: _keyring.readOrThrow,
+      keyringEverAvailable: _storageState.keyringEverAvailable,
+      recordKeyringAvailable: _storageState.recordKeyringAvailable,
     ),
   );
   // The jump-host resolver turns a saved host's `jumpHostId` into the hop's
