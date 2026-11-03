@@ -76,7 +76,16 @@ class SerialFileWriter {
 /// file — every saved host, say — was overwritten by that save; with it, the
 /// bytes survive for someone to recover by hand. Best effort throughout: a
 /// failure here must not turn a bad load into a crash.
-Future<void> setAsideUnreadable(File? file) async {
+Future<void> setAsideUnreadable(File? file) =>
+    _setAside(file, suffix: 'corrupt');
+
+/// Moves a store file whose seal did not verify out of the way, to
+/// `<name>.unverified-<timestamp>` beside it, where it can be compared by
+/// hand and is never read again. Best effort, like [setAsideUnreadable].
+Future<void> setAsideUnverified(File? file) =>
+    _setAside(file, suffix: 'unverified');
+
+Future<void> _setAside(File? file, {required String suffix}) async {
   if (file == null) return;
   try {
     if (!await file.exists()) return;
@@ -84,7 +93,7 @@ Future<void> setAsideUnreadable(File? file) async {
         .toUtc()
         .toIso8601String()
         .replaceAll(RegExp(r'[^0-9T]'), '');
-    await file.rename('${file.path}.corrupt-$stamp');
+    await file.rename('${file.path}.$suffix-$stamp');
   } catch (_) {
     // Nothing further to try.
   }

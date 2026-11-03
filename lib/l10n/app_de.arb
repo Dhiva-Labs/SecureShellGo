@@ -62,7 +62,7 @@
   "hostListSessionsDropped": "{count, plural, other{{count} abgebrochen}}",
   "hostListResume": "Fortsetzen",
   "hostListKeyringLocked": "Der Systemschlüsselbund konnte nicht gelesen werden, daher können Ihre vertrauenswürdigen Hostschlüssel in dieser App-Sitzung nicht geprüft werden. Jeder Server fordert Sie erneut auf, seinen Schlüssel zu überprüfen, und von Ihnen akzeptierte Schlüssel werden erst gespeichert, wenn der Schlüsselbund entsperrt und die App neu gestartet wurde.",
-  "hostListTrustStoreReset": "Der Speicher der vertrauenswürdigen Hostschlüssel hat die Integritätsprüfung nicht bestanden und wurde zurückgesetzt. Jeder Server fordert Sie erneut auf, seinen Schlüssel zu überprüfen – gleichen Sie jeden Fingerabdruck direkt am Server ab.",
+  "hostListTrustStoreReset": "Ihre gespeicherten Serverschlüssel konnten auf diesem Gerät nicht bestätigt werden. Jeder Server fragt daher noch einmal nach seinem Schlüssel. Vergleichen Sie den Fingerabdruck mit dem Server, bevor Sie ihn annehmen.",
   "hostListDismiss": "Schließen",
   "hostListEmptyTitle": "Noch keine Hosts gespeichert",
   "hostListEmptyBody": "Fügen Sie einen Server hinzu, um sich beim nächsten Mal mit einem Tipp zu verbinden. Passwörter und Schlüssel werden verschlüsselt auf diesem Gerät gespeichert.",

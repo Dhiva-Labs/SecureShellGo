@@ -1,3 +1,17 @@
+secureshellgo (1.5.1~noble1) noble; urgency=medium
+
+  * Selecting text with a mouse no longer brings up a bar that moved the
+    terminal; copy on select, middle-click paste, and a preview before a
+    paste of several lines.
+  * Trusted server keys are kept when the keyring loses the key that
+    protects them, and remembered on a computer with no keyring, instead of
+    an integrity warning and every server asking again.
+  * Fewer popups across the app: snackbars replace each other, menus open at
+    the pointer with a mouse, and closing the last session returns to the
+    host list.
+
+ -- Dhiva Labs <dhivakar1010@gmail.com>  Tue, 03 Nov 2026 12:00:00 +0530
+
 secureshellgo (1.5.0~noble1) noble; urgency=medium
 
   * A major update; the full list is in CHANGELOG.md.

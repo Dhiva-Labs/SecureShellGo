@@ -63,7 +63,7 @@ void main() {
       final key = newKey();
       expect(await key.exists(), isFalse);
 
-      final first = await key.obtain();
+      final first = (await key.obtain())!;
       expect(first.length, KnownHostsIntegrityKey.keyLengthBytes);
       expect(await key.exists(), isTrue);
 
@@ -75,7 +75,7 @@ void main() {
 
     test('an unreadable stored key is replaced rather than crashing', () async {
       backend.data[KnownHostsIntegrityKey.storageKey] = 'not base64 !!!';
-      final key = await KnownHostsIntegrityKey(backend).obtain();
+      final key = (await KnownHostsIntegrityKey(backend).obtain())!;
       expect(key.length, KnownHostsIntegrityKey.keyLengthBytes);
     });
 
@@ -98,7 +98,7 @@ void main() {
 
   group('KnownHostsEnvelope', () {
     test('seals and reopens a payload', () async {
-      final key = await newKey().obtain();
+      final key = (await newKey().obtain())!;
       final sealed = KnownHostsEnvelope.seal(key, {'version': 1, 'hosts': {}});
 
       final check = KnownHostsEnvelope.open(
@@ -111,7 +111,7 @@ void main() {
     });
 
     test('a doctored payload no longer verifies', () async {
-      final key = await newKey().obtain();
+      final key = (await newKey().obtain())!;
       final sealed = KnownHostsEnvelope.seal(key, {
         'version': 1,
         'hosts': {'a': 1},
@@ -131,7 +131,7 @@ void main() {
 
     test('a different device key does not verify', () async {
       final sealed = KnownHostsEnvelope.seal(
-        await newKey().obtain(),
+        (await newKey().obtain())!,
         {'version': 1, 'hosts': {}},
       );
 
@@ -145,6 +145,23 @@ void main() {
         keyEverEstablished: true,
       );
       expect(check.verdict, IntegrityVerdict.tampered);
+    });
+
+    test('a seal under a key the keyring has lost is adopted, not tampered',
+        () async {
+      final sealed = KnownHostsEnvelope.seal(
+        (await newKey().obtain())!,
+        {'version': 1, 'hosts': {'a': 1}},
+      );
+      final minted = await KnownHostsIntegrityKey(
+        FakeSecureStorageBackend(),
+        random: Random(9),
+      ).obtain();
+
+      final check = KnownHostsEnvelope.open(sealed, key: minted);
+      expect(check.verdict, IntegrityVerdict.rekeyed);
+      expect(check.isTrustworthy, isTrue);
+      expect(check.payload?['hosts'], {'a': 1});
     });
 
     test('an unsealed file is adopted once, before a key exists', () {
@@ -226,23 +243,128 @@ void main() {
       expect(await reloaded.lookup('example.com', 22, 'ssh-ed25519'), isNull);
       expect(await reloaded.isHostKnown('example.com', 22), isFalse);
       expect(reloaded.integrityFailed, isTrue);
+
+      // Kept aside for a person to look at, never read again...
+      expect(await storeFile.exists(), isFalse);
+      final aside = tempDir
+          .listSync()
+          .whereType<File>()
+          .where((f) => f.path.contains('known_hosts.json.unverified-'));
+      expect(aside, hasLength(1));
+      // ...so the next launch does not say it all over again.
+      final next = KnownHostsService(
+        file: storeFile,
+        integrityKey: KnownHostsIntegrityKey(backend),
+      );
+      expect(await next.all(), isEmpty);
+      expect(next.integrityFailed, isFalse);
     });
 
-    test('losing the device key fails closed rather than trusting blindly',
+    test('a keyring that lost the key re-seals the store, without alarm',
         () async {
       await KnownHostsService(file: storeFile, integrityKey: newKey())
           .trust(hostKey());
 
-      // Secure storage wiped (app data cleared, key rotated): the file can no
-      // longer be authenticated, so nothing in it may be believed.
+      // The keyring was reset, or the data came from another machine. Only
+      // something with keyring access can take the key away, and that could
+      // have forged a seal anyway: this is not tampering.
       backend.data.clear();
 
       final reloaded = KnownHostsService(
         file: storeFile,
         integrityKey: KnownHostsIntegrityKey(backend),
       );
-      expect(await reloaded.all(), isEmpty);
-      expect(reloaded.integrityFailed, isTrue);
+      expect(
+        (await reloaded.lookup('example.com', 22, 'ssh-ed25519'))?.fingerprint,
+        'SHA256:AAAA',
+      );
+      expect(reloaded.integrityFailed, isFalse);
+
+      // Sealed again under the new key, so it verifies from now on — and a
+      // change to it now is tampering again.
+      expect(backend.data[KnownHostsIntegrityKey.storageKey], isNotNull);
+      final next = KnownHostsService(
+        file: storeFile,
+        integrityKey: KnownHostsIntegrityKey(backend),
+      );
+      expect(await next.isHostKnown('example.com', 22), isTrue);
+      expect(next.integrityFailed, isFalse);
+    });
+
+    test('a device that has never had a keyring still remembers trust',
+        () async {
+      KnownHostsIntegrityKey noKeyring() => KnownHostsIntegrityKey(
+            backend,
+            readOrThrow: (_) async => throw StateError('no secret service'),
+            keyringEverAvailable: () async => false,
+          );
+      await KnownHostsService(file: storeFile, integrityKey: noKeyring())
+          .trust(hostKey());
+
+      final reloaded =
+          KnownHostsService(file: storeFile, integrityKey: noKeyring());
+      expect(await reloaded.isHostKnown('example.com', 22), isTrue);
+      expect(reloaded.keyUnavailable, isFalse);
+      expect(reloaded.integrityFailed, isFalse);
+      expect(backend.data, isEmpty, reason: 'there was nowhere to keep a key');
+
+      // The first launch that reaches a keyring seals what was kept.
+      var recorded = false;
+      final withKeyring = KnownHostsService(
+        file: storeFile,
+        integrityKey: KnownHostsIntegrityKey(
+          backend,
+          readOrThrow: (key) async => backend.data[key],
+          keyringEverAvailable: () async => recorded,
+          recordKeyringAvailable: () async => recorded = true,
+        ),
+      );
+      expect(await withKeyring.isHostKnown('example.com', 22), isTrue);
+      expect(withKeyring.integrityFailed, isFalse);
+      expect(recorded, isTrue);
+      final document =
+          jsonDecode(await storeFile.readAsString()) as Map<String, dynamic>;
+      expect(document['mac'], isA<String>());
+    });
+
+    test('a keyring that worked before and is locked now still fails closed',
+        () async {
+      await KnownHostsService(file: storeFile, integrityKey: newKey())
+          .trust(hostKey());
+      final locked = KnownHostsService(
+        file: storeFile,
+        integrityKey: KnownHostsIntegrityKey(
+          backend,
+          readOrThrow: (_) async => throw StateError('keyring locked'),
+          keyringEverAvailable: () async => true,
+        ),
+      );
+      expect(await locked.all(), isEmpty);
+      expect(locked.keyUnavailable, isTrue);
+      expect(await storeFile.exists(), isTrue, reason: 'nothing set aside');
+    });
+
+    test('a key saved by another copy of the app is the one sealed with',
+        () async {
+      final service = KnownHostsService(file: storeFile, integrityKey: newKey());
+      await service.trust(hostKey());
+
+      // A second copy of the app, started at the same moment, saved its own
+      // key last.
+      final other = (await KnownHostsIntegrityKey(
+        FakeSecureStorageBackend(),
+        random: Random(7),
+      ).obtain())!;
+      backend.data[KnownHostsIntegrityKey.storageKey] = base64Encode(other);
+
+      await service.trust(hostKey(hostname: 'second.example'));
+
+      final reloaded = KnownHostsService(
+        file: storeFile,
+        integrityKey: KnownHostsIntegrityKey(backend),
+      );
+      expect(await reloaded.isHostKnown('second.example', 22), isTrue);
+      expect(reloaded.integrityFailed, isFalse);
     });
 
     test('a locked keyring leaves the real key and the sealed store intact',

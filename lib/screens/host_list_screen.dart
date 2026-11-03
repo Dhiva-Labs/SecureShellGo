@@ -1617,8 +1617,13 @@ class _OpenSessionsBar extends StatelessWidget {
   }
 }
 
-/// Shown when known_hosts.json failed its HMAC check and was dropped — or,
-/// with [keyringLocked], could not be checked at all this session.
+/// Shown once when known_hosts.json failed its HMAC check and was set aside
+/// — or, with [keyringLocked], could not be checked at all this session.
+///
+/// A notice rather than an alarm: by the time it shows, nothing is trusted
+/// that should not be, and the next step is the ordinary one of confirming a
+/// server's key. A keyring that only lost its key never gets here at all —
+/// see `IntegrityVerdict.rekeyed`.
 class _TrustStoreResetBanner extends StatelessWidget {
   const _TrustStoreResetBanner({
     required this.onDismiss,
@@ -1635,20 +1640,28 @@ class _TrustStoreResetBanner extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     return Material(
-      color: theme.colorScheme.error.withValues(alpha: 0.15),
+      color: theme.colorScheme.tertiaryContainer,
       child: Padding(
         padding: const EdgeInsets.fromLTRB(14, 12, 6, 12),
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Icon(Icons.gpp_maybe, color: theme.colorScheme.error, size: 20),
+            Icon(
+              Icons.shield_outlined,
+              color: theme.colorScheme.onTertiaryContainer,
+              size: 20,
+            ),
             const SizedBox(width: 10),
             Expanded(
               child: Text(
                 keyringLocked
                     ? context.l10n.hostListKeyringLocked
                     : context.l10n.hostListTrustStoreReset,
-                style: const TextStyle(fontSize: 12.5, height: 1.35),
+                style: TextStyle(
+                  fontSize: 12.5,
+                  height: 1.35,
+                  color: theme.colorScheme.onTertiaryContainer,
+                ),
               ),
             ),
             IconButton(

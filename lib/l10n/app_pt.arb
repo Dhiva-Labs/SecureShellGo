@@ -62,7 +62,7 @@
   "hostListSessionsDropped": "{count, plural, one{{count} caída} other{{count} caídas}}",
   "hostListResume": "Retomar",
   "hostListKeyringLocked": "Não foi possível ler o chaveiro do sistema, então as chaves de host confiáveis não podem ser conferidas nesta sessão do app. Cada servidor pedirá de novo a verificação da chave, e as chaves aceitas só serão salvas depois que o chaveiro for desbloqueado e o app reiniciado.",
-  "hostListTrustStoreReset": "O armazenamento de chaves de host confiáveis falhou na verificação de integridade e foi redefinido. Cada servidor pedirá de novo a verificação da chave — compare cada impressão digital com a do próprio servidor.",
+  "hostListTrustStoreReset": "Não foi possível confirmar neste dispositivo as chaves de servidor salvas, então cada servidor pedirá que você verifique a chave mais uma vez. Compare a impressão digital com a do servidor antes de aceitar.",
   "hostListDismiss": "Dispensar",
   "hostListEmptyTitle": "Nenhum host salvo ainda",
   "hostListEmptyBody": "Adicione um servidor para conectar com um toque da próxima vez. Senhas e chaves são armazenadas criptografadas neste dispositivo.",

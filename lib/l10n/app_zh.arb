@@ -62,7 +62,7 @@
   "hostListSessionsDropped": "{count, plural, other{{count} 个已断开}}",
   "hostListResume": "继续",
   "hostListKeyringLocked": "无法读取系统密钥环，因此本次运行期间无法校验您受信任的主机密钥。每台服务器都会再次要求您验证其密钥；在解锁密钥环并重启应用之前，您接受的密钥都不会被保存。",
-  "hostListTrustStoreReset": "受信任的主机密钥存储未通过完整性检查，已被重置。每台服务器都会再次要求您验证其密钥——请将每个指纹与服务器本身上的指纹进行核对。",
+  "hostListTrustStoreReset": "无法在此设备上确认已保存的服务器密钥，因此每台服务器都会再请您核对一次密钥。接受之前，请将指纹与服务器上的指纹进行比对。",
   "hostListDismiss": "关闭",
   "hostListEmptyTitle": "尚无已保存的主机",
   "hostListEmptyBody": "添加服务器后，下次轻点一下即可连接。密码和密钥会加密存储在此设备上。",

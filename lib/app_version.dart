@@ -5,7 +5,7 @@
 /// About box and the diagnostics log. `diagnostics_log_test.dart` fails the
 /// build when this and `pubspec.yaml` drift apart, so a release bump that
 /// forgets this file cannot ship.
-const String appVersion = '1.5.0+13';
+const String appVersion = '1.5.1+15';
 
 /// [appVersion] as people read it, without the build number.
 String get appDisplayVersion => appVersion.split('+').first;
