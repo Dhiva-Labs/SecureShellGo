@@ -3,9 +3,9 @@
 Releases before 1.4.5 are described on the
 [Releases](https://github.com/Dhiva-Labs/SecureShellGo/releases) page.
 
-## Unreleased
+## 1.5.1 - 2026-11-03
 
-Smoother copy and paste in the terminal, and less in the way across the app.
+Smoother copy and paste in the terminal, less in the way across the app, and trusted server keys that are no longer lost or flagged without cause.
 
 ### Added
 - Copy on select (Settings › Terminal): text selected with a mouse goes straight to the clipboard. Off by default.
@@ -34,9 +34,13 @@ Smoother copy and paste in the terminal, and less in the way across the app.
 - With one session open there is a single Transfers button instead of two that showed the same thing.
 
 ### Fixed
+- Trusted server keys are kept when the system keyring loses the key that protects them — after a keyring reset, a new login password, or the app's data moving to another computer — instead of the app warning that they failed an integrity check and asking about every server again.
+- On a computer with no keyring, including the Snap Store app before it is allowed to reach one, trusted server keys are remembered between launches instead of every server asking again each time.
+- Two copies of the app started together no longer leave the trusted server keys in a state the next launch cannot check.
+- When the saved server keys really cannot be checked, the app says so once, calmly, and keeps the old file aside, instead of the same red warning on every launch.
 - Closing the last session from its banner ("Shell ended", "Connection lost") left an empty window with no way back. It now asks first when transfers would be lost, and returns to the host list.
 
-## 1.5.0 - Unreleased
+## 1.5.0 - 2026-10-28
 
 A major update: remote desktop and virtual desktops, an IDE-like file editor, Mosh, sign-in with agents, security keys and certificates, agent and X11 forwarding, a terminal that survives network changes and sleep, commands on many servers, new file actions, Windows Hello, translations into eight languages, and layouts for tablets, foldables, touch and mouse.
 
