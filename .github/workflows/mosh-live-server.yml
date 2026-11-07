@@ -1,0 +1,68 @@
+name: Mosh live server
+
+# Runs the one test that talks to a real `mosh-server`, so the from-scratch
+# Dart Mosh client is checked against the program it must interoperate with.
+# The test skips when mosh-server is missing, which is right for a laptop but
+# would let this job pass without checking anything, so the job requires the
+# server and then fails if the test was reported as skipped.
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - 'lib/services/mosh/**'
+      - 'test/mosh_live_server_test.dart'
+      - '.github/workflows/mosh-live-server.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'lib/services/mosh/**'
+      - 'test/mosh_live_server_test.dart'
+      - '.github/workflows/mosh-live-server.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  # Keep in sync with desktop-builds.yml.
+  FLUTTER_VERSION: '3.44.6'
+
+jobs:
+  live:
+    name: Mosh client against mosh-server
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Install mosh
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y mosh
+          command -v mosh-server
+          mosh-server --version 2>&1 | head -n 1
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          cache: true
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Test against the real mosh-server
+        env:
+          SSGO_REQUIRE_MOSH_SERVER: '1'
+        # The runner's bash has pipefail on, so a failing test fails the step.
+        run: |
+          flutter test --reporter json test/mosh_live_server_test.dart | tee live.json
+          if grep -q '"skipped":true' live.json; then
+            echo "::error::the live mosh-server test was skipped"
+            exit 1
+          fi
