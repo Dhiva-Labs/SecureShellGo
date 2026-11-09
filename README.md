@@ -11,6 +11,8 @@ files — with strict host-key verification at the core. In English, Simplified
 Chinese, Japanese, Brazilian Portuguese, Spanish, Russian, German, Korean and
 French.
 
+**Documentation:** step-by-step guides at [learn.dhivalabs.com](https://learn.dhivalabs.com/apps/secureshellgo/): [install](https://learn.dhivalabs.com/apps/secureshellgo/install) · [beginner guide](https://learn.dhivalabs.com/apps/secureshellgo/getting-started) · [troubleshooting](https://learn.dhivalabs.com/apps/secureshellgo/faq). New to the topic? Try the [Networking and SSH](https://learn.dhivalabs.com/tracks/networking/) and [Security and safe habits](https://learn.dhivalabs.com/tracks/security/) learning tracks.
+
 ## Features
 
 ### Terminal
