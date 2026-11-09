@@ -41,7 +41,9 @@ grade: stable
 confinement: strict
 icon: snap/gui/icon.png
 license: MIT
-website: https://github.com/Dhiva-Labs/SecureShellGo
+website:
+  - https://github.com/Dhiva-Labs/SecureShellGo
+  - https://learn.dhivalabs.com/apps/secureshellgo/
 source-code: https://github.com/Dhiva-Labs/SecureShellGo
 issues: https://github.com/Dhiva-Labs/SecureShellGo/issues
 contact: dhivakar1010@gmail.com
