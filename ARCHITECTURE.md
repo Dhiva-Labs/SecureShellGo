@@ -308,13 +308,16 @@ Three outcomes on load:
 | --- | --- |
 | MAC present and correct | Load normally. |
 | No MAC, and no key has ever been established on this device | **Legacy migration.** A genuine Phase 1/2 file. Adopt it once, then immediately re-write it sealed. |
-| MAC missing after a key exists, MAC wrong, key gone, or the file is unparseable | **Fail closed.** Load as empty, set `integrityFailed`, so every host reads as unknown and the user re-verifies. The host list shows a banner saying so, because a silently emptied trust store looks like a bug rather than a warning. |
+| MAC missing after a key exists, MAC wrong, or the file is unparseable | **Fail closed.** Load as empty, set `integrityFailed`, so every host reads as unknown and the user re-verifies. The host list shows a banner saying so, because a silently emptied trust store looks like a bug rather than a warning. |
 
 That middle row is the one worth being careful about: accepting an unsealed file
 unconditionally would let an attacker strip the envelope and downgrade their way
 past the check, so it is gated on the device never having written a sealed file
-before. Losing the Keystore key (app data cleared) also fails closed — the right
-direction, since the alternative is trusting a file nothing can authenticate.
+before. A file sealed under a key the device no longer has (keyring reset, data
+moved from another machine) is not treated as tampering: the code reports it as
+`rekeyed`, adopts the contents and re-seals them under the new key, because
+whatever can delete the key could equally have read it and forged a seal. See
+the comments in `known_hosts_integrity.dart`.
 
 `KnownHostsService`'s public API is unchanged; the key is injected as an
 optional `integrityKey:` constructor argument, and omitting it keeps the plain
@@ -846,9 +849,9 @@ picker that would fail.
 ---
 
 
-## Remote desktop (1.6)
+## Remote desktop
 
-The design and its reasons are in `REMOTE_DESKTOP_PLAN.md`; this is where the
+The design and its reasons are in [`docs/REMOTE_DESKTOP_PLAN.md`](docs/REMOTE_DESKTOP_PLAN.md); this is where the
 pieces live.
 
 ```

@@ -1,6 +1,6 @@
 # Remote desktop — plan
 
-Status: built and verified end to end on 2026-10-27 (see "Verified" at the end). Target release: **1.6.0**.
+Status: built and verified end to end on 2026-10-27 (see "Verified" at the end), and shipped in 1.5.0. This is the original design note; [ARCHITECTURE.md](../ARCHITECTURE.md) describes the code as it is.
 
 - SecureShell Go work is on `feature/remote-desktop`, branched from
   `release/1.5.0`. That release
