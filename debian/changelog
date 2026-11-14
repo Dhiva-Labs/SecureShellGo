@@ -1,3 +1,16 @@
+secureshellgo (1.6.0~noble1) noble; urgency=medium
+
+  * AI Bridge, on Linux and Windows and off by default: an AI assistant on
+    your computer can read from the servers you share, by name and
+    read-only, without ever being given a password or key.
+  * Settings has "Connect an assistant", "Paired assistants" (revoke any
+    time), "Shared hosts" and an Activity list of every call made; "Connect
+    Claude Code" sets it up in one step where the claude program is found.
+  * A secureshellgo-mcp launcher in every package; one-click connect is not
+    available in the snap or the Flatpak. The full list is in CHANGELOG.md.
+
+ -- Dhiva Labs <dhivakar1010@gmail.com>  Sun, 15 Nov 2026 12:00:00 +0530
+
 secureshellgo (1.5.1~noble1) noble; urgency=medium
 
   * Selecting text with a mouse no longer brings up a bar that moved the

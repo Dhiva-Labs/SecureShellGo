@@ -1,6 +1,6 @@
 # Changes waiting for a release
 
-1.5.0's notes have been folded into `CHANGELOG.md`. Start new files here for
+1.6.0's notes have been folded into `CHANGELOG.md`. Start new files here for
 the next release.
 
 Several parts of 1.5 are built side by side, on separate branches. If each
@@ -28,7 +28,6 @@ One file per piece of work, named for it:
 | `remote-ops.md` | Commands on many servers, archive and search actions |
 | `mosh.md` | Mosh |
 | `localization.md` | Translations |
-| `ai-bridge.md` | AI Bridge: read-only access for MCP-compatible AI assistants, on Linux and Windows |
 
 Write for the people using the app, in the sections `CHANGELOG.md` uses:
 `### Added`, `### Changed`, `### Fixed`, `### Security`. One line per change,
