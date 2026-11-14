@@ -1,0 +1,91 @@
+# Builds the Microsoft Store packages (unsigned MSIX; the Store signs them)
+# for x64 and arm64. Runs by hand, on a `v*` tag, and on pushes to `store/**`
+# branches, and uploads each package as an artifact for Partner Center.
+name: Store MSIX
+
+on:
+  workflow_dispatch:
+  push:
+    branches: ['store/**']
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+env:
+  FLUTTER_VERSION: '3.44.6'
+
+jobs:
+  msix:
+    name: MSIX ${{ matrix.arch }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x64
+            runner: windows-latest
+          - arch: arm64
+            runner: windows-11-arm
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      # As in desktop-builds.yml: a shallow clone of the release tag, which
+      # also works on the ARM64 runner where there is no SDK archive.
+      - name: Install Flutter ${{ env.FLUTTER_VERSION }}
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $true
+          git clone --depth 1 --branch $env:FLUTTER_VERSION `
+            https://github.com/flutter/flutter.git "$env:RUNNER_TEMP\flutter"
+          Add-Content -Path $env:GITHUB_PATH -Value "$env:RUNNER_TEMP\flutter\bin"
+
+      - name: Configure Flutter
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $true
+          flutter config --no-analytics --enable-windows-desktop
+          flutter precache --windows
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Build Windows release
+        run: flutter build windows --release
+
+      - name: Package MSIX
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $true
+          $version = (Select-String -Path pubspec.yaml -Pattern '^version:\s*([0-9.]+)').Matches[0].Groups[1].Value
+          dart run msix:create --store --build-windows false `
+            --architecture ${{ matrix.arch }} `
+            --output-path build\msix `
+            --output-name "SecureShellGo-$version-${{ matrix.arch }}"
+          Get-ChildItem build\msix
+
+      - name: Check the package identity
+        run: |
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
+          $msix = Get-ChildItem build\msix\*.msix | Select-Object -First 1
+          $zip = [IO.Compression.ZipFile]::OpenRead($msix.FullName)
+          try {
+            $entry = $zip.Entries | Where-Object FullName -eq 'AppxManifest.xml'
+            $reader = New-Object IO.StreamReader($entry.Open())
+            [xml]$manifest = $reader.ReadToEnd()
+            $reader.Dispose()
+          } finally { $zip.Dispose() }
+          $id = $manifest.Package.Identity
+          "Name=$($id.Name) Publisher=$($id.Publisher) Version=$($id.Version) Arch=$($id.ProcessorArchitecture)"
+          if ($id.Name -ne 'Dhiva-Labs.SecureShellGo') { throw "wrong identity name $($id.Name)" }
+          if ($id.Publisher -ne 'CN=0F69015A-AA5B-431D-970A-165099309E53') { throw "wrong publisher $($id.Publisher)" }
+          if ($id.ProcessorArchitecture -ne '${{ matrix.arch }}') { throw "wrong architecture $($id.ProcessorArchitecture)" }
+
+      - name: Upload MSIX
+        uses: actions/upload-artifact@v7
+        with:
+          name: store-msix-${{ matrix.arch }}
+          path: build/msix/*.msix
+          if-no-files-found: error

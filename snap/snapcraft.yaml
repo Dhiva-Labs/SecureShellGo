@@ -21,7 +21,7 @@
 name: secureshellgo
 title: SecureShell Go
 base: core22
-version: '1.5.0'
+version: '1.5.1'
 summary: SSH terminal and SFTP client with strict host-key verification
 description: |
   SecureShell Go is a fast, security-first SSH terminal and SFTP client for
@@ -46,7 +46,9 @@ grade: stable
 confinement: strict
 icon: snap/gui/icon.png
 license: MIT
-website: https://github.com/Dhiva-Labs/SecureShellGo
+website:
+  - https://github.com/Dhiva-Labs/SecureShellGo
+  - https://learn.dhivalabs.com/apps/secureshellgo/
 source-code: https://github.com/Dhiva-Labs/SecureShellGo
 issues: https://github.com/Dhiva-Labs/SecureShellGo/issues
 contact: dhivakar1010@gmail.com
@@ -135,8 +137,12 @@ parts:
       craftctl default
       command -v dart > /dev/null || { echo "dart is not on PATH" >&2; exit 1; }
       sh "$CRAFT_PART_BUILD/tool/build_launcher.sh" "$CRAFT_PART_INSTALL/secureshellgo-mcp"
+    # GTK 3 itself comes from the gnome extension's content snap. Staging
+    # libgtk-3-0 as well put Ubuntu's copies of it and its GL stack (libepoxy
+    # and friends) in front of the content snap's: under software GL on an
+    # amd64 machine EGL then fails, Flutter never draws a first frame and the
+    # window never maps.
     stage-packages:
-      - libgtk-3-0
       - libsecret-1-0
       - libssl3
 

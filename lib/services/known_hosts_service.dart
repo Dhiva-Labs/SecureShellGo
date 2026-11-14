@@ -73,7 +73,7 @@ class KnownHostsService {
   }
 
   Future<void> _load() async {
-    var migrateLegacy = false;
+    var reseal = false;
     var fileExisted = false;
     try {
       final file = await _resolveFile();
@@ -97,12 +97,20 @@ class KnownHostsService {
             // Fail closed: the file was modified by something that does not
             // hold the device key. Treat the whole store as empty so every
             // host is re-verified by a human instead of trusting a forgery.
+            //
+            // And move the file aside, so this is said once. Left in place
+            // it fails again on every launch until a host is next trusted,
+            // repeating a warning about one past event as if it were new.
             _integrityFailed = true;
             _entries.clear();
+            await setAsideUnverified(file);
             return;
           }
 
-          migrateLegacy = check.verdict == IntegrityVerdict.legacyMigrated;
+          // Adopted from before integrity, or from under a key the keyring
+          // has since lost: written again, sealed under the key it has now.
+          reseal = check.verdict == IntegrityVerdict.legacyMigrated ||
+              check.verdict == IntegrityVerdict.rekeyed;
 
           final hosts = check.payload?['hosts'];
           if (hosts is Map<String, dynamic>) {
@@ -143,10 +151,10 @@ class KnownHostsService {
       _loaded = true;
     }
 
-    if (migrateLegacy) {
-      // First run after the upgrade: adopt the pre-integrity file once and
-      // immediately re-write it sealed. From here on an unsealed file is a
-      // downgrade attempt and fails closed.
+    if (reseal) {
+      // First run after the upgrade, or after the keyring lost the key:
+      // adopt the file once and immediately re-write it sealed. From here on
+      // an unsealed file is a downgrade attempt and fails closed.
       try {
         await _persist();
       } catch (_) {
@@ -165,7 +173,7 @@ class KnownHostsService {
         for (final entry in _entries.entries) entry.key: entry.value.toJson(),
       },
     };
-    final key = await _integrityKey?.obtain();
+    final key = await _integrityKey?.obtain(fresh: true);
     final document =
         key == null ? jsonEncode(payload) : KnownHostsEnvelope.seal(key, payload);
     await file.parent.create(recursive: true);

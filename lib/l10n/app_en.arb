@@ -329,9 +329,9 @@
   "@hostListKeyringLocked": {
     "description": "Host list: security banner when the OS keyring holding the integrity key of the trusted host keys is locked."
   },
-  "hostListTrustStoreReset": "The trusted host-key store failed its integrity check and was reset. Every server will ask you to verify its key again — compare each fingerprint against the server itself.",
+  "hostListTrustStoreReset": "Your saved server keys couldn't be confirmed on this device, so each server will ask you to check its key once more. Compare the fingerprint with the server before you accept it.",
   "@hostListTrustStoreReset": {
-    "description": "Host list: security banner when the saved trusted host keys were found tampered with or corrupt and were discarded."
+    "description": "Host list: one-time notice when the saved trusted host keys could not be verified (changed outside the app, or corrupt) and were set aside, so each server asks to confirm its key again."
   },
   "hostListDismiss": "Dismiss",
   "@hostListDismiss": {
@@ -1121,10 +1121,6 @@
   "@hostKeyFingerprint": {
     "description": "Host key dialog: label over the key's fingerprint. Keep SHA256."
   },
-  "hostKeyFingerprintCopied": "Fingerprint copied",
-  "@hostKeyFingerprintCopied": {
-    "description": "Host key dialog: snackbar after tapping a fingerprint."
-  },
   "hostKeyVerifiedNewKey": "I verified this new key with the server owner",
   "@hostKeyVerifiedNewKey": {
     "description": "Host key dialog: checkbox that must be ticked before a changed key can be trusted."
@@ -1218,10 +1214,6 @@
         "example": "Install public key on server…"
       }
     }
-  },
-  "publicKeyCopied": "Public key copied",
-  "@publicKeyCopied": {
-    "description": "Host form: snackbar after copying the public key."
   },
   "publicKeyDone": "Done",
   "@publicKeyDone": {
@@ -1428,6 +1420,14 @@
   "settingsCursorBlinkHelp": "Blinks while the terminal has the keyboard",
   "@settingsCursorBlinkHelp": {
     "description": "Settings > Terminal: subtitle of the blinking cursor switch."
+  },
+  "settingsCopyOnSelect": "Copy on select",
+  "@settingsCopyOnSelect": {
+    "description": "Settings > Terminal: switch that copies text to the clipboard as soon as it is selected with a mouse."
+  },
+  "settingsCopyOnSelectHelp": "Text you select with the mouse goes straight to the clipboard",
+  "@settingsCopyOnSelectHelp": {
+    "description": "Settings > Terminal: subtitle of the copy-on-select switch."
   },
   "settingsBell": "Bell",
   "@settingsBell": {
@@ -2725,6 +2725,224 @@
   "sessionTailFile": "Tail a file…",
   "@sessionTailFile": {
     "description": "Session screen: overflow-menu item that follows a remote log file live (like tail -f). The ellipsis means a dialog follows."
+  },
+  "remoteAppTitle": "Open an app in a window",
+  "@remoteAppTitle": {
+    "description": "Remote app launcher: title of the dialog or sheet, and the name of the session menu entry that opens it. A graphical program on the server gets its own window on this device."
+  },
+  "remoteAppIntro": "Start one program on the server and its window opens here, on this device's desktop. No terminal needed.",
+  "@remoteAppIntro": {
+    "description": "Remote app launcher: one-line explanation under the title."
+  },
+  "remoteAppCommandLabel": "Command to run",
+  "@remoteAppCommandLabel": {
+    "description": "Remote app launcher: label of the text field for the command line to start on the server."
+  },
+  "remoteAppCommandHint": "For example gedit, xeyes or firefox",
+  "@remoteAppCommandHint": {
+    "description": "Remote app launcher: hint inside the command field. Keep the program names untranslated."
+  },
+  "remoteAppRun": "Run",
+  "@remoteAppRun": {
+    "description": "Remote app launcher: button that starts the command on the server."
+  },
+  "remoteAppInstalledApps": "Installed apps…",
+  "@remoteAppInstalledApps": {
+    "description": "Remote app launcher: button that opens a list of the applications installed on the server. The ellipsis means a list follows."
+  },
+  "remoteAppInstalledTitle": "Apps on the server",
+  "@remoteAppInstalledTitle": {
+    "description": "Remote app launcher: title of the list of applications installed on the server."
+  },
+  "remoteAppInstalledSearch": "Search apps",
+  "@remoteAppInstalledSearch": {
+    "description": "Remote app launcher: hint of the search field above the list of installed applications."
+  },
+  "remoteAppInstalledEmpty": "No applications were found on the server.",
+  "@remoteAppInstalledEmpty": {
+    "description": "Remote app launcher: shown when the server has no desktop applications to list."
+  },
+  "remoteAppInstalledFailed": "Could not read the server's list of applications. {error}",
+  "@remoteAppInstalledFailed": {
+    "description": "Remote app launcher: shown when listing the applications installed on the server failed. {error} is the technical reason, in English.",
+    "placeholders": {
+      "error": {
+        "type": "String",
+        "example": "Permission denied"
+      }
+    }
+  },
+  "remoteAppRecent": "Recent",
+  "@remoteAppRecent": {
+    "description": "Remote app launcher: heading above the chips of commands used before on this host."
+  },
+  "remoteAppForgetRecent": "Forget this command",
+  "@remoteAppForgetRecent": {
+    "description": "Remote app launcher: tooltip of the delete button on a recent-command chip."
+  },
+  "remoteAppRunningTitle": "Apps from this session",
+  "@remoteAppRunningTitle": {
+    "description": "Remote app launcher: heading above the list of programs started from this session, running or ended."
+  },
+  "remoteAppStop": "Stop",
+  "@remoteAppStop": {
+    "description": "Remote app launcher: button that ends a running program on the server."
+  },
+  "remoteAppRemove": "Remove from the list",
+  "@remoteAppRemove": {
+    "description": "Remote app launcher: tooltip of the button that removes an ended program from the list."
+  },
+  "remoteAppStateStarting": "Starting…",
+  "@remoteAppStateStarting": {
+    "description": "Remote app launcher: state of a program whose channel is being opened."
+  },
+  "remoteAppStateRunning": "Running",
+  "@remoteAppStateRunning": {
+    "description": "Remote app launcher: state of a program that is running on the server."
+  },
+  "remoteAppStateStopping": "Stopping…",
+  "@remoteAppStateStopping": {
+    "description": "Remote app launcher: state of a program after Stop was pressed, until it has ended."
+  },
+  "remoteAppStateStopped": "Stopped",
+  "@remoteAppStateStopped": {
+    "description": "Remote app launcher: state of a program that the person stopped."
+  },
+  "remoteAppStateExited": "Exited with code {code}",
+  "@remoteAppStateExited": {
+    "description": "Remote app launcher: state of a program that ended by itself; {code} is its exit status (0 means it finished normally).",
+    "placeholders": {
+      "code": {
+        "type": "int",
+        "example": "1"
+      }
+    }
+  },
+  "remoteAppStateEnded": "Ended",
+  "@remoteAppStateEnded": {
+    "description": "Remote app launcher: state of a program that ended without the server giving an exit status."
+  },
+  "remoteAppStateSignal": "Ended by signal {signal}",
+  "@remoteAppStateSignal": {
+    "description": "Remote app launcher: state of a program that was ended by a Unix signal; {signal} is its name, such as TERM or SEGV.",
+    "placeholders": {
+      "signal": {
+        "type": "String",
+        "example": "SEGV"
+      }
+    }
+  },
+  "remoteAppStateLost": "Connection lost",
+  "@remoteAppStateLost": {
+    "description": "Remote app launcher: state of a program whose SSH connection went away while it ran, so what became of it is unknown."
+  },
+  "remoteAppStateRefused": "Refused by the server",
+  "@remoteAppStateRefused": {
+    "description": "Remote app launcher: state of a program the server would not start because it refused X11 forwarding."
+  },
+  "remoteAppStateFailed": "Could not start. {reason}",
+  "@remoteAppStateFailed": {
+    "description": "Remote app launcher: state of a program that could not be started; {reason} is the technical reason, in English, and may be empty.",
+    "placeholders": {
+      "reason": {
+        "type": "String",
+        "example": "Channel open failure"
+      }
+    }
+  },
+  "remoteAppStartedAt": "Started {time}",
+  "@remoteAppStartedAt": {
+    "description": "Remote app launcher: when a program was started; {time} is a clock time such as 14:02.",
+    "placeholders": {
+      "time": {
+        "type": "String",
+        "example": "14:02"
+      }
+    }
+  },
+  "remoteAppErrorOutput": "Error output",
+  "@remoteAppErrorOutput": {
+    "description": "Remote app launcher: heading above the last lines a program wrote to its error output (stderr)."
+  },
+  "remoteAppFullAccessWarning": "This display cannot give the server limited access, so this app can see and control every window on it.",
+  "@remoteAppFullAccessWarning": {
+    "description": "Remote app launcher: warning shown when X11 forwarding on this device can only be done with full access (as ssh -Y does). Keep the warning as strong."
+  },
+  "remoteAppSecurityDesktop": "The app gets limited access to this display, as with ssh -X: it can show its own windows, but not read your other windows or watch your keyboard. If this display cannot limit it, the app can see and control every window on it, as with ssh -Y, and this screen says so. Only open apps from servers you trust.",
+  "@remoteAppSecurityDesktop": {
+    "description": "Remote app launcher: security note on Linux and macOS about what X11 forwarding lets the server do. Keep ssh -X and ssh -Y, and keep the warning as strong."
+  },
+  "remoteAppSecurityTrustedServers": "Only open apps from servers you trust.",
+  "@remoteAppSecurityTrustedServers": {
+    "description": "Remote app launcher: follows the full-access warning when this display cannot limit what the server's apps may do."
+  },
+  "remoteAppSecurityWindows": "While the app is open, programs on the server can see and control every window on this display, because X servers on Windows cannot limit them. Only open apps from servers you trust.",
+  "@remoteAppSecurityWindows": {
+    "description": "Remote app launcher: security note on Windows about what X11 forwarding lets the server do. Keep the warning as strong."
+  },
+  "remoteAppUnavailableTitle": "An app can't open in a window right now",
+  "@remoteAppUnavailableTitle": {
+    "description": "Remote app launcher: heading of the explanation shown when the feature cannot be used on this session."
+  },
+  "remoteAppUnavailableUnsupported": "This device has no X server to draw the app's window on, so apps from the server cannot open as windows here. A virtual desktop shows the server's own desktop instead.",
+  "@remoteAppUnavailableUnsupported": {
+    "description": "Remote app launcher: why it is unavailable on Android and iOS."
+  },
+  "remoteAppUnavailableNoDisplay": "There is no X display on this device to draw on: DISPLAY is not set, or the X server it names is not answering. Start your desktop's X server, then check again.",
+  "@remoteAppUnavailableNoDisplay": {
+    "description": "Remote app launcher: why it is unavailable on Linux and macOS when there is no X display. Keep DISPLAY as written."
+  },
+  "remoteAppUnavailableNoDisplayWindows": "No X server is answering on this computer. Install and start one, such as VcXsrv or X410, then check again.",
+  "@remoteAppUnavailableNoDisplayWindows": {
+    "description": "Remote app launcher: why it is unavailable on Windows when no X server answers. Keep VcXsrv and X410."
+  },
+  "remoteAppUnavailableSsh": "The SSH connection to the server isn't available right now: the session is closed or reconnecting, or only its Mosh terminal is still up. Reconnect, then try again.",
+  "@remoteAppUnavailableSsh": {
+    "description": "Remote app launcher: why it is unavailable when the session has no working SSH connection."
+  },
+  "remoteAppUnavailableRefused": "The server turned down showing windows here. Usually a small program, xauth, is missing there, or its SSH settings have X11 forwarding switched off. Fix it on the server finds out which, and sets it up when it can.",
+  "@remoteAppUnavailableRefused": {
+    "description": "Remote app launcher: why it is unavailable after the server refused X11 forwarding; the button it names is remoteAppFixServer. Keep xauth as written."
+  },
+  "remoteAppUnavailableRefusedCertificate": "The server refused X11 forwarding. The certificate this host signs in with does not permit it (no permit-X11-forwarding); ask its CA for one that does.",
+  "@remoteAppUnavailableRefusedCertificate": {
+    "description": "Remote app launcher: why it is unavailable after the server refused X11 forwarding, when the certificate this host signs in with lacks the permit-X11-forwarding extension. Keep permit-X11-forwarding as written."
+  },
+  "remoteAppCheckAgain": "Check again",
+  "@remoteAppCheckAgain": {
+    "description": "Remote app launcher: button that checks again whether an X server is now answering."
+  },
+  "remoteAppFixServer": "Fix it on the server",
+  "@remoteAppFixServer": {
+    "description": "Remote app launcher: button, after the server refused X11 forwarding, that checks the server and installs what is missing (xauth) or explains what an administrator has to change."
+  },
+  "remoteAppSetupXauth": "Window access (xauth)",
+  "@remoteAppSetupXauth": {
+    "description": "Server setup dialog: the item that installs xauth. Keep xauth as written."
+  },
+  "remoteAppSetupXauthDetail": "A small program the SSH server needs to send an app's window to this device.",
+  "@remoteAppSetupXauthDetail": {
+    "description": "Server setup dialog: what the xauth item is for."
+  },
+  "remoteAppX11FixTitle": "This server can't send windows yet",
+  "@remoteAppX11FixTitle": {
+    "description": "Remote app launcher: title of the dialog that explains what has to change on the server before windows can be sent."
+  },
+  "remoteAppXauthMissingBody": "The server needs a small program, xauth, to send windows here, and this app can't tell how to install it on this system. Ask an administrator to install the xauth package there, then try again. A virtual desktop works without it.",
+  "@remoteAppXauthMissingBody": {
+    "description": "Remote app launcher: xauth is missing on a server whose package manager the app does not know. Keep xauth as written."
+  },
+  "remoteAppX11OffBody": "X11 forwarding is switched off in this server's SSH settings. An administrator can turn it on: set X11Forwarding yes in /etc/ssh/sshd_config, restart the SSH service, then reconnect. A virtual desktop works without it.",
+  "@remoteAppX11OffBody": {
+    "description": "Remote app launcher: the server's sshd_config does not turn X11 forwarding on. Keep X11Forwarding yes and /etc/ssh/sshd_config as written."
+  },
+  "remoteAppX11BlockedBody": "xauth is installed, so the server's SSH settings must be turning X11 forwarding off for this account: X11Forwarding no, perhaps in a Match block. An administrator can change that in /etc/ssh/sshd_config; reconnect afterwards. A virtual desktop works without it.",
+  "@remoteAppX11BlockedBody": {
+    "description": "Remote app launcher: xauth is installed but X11 is still refused, so a setting blocks it for this account. Keep xauth, X11Forwarding no, Match and /etc/ssh/sshd_config as written."
+  },
+  "remoteAppVirtualDesktop": "Open a virtual desktop instead",
+  "@remoteAppVirtualDesktop": {
+    "description": "Remote app launcher: button offered whenever an app cannot open in a window; it opens the server's own desktop in a virtual desktop instead."
   },
   "sessionNew": "New session",
   "@sessionNew": {
@@ -6755,6 +6973,609 @@
   "fleetRunStatusStopped": "stopped",
   "@fleetRunStatusStopped": {
     "description": "Host status: stopped by the user."
+  },
+  "remoteDesktopConnecting": "Connecting…",
+  "@remoteDesktopConnecting": {
+    "description": "Remote desktop: status line while opening, before the opener reports any progress."
+  },
+  "remoteDesktopWaiting": "Waiting for the remote side. It may be showing a consent dialog that someone there has to approve.",
+  "@remoteDesktopWaiting": {
+    "description": "Remote desktop: shown under the status while the remote side is slow to answer, because it may be asking permission on its own screen."
+  },
+  "remoteDesktopCancel": "Cancel",
+  "@remoteDesktopCancel": {
+    "description": "Remote desktop: button that gives up opening the desktop and leaves the screen."
+  },
+  "remoteDesktopFailedTitle": "The remote desktop could not be opened",
+  "@remoteDesktopFailedTitle": {
+    "description": "Remote desktop: heading above the error when opening failed."
+  },
+  "remoteDesktopRetry": "Retry",
+  "@remoteDesktopRetry": {
+    "description": "Remote desktop: button that tries to open the desktop again after a failure."
+  },
+  "remoteDesktopEnded": "The remote desktop session ended",
+  "@remoteDesktopEnded": {
+    "description": "Remote desktop: heading shown when an open session has ended; the reason follows below it."
+  },
+  "remoteDesktopReconnect": "Reconnect",
+  "@remoteDesktopReconnect": {
+    "description": "Remote desktop: button that opens the desktop again after the session ended."
+  },
+  "remoteDesktopKeepsRunning": "The virtual desktop keeps running on the server.",
+  "@remoteDesktopKeepsRunning": {
+    "description": "Remote desktop: snackbar shown after leaving a virtual desktop that was set to keep running after disconnect."
+  },
+  "remoteDesktopCantTypeThat": "Some characters cannot be typed from this keyboard. Use Paste to remote instead.",
+  "@remoteDesktopCantTypeThat": {
+    "description": "Remote desktop: snackbar shown once when the on-screen keyboard produced a character that has no key (for example an accented letter). \"Paste to remote\" is the name of the toolbar button, remoteDesktopPasteToRemote."
+  },
+  "remoteDesktopPasteToRemote": "Paste to remote",
+  "@remoteDesktopPasteToRemote": {
+    "description": "Remote desktop: toolbar button and snackbar action that copies this device's clipboard text to the remote computer and pastes it there."
+  },
+  "remoteDesktopClipboardEmpty": "The clipboard is empty.",
+  "@remoteDesktopClipboardEmpty": {
+    "description": "Remote desktop: snackbar when Paste to remote is used with nothing on the clipboard."
+  },
+  "remoteDesktopFocusMode": "Focus mode",
+  "@remoteDesktopFocusMode": {
+    "description": "Remote desktop: tooltip of the title bar button that hides the title bar and toolbar so the remote screen fills the display."
+  },
+  "remoteDesktopExitFocusMode": "Show controls",
+  "@remoteDesktopExitFocusMode": {
+    "description": "Remote desktop: tooltip of the small floating button shown in focus mode that brings the title bar and toolbar back."
+  },
+  "remoteDesktopDisconnect": "Disconnect",
+  "@remoteDesktopDisconnect": {
+    "description": "Remote desktop: tooltip of the title bar button that ends the session and leaves the screen."
+  },
+  "remoteDesktopStats": "{fps} fps · {rtt} ms · {rate} KB/s",
+  "@remoteDesktopStats": {
+    "description": "Remote desktop: small readout under the title with frames per second, round-trip time in milliseconds and data rate in kilobytes per second. Keep the units short.",
+    "placeholders": {
+      "fps": {
+        "type": "int"
+      },
+      "rtt": {
+        "type": "int"
+      },
+      "rate": {
+        "type": "int"
+      }
+    }
+  },
+  "remoteDesktopStatsNoRtt": "{fps} fps · {rate} KB/s",
+  "@remoteDesktopStatsNoRtt": {
+    "description": "Remote desktop: the same readout before the first round-trip time has been measured.",
+    "placeholders": {
+      "fps": {
+        "type": "int"
+      },
+      "rate": {
+        "type": "int"
+      }
+    }
+  },
+  "remoteDesktopDisplay": "Display",
+  "@remoteDesktopDisplay": {
+    "description": "Remote desktop: tooltip of the toolbar menu that picks which of the remote computer's monitors to show."
+  },
+  "remoteDesktopDisplayItem": "{name} ({width}×{height})",
+  "@remoteDesktopDisplayItem": {
+    "description": "Remote desktop: one monitor in the display menu, with its name and size in pixels.",
+    "placeholders": {
+      "name": {
+        "type": "String"
+      },
+      "width": {
+        "type": "int"
+      },
+      "height": {
+        "type": "int"
+      }
+    }
+  },
+  "remoteDesktopDisplayNumbered": "Display {number}",
+  "@remoteDesktopDisplayNumbered": {
+    "description": "Remote desktop: name used for a monitor that has none, numbered from 1.",
+    "placeholders": {
+      "number": {
+        "type": "int"
+      }
+    }
+  },
+  "remoteDesktopQuality": "Quality",
+  "@remoteDesktopQuality": {
+    "description": "Remote desktop: tooltip of the toolbar menu that trades picture quality for speed."
+  },
+  "remoteDesktopQualityLossless": "Lossless",
+  "@remoteDesktopQualityLossless": {
+    "description": "Remote desktop: quality level, every pixel exact."
+  },
+  "remoteDesktopQualityBalanced": "Balanced",
+  "@remoteDesktopQualityBalanced": {
+    "description": "Remote desktop: quality level, compressed photos that sharpen once they stop moving."
+  },
+  "remoteDesktopQualitySpeed": "Speed",
+  "@remoteDesktopQualitySpeed": {
+    "description": "Remote desktop: quality level, the most compression for slow connections."
+  },
+  "remoteDesktopViewOnly": "View only (send no input)",
+  "@remoteDesktopViewOnly": {
+    "description": "Remote desktop: tooltip of the toolbar toggle that stops keyboard, mouse and touch input being sent to the remote computer."
+  },
+  "remoteDesktopViewOnlyLocked": "This session was started view-only and cannot send input",
+  "@remoteDesktopViewOnlyLocked": {
+    "description": "Remote desktop: tooltip of the disabled view-only toggle when the remote side started the session view-only."
+  },
+  "remoteDesktopClipboardSync": "Clipboard sync (remote to this device)",
+  "@remoteDesktopClipboardSync": {
+    "description": "Remote desktop: tooltip of the toolbar toggle that, when on, copies text copied on the remote computer to this device's clipboard."
+  },
+  "remoteDesktopActualSize": "Actual size (1:1)",
+  "@remoteDesktopActualSize": {
+    "description": "Remote desktop: tooltip of the toolbar button that shows one remote pixel per screen pixel, panning around, instead of fitting the whole screen."
+  },
+  "remoteDesktopFitToWindow": "Fit to window",
+  "@remoteDesktopFitToWindow": {
+    "description": "Remote desktop: tooltip of the toolbar button that scales the whole remote screen to fit."
+  },
+  "remoteDesktopShowKeyBar": "Show extra keys",
+  "@remoteDesktopShowKeyBar": {
+    "description": "Remote desktop: tooltip of the toolbar toggle that shows the row of extra keys (Esc, Ctrl, arrows, F-keys) under the screen."
+  },
+  "remoteDesktopHideKeyBar": "Hide extra keys",
+  "@remoteDesktopHideKeyBar": {
+    "description": "Remote desktop: tooltip of the same toggle while the row of extra keys is showing."
+  },
+  "remoteDesktopSwitchToDirect": "Switch to direct touch",
+  "@remoteDesktopSwitchToDirect": {
+    "description": "Remote desktop: tooltip of the touch-screen toggle, shown while in trackpad mode. Direct touch means a tap clicks exactly where the finger lands."
+  },
+  "remoteDesktopSwitchToTrackpad": "Switch to trackpad mode",
+  "@remoteDesktopSwitchToTrackpad": {
+    "description": "Remote desktop: tooltip of the touch-screen toggle, shown while in direct touch mode. Trackpad mode means the screen acts like a laptop touchpad moving a separate cursor."
+  },
+  "remoteDesktopReleaseKeyboard": "Stop sending keys to the remote (click the screen to resume)",
+  "@remoteDesktopReleaseKeyboard": {
+    "description": "Remote desktop: tooltip of the toolbar button that hands the keyboard back to this app. While the screen has focus every key, even Tab and Ctrl+W, goes to the remote computer."
+  },
+  "remoteDesktopFunctionKeys": "Function keys",
+  "@remoteDesktopFunctionKeys": {
+    "description": "Remote desktop: tooltip of the extra-keys button that opens a menu of F1 to F12."
+  },
+  "remoteDesktopShowKeyboard": "Show keyboard",
+  "@remoteDesktopShowKeyboard": {
+    "description": "Remote desktop: tooltip of the extra-keys button that raises the on-screen keyboard."
+  },
+  "remoteDesktopHideKeyboard": "Hide keyboard",
+  "@remoteDesktopHideKeyboard": {
+    "description": "Remote desktop: tooltip of the same button while the on-screen keyboard is up."
+  },
+  "remoteDesktopDismissNotice": "Dismiss",
+  "@remoteDesktopDismissNotice": {
+    "description": "Remote desktop: tooltip of the close button on a notice banner sent by the remote side."
+  },
+  "sessionRemoteDesktop": "Remote desktop…",
+  "@sessionRemoteDesktop": {
+    "description": "Session screen: overflow-menu item and toolbar tooltip that opens remote desktop for this server."
+  },
+  "sessionOpenAppWindow": "Open an app in a window…",
+  "@sessionOpenAppWindow": {
+    "description": "Session screen: overflow-menu item that opens the launcher for running one graphical program from the server in a window on this device."
+  },
+  "remoteDesktopLaunchChecking": "Checking what this server can show…",
+  "@remoteDesktopLaunchChecking": {
+    "description": "Remote desktop: shown while the app checks which kinds of remote desktop the server can offer."
+  },
+  "remoteDesktopLaunchTitle": "Remote desktop on {host}",
+  "@remoteDesktopLaunchTitle": {
+    "description": "Remote desktop: title of the chooser listing the kinds of remote desktop for a server. {host} is the server's name.",
+    "placeholders": {
+      "host": {
+        "type": "String"
+      }
+    }
+  },
+  "remoteDesktopLaunchShowDesktop": "Show the desktop",
+  "@remoteDesktopLaunchShowDesktop": {
+    "description": "Remote desktop chooser: option that shows and controls the desktop already signed in on the server."
+  },
+  "remoteDesktopLaunchShowDesktopHint": "See and control the desktop signed in on this server.",
+  "@remoteDesktopLaunchShowDesktopHint": {
+    "description": "Remote desktop chooser: subtitle of the show-the-desktop option."
+  },
+  "remoteDesktopLaunchNoDesktop": "Nobody is signed in to a desktop on this server.",
+  "@remoteDesktopLaunchNoDesktop": {
+    "description": "Remote desktop chooser: why show-the-desktop is unavailable — nobody is signed in to a graphical desktop on the server."
+  },
+  "remoteDesktopLaunchOtherUser": "The desktop here belongs to {users}. Sign in as that account to show it.",
+  "@remoteDesktopLaunchOtherUser": {
+    "description": "Remote desktop chooser: why show-the-desktop is unavailable — the desktop belongs to other accounts. {users} is a comma-separated list of user names.",
+    "placeholders": {
+      "users": {
+        "type": "String"
+      }
+    }
+  },
+  "remoteDesktopLaunchNewVirtual": "Start a virtual desktop…",
+  "@remoteDesktopLaunchNewVirtual": {
+    "description": "Remote desktop chooser: option that starts a new virtual desktop (a private screen on the server)."
+  },
+  "remoteDesktopLaunchNewVirtualHint": "Run programs on a private screen on the server, even with no monitor attached.",
+  "@remoteDesktopLaunchNewVirtualHint": {
+    "description": "Remote desktop chooser: subtitle of the virtual-desktop option."
+  },
+  "remoteDesktopLaunchNeedsXvfb": "Virtual desktops need Xvfb on the server. Install it there with:",
+  "@remoteDesktopLaunchNeedsXvfb": {
+    "description": "Remote desktop chooser: virtual desktops need the Xvfb package on the server; followed by the install command."
+  },
+  "remoteDesktopLaunchCopy": "Copy",
+  "@remoteDesktopLaunchCopy": {
+    "description": "Remote desktop: tooltip of the button that copies a shown command to the clipboard."
+  },
+  "remoteDesktopLaunchCopied": "Copied to the clipboard",
+  "@remoteDesktopLaunchCopied": {
+    "description": "Remote desktop: snackbar after a command was copied."
+  },
+  "remoteDesktopLaunchRunning": "Running virtual desktops",
+  "@remoteDesktopLaunchRunning": {
+    "description": "Remote desktop chooser: heading above virtual desktops that were kept running on the server."
+  },
+  "remoteDesktopLaunchRunningItem": "{label} on {display}, {width}×{height}",
+  "@remoteDesktopLaunchRunningItem": {
+    "description": "Remote desktop chooser: one running virtual desktop. {label} is what runs in it, {display} its X display such as :3.",
+    "placeholders": {
+      "label": {
+        "type": "String"
+      },
+      "display": {
+        "type": "String"
+      },
+      "width": {
+        "type": "int"
+      },
+      "height": {
+        "type": "int"
+      }
+    }
+  },
+  "remoteDesktopLaunchStop": "Stop",
+  "@remoteDesktopLaunchStop": {
+    "description": "Remote desktop chooser: button that stops a running virtual desktop."
+  },
+  "remoteDesktopLaunchMac": "Show this Mac's screen",
+  "@remoteDesktopLaunchMac": {
+    "description": "Remote desktop chooser: option that shows a Mac's screen through its built-in Screen Sharing."
+  },
+  "remoteDesktopLaunchMacHint": "Uses the Mac's built-in Screen Sharing, through this SSH connection.",
+  "@remoteDesktopLaunchMacHint": {
+    "description": "Remote desktop chooser: subtitle of the Mac option."
+  },
+  "remoteDesktopLaunchUnsupported": "Remote desktop works with Linux, Windows and macOS servers.",
+  "@remoteDesktopLaunchUnsupported": {
+    "description": "Remote desktop chooser: shown when the server is not Linux, Windows or macOS."
+  },
+  "remoteDesktopLaunchFailed": "Could not check this server: {error}",
+  "@remoteDesktopLaunchFailed": {
+    "description": "Remote desktop: snackbar when checking the server failed. {error} is the reason.",
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
+  "remoteDesktopVirtualTitle": "New virtual desktop",
+  "@remoteDesktopVirtualTitle": {
+    "description": "Virtual desktop setup: dialog title."
+  },
+  "remoteDesktopVirtualWhat": "What to run",
+  "@remoteDesktopVirtualWhat": {
+    "description": "Virtual desktop setup: heading above the choice of what runs in it."
+  },
+  "remoteDesktopVirtualSession": "{name} desktop",
+  "@remoteDesktopVirtualSession": {
+    "description": "Virtual desktop setup: one installed desktop environment to run. {name} is its name, such as Xfce.",
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "remoteDesktopVirtualOneApp": "One program",
+  "@remoteDesktopVirtualOneApp": {
+    "description": "Virtual desktop setup: option to run a single program instead of a desktop environment."
+  },
+  "remoteDesktopVirtualNoSessions": "No desktop environment such as Xfce is installed on the server, so the virtual desktop will run one program.",
+  "@remoteDesktopVirtualNoSessions": {
+    "description": "Virtual desktop setup: shown when no desktop environment is installed on the server."
+  },
+  "remoteDesktopVirtualSize": "Screen size",
+  "@remoteDesktopVirtualSize": {
+    "description": "Virtual desktop setup: label of the screen-size choice."
+  },
+  "remoteDesktopVirtualSizeFit": "This window ({width}×{height})",
+  "@remoteDesktopVirtualSizeFit": {
+    "description": "Virtual desktop setup: screen size matching this window. {width}×{height} in pixels.",
+    "placeholders": {
+      "width": {
+        "type": "int"
+      },
+      "height": {
+        "type": "int"
+      }
+    }
+  },
+  "remoteDesktopVirtualKeep": "Keep running after I disconnect",
+  "@remoteDesktopVirtualKeep": {
+    "description": "Virtual desktop setup: checkbox to keep the virtual desktop running on the server after disconnecting."
+  },
+  "remoteDesktopVirtualKeepHint": "Reconnect to it later from Remote desktop. It runs until you stop it.",
+  "@remoteDesktopVirtualKeepHint": {
+    "description": "Virtual desktop setup: explains the keep-running option."
+  },
+  "remoteDesktopVirtualStart": "Start",
+  "@remoteDesktopVirtualStart": {
+    "description": "Virtual desktop setup: button that starts the virtual desktop."
+  },
+  "remoteDesktopVirtualNeedsCommand": "Enter a program to run.",
+  "@remoteDesktopVirtualNeedsCommand": {
+    "description": "Virtual desktop setup: validation error when no program was entered."
+  },
+  "remoteDesktopVirtualScreenTitle": "Virtual desktop {display}",
+  "@remoteDesktopVirtualScreenTitle": {
+    "description": "Remote desktop screen: title for a virtual desktop. {display} is its X display, such as :3.",
+    "placeholders": {
+      "display": {
+        "type": "String"
+      }
+    }
+  },
+  "remoteDesktopStatusPreparing": "Preparing the remote-desktop agent…",
+  "@remoteDesktopStatusPreparing": {
+    "description": "Remote desktop: progress while the agent is prepared for the server."
+  },
+  "remoteDesktopStatusUploading": "Uploading the remote-desktop agent… {percent}%",
+  "@remoteDesktopStatusUploading": {
+    "description": "Remote desktop: progress while the agent is copied to the server. {percent} is 0–100.",
+    "placeholders": {
+      "percent": {
+        "type": "int"
+      }
+    }
+  },
+  "remoteDesktopStatusStarting": "Starting the agent on the server…",
+  "@remoteDesktopStatusStarting": {
+    "description": "Remote desktop: progress while the agent starts on the server."
+  },
+  "remoteDesktopStatusStartingVirtual": "Starting the virtual desktop…",
+  "@remoteDesktopStatusStartingVirtual": {
+    "description": "Remote desktop: progress while a virtual desktop starts on the server."
+  },
+  "remoteDesktopStatusReattaching": "Reconnecting to the virtual desktop…",
+  "@remoteDesktopStatusReattaching": {
+    "description": "Remote desktop: progress while reconnecting to a virtual desktop that kept running."
+  },
+  "remoteDesktopVncTitle": "Screen Sharing sign-in",
+  "@remoteDesktopVncTitle": {
+    "description": "Screen Sharing sign-in dialog: title."
+  },
+  "remoteDesktopVncPasswordHint": "Enter the screen-sharing password set on the server.",
+  "@remoteDesktopVncPasswordHint": {
+    "description": "Screen Sharing sign-in dialog: the server asks for its screen-sharing (VNC) password."
+  },
+  "remoteDesktopVncAccountHint": "Sign in with a user account on this Mac.",
+  "@remoteDesktopVncAccountHint": {
+    "description": "Screen Sharing sign-in dialog: the Mac asks for one of its user accounts."
+  },
+  "remoteDesktopVncUser": "User name",
+  "@remoteDesktopVncUser": {
+    "description": "Screen Sharing sign-in dialog: user-name field label."
+  },
+  "remoteDesktopVncPassword": "Password",
+  "@remoteDesktopVncPassword": {
+    "description": "Screen Sharing sign-in dialog: password field label."
+  },
+  "remoteDesktopVncSignIn": "Sign in",
+  "@remoteDesktopVncSignIn": {
+    "description": "Screen Sharing sign-in dialog: confirm button."
+  },
+  "remoteDesktopLaunchListFailed": "Could not check for running virtual desktops: {error}",
+  "@remoteDesktopLaunchListFailed": {
+    "description": "Remote desktop chooser: the virtual desktops kept running on the server could not be listed. {error} is the reason.",
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
+  "remoteDesktopSetupTitle": "Set up this server",
+  "@remoteDesktopSetupTitle": {
+    "description": "Server setup dialog: title. The app installs what a virtual desktop needs on the server."
+  },
+  "remoteDesktopSetupChecking": "Checking how software can be installed…",
+  "@remoteDesktopSetupChecking": {
+    "description": "Server setup dialog: shown while checking whether this account is root or can use sudo."
+  },
+  "remoteDesktopSetupIntro": "SecureShell Go will install these on {host}:",
+  "@remoteDesktopSetupIntro": {
+    "description": "Server setup dialog: above the list of things to install. {host} is the server name.",
+    "placeholders": {
+      "host": {
+        "type": "String"
+      }
+    }
+  },
+  "remoteDesktopSetupNoSudo": "This account can't install software on the server. Someone with an administrator account can install it with:",
+  "@remoteDesktopSetupNoSudo": {
+    "description": "Server setup dialog: this account has no sudo, so the app cannot install; followed by the command for an administrator."
+  },
+  "remoteDesktopSetupPassword": "Your password on the server",
+  "@remoteDesktopSetupPassword": {
+    "description": "Server setup dialog: label of the field for the account's own password, which sudo asks for."
+  },
+  "remoteDesktopSetupPasswordHint": "sudo asks for it to install software. It is used for this install only and is not saved.",
+  "@remoteDesktopSetupPasswordHint": {
+    "description": "Server setup dialog: helper text under the sudo password field."
+  },
+  "remoteDesktopSetupInstall": "Install",
+  "@remoteDesktopSetupInstall": {
+    "description": "Server setup dialog: button that starts the install."
+  },
+  "remoteDesktopSetupInstalling": "Installing… {minutes}:{seconds}. This can take a few minutes.",
+  "@remoteDesktopSetupInstalling": {
+    "description": "Server setup dialog: progress while installing. {minutes}:{seconds} is the time so far.",
+    "placeholders": {
+      "minutes": {
+        "type": "int"
+      },
+      "seconds": {
+        "type": "String"
+      }
+    }
+  },
+  "remoteDesktopSetupHide": "Close",
+  "@remoteDesktopSetupHide": {
+    "description": "Server setup dialog: closes the dialog while the install goes on by itself on the server."
+  },
+  "remoteDesktopSetupDone": "Installed.",
+  "@remoteDesktopSetupDone": {
+    "description": "Server setup dialog: the install finished."
+  },
+  "remoteDesktopSetupXvfb": "Virtual screen (Xvfb)",
+  "@remoteDesktopSetupXvfb": {
+    "description": "Server setup dialog: item — the virtual screen (Xvfb) every virtual desktop runs in."
+  },
+  "remoteDesktopSetupXvfbDetail": "Needed for every virtual desktop. A few megabytes.",
+  "@remoteDesktopSetupXvfbDetail": {
+    "description": "Server setup dialog: detail under the Xvfb item."
+  },
+  "remoteDesktopSetupDesktop": "Xfce desktop",
+  "@remoteDesktopSetupDesktop": {
+    "description": "Server setup dialog: item — the Xfce desktop."
+  },
+  "remoteDesktopSetupDesktopDetail": "A light desktop with a terminal and a file manager. Around 150–250 MB on a server with no desktop yet.",
+  "@remoteDesktopSetupDesktopDetail": {
+    "description": "Server setup dialog: detail under the Xfce desktop item."
+  },
+  "remoteDesktopSetupProgramDetail": "From the {package} package.",
+  "@remoteDesktopSetupProgramDetail": {
+    "description": "Server setup dialog: detail under a program to install. {package} is the package that provides it.",
+    "placeholders": {
+      "package": {
+        "type": "String"
+      }
+    }
+  },
+  "remoteDesktopLaunchSetupNeeded": "This server needs a virtual screen first. SecureShell Go can install it for you.",
+  "@remoteDesktopLaunchSetupNeeded": {
+    "description": "Remote desktop chooser: subtitle of the virtual-desktop option when the server lacks Xvfb but the app can install it."
+  },
+  "remoteDesktopVirtualInstallDesktopButton": "Install the Xfce desktop",
+  "@remoteDesktopVirtualInstallDesktopButton": {
+    "description": "Virtual desktop setup: button that installs the Xfce desktop on the server."
+  },
+  "remoteDesktopVirtualProgramMissing": "{program} is not installed on the server.",
+  "@remoteDesktopVirtualProgramMissing": {
+    "description": "Virtual desktop setup: the program typed is not installed on the server. {program} is its name.",
+    "placeholders": {
+      "program": {
+        "type": "String"
+      }
+    }
+  },
+  "remoteDesktopVirtualInstallProgram": "Install {package}",
+  "@remoteDesktopVirtualInstallProgram": {
+    "description": "Virtual desktop setup: button that installs the package providing the program. {package} is the package name.",
+    "placeholders": {
+      "package": {
+        "type": "String"
+      }
+    }
+  },
+  "remoteDesktopVirtualOrType": "Or type a command",
+  "@remoteDesktopVirtualOrType": {
+    "description": "Virtual desktop setup: label of the command field, below the button that picks an installed app."
+  },
+  "remoteDesktopVirtualRootNote": "{program} does not start as root on its own, so SecureShell Go adds the options it asks for: no sandbox, and a profile folder of its own.",
+  "@remoteDesktopVirtualRootNote": {
+    "description": "Virtual desktop setup: shown when signed in as root and the app (VS Code, Chrome…) needs extra options to start as root. {program} is its name.",
+    "placeholders": {
+      "program": {
+        "type": "String"
+      }
+    }
+  },
+  "remoteDesktopVirtualLingerAsk": "This server stops your programs when you sign out. Allow this desktop to keep running?",
+  "@remoteDesktopVirtualLingerAsk": {
+    "description": "Virtual desktop setup: shown when keep-running is ticked but the server stops programs at sign-out."
+  },
+  "remoteDesktopVirtualLingerAllow": "Allow",
+  "@remoteDesktopVirtualLingerAllow": {
+    "description": "Virtual desktop setup: button that allows programs to keep running after sign-out."
+  },
+  "remoteDesktopSetupLinger": "Keep desktops running after sign-out",
+  "@remoteDesktopSetupLinger": {
+    "description": "Server setup dialog: item — let programs keep running after sign-out."
+  },
+  "remoteDesktopSetupLingerDetail": "Turns on lingering for your account, so its programs are not stopped when you sign out.",
+  "@remoteDesktopSetupLingerDetail": {
+    "description": "Server setup dialog: detail under the keep-running item."
+  },
+  "remoteDesktopProgramStopped": "The program stopped soon after it started (exit code {code}).",
+  "@remoteDesktopProgramStopped": {
+    "description": "Remote desktop: the program in a virtual desktop stopped soon after starting. {code} is its exit code.",
+    "placeholders": {
+      "code": {
+        "type": "int"
+      }
+    }
+  },
+  "remoteDesktopLaunchHelperNote": "The first time, SecureShell Go copies a small helper (2–5 MB) to the server. It runs only while you use it.",
+  "@remoteDesktopLaunchHelperNote": {
+    "description": "Remote desktop chooser: footnote about the helper the app copies to the server."
+  },
+  "remoteDesktopVirtualClearApp": "Clear",
+  "@remoteDesktopVirtualClearApp": {
+    "description": "Virtual desktop setup: tooltip of the button that clears the app picked from the server's list."
+  },
+  "commonCopied": "Copied",
+  "@commonCopied": {
+    "description": "A copy button's label for a moment after it copied."
+  },
+  "hostListTryAgain": "Try again",
+  "@hostListTryAgain": {
+    "description": "Connection error dialog: button that connects to the same host again."
+  },
+  "hostEditDiscardTitle": "Discard changes?",
+  "@hostEditDiscardTitle": {
+    "description": "Host form: title of the confirmation when leaving with unsaved changes."
+  },
+  "hostEditDiscardBody": "Your changes to this host have not been saved.",
+  "@hostEditDiscardBody": {
+    "description": "Host form: body of the confirmation when leaving with unsaved changes."
+  },
+  "transferPanelCancelAllTitle": "{count, plural, =1{Cancel 1 transfer?} other{Cancel {count} transfers?}}",
+  "@transferPanelCancelAllTitle": {
+    "description": "Transfers: title of the confirmation before Cancel all.",
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "transferPanelCancelAllBody": "A cancelled transfer stops where it is and can't be resumed.",
+  "@transferPanelCancelAllBody": {
+    "description": "Transfers: body of the confirmation before Cancel all."
+  },
+  "transferPanelKeepTransfers": "Keep going",
+  "@transferPanelKeepTransfers": {
+    "description": "Transfers: button that closes the Cancel all confirmation and leaves transfers running."
+  },
+  "terminalJumpToLatest": "Jump to the latest output",
+  "@terminalJumpToLatest": {
+    "description": "Terminal: tooltip of the button that appears while scrolled up in the history and scrolls back down to the newest output."
   },
   "settingsBridge": "AI Bridge",
   "@settingsBridge": {

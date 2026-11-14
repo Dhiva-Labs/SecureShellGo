@@ -67,7 +67,8 @@ Future<List<String>?> showLoginPromptDialog(
   );
 }
 
-/// Shows text a server sent before login, and completes once dismissed.
+/// Shows text a server sent before login, and completes once dismissed —
+/// with Continue, or with Enter or Space, Continue having the focus.
 Future<void> showServerBannerSheet(
   BuildContext context,
   List<ServerBanner> banners,
@@ -105,6 +106,10 @@ Future<void> showServerBannerSheet(
               Align(
                 alignment: Alignment.centerRight,
                 child: FilledButton(
+                  // Every connect to a host with a banner stops here, so the
+                  // keyboard carries on with Enter or Space rather than the
+                  // user having to reach for the mouse or the screen.
+                  autofocus: true,
                   onPressed: () => Navigator.of(context).pop(),
                   child: Text(
                     MaterialLocalizations.of(context).continueButtonLabel,

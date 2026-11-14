@@ -265,7 +265,7 @@ void main() {
       expect(find.text('Not now'), findsNothing);
     });
 
-    testWidgets('a dialog asks to save right after the offer appears',
+    testWidgets('the page offers to save, with no dialog in the way',
         (tester) async {
       await pumpOffer(
         tester,
@@ -273,29 +273,22 @@ void main() {
       );
       await tester.pump();
 
-      expect(find.text('Save this server?'), findsOneWidget);
-      expect(find.text('Save host'), findsOneWidget);
-      expect(find.text('Not now'), findsOneWidget);
+      expect(find.byType(AlertDialog), findsNothing);
+      expect(find.text('Save this server?'), findsNothing);
+      expect(find.text('Save this server'), findsOneWidget);
+      expect(find.text('Done'), findsOneWidget);
     });
 
-    testWidgets('declining saves nothing and does not ask again',
-        (tester) async {
+    testWidgets('nothing is saved until asked', (tester) async {
       await pumpOffer(
         tester,
         credentialStore: CredentialStore(backend: _InMemoryBackend()),
       );
-      await tester.pump();
-
-      await tapAndRun(tester, 'Not now', checks: () async {
-        expect(await hosts.all(), isEmpty);
-      });
-
-      expect(find.text('Save this server?'), findsNothing);
-
-      // Rebuilding the same widget instance (e.g. a parent redraw) must not
-      // re-open the dialog — it already got its answer.
       await tester.pump(const Duration(seconds: 1));
-      expect(find.text('Save this server?'), findsNothing);
+      await settleIo(tester, rounds: 5);
+
+      expect(await tester.runAsync(hosts.all), isEmpty);
+      expect(find.byType(AlertDialog), findsNothing);
     });
 
     testWidgets(
@@ -305,7 +298,7 @@ void main() {
       await pumpOffer(tester, credentialStore: credentialStore);
       await tester.pump();
 
-      await tapAndRun(tester, 'Save host', checks: () async {
+      await tapAndRun(tester, 'Save this server', checks: () async {
         final saved = await hosts.all();
         expect(saved, hasLength(1));
         expect(saved.single.id, isNot(startsWith('quick-')));
@@ -328,7 +321,7 @@ void main() {
       await pumpOffer(tester, credentialStore: credentialStore);
       await tester.pump();
 
-      await tapAndRun(tester, 'Save host', checks: () async {
+      await tapAndRun(tester, 'Save this server', checks: () async {
         expect(await hosts.all(), hasLength(1));
       });
 

@@ -1,0 +1,13 @@
+{
+  "encodings": {
+    "Deflate": 3,
+    "Jpeg": 3
+  },
+  "exact": true,
+  "frames": 2,
+  "height": 160,
+  "maxMeanAbsError": 0.0,
+  "quality": "balanced",
+  "rustMeanAbsError": 0.0,
+  "width": 256
+}

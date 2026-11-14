@@ -1,0 +1,55 @@
+# Maintainer: Dhiva Labs <dhivakar1010@gmail.com>
+#
+# AUR package. It repackages the Linux tarball from the GitHub release, so
+# Arch users run the same build as every other distribution, laid out as the
+# PPA's .deb is (/opt/secureshellgo, see packaging/linux-distros/tree.sh).
+# packaging/arch/aur.sh renders this file for each release (version and
+# checksums) and checks it with makepkg; the rendered PKGBUILD and .SRCINFO
+# are what gets pushed to the AUR.
+pkgname=@NAME@-bin
+pkgver=@VERSION@
+pkgrel=1
+pkgdesc='@SUMMARY@'
+arch=('x86_64' 'aarch64')
+url='@HOMEPAGE@'
+license=('@LICENSE@')
+depends=(@ARCH_DEPENDS@)
+optdepends=(@ARCH_OPTDEPENDS@)
+provides=('@NAME@')
+conflicts=('@NAME@')
+options=('!strip' '!debug')
+_raw=https://raw.githubusercontent.com/@GITHUB_REPO@/@TAG@
+source=("LICENSE::$_raw/LICENSE"
+        "secureshellgo.wrapper::$_raw/debian/secureshellgo.wrapper"
+        "com.dhivalabs.secure_shell_go.desktop::$_raw/linux/com.dhivalabs.secure_shell_go.desktop"
+        "secureshellgo-256.png::$_raw/linux/secureshellgo-256.png"
+        "com.dhivalabs.secure_shell_go.metainfo.xml::$_raw/packaging/flatpak/com.dhivalabs.secure_shell_go.metainfo.xml")
+# The release tarballs carry no version in their names; keep it in the local
+# file name so a newer release is never mistaken for a cached older one.
+source_x86_64=("SecureShellGo-$pkgver-linux-x64.tar.gz::@RELEASE_URL@/SecureShellGo-linux-x64.tar.gz")
+source_aarch64=("SecureShellGo-$pkgver-linux-arm64.tar.gz::@RELEASE_URL@/SecureShellGo-linux-arm64.tar.gz")
+sha256sums=('@SHA_LICENSE@'
+            '@SHA_WRAPPER@'
+            '@SHA_DESKTOP@'
+            '@SHA_ICON@'
+            '@SHA_METAINFO@')
+sha256sums_x86_64=('@SHA_X64@')
+sha256sums_aarch64=('@SHA_ARM64@')
+
+package() {
+  local id=com.dhivalabs.secure_shell_go bundle
+  case "$CARCH" in
+    x86_64) bundle="$srcdir/SecureShellGo-linux-x64" ;;
+    aarch64) bundle="$srcdir/SecureShellGo-linux-arm64" ;;
+  esac
+  install -d "$pkgdir/opt/secureshellgo"
+  cp -a "$bundle/." "$pkgdir/opt/secureshellgo/"
+  # Built only because the release runner has a JDK, and never loaded on the
+  # desktop; it would need libjvm.so (see packaging/linux-distros/distro.conf).
+  rm -f "$pkgdir/opt/secureshellgo/lib/libdartjni.so"
+  install -Dm755 secureshellgo.wrapper "$pkgdir/usr/bin/secureshellgo"
+  install -Dm644 "$id.desktop" "$pkgdir/usr/share/applications/$id.desktop"
+  install -Dm644 secureshellgo-256.png "$pkgdir/usr/share/icons/hicolor/256x256/apps/secureshellgo.png"
+  install -Dm644 "$id.metainfo.xml" "$pkgdir/usr/share/metainfo/$id.metainfo.xml"
+  install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+}

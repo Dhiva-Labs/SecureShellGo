@@ -3,12 +3,71 @@
 [![ARM64 builds](https://github.com/Dhiva-Labs/SecureShellGo/actions/workflows/desktop-builds.yml/badge.svg?branch=main)](https://github.com/Dhiva-Labs/SecureShellGo/actions/workflows/desktop-builds.yml)
 ![Linux x64 | arm64](https://img.shields.io/badge/Linux-x64%20%7C%20arm64-informational?logo=linux&logoColor=white)
 ![Windows x64 | arm64](https://img.shields.io/badge/Windows-x64%20%7C%20arm64-informational?logo=windows&logoColor=white)
+![Linux: deb | rpm | Arch | AppImage | Flatpak | Snap](https://img.shields.io/badge/Linux-deb%20%7C%20rpm%20%7C%20Arch%20%7C%20AppImage%20%7C%20Flatpak%20%7C%20Snap-informational?logo=linux&logoColor=white)
 
-A fast, security-first SSH terminal and SFTP client for Android, Windows and
-Linux. Connect to your servers, run a real interactive shell, edit and transfer
-files — with strict host-key verification at the core. In English, Simplified
-Chinese, Japanese, Brazilian Portuguese, Spanish, Russian, German, Korean and
-French.
+A security-first SSH terminal and SFTP client written in Flutter, for Android,
+Windows and Linux (a macOS build is attached to releases too). Connect to your
+servers, run a real interactive shell, edit and transfer files, with strict
+host-key verification at the core. The interface is translated into English,
+Simplified Chinese, Japanese, Brazilian Portuguese, Spanish, Russian, German,
+Korean and French.
+
+Latest release: **1.5.1**. Install options for each platform are
+[below](#install): release downloads (APK, Linux, Windows, macOS), the Ubuntu
+PPA (`ppa:dhiva-labs/apps`) and the Snap Store (`sudo snap install secureshellgo`).
+
+## Engineering highlights
+
+- **Mosh client written from scratch in Dart**, with no native Mosh code. It
+  covers the State Synchronization Protocol with Mosh's own timing
+  ([`mosh_transport.dart`](lib/services/mosh/mosh_transport.dart)), fragment
+  reassembly ([`mosh_fragment.dart`](lib/services/mosh/mosh_fragment.dart)), a
+  protobuf codec ([`mosh_protobuf.dart`](lib/services/mosh/mosh_protobuf.dart)),
+  local echo prediction ([`mosh_overlay.dart`](lib/services/mosh/mosh_overlay.dart))
+  and the SSH bootstrap ([`mosh_bootstrap.dart`](lib/services/mosh/mosh_bootstrap.dart)).
+  Tests: [`mosh_wire_test.dart`](test/mosh_wire_test.dart),
+  [`mosh_transport_test.dart`](test/mosh_transport_test.dart),
+  [`mosh_prediction_test.dart`](test/mosh_prediction_test.dart),
+  [`mosh_integration_test.dart`](test/mosh_integration_test.dart).
+- **AES-OCB (RFC 7253) implemented over pointycastle's AES block cipher**, the
+  authenticated cipher Mosh seals every datagram with
+  ([`ocb.dart`](lib/services/mosh/ocb.dart)). It supports every key, nonce and
+  tag size in the RFC, and
+  [`mosh_ocb_test.dart`](test/mosh_ocb_test.dart) runs the RFC's Appendix A
+  sample results.
+- **Tamper-evident known_hosts store.** The trusted-keys file is wrapped in an
+  HMAC envelope keyed from platform secure storage, verified in constant time,
+  with four verdicts (verified, legacy-migrated, re-keyed, tampered) and a
+  fail-closed path that empties the trust list and warns
+  ([`known_hosts_integrity.dart`](lib/services/known_hosts_integrity.dart),
+  [`known_hosts_integrity_test.dart`](test/known_hosts_integrity_test.dart)).
+  The design is written up in [ARCHITECTURE.md](ARCHITECTURE.md).
+- **Host-key policy keyed like OpenSSH** on (host, port, key type), with a
+  changed key blocking the connection until explicitly overridden
+  ([`host_key_policy_test.dart`](test/host_key_policy_test.dart),
+  [`known_hosts_service_test.dart`](test/known_hosts_service_test.dart)).
+- **Encrypted backups** with Argon2id and AES-256-GCM
+  ([`backup_crypto.dart`](lib/services/backup_crypto.dart),
+  [`backup_crypto_test.dart`](test/backup_crypto_test.dart)).
+- **Remote desktop over the existing SSH connection**, using a small agent
+  copied to the server for the session
+  ([`lib/services/remote_desktop/`](lib/services/remote_desktop)).
+
+## Status and limits
+
+- Version 1.5.1. The Android app is in testing and is distributed as an APK on
+  the Releases page; it is not on Google Play. The Windows and Linux builds are
+  built and started in CI, but haven't had the testing the Android app has.
+- Windows builds are zip downloads from Releases. Microsoft Store packaging
+  exists in the repo ([`store-msix.yml`](.github/workflows/store-msix.yml),
+  [store listing draft](store/microsoft-store-listing.md)); this README does not
+  claim a Store listing.
+- macOS builds are unsigned (see below). iOS is not supported.
+- The security code has not had an independent audit. The Mosh client was
+  written from the protocol and the Mosh source, and has not been run against
+  every server version.
+
+**Documentation:** step-by-step guides at [learn.dhivalabs.com](https://learn.dhivalabs.com/apps/secureshellgo/): [install](https://learn.dhivalabs.com/apps/secureshellgo/install) · [beginner guide](https://learn.dhivalabs.com/apps/secureshellgo/getting-started) · [troubleshooting](https://learn.dhivalabs.com/apps/secureshellgo/faq). New to the topic? Try the [Networking and SSH](https://learn.dhivalabs.com/tracks/networking/) and [Security and safe habits](https://learn.dhivalabs.com/tracks/security/) learning tracks.
 
 ## Features
 
@@ -126,6 +185,29 @@ French.
 - Server stats (load, memory, disk, uptime), a live log viewer with filtering
   and severity highlighting, and a systemd service and process manager
 
+### Remote desktop and graphical apps
+- **See and control a server's desktop**, TeamViewer-style, from any device,
+  phones included: GNOME on Wayland, X11 desktops and Windows. The app copies
+  a small agent over the SSH connection you already have, starts it for the
+  session and stops it after; it listens on the server's loopback only and
+  is reached through the SSH tunnel, so no port is opened and SSH is the only
+  login. The person at the screen is told while it is being viewed.
+- **Virtual desktops on headless servers**: start a private screen (Xvfb)
+  running a desktop such as Xfce, or a single program, and use it from the
+  same viewer. Optionally keep it running after you disconnect and come back
+  to it later.
+- **Open an app in a window**: run one graphical program on the server and
+  have its window open on this device's own desktop, through X11 forwarding
+  (Linux, or Windows with an X server such as VcXsrv or X410). No host
+  setting to turn on first, and a server missing `xauth` gets it installed
+  in one click.
+- **Macs** through their built-in Screen Sharing, over the same tunnel.
+- Mouse, keyboard and clipboard; on touch screens a trackpad mode and a
+  direct mode, and a key bar with Ctrl, Alt, Super and Ctrl+Alt+Del.
+- Nothing runs on a server until you open a remote desktop on it. The agents
+  add about 5.7 MB to the app, and older ones the app left behind are
+  removed from servers when a newer one is installed.
+
 ### Locked down
 - Optional app lock behind your device's own authentication (Android) or
   Windows Hello
@@ -174,6 +256,31 @@ macOS builds are unsigned — there's no Apple Developer ID behind this
 project — so Gatekeeper will refuse to open the app and call it an
 "unidentified developer." Right-click the `.app`, choose **Open**, and
 confirm once; after that it launches normally.
+
+### Fedora, openSUSE, Arch, AppImage and Flatpak
+
+Releases from 1.5.1 on also carry these, for x64 (`x86_64`) and arm64
+(`aarch64`), all holding the same build as the `linux` archives:
+
+| Distribution | Asset | Install |
+|---|---|---|
+| Fedora, RHEL | `secureshellgo-<version>-1.x86_64.rpm` | `sudo dnf install ./secureshellgo-<version>-1.x86_64.rpm` |
+| openSUSE | the same `.rpm` | `sudo zypper install --allow-unsigned-rpm ./secureshellgo-<version>-1.x86_64.rpm` |
+| Arch, Manjaro, EndeavourOS | `secureshellgo-<version>-1-x86_64.pkg.tar.zst` | `sudo pacman -U ./secureshellgo-<version>-1-x86_64.pkg.tar.zst` |
+| Any Linux with GTK 3 | `SecureShellGo-<version>-x86_64.AppImage` | `chmod +x SecureShellGo-<version>-x86_64.AppImage && ./SecureShellGo-<version>-x86_64.AppImage` |
+| Any Linux with Flatpak | `secureshellgo-<version>-x86_64.flatpak` | `flatpak install --user ./secureshellgo-<version>-x86_64.flatpak` (the GNOME runtime comes from Flathub) |
+
+Replace `x86_64` with `aarch64` on ARM64. The `.rpm` and the Arch package
+install the same files as the PPA's `.deb` (`/opt/secureshellgo`, started as
+`secureshellgo`) and recommend a Secret Service provider the way it does. The
+`.rpm` is not signed, hence `--allow-unsigned-rpm` on openSUSE; check the
+files against the release page. The builds are made on Ubuntu 24.04 (glibc
+2.39), so use a current distribution: Fedora 40 or later, openSUSE
+Tumbleweed or current Arch, not RHEL 9 or openSUSE Leap 15; dnf and zypper
+refuse the `.rpm` where its glibc is too old. Each release also carries
+`secureshellgo-bin-<version>-aur.tar.gz`, the recipe for an AUR
+`secureshellgo-bin` package, which is not on the AUR yet. What the Flatpak's
+sandbox allows is in [packaging/flatpak/README.md](packaging/flatpak/README.md).
 
 ### Install on Ubuntu
 
@@ -369,6 +476,24 @@ flutter pub get
 flutter build apk --release
 ```
 
+Run the checks CI runs (Flutter 3.44.6 is what the workflows pin):
+
+```bash
+flutter analyze
+flutter test
+```
+
+Remote desktop carries CrossShell's agents in `assets/agents/`, packed and
+committed, with their hashes pinned in `assets/agents/manifest.json`. To move to
+a new [CrossShell](https://github.com/Dhiva-Labs/CrossShell) release, download
+its `crossshell-host-*` assets and `crossshell-host-SHA256SUMS` (renamed to
+`SHA256SUMS`) into one folder and stage them; every file is checked against the
+sums first:
+
+```bash
+tool/stage_agents.sh path/to/that/folder
+```
+
 Release builds are signed with the upload key named in
 `android/key.properties`, which is gitignored along with the keystore itself.
 Without that file the build still succeeds, falling back to the debug key with
@@ -376,6 +501,18 @@ a warning — runnable, but not uploadable to Google Play.
 
 Built with Flutter. No third-party platform plugins for storage, wakelock, or
 the foreground service — small, auditable Kotlin channels instead.
+
+## Sponsors
+
+Dhiva Labs is an independent, self-funded lab. [Sponsorships](https://github.com/sponsors/Dhiva-Labs) help bring this project and the rest of Dhiva Labs to every platform, iPhone and Mac included.
+
+[![Sponsor Dhiva Labs](https://img.shields.io/badge/Sponsor-Dhiva%20Labs-ea4aaa?logo=githubsponsors&logoColor=white)](https://github.com/sponsors/Dhiva-Labs)
+
+Monthly sponsors at $10 and up are listed here:
+
+<!-- sponsors -->
+*Be the first: [sponsor Dhiva Labs](https://github.com/sponsors/Dhiva-Labs).*
+<!-- sponsors -->
 
 ## Licence
 

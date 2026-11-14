@@ -1,0 +1,56 @@
+# Flatpak manifest for SecureShell Go.
+#
+# Like the .rpm, Arch package and AppImage, this repackages the installed
+# tree CI lays out from the release tarball (packaging/linux-distros/tree.sh,
+# unpacked into packaging/flatpak/tree/ by the workflow), so the Flatpak ships
+# the same binary instead of a second build inside the sandbox. A Flathub
+# submission needs `tree` swapped for the release tarball (URL + sha256); see
+# README.md in this directory, which also lists what works in the sandbox.
+id: com.dhivalabs.secure_shell_go
+runtime: org.gnome.Platform
+runtime-version: '51'
+sdk: org.gnome.Sdk
+command: secureshellgo
+finish-args:
+  # GTK draws on Wayland when there is a compositor. The X11 socket is asked
+  # for as well, not only as a fallback: "Open an app in a window" (X11
+  # forwarding) draws the server's programs on the local X server, which on a
+  # Wayland desktop is Xwayland (the snap has the x11 plug for the same
+  # reason).
+  - --socket=wayland
+  - --socket=x11
+  - --share=ipc
+  # GPU acceleration for Flutter's renderer.
+  - --device=dri
+  # SSH, SFTP, Mosh (UDP) and port forwards.
+  - --share=network
+  # Saved passwords, keys and passphrases go to the desktop's Secret Service
+  # (GNOME Keyring, KWallet, KeePassXC) through libsecret.
+  - --talk-name=org.freedesktop.secrets
+  # Keys held in the user's SSH agent.
+  - --socket=ssh-auth
+  # "Import from ~/.ssh/config" reads that file and the files it includes;
+  # nothing is written there.
+  - --filesystem=~/.ssh:ro
+  # SFTP downloads go straight into the Downloads folder. Uploads and "save
+  # as" go through the file chooser portal, which needs no grant.
+  - --filesystem=xdg-download
+modules:
+  - name: secureshellgo
+    buildsystem: simple
+    sources:
+      - type: dir
+        path: tree
+        dest: tree
+    build-commands:
+      # The bundle as it is; Flutter finds lib/ and data/ next to its
+      # executable.
+      - mkdir -p /app/lib /app/bin
+      - cp -a tree/opt/secureshellgo /app/lib/secureshellgo
+      - ln -s ../lib/secureshellgo/secure_shell_go /app/bin/secureshellgo
+      # The desktop file is already named after the application ID; the icon
+      # gets that name too, as Flatpak requires.
+      - install -Dm644 -t /app/share/applications tree/usr/share/applications/com.dhivalabs.secure_shell_go.desktop
+      - desktop-file-edit --set-icon=com.dhivalabs.secure_shell_go /app/share/applications/com.dhivalabs.secure_shell_go.desktop
+      - install -Dm644 tree/usr/share/icons/hicolor/256x256/apps/secureshellgo.png /app/share/icons/hicolor/256x256/apps/com.dhivalabs.secure_shell_go.png
+      - install -Dm644 -t /app/share/metainfo tree/usr/share/metainfo/com.dhivalabs.secure_shell_go.metainfo.xml

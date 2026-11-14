@@ -106,6 +106,18 @@ class _SnippetPickerSheetState extends State<_SnippetPickerSheet> {
     await runSnippetOnSession(context, snippet: snippet, session: widget.session);
   }
 
+  /// Enter in the search box: runs the first snippet still listed, the one
+  /// the user would otherwise reach for the mouse to click. Typing a few
+  /// letters and pressing Enter is the whole point of a search box over a
+  /// list. Nothing matching, nothing runs.
+  Future<void> _runTopMatch() async {
+    final snippets = await _future;
+    if (!mounted) return;
+    final matches = _filter(snippets);
+    if (matches.isEmpty) return;
+    await _run(matches.first);
+  }
+
   @override
   Widget build(BuildContext context) {
     // Two-thirds of the screen height: enough to browse a long list without
@@ -123,6 +135,8 @@ class _SnippetPickerSheetState extends State<_SnippetPickerSheet> {
               child: TextField(
                 controller: _searchController,
                 autofocus: true,
+                textInputAction: TextInputAction.go,
+                onSubmitted: (_) => unawaited(_runTopMatch()),
                 decoration: InputDecoration(
                   hintText: l10n.snippetsSearch,
                   prefixIcon: const Icon(Icons.search),

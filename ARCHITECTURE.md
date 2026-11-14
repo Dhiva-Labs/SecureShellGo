@@ -335,13 +335,16 @@ Three outcomes on load:
 | --- | --- |
 | MAC present and correct | Load normally. |
 | No MAC, and no key has ever been established on this device | **Legacy migration.** A genuine Phase 1/2 file. Adopt it once, then immediately re-write it sealed. |
-| MAC missing after a key exists, MAC wrong, key gone, or the file is unparseable | **Fail closed.** Load as empty, set `integrityFailed`, so every host reads as unknown and the user re-verifies. The host list shows a banner saying so, because a silently emptied trust store looks like a bug rather than a warning. |
+| MAC missing after a key exists, MAC wrong, or the file is unparseable | **Fail closed.** Load as empty, set `integrityFailed`, so every host reads as unknown and the user re-verifies. The host list shows a banner saying so, because a silently emptied trust store looks like a bug rather than a warning. |
 
 That middle row is the one worth being careful about: accepting an unsealed file
 unconditionally would let an attacker strip the envelope and downgrade their way
 past the check, so it is gated on the device never having written a sealed file
-before. Losing the Keystore key (app data cleared) also fails closed — the right
-direction, since the alternative is trusting a file nothing can authenticate.
+before. A file sealed under a key the device no longer has (keyring reset, data
+moved from another machine) is not treated as tampering: the code reports it as
+`rekeyed`, adopts the contents and re-seals them under the new key, because
+whatever can delete the key could equally have read it and forged a seal. See
+the comments in `known_hosts_integrity.dart`.
 
 `KnownHostsService`'s public API is unchanged; the key is injected as an
 optional `integrityKey:` constructor argument, and omitting it keeps the plain
@@ -1281,6 +1284,40 @@ The browser hides the "Upload folder" entry on Android rather than showing a
 picker that would fail.
 
 ---
+
+
+## Remote desktop
+
+The design and its reasons are in [`docs/REMOTE_DESKTOP_PLAN.md`](docs/REMOTE_DESKTOP_PLAN.md); this is where the
+pieces live.
+
+```
+screens/remote_desktop_launch.dart   "Remote desktop…": probe, chooser, virtual-desktop
+                                     setup, and the openers that tie the layers below
+screens/remote_desktop_screen.dart   the viewer: states, toolbar, input, Reconnect
+screens/remote_app_launcher.dart     "Open an app in a window" (X11 forwarding)
+widgets/remote_desktop/              compositor (GPU framebuffer), painter, cursor,
+                                     input controller, key bar, soft keyboard
+services/remote_desktop/
+  remote_screen_session.dart         the one interface the viewer draws from
+  csrd_*.dart                        CrossShell agent protocol, tiles, client, keymap
+  rfb_*.dart                         VNC client for Macs (Screen Sharing)
+  agent_*.dart                       probe, bundled-agent manifest, deploy, launch
+  virtual_desktop.dart               Xvfb desktops, kept or torn down with the viewer
+  remote_input*.dart                 pure input logic: scroll, moves, touch, text
+services/remote_app_runner.dart      one exec with x11-req per program
+```
+
+The agent is CrossShell's `crossshell-host`, bundled xz-compressed under
+`assets/agents/` with its hashes pinned in the committed `manifest.json`. It
+is uploaded to a sha256-named folder on the server, checked again before
+every launch, started in the user's session (`systemd-run --user` on Linux,
+a run-once interactive task on Windows) on 127.0.0.1 only, and reached
+through a `direct-tcpip` channel: no listening port anywhere, SSH the only
+authentication, the agent's token a second lock against other local users.
+
+Nothing of this runs until a remote desktop is opened: no probe at connect,
+no upload, no background work.
 
 ## Testing
 

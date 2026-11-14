@@ -1,0 +1,13 @@
+{
+  "encodings": {
+    "Fill": 3,
+    "Jpeg": 3
+  },
+  "exact": false,
+  "frames": 1,
+  "height": 160,
+  "maxMeanAbsError": 10.73,
+  "quality": "balanced",
+  "rustMeanAbsError": 6.486,
+  "width": 256
+}

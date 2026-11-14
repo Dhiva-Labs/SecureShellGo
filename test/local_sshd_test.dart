@@ -300,6 +300,45 @@ void main() {
       expect((await xServer.firstSetup).data, untrusted);
       shell.close();
     }, skip: skip, timeout: timeout);
+
+    test('with the host switch off, the shell has no display but an app '
+        'channel does', () async {
+      final xServer = await _FakeXServer.start();
+      addTearDown(xServer.close);
+      final realCookie = Uint8List.fromList(List.generate(16, (i) => 0x50 + i));
+
+      final connection = await lab.connect(
+        lab.host(authMethod: SshAuthMethod.privateKey),
+        SshCredentials(privateKeyPem: lab.read('userkey')),
+        x11: () => X11Forwarder(
+          display: X11Display(host: '127.0.0.1', number: xServer.display),
+          realCookie: () async => XauthEntry(
+            family: XauthEntry.familyWild,
+            address: Uint8List(0),
+            number: '',
+            name: x11CookieProtocol,
+            data: realCookie,
+          ),
+          untrustedCookie: _trustedOnly,
+        ),
+      );
+      addTearDown(connection.close);
+
+      final shell = await _Shell.open(connection);
+      expect(await shell.run('echo "DISPLAY=[\$DISPLAY]"'),
+          contains('DISPLAY=[]'));
+
+      final forwarder = connection.x11Forwarder!;
+      final app = await connection.client.execute(
+          'python3 ${lab.path('x11client.py')}',
+          x11: forwarder.config);
+      final out = await app.stdout
+          .map((d) => utf8.decode(d, allowMalformed: true))
+          .join();
+      expect(out, contains('X11-REPLY hello-from-x'));
+      expect((await xServer.firstSetup).data, realCookie);
+      shell.close();
+    }, skip: skip, timeout: timeout);
   });
 }
 

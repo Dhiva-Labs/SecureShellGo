@@ -3,9 +3,46 @@
 Releases before 1.4.5 are described on the
 [Releases](https://github.com/Dhiva-Labs/SecureShellGo/releases) page.
 
-## 1.5.0 - Unreleased
+## 1.5.1 - 2026-11-03
 
-A major update: an IDE-like file editor, Mosh, sign-in with agents, security keys and certificates, agent and X11 forwarding, a terminal that survives network changes and sleep, commands on many servers, new file actions, Windows Hello, translations into eight languages, and layouts for tablets, foldables, touch and mouse.
+Smoother copy and paste in the terminal, less in the way across the app, and trusted server keys that are no longer lost or flagged without cause.
+
+### Added
+- Copy on select (Settings › Terminal): text selected with a mouse goes straight to the clipboard. Off by default.
+- On Linux a middle click pastes, as in other terminals: the terminal's own selection when there is one, the clipboard otherwise.
+- A button to jump back to the latest output after scrolling up through the history.
+- A paste of several lines shows the lines before they run. With a keyboard it is a dialog that Enter confirms and Escape cancels.
+- The host form saves with Ctrl+S (⌘S on a Mac), has Save at the top, asks before throwing away changes and scrolls to the first field that needs fixing.
+- A failed connection offers Try again and Edit host.
+- The command palette also finds hosts by their address, and keeps the highlighted row in view.
+- Enter in the snippet picker's search runs the top match.
+- Ctrl+Shift+W closes the session in front, asking first as the Disconnect button does. Ctrl+Shift+N and Ctrl+Shift+P move between the panes of a split. On a Mac, ⌘ works in place of Ctrl for these and the other Ctrl+Shift shortcuts.
+- Enter or Space dismisses a server's login banner.
+
+### Changed
+- Selecting text with a mouse no longer brings up the Copy bar, which used to shrink the terminal and move the text being selected. Right-click, Ctrl+Shift+C and copy-on-select copy instead, and the selection stays highlighted after a copy.
+- On touch, the Copy bar floats over the terminal instead of resizing it, and moves to the top when the selection is near the bottom.
+- "Copied" and "Clipboard is empty" are a small note over the terminal instead of a snackbar across the bottom of the window.
+- Right-clicking a file opens a menu at the pointer instead of a sheet from the bottom; the host ⋮ button does the same with a mouse. Touch keeps the sheets.
+- Snackbars replace each other instead of queueing, and the ones that only repeated what is on screen are gone: "Downloading…", "Queued", a plain editor save.
+- Copy buttons in the host key and public key dialogs show "Copied" themselves, instead of a snackbar hidden behind the dialog.
+- Cancel all asks first when it would stop more than one transfer.
+- Opening a folder keeps the current listing on screen while the next one loads, instead of a full-screen spinner.
+- Quick connect focuses the password field and no longer opens a "Save this server?" dialog by itself; Save stays on the page.
+- The host ⋮ button is a full 48dp target on touch in every list style.
+- A dropped connection on screen is told by its banner alone; the red snackbar is kept for a session in the background.
+- With one session open there is a single Transfers button instead of two that showed the same thing.
+
+### Fixed
+- Trusted server keys are kept when the system keyring loses the key that protects them — after a keyring reset, a new login password, or the app's data moving to another computer — instead of the app warning that they failed an integrity check and asking about every server again.
+- On a computer with no keyring, including the Snap Store app before it is allowed to reach one, trusted server keys are remembered between launches instead of every server asking again each time.
+- Two copies of the app started together no longer leave the trusted server keys in a state the next launch cannot check.
+- When the saved server keys really cannot be checked, the app says so once, calmly, and keeps the old file aside, instead of the same red warning on every launch.
+- Closing the last session from its banner ("Shell ended", "Connection lost") left an empty window with no way back. It now asks first when transfers would be lost, and returns to the host list.
+
+## 1.5.0 - 2026-10-28
+
+A major update: remote desktop and virtual desktops, an IDE-like file editor, Mosh, sign-in with agents, security keys and certificates, agent and X11 forwarding, a terminal that survives network changes and sleep, commands on many servers, new file actions, Windows Hello, translations into eight languages, and layouts for tablets, foldables, touch and mouse.
 
 ### Security
 - On Android, the app lock stays shut when the device cannot show its unlock prompt, instead of letting the app open.
@@ -18,6 +55,13 @@ A major update: an IDE-like file editor, Mosh, sign-in with agents, security key
 - A backup that demands an unreasonable amount of key-derivation work is refused instead of freezing the app.
 
 ### Added
+- Remote desktop: see and control a server's desktop from any device, phones included, over the SSH connection you already have. It works with GNOME on Wayland, X11 desktops and Windows. A small agent is copied to the server for the session and stopped afterwards; it listens on the server's loopback only, so no port is opened and SSH is the only login. The person at the server's screen is told while it is being viewed.
+- Virtual desktops on servers with no screen: start a private desktop, such as Xfce, or a single program, and use it in the same viewer. Optionally keep it running after you disconnect and come back to it from Remote desktop later.
+- Open an app in a window: run one graphical program on the server and have its window open on your own desktop, without a terminal and without turning on the host's X11 switch first. A server that turns it down for want of `xauth` gets it installed in one click, and the program starts. Where that cannot work — on a phone, or with no X server on Windows — it offers a virtual desktop instead.
+- Show a Mac's screen through its built-in Screen Sharing, over the same SSH connection.
+- On touch screens the viewer has a trackpad mode and a direct-touch mode, pinch to zoom, and a key bar with Esc, Tab, Ctrl, Alt, Super, arrows, function keys and Ctrl+Alt+Del. Clipboard text goes both ways.
+- When a server is missing what a virtual desktop needs (the virtual screen, a desktop, or a program you typed), the app offers to install it and does, asking for your sudo password only if the server wants it. It is used for that install and not saved.
+- VS Code, VSCodium, Cursor and Chromium-based browsers open in a virtual desktop, as root too: the app adds the options they need there and says so.
 - The remote editor indents like a code editor. Tab and Shift+Tab indent and outdent, Enter keeps the indentation and goes a level deeper after a Python colon or an opening bracket, and each file's own style (tabs or 2, 4 or 8 spaces) is detected and shown in the status bar, where it can be changed.
 - Line and comment shortcuts: toggle comment (Ctrl+/), move line (Alt+↑/↓), duplicate line (Shift+Alt+↑/↓), indent and outdent line (Ctrl+] and Ctrl+[).
 - Show whitespace, and a warning when a Python, YAML or Makefile file mixes tabs and spaces.
@@ -77,6 +121,7 @@ A major update: an IDE-like file editor, Mosh, sign-in with agents, security key
 - The app speaks Simplified Chinese, Japanese, Brazilian Portuguese, Spanish, Russian, German, Korean and French as well as English. It follows the device's language, or the one picked in Settings > Appearance > Language.
 
 ### Changed
+- The app is about 5.7 MB larger, for the remote-desktop agents. Nothing extra runs until a remote desktop is opened, and agents left on a server by an older version of the app are removed when a newer one is installed.
 - Each open file keeps its own undo history when switching between them.
 - Transfers cut off by a dropped connection are marked interrupted rather than cancelled, and start again by themselves once the session reconnects — including copies to another server whose session dropped.
 - A server closing the connection under a running shell (a reboot, sshd restarting) is reconnected; typing `exit` still ends the session for good.

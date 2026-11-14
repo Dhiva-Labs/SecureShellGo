@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import '../l10n/l10n.dart';
 import '../services/remote_path.dart';
 import '../services/transfer_queue.dart';
+import 'app_snack.dart';
 
 /// The icon for a direction, in one place so the summary bar and the row in
 /// the sheet cannot drift apart.
@@ -69,6 +70,45 @@ String transferSubtitle(
       return '${l10n.transferPanelProgress(moved, RemotePath.formatBytes(total))}'
           ' · ${task.percent}%$rate';
   }
+}
+
+/// Asks before "Cancel all" stops [count] transfers at once, and says
+/// whether to go ahead.
+///
+/// Shared by the session sheet and the all-sessions panel. A cancelled
+/// transfer cannot be retried, so one stray click on the button beside
+/// "Clear" used to cost the user picking every file again. A single transfer
+/// is not asked about: its own row's ✕ stops it with no question, and "Cancel
+/// all" is that same click then.
+Future<bool> confirmCancelAllTransfers(BuildContext context, int count) async {
+  if (count < 2) return true;
+  final confirmed = await showDialog<bool>(
+    context: context,
+    builder: (context) {
+      final l10n = context.l10n;
+      return AlertDialog(
+        title: Text(l10n.transferPanelCancelAllTitle(count)),
+        content: Text(
+          l10n.transferPanelCancelAllBody,
+          style: const TextStyle(height: 1.35),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: Text(l10n.transferPanelKeepTransfers),
+          ),
+          FilledButton(
+            style: FilledButton.styleFrom(
+              backgroundColor: Theme.of(context).colorScheme.error,
+            ),
+            onPressed: () => Navigator.of(context).pop(true),
+            child: Text(l10n.transferPanelCancelAll),
+          ),
+        ],
+      );
+    },
+  );
+  return confirmed ?? false;
 }
 
 /// Rebuilds [builder] whenever anything in [queue] changes.
@@ -265,7 +305,13 @@ Future<void> showTransfersSheet(
                       const Spacer(),
                       if (queue.hasActive)
                         TextButton(
-                          onPressed: queue.cancelAll,
+                          onPressed: () async {
+                            final go = await confirmCancelAllTransfers(
+                              context,
+                              queue.activeCount,
+                            );
+                            if (go) queue.cancelAll();
+                          },
                           child: Text(context.l10n.transferPanelCancelAll),
                         ),
                       if (anyFinished)
@@ -325,12 +371,9 @@ class _TransferTile extends StatelessWidget {
       (task.destinationUri?.isNotEmpty ?? false);
 
   Future<void> _open(BuildContext context) async {
-    final messenger = ScaffoldMessenger.of(context);
     final noApp = context.l10n.transferPanelNoAppForFile;
     final opened = await onOpen!(task);
-    if (!opened) {
-      messenger.showSnackBar(SnackBar(content: Text(noApp)));
-    }
+    if (!opened && context.mounted) showReplacingSnack(context, noApp);
   }
 
   @override

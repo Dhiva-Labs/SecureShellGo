@@ -1,0 +1,14 @@
+{
+  "encodings": {
+    "Deflate": 3,
+    "Fill": 5,
+    "Raw": 1
+  },
+  "exact": true,
+  "frames": 1,
+  "height": 217,
+  "maxMeanAbsError": 0.0,
+  "quality": "lossless",
+  "rustMeanAbsError": 0.0,
+  "width": 333
+}

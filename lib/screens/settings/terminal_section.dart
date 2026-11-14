@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../../l10n/l10n.dart';
 import '../../models/app_settings.dart';
+import '../../services/input_profile.dart';
 import 'setting_labels.dart';
 import 'settings_section.dart';
 
@@ -46,6 +47,15 @@ class TerminalOptionsSection extends StatelessWidget {
           value: settings.cursorBlink,
           onChanged: (on) => apply((s) => s.copyWith(cursorBlink: on)),
         ),
+        // Only a mouse selects by dragging; a finger has the Copy bar.
+        if (InputProfile.of(context).mouse)
+          SwitchListTile(
+            secondary: const Icon(Icons.content_copy_outlined),
+            title: Text(l10n.settingsCopyOnSelect),
+            subtitle: Text(l10n.settingsCopyOnSelectHelp),
+            value: settings.copyOnSelect,
+            onChanged: (on) => apply((s) => s.copyWith(copyOnSelect: on)),
+          ),
         SettingsChoice<TerminalBell>(
           label: l10n.settingsBell,
           icon: Icons.notifications_none,

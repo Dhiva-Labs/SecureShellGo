@@ -16,6 +16,18 @@ enum IntegrityVerdict {
   /// and re-written under a MAC.
   legacyMigrated,
 
+  /// Sealed under a key the device no longer has: the keyring lost it (reset,
+  /// a new keyring, a new login password), or the app's data was brought over
+  /// from another machine. Adopted and re-sealed under the new key.
+  ///
+  /// Not evidence of tampering. The threat the seal answers is something
+  /// that can rewrite the file but cannot reach the keyring; that cannot make
+  /// a key disappear. Whatever can make one disappear can also read it, and
+  /// so could have forged a valid seal instead. Failing closed here protected
+  /// nobody and told every user whose keyring was reset that their trusted
+  /// keys had been tampered with.
+  rekeyed,
+
   /// The MAC was missing, malformed or wrong. Callers must fail closed.
   tampered,
 }
@@ -45,13 +57,28 @@ class KnownHostsIntegrityKey {
   /// [FlutterSecureStorageBackend.readOrThrow]). Without it every failed read
   /// looks like "no key yet", which is what tests over an in-memory store
   /// want and what production must not have.
+  ///
+  /// [keyringEverAvailable] and [recordKeyringAvailable] tell a keyring that
+  /// is locked for now apart from a device that has never had one — a snap
+  /// not yet allowed to reach it, a desktop with no keyring running. Locked,
+  /// the store fails closed for the session, since the real key is in there.
+  /// Never had one, there is no key anywhere and nowhere to keep one, so
+  /// [obtain] answers null: the file is written unsealed and trust is
+  /// remembered, instead of every server asking again on every launch. The
+  /// first launch that reaches a keyring seals it.
   KnownHostsIntegrityKey(
     this._backend, {
     Random? random,
     Future<String?> Function(String key)? readOrThrow,
+    Future<bool> Function()? keyringEverAvailable,
+    Future<void> Function()? recordKeyringAvailable,
   })  : _random = random ?? Random.secure(),
         // ignore: prefer_initializing_formals
-        _readOrThrow = readOrThrow;
+        _readOrThrow = readOrThrow,
+        // ignore: prefer_initializing_formals
+        _keyringEverAvailable = keyringEverAvailable,
+        // ignore: prefer_initializing_formals
+        _recordKeyringAvailable = recordKeyringAvailable;
 
   static const String storageKey = 'known_hosts:hmac_key_v1';
   static const int keyLengthBytes = 32;
@@ -59,8 +86,17 @@ class KnownHostsIntegrityKey {
   final SecureStorageBackend _backend;
   final Random _random;
   final Future<String?> Function(String key)? _readOrThrow;
+  final Future<bool> Function()? _keyringEverAvailable;
+  final Future<void> Function()? _recordKeyringAvailable;
 
   Uint8List? _cached;
+
+  /// No keyring has ever been reachable on this device, so there is no key
+  /// and the store goes unsealed. Decided by the first read of the session.
+  bool _noKeyring = false;
+
+  /// Whether this session runs without a key at all — see the constructor.
+  bool get unsealed => _noKeyring;
 
   /// Reads the stored key, telling "none saved" (null) apart from "cannot
   /// tell right now" ([KnownHostsKeyUnavailable]).
@@ -68,10 +104,27 @@ class KnownHostsIntegrityKey {
     final strict = _readOrThrow;
     if (strict == null) return _backend.read(storageKey);
     try {
-      return await strict(storageKey);
+      final raw = await strict(storageKey);
+      await _recordKeyringAvailable?.call();
+      return raw;
     } catch (e) {
+      if (!(await _keyringEverAvailable?.call() ?? true)) {
+        _noKeyring = true;
+        return null;
+      }
       throw KnownHostsKeyUnavailable(e);
     }
+  }
+
+  static Uint8List? _decode(String? raw) {
+    if (raw == null || raw.isEmpty) return null;
+    try {
+      final decoded = base64Decode(raw);
+      if (decoded.length == keyLengthBytes) return Uint8List.fromList(decoded);
+    } catch (_) {
+      // A key that does not decode is no key at all.
+    }
+    return null;
   }
 
   /// Whether a key has ever been established on this device.
@@ -87,39 +140,43 @@ class KnownHostsIntegrityKey {
     return raw != null && raw.isNotEmpty;
   }
 
-  /// The device key, creating and persisting one on first use.
+  /// The device key, creating and persisting one on first use — or null on
+  /// a device that has never had a keyring (see the constructor).
   ///
   /// Throws [KnownHostsKeyUnavailable], and mints nothing, when the store
   /// cannot be read: a key that is merely unreadable for now (a locked
   /// keyring) would otherwise be overwritten by a fresh one, and every file
   /// it sealed would stop verifying for good.
-  Future<Uint8List> obtain() async {
+  ///
+  /// [fresh] reads the keyring again instead of answering from memory: what
+  /// is about to be sealed must verify against the key the *next* launch
+  /// will read, and another copy of the app may have saved one since.
+  Future<Uint8List?> obtain({bool fresh = false}) async {
     final cached = _cached;
-    if (cached != null) return cached;
+    if (cached != null && !fresh) return cached;
 
-    final raw = await _read();
-    if (raw != null && raw.isNotEmpty) {
-      try {
-        final decoded = base64Decode(raw);
-        if (decoded.length == keyLengthBytes) {
-          return _cached = Uint8List.fromList(decoded);
-        }
-      } catch (_) {
-        // Fall through and mint a fresh key. A key we cannot decode is no key
-        // at all; the file it authenticated will fail verification and the
-        // store will fail closed, which is the safe direction.
-      }
+    final stored = _decode(await _read());
+    if (stored != null) return _cached = stored;
+    if (_noKeyring) return null;
+    if (cached != null) {
+      // The keyring lost the key mid-session. Put it back rather than seal
+      // with a key nothing will remember.
+      await _backend.write(storageKey, base64Encode(cached));
+      return cached;
     }
 
-    final fresh = Uint8List.fromList(
+    final minted = Uint8List.fromList(
       List<int>.generate(keyLengthBytes, (_) => _random.nextInt(256)),
     );
-    await _backend.write(storageKey, base64Encode(fresh));
-    return _cached = fresh;
+    await _backend.write(storageKey, base64Encode(minted));
+    // Read back what was saved. Two copies of the app starting together
+    // each mint one and the last write wins; sealing with the loser's key
+    // would leave a file the next launch cannot verify.
+    return _cached = _decode(await _read()) ?? minted;
   }
 
-  /// Drops the key. Any existing file stops verifying, so the store fails
-  /// closed and every host is re-prompted.
+  /// Drops the key. The next load finds the file sealed under a key that is
+  /// gone, adopts it and seals it again — see [IntegrityVerdict.rekeyed].
   Future<void> reset() async {
     _cached = null;
     await _backend.delete(storageKey);
@@ -178,7 +235,10 @@ class KnownHostsEnvelope {
   /// simply decoded.
   ///
   /// [keyEverEstablished] gates the legacy path: a version-1 document is only
-  /// adopted on a device that has never written a protected one.
+  /// adopted on a device that has never written a protected one. It also
+  /// tells a seal that fails because the key is new — the old one is gone,
+  /// see [IntegrityVerdict.rekeyed] — from one that fails because the file
+  /// changed under a key that is still there.
   static IntegrityCheck open(
     String raw, {
     Uint8List? key,
@@ -215,7 +275,12 @@ class KnownHostsEnvelope {
     }
 
     if (!_constantTimeEquals(macOf(key, payloadText), mac)) {
-      return const IntegrityCheck(IntegrityVerdict.tampered);
+      if (keyEverEstablished) {
+        return const IntegrityCheck(IntegrityVerdict.tampered);
+      }
+      final body = _decodeBody(payloadText);
+      if (body == null) return const IntegrityCheck(IntegrityVerdict.tampered);
+      return IntegrityCheck(IntegrityVerdict.rekeyed, body);
     }
 
     final body = _decodeBody(payloadText);

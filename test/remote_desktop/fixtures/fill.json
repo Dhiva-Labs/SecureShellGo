@@ -1,0 +1,12 @@
+{
+  "encodings": {
+    "Fill": 6
+  },
+  "exact": true,
+  "frames": 1,
+  "height": 128,
+  "maxMeanAbsError": 0.0,
+  "quality": "lossless",
+  "rustMeanAbsError": 0.0,
+  "width": 192
+}
