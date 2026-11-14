@@ -205,10 +205,48 @@ String? unsupervise(String command) {
   final prefix = shape.substring(0, shape.length - marker.length);
   if (!command.startsWith(prefix)) return null;
   final quoted = command.substring(prefix.length);
-  if (quoted.length < 2 || !quoted.startsWith("'") || !quoted.endsWith("'")) {
-    return null;
+  return _shellWord(quoted);
+}
+
+/// One shell word as sh reads it: single quotes literal, double quotes with
+/// `\\`, `\"`, `\$` and a backquote escaped, a backslash outside quotes
+/// taking the next character. Null for anything else (a second word, a
+/// quote left open). Reads both quoting styles of the wrapper's argument.
+String? _shellWord(String text) {
+  final out = StringBuffer();
+  var i = 0;
+  while (i < text.length) {
+    final c = text[i];
+    if (c == "'") {
+      final end = text.indexOf("'", i + 1);
+      if (end < 0) return null;
+      out.write(text.substring(i + 1, end));
+      i = end + 1;
+    } else if (c == '"') {
+      i++;
+      while (true) {
+        if (i >= text.length) return null;
+        final d = text[i];
+        if (d == '"') {
+          i++;
+          break;
+        }
+        if (d == r'\' && i + 1 < text.length && r'\"$`'.contains(text[i + 1])) {
+          out.write(text[i + 1]);
+          i += 2;
+        } else {
+          out.write(d);
+          i++;
+        }
+      }
+    } else if (c == r'\' && i + 1 < text.length) {
+      out.write(text[i + 1]);
+      i += 2;
+    } else {
+      return null;
+    }
   }
-  return quoted.substring(1, quoted.length - 1).replaceAll("'\\''", "'");
+  return out.toString();
 }
 
 /// A [FakeExecTransport] for the bridge tools: it insists every command
