@@ -28,6 +28,7 @@ One file per piece of work, named for it:
 | `remote-ops.md` | Commands on many servers, archive and search actions |
 | `mosh.md` | Mosh |
 | `localization.md` | Translations |
+| `backup-settings.md` | Backups no longer reset "Copy on select" |
 
 Write for the people using the app, in the sections `CHANGELOG.md` uses:
 `### Added`, `### Changed`, `### Fixed`, `### Security`. One line per change,
