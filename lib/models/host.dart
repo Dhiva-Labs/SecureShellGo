@@ -1,3 +1,5 @@
+import 'host_ai_access.dart';
+
 /// How the user authenticates against a remote host.
 enum SshAuthMethod {
   password,
@@ -141,6 +143,7 @@ class Host {
     this.persistentSession = PersistentSession.off,
     this.certificate,
     this.transport = HostTransport.ssh,
+    this.aiAccess = HostAiAccess.off,
   });
 
   final String id;
@@ -222,6 +225,10 @@ class Host {
   /// See [HostTransport].
   final HostTransport transport;
 
+  /// Whether an AI assistant may use this host through the AI Bridge. Off by
+  /// default, and never carried by a backup: see `BackupPayload`.
+  final HostAiAccess aiAccess;
+
   /// `user@host` or `user@host:port` when the port is non-standard.
   String get target =>
       port == 22 ? '$username@$hostname' : '$username@$hostname:$port';
@@ -247,6 +254,7 @@ class Host {
     PersistentSession? persistentSession,
     String? certificate,
     HostTransport? transport,
+    HostAiAccess? aiAccess,
   }) {
     return Host(
       id: id ?? this.id,
@@ -266,6 +274,7 @@ class Host {
       persistentSession: persistentSession ?? this.persistentSession,
       certificate: certificate ?? this.certificate,
       transport: transport ?? this.transport,
+      aiAccess: aiAccess ?? this.aiAccess,
     );
   }
 
@@ -293,6 +302,7 @@ class Host {
         persistentSession: persistentSession,
         certificate: certificate,
         transport: transport,
+        aiAccess: aiAccess,
       );
 
   /// Reassigns this host's group, [group] null meaning Ungrouped.
@@ -319,6 +329,7 @@ class Host {
         persistentSession: persistentSession,
         certificate: certificate,
         transport: transport,
+        aiAccess: aiAccess,
       );
 
   /// Sets (or removes, with null) the certificate. Its own helper for the
@@ -341,6 +352,7 @@ class Host {
         persistentSession: persistentSession,
         certificate: certificate,
         transport: transport,
+        aiAccess: aiAccess,
       );
 
   Map<String, dynamic> toJson() => {
@@ -365,6 +377,7 @@ class Host {
           'persistentSession': persistentSession.name,
         if (certificate != null) 'certificate': certificate,
         if (transport != HostTransport.ssh) 'transport': transport.name,
+        if (aiAccess != HostAiAccess.off) 'aiAccess': aiAccess.name,
       };
 
   factory Host.fromJson(Map<String, dynamic> json) {
@@ -412,6 +425,8 @@ class Host {
         _ => null,
       },
       transport: HostTransport.fromName(json['transport'] as String?),
+      // Absent before 1.6, and anything unrecognised: no AI access.
+      aiAccess: HostAiAccess.fromJson(json['aiAccess']),
     );
   }
 }

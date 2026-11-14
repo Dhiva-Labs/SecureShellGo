@@ -6,6 +6,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:secure_shell_go/models/host.dart';
+import 'package:secure_shell_go/models/host_ai_access.dart';
 import 'package:secure_shell_go/screens/host_edit_screen.dart';
 import 'package:secure_shell_go/services/composite_secure_storage.dart';
 import 'package:secure_shell_go/services/credential_store.dart';
@@ -156,6 +157,7 @@ void main() {
     CredentialStore credentials, {
     Host? host,
     DeviceStorage? deviceStorage,
+    bool aiBridge = false,
   }) async {
     // Tall enough that the whole form, buttons included, is built — a
     // `ListView` does not create what is off screen, and a finder cannot tap
@@ -182,6 +184,7 @@ void main() {
             sessions: sessions,
             host: host,
             deviceStorage: deviceStorage,
+            aiBridgeAvailable: aiBridge,
           ),
         ),
       ),
@@ -662,6 +665,100 @@ void main() {
         expect(saved.transport, HostTransport.ssh);
         expect(saved.certificate, original.certificate,
             reason: 'nothing on this form shows it, and saving must keep it');
+      });
+    });
+
+    testWidgets('an edit keeps the host\'s AI Bridge access', (tester) async {
+      final original = Host(
+        id: hosts.newId(),
+        label: 'Web',
+        hostname: 'web.example.com',
+        port: 22,
+        username: 'dev',
+        authMethod: SshAuthMethod.password,
+        aiAccess: HostAiAccess.readOnly,
+      );
+      await withRealIo(tester, () => hosts.add(original));
+      await pumpForm(tester, noKeyringStore(), host: original);
+
+      await tester.enterText(
+        find.widgetWithText(TextFormField, 'Web'),
+        'Web 2',
+      );
+      await tester.enterText(
+        find.widgetWithText(TextFormField, 'Password'),
+        'hunter2',
+      );
+      await tapAndRun(tester, 'Save changes', checks: () async {
+        final saved = (await hosts.all()).single;
+        expect(saved.label, 'Web 2');
+        expect(saved.aiAccess, HostAiAccess.readOnly,
+            reason: 'renaming a host must not change what an assistant '
+                'may reach');
+      });
+    });
+
+    testWidgets('the AI access switch is not there without the bridge',
+        (tester) async {
+      await pumpForm(tester, noKeyringStore());
+      expect(find.text('AI access (read-only)'), findsNothing);
+    });
+
+    testWidgets(
+        'a new host starts with AI access off, and the switch turns it on',
+        (tester) async {
+      await pumpForm(tester, noKeyringStore(), aiBridge: true);
+      expect(
+        tester
+            .widget<SwitchListTile>(
+                find.widgetWithText(SwitchListTile, 'AI access (read-only)'))
+            .value,
+        isFalse,
+      );
+      await fillIn(tester);
+      await tester.tap(find.text('AI access (read-only)'));
+      await tester.pump();
+      await tapAndRun(tester, 'Save host', checks: () async {
+        expect((await hosts.all()).single.aiAccess, HostAiAccess.readOnly);
+      });
+    });
+
+    testWidgets('an unchanged switch saves off', (tester) async {
+      await pumpForm(tester, noKeyringStore(), aiBridge: true);
+      await fillIn(tester);
+      await tapAndRun(tester, 'Save host', checks: () async {
+        expect((await hosts.all()).single.aiAccess, HostAiAccess.off);
+      });
+    });
+
+    testWidgets('the switch shows a host\'s access and turns it off',
+        (tester) async {
+      final original = Host(
+        id: hosts.newId(),
+        label: 'Web',
+        hostname: 'web.example.com',
+        port: 22,
+        username: 'dev',
+        authMethod: SshAuthMethod.password,
+        aiAccess: HostAiAccess.readOnly,
+      );
+      await withRealIo(tester, () => hosts.add(original));
+      await pumpForm(tester, noKeyringStore(), host: original, aiBridge: true);
+      expect(
+        tester
+            .widget<SwitchListTile>(
+                find.widgetWithText(SwitchListTile, 'AI access (read-only)'))
+            .value,
+        isTrue,
+      );
+      await tester.enterText(
+        find.widgetWithText(TextFormField, 'Password'),
+        'hunter2',
+      );
+      await tester.tap(find.text('AI access (read-only)'));
+      await tester.pump();
+      await tapAndRun(tester, 'Save changes', checks: () async {
+        expect((await hosts.all()).single.aiAccess, HostAiAccess.off);
       });
     });
   });

@@ -30,7 +30,7 @@ An SSH and Mosh terminal with an SFTP file browser, for servers you run. Host ke
 ---
 
 ## Description
-*(Required. Limit 10,000 characters. This is 5,839.)*
+*(Required. Limit 10,000 characters. This is 6,284.)*
 
 ```
 SecureShell Go is an SSH terminal and SFTP file client for servers you run. It checks host keys the way OpenSSH does, signs in with your SSH agent or Pageant if you want it to, and keeps what it stores on this PC. There is no account, no advertising and no analytics. The app connects only to the servers you add, and to your own SSH agent or X server when you switch those on.
@@ -81,6 +81,9 @@ FILES
 • Compress to .tar.gz or .zip and extract archives on the server; search the server by name or content. Actions the server's tools cannot do are not offered
 • Drag a file onto another session's tab to copy it between servers, directly from one to the other or through this PC. Direct copies, compress and extract keep running on the server if the app closes
 • Built-in editor with syntax colouring for 20 languages, find and replace, tabs for several files, and a save that checks nobody changed the file first and keeps its permissions
+
+AI BRIDGE (OPTIONAL, OFF BY DEFAULT)
+Let an MCP-compatible AI assistant on this PC read from servers you choose, by name. It can read stats, services, log tails, folders and text files, and search by file name. It cannot run commands or change anything, and it never receives passwords or keys. Common secret locations are blocked, every call is logged on this PC, and what the assistant reads goes to that assistant's own provider, not to us.
 
 ACROSS YOUR SERVERS
 • Groups, colour tags and search, with a Ctrl+K command palette over hosts, snippets and actions
@@ -215,6 +218,17 @@ or fewer, no bullets):
 ---
 
 ## Verification notes
+
+AI Bridge
+- **Optional, off by default, read-only, no passwords or keys, blocked secret
+  paths, call log, provider note** — `lib/services/bridge/` (policy, path
+  guard, redactor, audit, tools), `docs/changes/ai-bridge.md`,
+  `docs/privacy-policy.md`. "Stats, services, log tails, folders and text
+  files, and search by file name" are the seven tools in `bridge_tools.dart`
+  (`list_hosts`, `server_stats`, `list_services`, `tail_log`, `list_dir`,
+  `read_file`, `search_files`); "logged on this PC" is
+  `bridge/audit.log`. Checked against the 1.6.0 branch; re-check if a tool
+  is added before submitting.
 
 Terminal
 - **xterm-256color, ten colour schemes, JetBrains Mono** — `lib/services/ssh_service.dart`

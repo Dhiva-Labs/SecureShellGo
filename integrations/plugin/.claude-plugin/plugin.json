@@ -1,0 +1,26 @@
+{
+  "name": "secureshellgo",
+  "displayName": "SecureShell Go",
+  "version": "1.6.0",
+  "description": "Read-only access to your servers through the SecureShell Go AI Bridge: list hosts, read stats, services, logs and files by host name. The app keeps the keys.",
+  "author": { "name": "Dhiva Labs", "url": "https://github.com/Dhiva-Labs" },
+  "homepage": "https://github.com/Dhiva-Labs/SecureShellGo",
+  "repository": "https://github.com/Dhiva-Labs/SecureShellGo",
+  "license": "MIT",
+  "keywords": ["ssh", "sftp", "servers", "mcp", "read-only"],
+  "userConfig": {
+    "bridge_token": {
+      "type": "string",
+      "title": "Pairing token",
+      "description": "From SecureShell Go: Settings → AI Bridge → Connect an assistant. Shown once when you pair.",
+      "sensitive": true,
+      "required": true
+    },
+    "launcher": {
+      "type": "string",
+      "title": "Launcher command",
+      "description": "secureshellgo-mcp for the deb and the Microsoft Store install, secureshellgo.mcp for the snap, or the full path of secureshellgo-mcp next to the app for the Linux tarball or Windows zip. Connect an assistant in the app shows the right one.",
+      "default": "secureshellgo-mcp"
+    }
+  }
+}

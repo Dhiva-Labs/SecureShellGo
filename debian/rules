@@ -123,6 +123,14 @@ override_dh_auto_build:
 		done' - {} +
 	$(FLUTTER_ROOT)/bin/flutter pub get --offline
 	$(FLUTTER_ROOT)/bin/flutter build linux --release --no-pub
+	# The AI Bridge launcher. tool/build_launcher.sh compiles it with the
+	# vendored SDK's own dart against a copy of the package map that the
+	# offline pub get above wrote, minus the build-hook packages, so it
+	# needs no second pub get, no network and no build hooks; see the
+	# script for why a plain `dart compile exe` does not work. It is built
+	# beside the bundle and installed from there, not inside it, so the
+	# bundle stays exactly what flutter produced.
+	FLUTTER_ROOT=$(FLUTTER_ROOT) sh tool/build_launcher.sh build/linux/$(FLUTTER_ARCH)/release/secureshellgo-mcp
 
 override_dh_auto_test:
 	# The Dart/Flutter test suite needs a Flutter engine and a display; it
@@ -138,12 +146,20 @@ override_dh_strip:
 	# exact binaries Google/Flutter tested against — stripping them here
 	# would produce a different .so than every other Flutter Linux
 	# installation and defeat symbol-based crash reporting. Skip strip.
+	# The AI Bridge launcher depends on this too: `dart compile exe`
+	# appends the compiled program to the ELF runtime outside any section,
+	# and strip silently cuts it off (the stripped file only prints the
+	# Dart VM's usage text). Never let dh_strip touch secureshellgo-mcp.
 
 override_dh_auto_install:
 	mkdir -p debian/secureshellgo/opt/secureshellgo
 	cp -a build/linux/$(FLUTTER_ARCH)/release/bundle/. debian/secureshellgo/opt/secureshellgo/
 	mkdir -p debian/secureshellgo/usr/bin
 	install -m 0755 debian/secureshellgo.wrapper debian/secureshellgo/usr/bin/secureshellgo
+	# The AI Bridge launcher, next to the app, and the command an AI
+	# assistant is configured with.
+	install -m 0755 build/linux/$(FLUTTER_ARCH)/release/secureshellgo-mcp debian/secureshellgo/opt/secureshellgo/secureshellgo-mcp
+	install -m 0755 debian/secureshellgo-mcp.wrapper debian/secureshellgo/usr/bin/secureshellgo-mcp
 	mkdir -p debian/secureshellgo/usr/share/applications
 	# The desktop file MUST be named after the GTK application id
 	# (com.dhivalabs.secure_shell_go): GNOME Shell matches a running

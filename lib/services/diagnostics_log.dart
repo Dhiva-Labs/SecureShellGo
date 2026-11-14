@@ -928,7 +928,7 @@ class _PendingEntry {
 }
 
 /// See [DiagnosticsLog.watchCredentialStorage].
-class _CredentialTap implements SecureStorageBackend {
+class _CredentialTap implements SecureStorageBackend, QuietSecureStorageRead {
   _CredentialTap(this._inner, this._log);
 
   final SecureStorageBackend _inner;
@@ -937,6 +937,15 @@ class _CredentialTap implements SecureStorageBackend {
   @override
   Future<String?> read(String key) async {
     final value = await _inner.read(key);
+    _log._learnStoredEntry(value);
+    return value;
+  }
+
+  /// Passed through, so wrapping a backend never turns a quiet read back
+  /// into one that can prompt.
+  @override
+  Future<String?> readQuiet(String key) async {
+    final value = await readSecureStorageQuietly(_inner, key);
     _log._learnStoredEntry(value);
     return value;
   }

@@ -5,11 +5,13 @@ import 'dart:typed_data';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:secure_shell_go/models/app_settings.dart';
 import 'package:secure_shell_go/models/host.dart';
+import 'package:secure_shell_go/models/host_ai_access.dart';
 import 'package:secure_shell_go/models/snippet.dart';
 import 'package:secure_shell_go/models/tunnel_profile.dart';
 import 'package:secure_shell_go/services/backup_crypto.dart';
 import 'package:secure_shell_go/services/backup_payload.dart';
 import 'package:secure_shell_go/services/backup_service.dart';
+import 'package:secure_shell_go/services/bridge/bridge_client_store.dart';
 import 'package:secure_shell_go/services/bookmark_store.dart';
 import 'package:secure_shell_go/services/credential_store.dart';
 import 'package:secure_shell_go/services/host_store.dart';
@@ -555,6 +557,221 @@ void main() {
       expect(json, isNot(contains('known_hosts')));
       expect(json, isNot(contains('knownHosts')));
       expect(json, isNot(contains('fingerprint')));
+    });
+  });
+
+  group('AI Bridge state', () {
+    const pass = 'a very good passphrase';
+
+    Future<void> withBridgeOn(Fixture f) async {
+      await f.hostStore.add(
+        buildHost('h1', label: 'Web').copyWith(aiAccess: HostAiAccess.readOnly),
+      );
+      await f.settingsStore.save(
+        const AppSettings(
+          keepScreenAwake: true,
+          bridgeEnabled: true,
+          bridgeShowAddress: true,
+          bridgeReadSensitivePaths: true,
+          bridgeExtraBlockedPaths: ['/srv/secret/**'],
+        ),
+      );
+    }
+
+    test('an export carries no aiAccess and no bridge settings', () async {
+      await withBridgeOn(source);
+      final file = await source.service.export(
+        passphrase: pass,
+        includeCredentials: false,
+        useIsolate: false,
+      );
+      final plaintext = await BackupCrypto.decrypt(
+        file: file,
+        passphrase: pass,
+        useIsolate: false,
+      );
+      final text = utf8.decode(plaintext);
+      expect(text, isNot(contains('aiAccess')));
+      expect(text, isNot(contains('bridge')));
+      final json = jsonDecode(text) as Map<String, dynamic>;
+      expect((json['settings'] as Map)['keepScreenAwake'], isTrue);
+    });
+
+    test('a backup made with access on restores with access off', () async {
+      await withBridgeOn(source);
+      final file = await source.service.export(
+        passphrase: pass,
+        includeCredentials: false,
+        useIsolate: false,
+      );
+      final target = await emptyTarget();
+      await target.hostStore.add(
+        buildHost(
+          'local',
+          label: 'Local',
+        ).copyWith(aiAccess: HostAiAccess.readOnly),
+      );
+      final payload = await target.service.readBackup(
+        file: file,
+        passphrase: pass,
+        useIsolate: false,
+      );
+      await target.service.apply(payload: payload, mode: ImportMode.merge);
+
+      final restored = await target.hostStore.get('h1');
+      expect(restored!.aiAccess, HostAiAccess.off);
+      expect(
+        (await target.hostStore.get('local'))!.aiAccess,
+        HostAiAccess.readOnly,
+        reason: 'a merge leaves hosts the file does not mention alone',
+      );
+      await target.settingsStore.ensureLoaded();
+      final settings = target.settingsStore.current;
+      expect(settings.keepScreenAwake, isTrue);
+      expect(
+        settings.bridgeEnabled,
+        isFalse,
+        reason:
+            'the file carries no bridge settings, and this device had '
+            'none on',
+      );
+    });
+
+    for (final mode in ImportMode.values) {
+      test(
+        'an import leaves this device\'s bridge settings alone ($mode)',
+        () async {
+          await withBridgeOn(source);
+          final file = await source.service.export(
+            passphrase: pass,
+            includeCredentials: false,
+            useIsolate: false,
+          );
+          final target = await emptyTarget();
+          await target.settingsStore.save(
+            const AppSettings(
+              bridgeEnabled: true,
+              bridgeReadSensitivePaths: false,
+              bridgeShowAddress: false,
+              bridgeExtraBlockedPaths: ['/mine/**'],
+            ),
+          );
+          final payload = await target.service.readBackup(
+            file: file,
+            passphrase: pass,
+            useIsolate: false,
+          );
+          await target.service.apply(payload: payload, mode: mode);
+
+          final settings = target.settingsStore.current;
+          expect(settings.keepScreenAwake, isTrue, reason: 'file settings win');
+          expect(settings.bridgeEnabled, isTrue);
+          expect(settings.bridgeShowAddress, isFalse);
+          expect(settings.bridgeReadSensitivePaths, isFalse);
+          expect(settings.bridgeExtraBlockedPaths, ['/mine/**']);
+          final reloaded = SettingsStore(
+            file: File('${target.dir.path}/settings.json'),
+          );
+          await reloaded.ensureLoaded();
+          expect(reloaded.current.bridgeExtraBlockedPaths, ['/mine/**']);
+        },
+      );
+    }
+
+    test(
+      'a file claiming bridge settings are on cannot switch them on',
+      () async {
+        final target = await emptyTarget();
+        final payload = BackupPayload.decode(
+          Uint8List.fromList(
+            utf8.encode(
+              jsonEncode({
+                'app': BackupPayload.appId,
+                'payloadVersion': BackupPayload.payloadVersion,
+                'settings': {
+                  'bridgeEnabled': true,
+                  'bridgeShowAddress': true,
+                  'bridgeReadSensitivePaths': true,
+                  'bridgeExtraBlockedPaths': ['/x'],
+                },
+              }),
+            ),
+          ),
+        );
+        await target.service.apply(payload: payload, mode: ImportMode.replace);
+        final settings = target.settingsStore.current;
+        expect(settings.bridgeEnabled, isFalse);
+        expect(settings.bridgeShowAddress, isFalse);
+        expect(settings.bridgeReadSensitivePaths, isFalse);
+        expect(settings.bridgeExtraBlockedPaths, isEmpty);
+      },
+    );
+
+    test('an export holds nothing from the paired-client store', () async {
+      await withBridgeOn(source);
+      final clients = BridgeClientStore(
+        file: File('${source.dir.path}/bridge_clients.json'),
+      );
+      final created = await clients.create('Assistant');
+      final file = await source.service.export(
+        passphrase: pass,
+        includeCredentials: true,
+        useIsolate: false,
+      );
+      final text = utf8.decode(
+        await BackupCrypto.decrypt(
+          file: file,
+          passphrase: pass,
+          useIsolate: false,
+        ),
+      );
+      expect(text, isNot(contains(created.client.tokenHash)));
+      expect(text, isNot(contains(created.token)));
+      expect(text, isNot(contains('"clients"')));
+      expect(text, isNot(contains('tokenHash')));
+    });
+
+    test('a file edited to carry access still imports as off', () {
+      final payload = BackupPayload.decode(
+        Uint8List.fromList(
+          utf8.encode(
+            jsonEncode({
+              'app': BackupPayload.appId,
+              'payloadVersion': BackupPayload.payloadVersion,
+              'hosts': [
+                {
+                  'id': 'h1',
+                  'hostname': 'a.example.com',
+                  'username': 'dev',
+                  'aiAccess': 'readOnly',
+                },
+              ],
+              'settings': {'bridgeEnabled': true, 'bridgeShowAddress': true},
+            }),
+          ),
+        ),
+      );
+      expect(payload.hosts.single.aiAccess, HostAiAccess.off);
+      expect(payload.settings.bridgeEnabled, isFalse);
+      expect(payload.settings.bridgeShowAddress, isFalse);
+    });
+
+    test('apply forces access off for a payload built in code', () async {
+      final target = await emptyTarget();
+      await target.service.apply(
+        payload: BackupPayload(
+          hosts: [buildHost('h1').copyWith(aiAccess: HostAiAccess.readOnly)],
+          snippets: const [],
+          tunnels: const [],
+          bookmarks: const [],
+          settings: const AppSettings(bridgeEnabled: true),
+          includesCredentials: false,
+        ),
+        mode: ImportMode.replace,
+      );
+      expect((await target.hostStore.get('h1'))!.aiAccess, HostAiAccess.off);
+      await target.settingsStore.ensureLoaded();
+      expect(target.settingsStore.current.bridgeEnabled, isFalse);
     });
   });
 }

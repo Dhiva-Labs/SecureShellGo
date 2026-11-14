@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "secureshellgo": {
+      "command": "${user_config.launcher}",
+      "env": { "SSG_BRIDGE_TOKEN": "${user_config.bridge_token}" }
+    }
+  }
+}

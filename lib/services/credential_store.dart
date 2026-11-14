@@ -7,7 +7,9 @@ export 'secure_storage_backend.dart'
     show
         SecureStorageBackend,
         FlutterSecureStorageBackend,
-        SecureStorageUnavailableException;
+        SecureStorageUnavailableException,
+        SecureStorageSealed,
+        SecureStorageSealedKind;
 
 /// Saves and loads [SshCredentials] for a saved host, keyed by [Host.id].
 ///
@@ -42,8 +44,24 @@ class CredentialStore {
   /// (or the entry could not be read/decoded — fails closed like the other
   /// stores: the caller ends up asking the user to re-enter, not connecting
   /// with something unexpected).
-  Future<SshCredentials?> load(String hostId) async {
-    final raw = await _backend.read(_keyFor(hostId));
+  Future<SshCredentials?> load(String hostId) async =>
+      _decode(await _backend.read(_keyFor(hostId)));
+
+  /// [load] for a caller with nobody to ask (the AI Bridge): never shows the
+  /// vault's passphrase prompt. Null when nothing is saved, as [load]; throws
+  /// [CredentialsNeedPerson] when something may be saved but cannot be read
+  /// until the user opens the store in the app.
+  Future<SshCredentials?> loadQuiet(String hostId) async {
+    final String? raw;
+    try {
+      raw = await readSecureStorageQuietly(_backend, _keyFor(hostId));
+    } on SecureStorageSealed catch (e) {
+      throw CredentialsNeedPerson(e.kind);
+    }
+    return _decode(raw);
+  }
+
+  static SshCredentials? _decode(String? raw) {
     if (raw == null) return null;
     try {
       final decoded = jsonDecode(raw);
@@ -66,4 +84,21 @@ class CredentialStore {
 
   /// Deletes the saved credentials for [hostId]. A no-op if there were none.
   Future<void> delete(String hostId) => _backend.delete(_keyFor(hostId));
+}
+
+/// Thrown by [CredentialStore.loadQuiet]: the host's credentials may be
+/// saved, but the store holding them needs a person to open it first.
+class CredentialsNeedPerson implements Exception {
+  const CredentialsNeedPerson(this.kind);
+
+  final SecureStorageSealedKind kind;
+
+  @override
+  String toString() => switch (kind) {
+    SecureStorageSealedKind.vault =>
+      'The saved sign-in is in the credential vault, which is locked.',
+    SecureStorageSealedKind.keyring =>
+      'The saved sign-in is in the system keyring, which could not be '
+          'reached or unlocked.',
+  };
 }

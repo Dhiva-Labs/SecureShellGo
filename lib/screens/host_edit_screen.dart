@@ -7,6 +7,7 @@ import 'package:flutter/services.dart';
 import '../l10n/host_labels.dart';
 import '../l10n/l10n.dart';
 import '../models/host.dart';
+import '../models/host_ai_access.dart';
 import '../services/credential_store.dart';
 import '../services/device_storage.dart';
 import '../services/host_field_input.dart';
@@ -55,6 +56,7 @@ class HostEditScreen extends StatefulWidget {
     required this.sessions,
     this.deviceStorage,
     this.host,
+    this.aiBridgeAvailable = false,
   });
 
   final HostStore hostStore;
@@ -72,6 +74,11 @@ class HostEditScreen extends StatefulWidget {
 
   /// The host being edited, or null when adding a new one.
   final Host? host;
+
+  /// Whether the AI Bridge exists on this platform, which is when the
+  /// "AI access" switch is shown. Off elsewhere; the host keeps whatever it
+  /// already had either way.
+  final bool aiBridgeAvailable;
 
   bool get isEditing => host != null;
 
@@ -115,6 +122,7 @@ class _HostEditScreenState extends State<HostEditScreen> {
   /// The "Advanced" fold: transport, persistent session, forwarding and
   /// legacy algorithms. All off for every new host.
   HostAdvancedOptions _advanced = const HostAdvancedOptions();
+  HostAiAccess _aiAccess = HostAiAccess.off;
 
   /// See [Host.certificate]. Carried through an edit so saving the form never
   /// drops one; it is chosen in the sign-in area, under the key it goes with.
@@ -175,6 +183,7 @@ class _HostEditScreenState extends State<HostEditScreen> {
       _jumpHostId = host.jumpHostId;
       _advanced = HostAdvancedOptions.of(host);
       _certificate = host.certificate;
+      _aiAccess = host.aiAccess;
       _loadExistingCredentials(host.id);
     }
     unawaited(_loadGroupNames());
@@ -279,6 +288,9 @@ class _HostEditScreenState extends State<HostEditScreen> {
       // used: switching back to the key should find it still there.
       certificate: _certificate,
       transport: _advanced.transport,
+      // Where the switch is not shown, this is still what the host had, so
+      // an edit never changes what an assistant may reach by accident.
+      aiAccess: _aiAccess,
     );
   }
 
@@ -1092,6 +1104,17 @@ class _HostEditScreenState extends State<HostEditScreen> {
           options: _advanced,
           onChanged: (value) => setState(() => _advanced = value),
         ),
+        if (widget.aiBridgeAvailable)
+          SwitchListTile(
+            contentPadding: EdgeInsets.zero,
+            secondary: const Icon(Icons.hub_outlined),
+            title: Text(l10n.hostEditAiAccess),
+            subtitle: Text(l10n.hostEditAiAccessHelp),
+            value: _aiAccess == HostAiAccess.readOnly,
+            onChanged: (on) => setState(
+              () => _aiAccess = on ? HostAiAccess.readOnly : HostAiAccess.off,
+            ),
+          ),
         const SizedBox(height: 12),
         InlineHint(icon: Icons.shield_outlined, text: l10n.hostEditStorageHint),
         if (_credentialNotice != null) ...[

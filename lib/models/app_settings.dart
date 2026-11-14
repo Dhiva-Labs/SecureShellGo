@@ -180,6 +180,10 @@ class AppSettings {
     this.editorFontSize = defaultFontSize,
     this.diagnosticsLog = false,
     this.localeOverride,
+    this.bridgeEnabled = false,
+    this.bridgeShowAddress = false,
+    this.bridgeReadSensitivePaths = false,
+    this.bridgeExtraBlockedPaths = const <String>[],
   });
 
   static const double defaultFontSize = 13;
@@ -255,6 +259,55 @@ class AppSettings {
   /// language, or null to follow the device.
   final String? localeOverride;
 
+  /// Whether the AI Bridge (the local MCP server) is running. Off unless the
+  /// user turns it on, and off for a settings file that does not say.
+  final bool bridgeEnabled;
+
+  /// Whether the host list an assistant sees includes address, port and user
+  /// name. Off: it sees labels and groups only.
+  final bool bridgeShowAddress;
+
+  /// Lifts the built-in blocklist of credential-like paths (`~/.ssh`, `.env`,
+  /// key files...). Off by default; [bridgeExtraBlockedPaths] applies either way.
+  final bool bridgeReadSensitivePaths;
+
+  /// The user's own blocked path patterns, on top of the built-in ones.
+  final List<String> bridgeExtraBlockedPaths;
+
+  /// These settings with the four bridge fields taken from [other]. An
+  /// import uses it so a backup's settings land without touching what this
+  /// device allows an assistant to do.
+  AppSettings withBridgeFrom(AppSettings other) => copyWith(
+        bridgeEnabled: other.bridgeEnabled,
+        bridgeShowAddress: other.bridgeShowAddress,
+        bridgeReadSensitivePaths: other.bridgeReadSensitivePaths,
+        bridgeExtraBlockedPaths: other.bridgeExtraBlockedPaths,
+      );
+
+  /// These settings with the four bridge fields back at their defaults.
+  /// Used on backup export and decode: what an assistant may reach is a
+  /// decision about this device, not something a file should carry in or out.
+  AppSettings withBridgeDefaults() => AppSettings(
+        terminalFontSize: terminalFontSize,
+        colorScheme: colorScheme,
+        uiStyle: uiStyle,
+        themeBrightness: themeBrightness,
+        keepScreenAwake: keepScreenAwake,
+        showHiddenFilesByDefault: showHiddenFilesByDefault,
+        collapsedGroups: collapsedGroups,
+        appLockEnabled: appLockEnabled,
+        appLockTimeout: appLockTimeout,
+        scrollbackLines: scrollbackLines,
+        cursorStyle: cursorStyle,
+        cursorBlink: cursorBlink,
+        bell: bell,
+        terminalFont: terminalFont,
+        keyBarMode: keyBarMode,
+        editorFontSize: editorFontSize,
+        diagnosticsLog: diagnosticsLog,
+        localeOverride: localeOverride,
+      );
+
   /// Keeps a font size inside the range the settings slider and pinch-zoom
   /// both respect. `num.clamp` returns `num`, not `double`, which is the kind
   /// of thing that quietly turns into an analyzer complaint at the call site
@@ -290,6 +343,10 @@ class AppSettings {
     KeyBarMode? keyBarMode,
     double? editorFontSize,
     bool? diagnosticsLog,
+    bool? bridgeEnabled,
+    bool? bridgeShowAddress,
+    bool? bridgeReadSensitivePaths,
+    List<String>? bridgeExtraBlockedPaths,
   }) {
     return AppSettings(
       terminalFontSize: clampFontSize(terminalFontSize ?? this.terminalFontSize),
@@ -312,6 +369,12 @@ class AppSettings {
           clampEditorFontSize(editorFontSize ?? this.editorFontSize),
       diagnosticsLog: diagnosticsLog ?? this.diagnosticsLog,
       localeOverride: localeOverride,
+      bridgeEnabled: bridgeEnabled ?? this.bridgeEnabled,
+      bridgeShowAddress: bridgeShowAddress ?? this.bridgeShowAddress,
+      bridgeReadSensitivePaths:
+          bridgeReadSensitivePaths ?? this.bridgeReadSensitivePaths,
+      bridgeExtraBlockedPaths:
+          bridgeExtraBlockedPaths ?? this.bridgeExtraBlockedPaths,
     );
   }
 
@@ -336,6 +399,10 @@ class AppSettings {
         editorFontSize: editorFontSize,
         diagnosticsLog: diagnosticsLog,
         localeOverride: (tag == null || tag.trim().isEmpty) ? null : tag,
+        bridgeEnabled: bridgeEnabled,
+        bridgeShowAddress: bridgeShowAddress,
+        bridgeReadSensitivePaths: bridgeReadSensitivePaths,
+        bridgeExtraBlockedPaths: bridgeExtraBlockedPaths,
       );
 
   static int _validScrollback(int lines) =>
@@ -361,6 +428,13 @@ class AppSettings {
         'editorFontSize': editorFontSize,
         'diagnosticsLog': diagnosticsLog,
         if (localeOverride != null) 'localeOverride': localeOverride,
+        // Each written only when it differs from the default, so a settings
+        // file that never used the bridge saves exactly as it did before.
+        if (bridgeEnabled) 'bridgeEnabled': true,
+        if (bridgeShowAddress) 'bridgeShowAddress': true,
+        if (bridgeReadSensitivePaths) 'bridgeReadSensitivePaths': true,
+        if (bridgeExtraBlockedPaths.isNotEmpty)
+          'bridgeExtraBlockedPaths': bridgeExtraBlockedPaths,
       };
 
   factory AppSettings.fromJson(Map<String, dynamic> json) {
@@ -416,6 +490,19 @@ class AppSettings {
       localeOverride: switch (json['localeOverride']) {
         final String tag when tag.trim().isNotEmpty => tag,
         _ => null,
+      },
+      // Absent before 1.6: the bridge is off and nothing is widened. Only a
+      // real `true` counts, so a mangled value cannot switch anything on.
+      bridgeEnabled: json['bridgeEnabled'] == true,
+      bridgeShowAddress: json['bridgeShowAddress'] == true,
+      bridgeReadSensitivePaths: json['bridgeReadSensitivePaths'] == true,
+      bridgeExtraBlockedPaths: switch (json['bridgeExtraBlockedPaths']) {
+        final List<dynamic> patterns => [
+            for (final pattern in patterns)
+              if (pattern is String && pattern.trim().isNotEmpty)
+                pattern.trim(),
+          ],
+        _ => const <String>[],
       },
     );
   }

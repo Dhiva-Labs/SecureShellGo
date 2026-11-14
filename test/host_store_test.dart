@@ -2,6 +2,7 @@ import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:secure_shell_go/models/host.dart';
+import 'package:secure_shell_go/models/host_ai_access.dart';
 import 'package:secure_shell_go/services/host_store.dart';
 
 void main() {
@@ -382,4 +383,108 @@ void main() {
       expect((await store.get('a'))?.group, 'Work');
     });
   });
+
+  group('a save that fails changes nothing', () {
+    Future<void> lockFolder(bool locked) async {
+      await Process.run('chmod', [locked ? '555' : '755', tempDir.path]);
+    }
+
+    test('update: the host is put back as it was', () async {
+      if (Platform.isWindows) return;
+      final store = HostStore(file: storeFile);
+      await store.add(host(id: 'a', label: 'Before'));
+      await store.add(host(id: 'b', label: 'Other'));
+      await lockFolder(true);
+      addTearDown(() => lockFolder(false));
+      await expectLater(
+        store.update(host(id: 'a', label: 'After')),
+        throwsA(isA<FileSystemException>()),
+      );
+      await lockFolder(false);
+      expect((await store.get('a'))!.label, 'Before');
+      expect((await store.all()).map((h) => h.id), ['a', 'b']);
+      expect((await HostStore(file: storeFile).get('a'))!.label, 'Before');
+    });
+
+    test('add: the host is not kept', () async {
+      if (Platform.isWindows) return;
+      final store = HostStore(file: storeFile);
+      await store.add(host(id: 'a'));
+      await lockFolder(true);
+      addTearDown(() => lockFolder(false));
+      await expectLater(
+        store.add(host(id: 'b')),
+        throwsA(isA<FileSystemException>()),
+      );
+      await lockFolder(false);
+      expect(await store.get('b'), isNull);
+      expect((await store.all()).map((h) => h.id), ['a']);
+    });
+
+    test('two saves that both fail leave what the file holds', () async {
+      if (Platform.isWindows) return;
+      final store = HostStore(file: storeFile);
+      await store.add(host(id: 'a', label: 'Before'));
+      await lockFolder(true);
+      addTearDown(() => lockFolder(false));
+      final first = store.update(host(id: 'a', label: 'First'));
+      final second = store.update(host(id: 'a', label: 'Second'));
+      await expectLater(first, throwsA(isA<FileSystemException>()));
+      await expectLater(second, throwsA(isA<FileSystemException>()));
+      await lockFolder(false);
+      expect((await store.get('a'))!.label, 'Before');
+      expect((await HostStore(file: storeFile).get('a'))!.label, 'Before');
+    });
+
+    test('a host deleted meanwhile is not brought back', () async {
+      if (Platform.isWindows) return;
+      final store = HostStore(file: storeFile);
+      await store.add(host(id: 'a', label: 'Before'));
+      await lockFolder(true);
+      addTearDown(() => lockFolder(false));
+      final failing = store.update(host(id: 'a', label: 'After'));
+      final deleting = store.delete('a');
+      await expectLater(failing, throwsA(isA<FileSystemException>()));
+      await expectLater(deleting, throwsA(isA<FileSystemException>()));
+      await lockFolder(false);
+      expect(await store.get('a'), isNull);
+    });
+  });
+
+  group('modify', () {
+    test('applies to the host as the store holds it now', () async {
+      final store = HostStore(file: storeFile);
+      final listed = host(id: 'a');
+      await store.add(listed);
+      // Taken out of (or put into) AI access after `listed` was read.
+      await store.update(listed.copyWith(aiAccess: HostAiAccess.readOnly));
+
+      final stamp = DateTime.utc(2026, 5, 1);
+      await store.modify('a', (h) => h.copyWith(lastConnectedAt: stamp));
+
+      final saved = (await HostStore(file: storeFile).get('a'))!;
+      expect(saved.aiAccess, HostAiAccess.readOnly);
+      expect(saved.lastConnectedAt, stamp);
+    });
+
+    test('is a no-op for a host that is gone', () async {
+      final store = HostStore(file: storeFile);
+      await store.modify('missing', (h) => h);
+      expect(await store.all(), isEmpty);
+    });
+
+    test('a failed save puts the host back', () async {
+      if (Platform.isWindows) return;
+      final store = HostStore(file: storeFile);
+      await store.add(host(id: 'a'));
+      await Process.run('chmod', ['555', tempDir.path]);
+      addTearDown(() => Process.run('chmod', ['755', tempDir.path]));
+      await expectLater(
+        store.modify('a', (h) => h.copyWith(label: 'Changed')),
+        throwsA(isA<FileSystemException>()),
+      );
+      expect((await store.get('a'))!.label, 'Home server');
+    });
+  });
 }
+

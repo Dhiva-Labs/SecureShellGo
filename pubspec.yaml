@@ -136,7 +136,9 @@ flutter:
   # For details regarding fonts from package dependencies,
   # see https://flutter.dev/to/font-from-package
 
-# Microsoft Store packaging: build on Windows with `dart run msix:create`.
+# Microsoft Store packaging: build on Windows with `tool\build_msix.ps1` (it
+# builds the AI Bridge launcher into the package and adds its execution alias,
+# which this config cannot express; see packaging/MSIX.md).
 # identity_name and publisher come from Partner Center (Product identity) and
 # must replace the placeholders before the first submission. `store: true`
 # leaves signing to the Store.

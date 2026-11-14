@@ -6755,5 +6755,585 @@
   "fleetRunStatusStopped": "stopped",
   "@fleetRunStatusStopped": {
     "description": "Host status: stopped by the user."
+  },
+  "settingsBridge": "AI Bridge",
+  "@settingsBridge": {
+    "description": "Settings: section header, and the title of the main switch. \"AI Bridge\" is a product feature name; keep it recognisable."
+  },
+  "settingsBridgeHelp": "Lets an AI assistant on this computer read from the servers you choose. Read-only.",
+  "@settingsBridgeHelp": {
+    "description": "Settings > AI Bridge: subtitle of the main switch."
+  },
+  "settingsBridgeStatusOff": "Off",
+  "@settingsBridgeStatusOff": {
+    "description": "Settings > AI Bridge: status when the bridge is switched off."
+  },
+  "settingsBridgeStatusRunning": "Running",
+  "@settingsBridgeStatusRunning": {
+    "description": "Settings > AI Bridge: status when the bridge is on and waiting for assistants."
+  },
+  "settingsBridgeStatusElsewhere": "Running in another SecureShell Go window",
+  "@settingsBridgeStatusElsewhere": {
+    "description": "Settings > AI Bridge: status when another window of the app already runs the bridge. Not an error."
+  },
+  "settingsBridgeStatusError": "Could not start: {message}",
+  "@settingsBridgeStatusError": {
+    "description": "Settings > AI Bridge: status when the bridge could not start. {message} is the technical reason, in English.",
+    "placeholders": {
+      "message": {
+        "type": "String"
+      }
+    }
+  },
+  "settingsBridgeEnableTitle": "Turn on the AI Bridge?",
+  "@settingsBridgeEnableTitle": {
+    "description": "Settings > AI Bridge: title of the confirmation shown each time the bridge is switched on."
+  },
+  "settingsBridgeEnableBody": "An AI assistant you pair can read from the hosts you enable for it. It never gets your passwords or keys. What it reads is sent by that assistant to its provider. Nothing can be changed on a server in this version.",
+  "@settingsBridgeEnableBody": {
+    "description": "Settings > AI Bridge: body of the confirmation shown when the bridge is switched on. Four plain promises/facts: reads from enabled hosts, never gets passwords or keys, the assistant sends what it reads to its provider, nothing can be changed on a server. Keep each one."
+  },
+  "settingsBridgeEnableConfirm": "Turn on",
+  "@settingsBridgeEnableConfirm": {
+    "description": "Settings > AI Bridge: confirm button of the dialog shown when the bridge is switched on."
+  },
+  "settingsBridgeAddress": "Show address and username",
+  "@settingsBridgeAddress": {
+    "description": "Settings > AI Bridge: switch title. Whether an assistant also sees each host's address and username."
+  },
+  "settingsBridgeAddressHelp": "Off: an assistant sees only the names of the hosts you shared. On: it also sees each host's address, port and username.",
+  "@settingsBridgeAddressHelp": {
+    "description": "Settings > AI Bridge: subtitle of the \"Show address and username\" switch."
+  },
+  "settingsBridgeSensitive": "Read sensitive paths",
+  "@settingsBridgeSensitive": {
+    "description": "Settings > AI Bridge: switch title. Lets an assistant read key files, .env files and similar."
+  },
+  "settingsBridgeSensitiveHelp": "Off: key files, .env files and similar are always refused.",
+  "@settingsBridgeSensitiveHelp": {
+    "description": "Settings > AI Bridge: subtitle of the \"Read sensitive paths\" switch."
+  },
+  "settingsBridgeSensitiveWarnTitle": "Allow reading sensitive paths?",
+  "@settingsBridgeSensitiveWarnTitle": {
+    "description": "Settings > AI Bridge: title of the warning shown when \"Read sensitive paths\" is switched on."
+  },
+  "settingsBridgeSensitiveWarnBody": "This lets a paired assistant read key files, .env files and similar, and what it reads is sent to its provider. Paths you add under Extra blocked paths stay blocked.",
+  "@settingsBridgeSensitiveWarnBody": {
+    "description": "Settings > AI Bridge: body of that warning. It must say plainly that key files and .env files become readable and that the content goes to the assistant's provider."
+  },
+  "settingsBridgeSensitiveWarnConfirm": "Allow",
+  "@settingsBridgeSensitiveWarnConfirm": {
+    "description": "Settings > AI Bridge: confirm button of the sensitive-paths warning."
+  },
+  "settingsBridgeBlocked": "Extra blocked paths",
+  "@settingsBridgeBlocked": {
+    "description": "Settings > AI Bridge: header of the list of extra path patterns an assistant can never read."
+  },
+  "settingsBridgeBlockedHelp": "Patterns an assistant can never read, such as /srv/private/** . They apply even when sensitive paths are allowed.",
+  "@settingsBridgeBlockedHelp": {
+    "description": "Settings > AI Bridge: explanation under \"Extra blocked paths\". The example pattern /srv/private/** is literal; do not translate it."
+  },
+  "settingsBridgeBlockedNone": "No extra patterns.",
+  "@settingsBridgeBlockedNone": {
+    "description": "Settings > AI Bridge: shown when no extra pattern has been added."
+  },
+  "settingsBridgeBlockedAdd": "Add a pattern",
+  "@settingsBridgeBlockedAdd": {
+    "description": "Settings > AI Bridge: button that adds an extra blocked path pattern."
+  },
+  "settingsBridgeBlockedField": "Path pattern",
+  "@settingsBridgeBlockedField": {
+    "description": "Settings > AI Bridge: label of the text field for a new path pattern."
+  },
+  "settingsBridgeBlockedRemove": "Remove {pattern}",
+  "@settingsBridgeBlockedRemove": {
+    "description": "Settings > AI Bridge: tooltip of the remove button of one pattern. {pattern} is the pattern itself.",
+    "placeholders": {
+      "pattern": {
+        "type": "String"
+      }
+    }
+  },
+  "settingsBridgeBuiltInView": "View built-in blocked paths",
+  "@settingsBridgeBuiltInView": {
+    "description": "Settings > AI Bridge: row that opens the list of built-in blocked paths."
+  },
+  "settingsBridgeBuiltInTitle": "Built-in blocked paths",
+  "@settingsBridgeBuiltInTitle": {
+    "description": "AI Bridge: title of the screen listing the built-in blocked paths."
+  },
+  "settingsBridgeBuiltInIntro": "An assistant cannot read these unless Read sensitive paths is on.",
+  "@settingsBridgeBuiltInIntro": {
+    "description": "AI Bridge: intro above the list of built-in blocked paths. The patterns themselves are not translated."
+  },
+  "settingsBridgePaired": "Paired assistants",
+  "@settingsBridgePaired": {
+    "description": "Settings > AI Bridge: header of the list of paired assistants."
+  },
+  "settingsBridgePairedNone": "No assistant is paired yet.",
+  "@settingsBridgePairedNone": {
+    "description": "Settings > AI Bridge: shown when no assistant is paired."
+  },
+  "settingsBridgePairedOn": "Paired {date}",
+  "@settingsBridgePairedOn": {
+    "description": "Settings > AI Bridge: when an assistant was paired. {date} is a short date.",
+    "placeholders": {
+      "date": {
+        "type": "String"
+      }
+    }
+  },
+  "settingsBridgeLastSeen": "last seen {date}",
+  "@settingsBridgeLastSeen": {
+    "description": "Settings > AI Bridge: when an assistant last connected. {date} is a short date and time. Joined to the previous string with a dot.",
+    "placeholders": {
+      "date": {
+        "type": "String"
+      }
+    }
+  },
+  "settingsBridgeNeverSeen": "not connected yet",
+  "@settingsBridgeNeverSeen": {
+    "description": "Settings > AI Bridge: shown for an assistant that has never connected."
+  },
+  "settingsBridgeConnected": "Connected",
+  "@settingsBridgeConnected": {
+    "description": "Settings > AI Bridge: marker on an assistant that is connected right now."
+  },
+  "settingsBridgeRevoke": "Revoke",
+  "@settingsBridgeRevoke": {
+    "description": "Settings > AI Bridge: button that removes a paired assistant."
+  },
+  "settingsBridgeRevokeTitle": "Revoke {name}?",
+  "@settingsBridgeRevokeTitle": {
+    "description": "Settings > AI Bridge: title of the revoke confirmation. {name} is the name the user gave the assistant.",
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "settingsBridgeRevokeBody": "It stops working at once. To use it again you have to pair it again.",
+  "@settingsBridgeRevokeBody": {
+    "description": "Settings > AI Bridge: body of the revoke confirmation."
+  },
+  "settingsBridgeConnect": "Connect an assistant",
+  "@settingsBridgeConnect": {
+    "description": "Settings > AI Bridge: button that starts pairing a new assistant, and the title of that screen."
+  },
+  "settingsBridgeActivity": "Activity",
+  "@settingsBridgeActivity": {
+    "description": "Settings > AI Bridge: row that opens the activity log."
+  },
+  "settingsBridgeActivityHelp": "What assistants asked for, and whether it was allowed",
+  "@settingsBridgeActivityHelp": {
+    "description": "Settings > AI Bridge: subtitle of the Activity row."
+  },
+  "settingsBridgeActivityWriteError": "The activity log could not be saved. Recent activity may be missing from it.",
+  "@settingsBridgeActivityWriteError": {
+    "description": "Settings > AI Bridge: warning shown when the activity log could not be written to disk."
+  },
+  "settingsBridgeSaveFailed": "That setting could not be saved, so it was put back.",
+  "@settingsBridgeSaveFailed": {
+    "description": "Settings > AI Bridge: error shown when saving one of the bridge settings failed. The switch or list returns to what is stored."
+  },
+  "bridgeConnectNameIntro": "Give the assistant a name you will recognise in the list of paired assistants and in the activity log.",
+  "@bridgeConnectNameIntro": {
+    "description": "AI Bridge > Connect an assistant: intro above the name field."
+  },
+  "bridgeConnectNameLabel": "Assistant name",
+  "@bridgeConnectNameLabel": {
+    "description": "AI Bridge > Connect an assistant: label of the name field."
+  },
+  "bridgeConnectNameHint": "Desktop assistant",
+  "@bridgeConnectNameHint": {
+    "description": "AI Bridge > Connect an assistant: example shown in the empty name field."
+  },
+  "bridgeConnectDefaultName": "Assistant",
+  "@bridgeConnectDefaultName": {
+    "description": "AI Bridge > Pair: the name given to an assistant when the name field is left empty."
+  },
+  "bridgeConnectKindTitle": "How will it connect?",
+  "@bridgeConnectKindTitle": {
+    "description": "AI Bridge > Connect an assistant: heading above the choice of how the assistant connects."
+  },
+  "bridgeConnectKindConfig": "Config file (mcp.json)",
+  "@bridgeConnectKindConfig": {
+    "description": "AI Bridge > Connect an assistant: choice title. Keep \"mcp.json\" as is."
+  },
+  "bridgeConnectKindOther": "Other",
+  "@bridgeConnectKindOther": {
+    "description": "AI Bridge > Connect an assistant: choice title for any other client."
+  },
+  "bridgeConnectKindPluginHelp": "The easiest way: paste one block of commands into a terminal.",
+  "@bridgeConnectKindPluginHelp": {
+    "description": "AI Bridge > Connect an assistant: description of the plugin choice."
+  },
+  "bridgeConnectKindConfigHelp": "For assistants that read an mcpServers configuration.",
+  "@bridgeConnectKindConfigHelp": {
+    "description": "AI Bridge > Connect an assistant: description of the config file choice. \"mcpServers\" is a literal name."
+  },
+  "bridgeConnectKindVscodeHelp": "Uses the servers format with type stdio.",
+  "@bridgeConnectKindVscodeHelp": {
+    "description": "AI Bridge > Connect an assistant: description of the VS Code choice. \"servers\" and \"stdio\" are literal names."
+  },
+  "bridgeConnectKindOtherHelp": "Just the launcher command and the token.",
+  "@bridgeConnectKindOtherHelp": {
+    "description": "AI Bridge > Connect an assistant: description of the Other choice."
+  },
+  "bridgeConnectCreate": "Create pairing token",
+  "@bridgeConnectCreate": {
+    "description": "AI Bridge > Connect an assistant: button that creates the pairing token."
+  },
+  "bridgeConnectFailed": "Could not pair the assistant: {error}",
+  "@bridgeConnectFailed": {
+    "description": "AI Bridge > Connect an assistant: error when the token could not be created. {error} is the technical reason.",
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
+  "bridgeConnectTokenOnceTitle": "This token is shown only once",
+  "@bridgeConnectTokenOnceTitle": {
+    "description": "AI Bridge > Connect an assistant: warning title above the token. The token can never be shown again."
+  },
+  "bridgeConnectTokenOnceBody": "Copy it now. SecureShell Go keeps only a fingerprint of it and cannot show it again. If you lose it, revoke this assistant and pair it again.",
+  "@bridgeConnectTokenOnceBody": {
+    "description": "AI Bridge > Connect an assistant: warning text above the token."
+  },
+  "bridgeConnectTokenLabel": "Pairing token",
+  "@bridgeConnectTokenLabel": {
+    "description": "AI Bridge > Connect an assistant: label of the token box. Matches the plugin prompt \"Pairing token\" in English."
+  },
+  "bridgeConnectCopied": "Copied",
+  "@bridgeConnectCopied": {
+    "description": "AI Bridge > Connect an assistant: snackbar after something was copied to the clipboard."
+  },
+  "bridgeConnectPluginCommands": "Paste this into a terminal. It installs the plugin and gives it the token:",
+  "@bridgeConnectPluginCommands": {
+    "description": "AI Bridge > Connect an assistant: intro above the block of shell commands that installs the plugin and sets its token."
+  },
+  "bridgeConnectPluginHelp": "If the first command says the marketplace is already added or cannot be found, the other two still work when the plugin is already installed.",
+  "@bridgeConnectPluginHelp": {
+    "description": "AI Bridge > Connect an assistant: short help under the plugin command block, for when the first command reports the marketplace as already added or not found. Keep the command names out of it."
+  },
+  "bridgeConnectPluginInSession": "The same can be done inside a Claude Code session, not in a terminal: type {command} there.",
+  "@bridgeConnectPluginInSession": {
+    "description": "AI Bridge > Connect an assistant: tells the user the same can be done inside a Claude Code session (not in a terminal) with a slash command. {command} is that slash command, which is not translated. Make it unmistakable that it is typed inside the assistant.",
+    "placeholders": {
+      "command": {
+        "type": "String"
+      }
+    }
+  },
+  "bridgeConnectConfigIntro": "Add this to the assistant's MCP configuration:",
+  "@bridgeConnectConfigIntro": {
+    "description": "AI Bridge > Connect an assistant: intro above the mcpServers JSON."
+  },
+  "bridgeConnectVscodeIntro": "Add this to VS Code's mcp.json:",
+  "@bridgeConnectVscodeIntro": {
+    "description": "AI Bridge > Connect an assistant: intro above the VS Code JSON."
+  },
+  "bridgeConnectOtherIntro": "Run this launcher command, and give it the token in the environment variable {env}:",
+  "@bridgeConnectOtherIntro": {
+    "description": "AI Bridge > Connect an assistant: intro for the Other choice. {env} is an environment variable name.",
+    "placeholders": {
+      "env": {
+        "type": "String"
+      }
+    }
+  },
+  "bridgeConnectLauncherLabel": "Launcher command",
+  "@bridgeConnectLauncherLabel": {
+    "description": "AI Bridge > Connect an assistant: label of the launcher command box."
+  },
+  "bridgeConnectEnvLabel": "Environment variable",
+  "@bridgeConnectEnvLabel": {
+    "description": "AI Bridge > Connect an assistant: label of the environment variable name box."
+  },
+  "bridgeConnectLauncherMissing": "The launcher was not found next to this app. Reinstall SecureShell Go, or copy secureshellgo-mcp next to it.",
+  "@bridgeConnectLauncherMissing": {
+    "description": "AI Bridge > Connect an assistant: warning when the launcher file is not beside the app. secureshellgo-mcp is a literal file name."
+  },
+  "bridgeConnectDone": "Done",
+  "@bridgeConnectDone": {
+    "description": "AI Bridge > Connect an assistant: button that leaves the screen once the token has been copied."
+  },
+  "bridgeConnectLeaveTitle": "Leave without the token?",
+  "@bridgeConnectLeaveTitle": {
+    "description": "AI Bridge > Pair: title of the confirmation when leaving the screen while the token is shown."
+  },
+  "bridgeConnectLeaveBody": "The token will not be shown again. If you have not copied it yet, you will have to pair this assistant again.",
+  "@bridgeConnectLeaveBody": {
+    "description": "AI Bridge > Pair: body of the leave confirmation. The token is shown once and cannot be recovered."
+  },
+  "bridgeConnectLeaveStay": "Stay",
+  "@bridgeConnectLeaveStay": {
+    "description": "AI Bridge > Pair: button that keeps the screen open."
+  },
+  "bridgeConnectLeaveConfirm": "Leave",
+  "@bridgeConnectLeaveConfirm": {
+    "description": "AI Bridge > Pair: button that leaves the screen and loses the token."
+  },
+  "bridgeAuditTitle": "AI Bridge activity",
+  "@bridgeAuditTitle": {
+    "description": "AI Bridge: title of the activity log screen."
+  },
+  "bridgeAuditEmpty": "Nothing yet. Requests from paired assistants will show up here.",
+  "@bridgeAuditEmpty": {
+    "description": "AI Bridge > Activity: empty state."
+  },
+  "bridgeAuditClear": "Clear",
+  "@bridgeAuditClear": {
+    "description": "AI Bridge > Activity: tooltip of the clear button."
+  },
+  "bridgeAuditClearTitle": "Clear the activity log?",
+  "@bridgeAuditClearTitle": {
+    "description": "AI Bridge > Activity: title of the clear confirmation."
+  },
+  "bridgeAuditClearBody": "This deletes the log on this computer. It cannot be undone.",
+  "@bridgeAuditClearBody": {
+    "description": "AI Bridge > Activity: body of the clear confirmation."
+  },
+  "bridgeAuditClearFailed": "The activity log could not be cleared.",
+  "@bridgeAuditClearFailed": {
+    "description": "AI Bridge > Activity: message shown when clearing the log failed."
+  },
+  "bridgeAuditOk": "OK",
+  "@bridgeAuditOk": {
+    "description": "AI Bridge > Activity: outcome of a request that was answered."
+  },
+  "bridgeAuditRefused": "Refused",
+  "@bridgeAuditRefused": {
+    "description": "AI Bridge > Activity: outcome of a request that was refused by policy."
+  },
+  "bridgeAuditError": "Error",
+  "@bridgeAuditError": {
+    "description": "AI Bridge > Activity: outcome of a request that failed."
+  },
+  "hostEditAiAccess": "AI access (read-only)",
+  "@hostEditAiAccess": {
+    "description": "Host form: switch title. Lets a paired AI assistant read from this host through the AI Bridge. Shown only on desktop."
+  },
+  "hostEditAiAccessHelp": "Lets an AI assistant you have paired read from this server through the AI Bridge. It cannot change anything.",
+  "@hostEditAiAccessHelp": {
+    "description": "Host form: subtitle of the AI access switch."
+  },
+  "settingsBridgeSharedHosts": "Shared hosts — {shared} of {total}",
+  "@settingsBridgeSharedHosts": {
+    "description": "Settings > AI Bridge: row that opens the list of saved hosts an assistant may read; shows how many of the saved hosts are shared.",
+    "placeholders": {
+      "shared": {
+        "type": "int"
+      },
+      "total": {
+        "type": "int"
+      }
+    }
+  },
+  "settingsBridgeSharedHostsHelp": "Choose which saved hosts an assistant can read. Each host can also be switched in its own edit screen.",
+  "@settingsBridgeSharedHostsHelp": {
+    "description": "Settings > AI Bridge: help line of the shared hosts row."
+  },
+  "bridgeOneClickButton": "Connect Claude Code",
+  "@bridgeOneClickButton": {
+    "description": "Settings > AI Bridge: button that sets up the Claude Code plugin in one go. Claude Code is a product name; do not translate it."
+  },
+  "bridgeOneClickCheckAgain": "Check again for Claude Code",
+  "@bridgeOneClickCheckAgain": {
+    "description": "Settings > AI Bridge: tooltip of the button that looks again for the Claude Code command on this computer."
+  },
+  "bridgeOneClickSandboxed": "One-click connect is not available in the snap. Use \"{action}\" instead.",
+  "@bridgeOneClickSandboxed": {
+    "description": "Settings > AI Bridge: note shown instead of the one-click button in the snap, which may not start other programs. {action} is the label of the manual connect button.",
+    "placeholders": {
+      "action": {
+        "type": "String"
+      }
+    }
+  },
+  "bridgeOneClickTitle": "Connect Claude Code",
+  "@bridgeOneClickTitle": {
+    "description": "One-click connect: title of the screen. Claude Code is a product name."
+  },
+  "bridgeOneClickRunIntro": "SecureShell Go will run this program to set up the plugin:",
+  "@bridgeOneClickRunIntro": {
+    "description": "One-click connect confirmation: introduces the full path of the program (Claude Code's command) that SecureShell Go will run. The path follows on its own line."
+  },
+  "bridgeOneClickVersion": "Version: {version}",
+  "@bridgeOneClickVersion": {
+    "description": "One-click connect confirmation: the version the program reported, shown as received.",
+    "placeholders": {
+      "version": {
+        "type": "String"
+      }
+    }
+  },
+  "bridgeOneClickWillTurnOn": "The AI Bridge is off and will be turned on.",
+  "@bridgeOneClickWillTurnOn": {
+    "description": "One-click connect confirmation: shown only when the AI Bridge is off, because connecting turns it on."
+  },
+  "bridgeOneClickConfirm": "Connect",
+  "@bridgeOneClickConfirm": {
+    "description": "One-click connect confirmation: confirm button."
+  },
+  "bridgeOneClickDefaultName": "Claude Code",
+  "@bridgeOneClickDefaultName": {
+    "description": "One-click connect: the name the new paired assistant gets in the list; a number is added if the name is taken. Product name."
+  },
+  "bridgeOneClickRunning": "Setting up Claude Code…",
+  "@bridgeOneClickRunning": {
+    "description": "One-click connect: heading while the setup runs."
+  },
+  "bridgeOneClickRunningHelp": "This can take a few minutes. Please keep this screen open.",
+  "@bridgeOneClickRunningHelp": {
+    "description": "One-click connect: help line while the setup runs; leaving is blocked until it ends."
+  },
+  "bridgeOneClickStepMarketplace": "Add the SecureShell Go plugin source",
+  "@bridgeOneClickStepMarketplace": {
+    "description": "One-click connect: first of four steps, adding the place the plugin comes from."
+  },
+  "bridgeOneClickStepInstall": "Install the plugin",
+  "@bridgeOneClickStepInstall": {
+    "description": "One-click connect: second of four steps."
+  },
+  "bridgeOneClickStepConfigure": "Set up the pairing",
+  "@bridgeOneClickStepConfigure": {
+    "description": "One-click connect: third of four steps, giving the plugin its pairing token."
+  },
+  "bridgeOneClickStepVerify": "Check the setup",
+  "@bridgeOneClickStepVerify": {
+    "description": "One-click connect: fourth of four steps, reading the setup back."
+  },
+  "bridgeOneClickFailedTitle": "Claude Code could not be connected",
+  "@bridgeOneClickFailedTitle": {
+    "description": "One-click connect: heading when the setup failed."
+  },
+  "bridgeOneClickFailedMarketplace": "Claude Code could not add the SecureShell Go plugin source.",
+  "@bridgeOneClickFailedMarketplace": {
+    "description": "One-click connect: the setup failed while adding the plugin source."
+  },
+  "bridgeOneClickFailedInstall": "Claude Code could not install the plugin.",
+  "@bridgeOneClickFailedInstall": {
+    "description": "One-click connect: the setup failed while installing the plugin."
+  },
+  "bridgeOneClickFailedConfigure": "Claude Code could not save the pairing for the plugin.",
+  "@bridgeOneClickFailedConfigure": {
+    "description": "One-click connect: the setup failed while saving the pairing for the plugin."
+  },
+  "bridgeOneClickFailedVerify": "Claude Code could not confirm that the pairing was saved.",
+  "@bridgeOneClickFailedVerify": {
+    "description": "One-click connect: the setup failed while checking that the pairing was saved."
+  },
+  "bridgeOneClickCleanedUp": "The pairing was removed again, so nothing unusable is left behind.",
+  "@bridgeOneClickCleanedUp": {
+    "description": "One-click connect: says the pairing made for this attempt was removed again."
+  },
+  "bridgeOneClickTechnical": "Technical details",
+  "@bridgeOneClickTechnical": {
+    "description": "One-click connect: title of the expandable area with the technical detail (command output, in English)."
+  },
+  "bridgeOneClickDoneTitle": "Claude Code is connected",
+  "@bridgeOneClickDoneTitle": {
+    "description": "One-click connect: heading when the setup worked."
+  },
+  "bridgeOneClickDoneBody": "Start a new Claude Code session to use it.",
+  "@bridgeOneClickDoneBody": {
+    "description": "One-click connect: last message. Claude Code is a product name."
+  },
+  "bridgeHostsTitle": "Shared hosts",
+  "@bridgeHostsTitle": {
+    "description": "Shared hosts: title of the screen where saved hosts are ticked for AI access."
+  },
+  "bridgeHostsIntro": "Tick the hosts a paired AI assistant may read. It can only read; it cannot change anything on a server.",
+  "@bridgeHostsIntro": {
+    "description": "Shared hosts: sentence above the list of hosts."
+  },
+  "bridgeHostsSave": "Save",
+  "@bridgeHostsSave": {
+    "description": "Shared hosts: button that applies the ticked hosts."
+  },
+  "bridgeHostsSkip": "Skip for now",
+  "@bridgeHostsSkip": {
+    "description": "Shared hosts: button that leaves the list without changing anything (one-click connect only)."
+  },
+  "bridgeHostsEmptyTitle": "No saved hosts yet",
+  "@bridgeHostsEmptyTitle": {
+    "description": "Shared hosts: heading when no host is saved."
+  },
+  "bridgeHostsEmptyBody": "Add a host and save it first. A quick connect is not saved, so it cannot be shared.",
+  "@bridgeHostsEmptyBody": {
+    "description": "Shared hosts: says a host must be added and saved first; a quick connect is not saved."
+  },
+  "bridgeHostsSaveFailed": "Not every change could be saved. The list shows what is saved now.",
+  "@bridgeHostsSaveFailed": {
+    "description": "Shared hosts: shown when one or more hosts could not be saved; the list is then reloaded to show what is stored."
+  },
+  "bridgeOneClickSourceOther": "The plugin will be loaded from: {description}",
+  "@bridgeOneClickSourceOther": {
+    "description": "One-click connect confirmation: shown when the plugin would come from somewhere other than the published repository. {description} is where, as reported by Claude Code (its kind words are English).",
+    "placeholders": {
+      "description": {
+        "type": "String"
+      }
+    }
+  },
+  "bridgeOneClickSourceOtherWarning": "This is not the published SecureShell Go plugin. Only continue if you set it up yourself.",
+  "@bridgeOneClickSourceOtherWarning": {
+    "description": "One-click connect confirmation: warning shown under the line saying the plugin comes from elsewhere."
+  },
+  "bridgeOneClickSourceUnknown": "SecureShell Go could not check where the plugin will come from.",
+  "@bridgeOneClickSourceUnknown": {
+    "description": "One-click connect confirmation: shown when the app could not check where the plugin would come from."
+  },
+  "bridgeOneClickFailedSource": "The setup stopped before anything was sent: the plugin source changed after you confirmed, or the program could not be run. Nothing was installed.",
+  "@bridgeOneClickFailedSource": {
+    "description": "One-click connect: the setup stopped before anything was sent, because the plugin source differed from the one shown in the confirmation or the program could not be run; nothing was installed and no token was sent."
+  },
+  "bridgeOneClickChecking": "Checking Claude Code…",
+  "@bridgeOneClickChecking": {
+    "description": "One-click connect: shown while the found claude program is asked for its version and plugin source, before the confirmation."
+  },
+  "bridgeOneClickCannotRun": "Claude Code was found but could not be run, so nothing was changed. You can connect an assistant by hand instead.",
+  "@bridgeOneClickCannotRun": {
+    "description": "One-click connect: the claude program was found on disk but did not answer when run; nothing was changed. Offers the manual way."
+  },
+  "bridgeOneClickStepSkipped": "Already set up, skipped",
+  "@bridgeOneClickStepSkipped": {
+    "description": "One-click connect: progress row note for a step that was not needed because it was already done."
+  },
+  "bridgeOneClickFailedOther": "Something went wrong before the setup finished.",
+  "@bridgeOneClickFailedOther": {
+    "description": "One-click connect: an unexpected error stopped the setup; the technical detail is shown below it."
+  },
+  "bridgeOneClickCleanupFailed": "The pairing \"{name}\" could not be removed. Remove it under {section} in Settings.",
+  "@bridgeOneClickCleanupFailed": {
+    "description": "One-click connect: the pairing made for this attempt could not be removed. {name} is the pairing's name; {section} is the Paired assistants heading in Settings > AI Bridge.",
+    "placeholders": {
+      "name": {
+        "type": "String"
+      },
+      "section": {
+        "type": "String"
+      }
+    }
+  },
+  "bridgeOneClickSwitchOffFailed": "The AI Bridge could not be switched off again. Switch it off in Settings if you do not need it.",
+  "@bridgeOneClickSwitchOffFailed": {
+    "description": "One-click connect: the AI Bridge that this attempt switched on could not be switched off again."
+  },
+  "bridgeConnectPluginHistoryNote": "Pasting these commands leaves the token in your terminal's history. Where it is available, \"{action}\" in Settings avoids this.",
+  "@bridgeConnectPluginHistoryNote": {
+    "description": "Manual pairing screen, Claude Code plugin choice: note under the commands. {action} is the \"Connect Claude Code\" button label in Settings > AI Bridge.",
+    "placeholders": {
+      "action": {
+        "type": "String"
+      }
+    }
+  },
+  "settingsBridgeRevokeFailed": "The pairing could not be removed, so it still works. Try again.",
+  "@settingsBridgeRevokeFailed": {
+    "description": "Settings > AI Bridge: shown when removing a paired assistant could not be saved; the pairing was kept and still works."
   }
 }

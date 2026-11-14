@@ -8,6 +8,7 @@ import '../services/credential_store.dart';
 import '../services/device_storage.dart';
 import '../services/fleet_push_run_registry.dart';
 import '../services/fleet_push_service.dart';
+import '../services/headless_dialer.dart';
 import '../services/remote_path.dart';
 import '../services/session_manager.dart';
 import '../services/sftp_service.dart';
@@ -143,15 +144,14 @@ class _FleetPushScreenState extends State<FleetPushScreen> {
     Host host,
     SshCredentials credentials,
   ) async {
-    final connection = await widget.sshService.connect(
-      host: host,
-      credentials: credentials,
-      // A fan-out never pauses for a per-host modal: an unknown or changed
-      // host key fails just that host instead of blocking every other one
-      // behind a dialog nobody is watching. A new key is only ever trusted
-      // through an ordinary, one-at-a-time connect from the host list.
-      verifyHostKey: (_) async => false,
-    );
+    // A fan-out never pauses for a per-host modal: an unknown or changed
+    // host key, or a question at login, fails just that host instead of
+    // blocking every other one behind a dialog nobody is watching. A new key
+    // is only ever trusted through an ordinary, one-at-a-time connect from
+    // the host list.
+    final connection = await HeadlessDialer(
+      widget.sshService,
+    ).dial(host, credentials);
     final client = await connection.openSftp();
     return FleetDialedConnection(
       sftp: SftpService(client),

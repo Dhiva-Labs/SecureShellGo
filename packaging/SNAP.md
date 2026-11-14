@@ -157,6 +157,38 @@ sudo snap remove secureshellgo   # clean up afterwards
 `--dangerous` is required for a locally-built, unsigned `.snap`; it's not
 needed once the snap is installed normally from the Store.
 
+## The AI Bridge launcher: `secureshellgo.mcp`
+
+The snap has a second app, `mcp`, so the command an MCP-compatible AI
+assistant is configured with is `secureshellgo.mcp` (the app's own command is
+`secureshellgo`). The launcher is compiled in the `secureshellgo` part
+(`override-build`, after the Flutter build) by `tool/build_launcher.sh`, with
+the `dart` that the `flutter` plugin puts on PATH for the part, and installed
+at the snap's root as `secureshellgo-mcp`. A plain `dart compile exe` fails in
+this package because of build hooks; the script says why and avoids it.
+
+It reaches the app through `<appdata>/bridge/endpoint.json` and a unix
+socket in the same directory. Both apps must therefore resolve the same
+directory: the data directory is `$XDG_DATA_HOME/com.dhivalabs.secure_shell_go`
+for both, and the `gnome` extension's launcher sets `XDG_DATA_HOME` to
+`$SNAP_USER_DATA/.local/share` for the app, so the `mcp` app (which has no
+extension) sets the same value in its `environment:`. If the socket path would
+be over 100 bytes (a long `$SNAP_USER_DATA` can do that) the app falls back to
+`$XDG_RUNTIME_DIR/secureshellgo-bridge.sock`, which snapd also makes per snap
+(`/run/user/<uid>/snap.secureshellgo`), so both apps still agree.
+
+The `mcp` app has **no plugs**. It only connects to a unix socket inside the
+snap's own data directory, which confinement always allows; it opens no network
+socket, reads nothing from the home directory and talks to no desktop
+service. (Listening is the main app's `network-bind`.)
+
+Not verified without a real strict install: that the `gnome` extension still
+sets `XDG_DATA_HOME` as above in the snapcraft version in use, and that
+`secureshellgo.mcp` can connect. See `store/release-checklist-1.6.md`. To check the first: switch the bridge on, then look for
+`~/snap/secureshellgo/current/.local/share/com.dhivalabs.secure_shell_go/bridge/endpoint.json`;
+a launcher answer of "not running" while that file exists means the two apps
+resolve different directories.
+
 ## Credential storage: `password-manager-service`
 
 Saving a host password or key passphrase writes to the host's Secret

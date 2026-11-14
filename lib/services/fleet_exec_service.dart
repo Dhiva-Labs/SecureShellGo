@@ -2,9 +2,10 @@ import 'dart:async';
 import 'dart:collection';
 import 'dart:convert';
 
-import 'package:dartssh2/dartssh2.dart' show SSHKeyPair, SSHSession, SSHSignal;
+import 'package:dartssh2/dartssh2.dart' show SSHSession, SSHSignal;
 
 import '../models/host.dart';
+import 'headless_dialer.dart';
 import 'shell_quote.dart';
 import 'ssh_service.dart';
 
@@ -147,15 +148,9 @@ class FleetExecHostRun {
 /// Thrown by a [FleetExecDialer] when the host cannot be signed in to
 /// without a person: it asked a question nobody saved an answer to, or its
 /// host key has not been checked yet. The host is reported as skipped, with
-/// [reason], rather than failed.
-class FleetSignInNeedsPerson implements Exception {
-  const FleetSignInNeedsPerson(this.reason);
-
-  final String reason;
-
-  @override
-  String toString() => reason;
-}
+/// its reason, rather than failed. The same exception the AI Bridge reads,
+/// since both dial through `HeadlessDialer`.
+typedef FleetSignInNeedsPerson = SignInNeedsPerson;
 
 /// The live session's transport for a host, or null when none is open —
 /// in which case the run dials its own.
@@ -568,33 +563,8 @@ class FleetExecService {
   /// Only what can be told before dialling: a one-time code or an
   /// untrusted host key turns up during the sign-in, and the dialer reports
   /// those as [FleetSignInNeedsPerson].
-  static String? signInProblem(Host host, SshCredentials? saved) {
-    switch (host.authMethod) {
-      case SshAuthMethod.agent:
-        return null;
-      case SshAuthMethod.password:
-        if (saved?.password?.isNotEmpty ?? false) return null;
-        return 'No saved password. Connect once from the host list and '
-            'save it to include this host.';
-      case SshAuthMethod.privateKey:
-        final pem = saved?.privateKeyPem?.trim() ?? '';
-        if (pem.isEmpty) {
-          return 'No saved private key. Edit the host to add one.';
-        }
-        final passphrase = saved?.passphrase ?? '';
-        if (passphrase.isEmpty) {
-          try {
-            if (SSHKeyPair.isEncryptedPem(pem)) {
-              return 'The key\'s passphrase is not saved, and nobody is asked '
-                  'for it here.';
-            }
-          } catch (_) {
-            // Unreadable: the dial says so properly.
-          }
-        }
-        return null;
-    }
-  }
+  static String? signInProblem(Host host, SshCredentials? saved) =>
+      HeadlessDialer.signInProblem(host, saved);
 
   /// [command] as the exec request carries it.
   ///

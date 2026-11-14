@@ -80,7 +80,8 @@ enum SecureStorageChoice {
 /// when half of it fails — and doing half of it here would be worse than
 /// not doing it. Left as future work, with the vault as the honest status
 /// quo until then.
-class CompositeSecureStorageBackend implements SecureStorageBackend {
+class CompositeSecureStorageBackend
+    implements SecureStorageBackend, QuietSecureStorageRead {
   CompositeSecureStorageBackend({
     required SecureStorageBackend keyring,
     required SecretVault vault,
@@ -203,6 +204,47 @@ class CompositeSecureStorageBackend implements SecureStorageBackend {
       case SecureStorageChoice.keyringLocked:
       case SecureStorageChoice.vaultSetupRequired:
         return null;
+    }
+  }
+
+  /// [read] for a caller with nobody to ask, such as the AI Bridge: the
+  /// vault is opened with this device's key if it can be, and otherwise
+  /// reported as [SecureStorageSealed] — the passphrase prompt is never
+  /// shown, and nor is an unlock some screen has already started waited on.
+  /// A keyring this install has seen working but cannot reach now is
+  /// reported the same way, since unlocking it is a person's job too.
+  @override
+  Future<String?> readQuiet(String key) async {
+    switch (await resolve()) {
+      case SecureStorageChoice.keyring:
+        return _keyring.read(key);
+      case SecureStorageChoice.vault:
+        if (!await _unlockVaultQuietly()) {
+          throw const SecureStorageSealed(SecureStorageSealedKind.vault);
+        }
+        try {
+          return await _vault.read(key);
+        } on SecretVaultException {
+          return null;
+        }
+      case SecureStorageChoice.keyringLocked:
+        throw const SecureStorageSealed(SecureStorageSealedKind.keyring);
+      case SecureStorageChoice.vaultSetupRequired:
+        return null;
+    }
+  }
+
+  Future<bool> _unlockVaultQuietly() async {
+    if (_vault.isUnlocked) return true;
+    // A prompt is up already; waiting on it would be waiting on a person.
+    if (_unlocking != null) return false;
+    final key = await _deviceKey.read();
+    if (key == null) return false;
+    try {
+      await _vault.unlockWithKey(key);
+      return true;
+    } on SecretVaultException {
+      return false;
     }
   }
 

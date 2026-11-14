@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "secureshellgo": {
+      "command": "secureshellgo-mcp",
+      "env": {
+        "SSG_BRIDGE_TOKEN": "PASTE-TOKEN-HERE"
+      }
+    }
+  }
+}

@@ -1,0 +1,12 @@
+{
+  "name": "dhiva-labs",
+  "description": "Plugins for Dhiva Labs apps",
+  "owner": { "name": "Dhiva Labs", "url": "https://github.com/Dhiva-Labs" },
+  "plugins": [
+    {
+      "name": "secureshellgo",
+      "source": "./integrations/plugin",
+      "description": "Read-only access to your servers through the SecureShell Go AI Bridge."
+    }
+  ]
+}

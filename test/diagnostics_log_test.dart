@@ -8,6 +8,8 @@ import 'package:secure_shell_go/models/app_settings.dart';
 import 'package:secure_shell_go/models/host.dart';
 import 'package:secure_shell_go/services/credential_store.dart';
 import 'package:secure_shell_go/services/diagnostics_log.dart';
+import 'package:secure_shell_go/services/secure_storage_backend.dart'
+    show QuietSecureStorageRead;
 import 'package:secure_shell_go/services/ssh_keygen.dart';
 
 import 'credential_store_test.dart' show FakeSecureStorageBackend;
@@ -579,6 +581,35 @@ void main() {
       expect(loaded.privateKeyPem, pem);
     });
 
+    test('a quiet read goes through the wrapper quiet, and learns the entry',
+        () async {
+      final quiet = _QuietProbeBackend('{"password":"quietWord99"}');
+      final wrapped = log.watchCredentialStorage(quiet);
+      expect(wrapped, isA<QuietSecureStorageRead>());
+      final store = CredentialStore(backend: wrapped);
+      expect((await store.loadQuiet('h1'))?.password, 'quietWord99');
+      expect(quiet.promptingReads, 0, reason: 'wrapping must not un-quiet it');
+      await log.setEnabled(true);
+      await log.record(StateError('server said quietWord99'), null);
+      expect(await current().readAsString(), isNot(contains('quietWord99')));
+
+      // A sealed store stays sealed through the wrapper, not read as empty.
+      final sealed = CredentialStore(
+        backend: log.watchCredentialStorage(_QuietProbeBackend(null)),
+      );
+      await expectLater(
+        sealed.loadQuiet('h1'),
+        throwsA(isA<CredentialsNeedPerson>()),
+      );
+      // And a backend with no quiet read of its own is read the ordinary way.
+      final plain = FakeSecureStorageBackend();
+      await plain.write('credentials:h1', jsonEncode({'password': 'x'}));
+      final plainStore = CredentialStore(
+        backend: log.watchCredentialStorage(plain),
+      );
+      expect((await plainStore.loadQuiet('h1'))?.password, 'x');
+    });
+
     test('a secret learned after writing is scrubbed from the copy',
         () async {
       await log.setEnabled(true);
@@ -696,4 +727,35 @@ void main() {
       expect(text, contains('layout exploded'));
     });
   });
+}
+
+/// A backend with a quiet read of its own, whose ordinary read counts as a
+/// read that could prompt.
+class _QuietProbeBackend
+    implements SecureStorageBackend, QuietSecureStorageRead {
+  _QuietProbeBackend(this.value);
+
+  final String? value;
+  var promptingReads = 0;
+
+  @override
+  Future<String?> read(String key) async {
+    promptingReads++;
+    return value;
+  }
+
+  @override
+  Future<String?> readQuiet(String key) async {
+    final v = value;
+    if (v == null) {
+      throw const SecureStorageSealed(SecureStorageSealedKind.vault);
+    }
+    return v;
+  }
+
+  @override
+  Future<void> write(String key, String value) async {}
+
+  @override
+  Future<void> delete(String key) async {}
 }

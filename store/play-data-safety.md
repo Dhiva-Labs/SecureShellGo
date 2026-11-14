@@ -2,7 +2,7 @@
 
 Answers for Play Console → App content → Data safety, question by question,
 with the reasoning and the code behind each one. They match
-`docs/privacy-policy.md` (effective 21 October 2026), so the form and the
+`docs/privacy-policy.md` (effective 14 November 2026), so the form and the
 policy say the same thing. Definitions are Google's, from the Play Console
 Help article "Provide information for Google Play's Data safety section":
 
@@ -21,6 +21,20 @@ advertising SDK. The only data that leaves the device goes over SSH or Mosh
 to servers the user typed in themselves, and Dhiva Labs never receives it.
 So the honest answer to the first question is **No**, and the form ends
 there.
+
+---
+
+## The AI Bridge (1.6.0): not available on Android
+
+Version 1.6.0 adds an optional AI Bridge on Linux and Windows, which lets an
+AI assistant on the same computer read from servers the user shares. It is
+not available in the Android app. Its Dart code is compiled into every
+build, Android included, but it can never run there: `BridgeService.supported`
+is true only on Linux and Windows, so on Android `main.dart` constructs no
+bridge, nothing listens, no launcher ships, and the Settings section and the
+per-host "AI access" switch are not shown. Nothing was added to the Android
+manifest, so there is no new permission. Every answer below is unchanged. The
+privacy policy covers the bridge in its own section.
 
 ---
 

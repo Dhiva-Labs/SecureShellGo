@@ -38,10 +38,15 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:secure_shell_go/l10n/l10n.dart';
 import 'package:secure_shell_go/models/app_settings.dart';
 import 'package:secure_shell_go/models/host.dart';
+import 'package:secure_shell_go/models/host_ai_access.dart';
 import 'package:secure_shell_go/models/known_host.dart';
 import 'package:secure_shell_go/models/remote_entry.dart';
 import 'package:secure_shell_go/models/tunnel_profile.dart';
 import 'package:secure_shell_go/screens/backup_screen.dart';
+import 'package:secure_shell_go/screens/bridge_audit_screen.dart';
+import 'package:secure_shell_go/screens/bridge_connect_screen.dart';
+import 'package:secure_shell_go/screens/bridge_one_click_screen.dart';
+import 'package:secure_shell_go/screens/bridge_shared_hosts_screen.dart';
 import 'package:secure_shell_go/screens/file_browser_pane.dart';
 import 'package:secure_shell_go/screens/fleet_run_screen.dart';
 import 'package:secure_shell_go/screens/host_edit_screen.dart';
@@ -51,6 +56,7 @@ import 'package:secure_shell_go/screens/remote_editor_screen.dart';
 import 'package:secure_shell_go/screens/remote_search_screen.dart';
 import 'package:secure_shell_go/screens/server_stats_screen.dart';
 import 'package:secure_shell_go/screens/session_screen.dart';
+import 'package:secure_shell_go/screens/settings/ai_bridge_section.dart';
 import 'package:secure_shell_go/screens/settings_screen.dart';
 import 'package:secure_shell_go/screens/snippet_edit_screen.dart';
 import 'package:secure_shell_go/screens/snippets_screen.dart';
@@ -62,6 +68,14 @@ import 'package:secure_shell_go/services/app_lock_controller.dart';
 import 'package:secure_shell_go/services/backup_payload.dart';
 import 'package:secure_shell_go/services/backup_service.dart';
 import 'package:secure_shell_go/services/bookmark_store.dart';
+import 'package:secure_shell_go/services/bridge/bridge_audit.dart';
+import 'package:secure_shell_go/services/bridge/bridge_cli_connector.dart';
+import 'package:secure_shell_go/services/bridge/bridge_client_store.dart';
+import 'package:secure_shell_go/services/bridge/bridge_connections.dart';
+import 'package:secure_shell_go/services/bridge/bridge_launcher_locator.dart';
+import 'package:secure_shell_go/services/bridge/bridge_redactor.dart';
+import 'package:secure_shell_go/services/bridge/bridge_service.dart';
+import 'package:secure_shell_go/services/bridge/bridge_tools.dart';
 import 'package:secure_shell_go/services/credential_store.dart';
 import 'package:secure_shell_go/services/device_storage.dart';
 import 'package:secure_shell_go/services/fleet_exec_service.dart';
@@ -502,6 +516,54 @@ Future<void> _loadFonts() async {
           ByteData.view(File(mono).readAsBytesSync().buffer)));
     await loader.load();
   }
+}
+
+/// A [BridgeService] with nothing behind it, for the AI Bridge screens to
+/// render against; it reports running and one connected assistant.
+class _DemoBridge extends BridgeService {
+  _DemoBridge(Directory dir, BridgeClientStore clients, BridgeAuditLog audit)
+      : this._(dir, clients, audit, _noConnections());
+
+  _DemoBridge._(
+    Directory dir,
+    BridgeClientStore clients,
+    BridgeAuditLog audit,
+    BridgeConnections connections,
+  ) : super(
+          settingsStore: SettingsStore(file: File('${dir.path}/unused.json')),
+          clients: clients,
+          connections: connections,
+          tools: BridgeTools(
+            loadHosts: () async => const [],
+            settings: () => const AppSettings(),
+            isAppLocked: () => false,
+            connections: connections,
+            redactor: BridgeRedactor(scrub: (s) => s),
+            audit: audit,
+          ),
+          createListener: (_) async => throw StateError('no listener'),
+        );
+
+  static BridgeConnections _noConnections() => BridgeConnections(
+        openTransport: (_) => null,
+        credentialLookup: (_) async => null,
+        dialer: (host, _) async => throw StateError('no dialling'),
+      );
+
+  List<BridgeClient> connected = const [];
+
+  @override
+  BridgeStatus get status => BridgeStatus.off;
+
+  @override
+  Stream<BridgeStatus> get statusChanges => const Stream.empty();
+
+  @override
+  List<BridgeClient> get connectedClients => connected;
+
+  @override
+  Stream<List<BridgeClient>> get connectedClientsChanges =>
+      const Stream.empty();
 }
 
 void main() {
@@ -1065,6 +1127,185 @@ void main() {
         );
       });
 
+      // The AI Bridge: its settings section with a pairing, a blocked
+      // pattern and a warning row; the pairing screen with a token on it;
+      // the activity log with one entry of each outcome.
+      testWidgets('AI Bridge settings', skip: _skip, (tester) async {
+        // Built inside `runAsync`: a store made on the test's fake clock
+        // chains its writes on it, and `runAsync` would wait for ever.
+        late BridgeClientStore clients;
+        late BridgeAuditLog audit;
+        await tester.runAsync(() async {
+          clients =
+              BridgeClientStore(file: File('${dir.path}/bridge_clients.json'));
+          audit = BridgeAuditLog(
+            scrub: (s) => s,
+            // A file in the way, so the "could not be saved" row shows too.
+            directory: Directory('${dir.path}/blocker/bridge'),
+          );
+          File('${dir.path}/blocker').writeAsStringSync('x');
+          await clients.create('Desk assistant');
+          await audit.record(
+            client: 'Desk assistant',
+            host: null,
+            tool: 'list_hosts',
+            args: const {},
+            outcome: BridgeAuditOutcome.ok,
+            ms: 1,
+          );
+        });
+        addTearDown(audit.dispose);
+        final bridge = _DemoBridge(dir, clients, audit);
+        await render(
+          tester,
+          'ai_bridge_settings',
+          (
+            name: device.name,
+            size: Size(device.size.width, 3200),
+            dpr: device.dpr,
+            text: device.text,
+          ),
+          push: true,
+          () => Scaffold(
+            body: SingleChildScrollView(
+              child: AiBridgeSettingsSection(
+                settings: const AppSettings(
+                  bridgeEnabled: true,
+                  bridgeExtraBlockedPaths: ['/srv/private/**', '**/*.sqlite'],
+                ),
+                apply: (_) async {},
+                bridge: bridge,
+                clients: clients,
+                audit: audit,
+              ),
+            ),
+          ),
+        );
+      });
+
+      testWidgets('AI Bridge pairing', skip: _skip, (tester) async {
+        final clients =
+            BridgeClientStore(file: File('${dir.path}/bridge_clients.json'));
+        await render(
+          tester,
+          'ai_bridge_pairing',
+          // Tall, so the button is built whatever the window.
+          (
+            name: device.name,
+            size: Size(device.size.width, 2400),
+            dpr: device.dpr,
+            text: device.text,
+          ),
+          push: true,
+          () => BridgeConnectScreen(
+            clients: clients,
+            launcher: const BridgeLauncherCommand(
+              command: '/opt/secureshellgo/secureshellgo-mcp',
+              exists: true,
+            ),
+          ),
+          after: (tester) async {
+            await tester.runAsync(
+              () => tester.tap(find.text(
+                  tester.element(find.byType(FilledButton).first).l10n
+                      .bridgeConnectCreate)),
+            );
+            await settleIo(tester, rounds: 10);
+            await tester.pumpAndSettle();
+          },
+        );
+      });
+
+      testWidgets('AI Bridge one-click connect', skip: _skip, (tester) async {
+        final clients =
+            BridgeClientStore(file: File('${dir.path}/bridge_clients.json'));
+        await render(
+          tester,
+          'ai_bridge_one_click',
+          (
+            name: device.name,
+            size: Size(device.size.width, 1600),
+            dpr: device.dpr,
+            text: device.text,
+          ),
+          push: true,
+          () => BridgeOneClickScreen(
+            connector: _DetectedClaude(),
+            clients: clients,
+            hostStore: HostStore(file: File('${dir.path}/hosts.json')),
+            bridgeEnabled: () => false,
+            apply: (_) async {},
+            launcher: const BridgeLauncherCommand(
+              command: '/opt/secureshellgo/secureshellgo-mcp',
+              exists: true,
+            ),
+          ),
+        );
+      });
+
+      testWidgets('AI Bridge shared hosts', skip: _skip, (tester) async {
+        late HostStore store;
+        await tester.runAsync(() async {
+          store = HostStore(file: File('${dir.path}/hosts.json'));
+          for (var i = 0; i < 4; i++) {
+            await store.add(Host(
+              id: 'h$i',
+              label: 'A host with a fairly long label $i',
+              hostname: 'h$i.test',
+              port: 22,
+              username: 'u',
+              authMethod: SshAuthMethod.password,
+              group: 'Production servers',
+              aiAccess: i.isEven ? HostAiAccess.readOnly : HostAiAccess.off,
+            ));
+          }
+        });
+        await render(
+          tester,
+          'ai_bridge_shared_hosts',
+          (
+            name: device.name,
+            size: device.size,
+            dpr: device.dpr,
+            text: device.text,
+          ),
+          push: true,
+          () => BridgeSharedHostsScreen(hostStore: store),
+          after: (tester) async {
+            await settleIo(tester, rounds: 10);
+            await tester.pumpAndSettle();
+          },
+        );
+      });
+
+      testWidgets('AI Bridge activity', skip: _skip, (tester) async {
+        final audit = BridgeAuditLog(
+          scrub: (s) => s,
+          directory: Directory('${dir.path}/bridge'),
+        );
+        addTearDown(audit.dispose);
+        await tester.runAsync(() async {
+          for (final outcome in BridgeAuditOutcome.values) {
+            await audit.record(
+              client: 'Desk assistant',
+              host: 'web-01#ab12',
+              tool: 'read_file',
+              args: const {'path': '/var/log/syslog'},
+              outcome: outcome,
+              detail: outcome == BridgeAuditOutcome.ok ? '' : 'blocked_path',
+              ms: 4,
+            );
+          }
+        });
+        await render(
+          tester,
+          'ai_bridge_activity',
+          device,
+          push: true,
+          () => BridgeAuditScreen(audit: audit),
+        );
+      });
+
       testWidgets('backup', skip: _skip, (tester) async {
         await render(
           tester,
@@ -1398,4 +1639,18 @@ void main() {
       });
     }
   });
+}
+
+/// A `claude` that answers its version and plugin source without anything
+/// being run, so the one-click screen opens on its confirmation.
+class _DetectedClaude extends ClaudeCliConnector {
+  @override
+  Future<ClaudeCliAvailability> detect() async => const ClaudeCliAvailable(
+    executablePath:
+        '/home/someone-with-a-long-name/.local/share/some/deep/folder/bin/claude',
+    version: '2.1.322 (Claude Code)',
+    pluginSource: ClaudePluginSourceOther(
+      'Folder: /home/someone-with-a-long-name/dev/a-fork-of-the-plugin',
+    ),
+  );
 }
