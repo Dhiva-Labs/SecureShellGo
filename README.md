@@ -272,7 +272,8 @@ Releases from 1.5.1 on also carry these, for x64 (`x86_64`) and arm64
 
 Replace `x86_64` with `aarch64` on ARM64. The `.rpm` and the Arch package
 install the same files as the PPA's `.deb` (`/opt/secureshellgo`, started as
-`secureshellgo`) and recommend a Secret Service provider the way it does. The
+`secureshellgo`, with the AI Bridge launcher as `secureshellgo-mcp`) and
+recommend a Secret Service provider the way it does. The
 `.rpm` is not signed, hence `--allow-unsigned-rpm` on openSUSE; check the
 files against the release page. The builds are made on Ubuntu 24.04 (glibc
 2.39), so use a current distribution: Fedora 40 or later, openSUSE
@@ -357,14 +358,16 @@ Set it up:
    does and asks you to confirm, every time you switch it on. (The one-click
    route below does this for you, with the same explanation.)
 2. Connect an assistant. Three routes; use the first that fits.
-   - **One click, for Claude Code (Linux deb or archive, and Windows).**
+   - **One click, for Claude Code (Linux deb, rpm, Arch package, AppImage or
+     archive, and Windows).**
      **Connect Claude Code** appears in Settings → AI Bridge only when the
      app finds a file named `claude` on your computer. Finding it runs
      nothing: opening Settings or pressing "Check again" only checks whether
      the file exists on your `PATH`, in `~/.local/bin` or in `~/.claude/local`
      (on Windows, the `PATH` and `%USERPROFILE%\.local\bin\claude.exe`). It is not
-     available in the snap, which cannot start other programs (the app does
-     not look there at all); snap users take a route below. When you press
+     available in the snap or the Flatpak, whose sandboxes cannot start
+     programs on your computer (the app does not look there at all); snap and
+     Flatpak users take a route below. When you press
      the button, the app runs `claude --version` and `claude plugin
      marketplace list --json` (10 seconds each) to show you the same
      explanation as when switching the bridge on, the full path and version
@@ -412,9 +415,19 @@ The launcher command the app shows depends on how you installed it:
 
 | Install | Launcher command |
 | --- | --- |
-| deb / PPA, Microsoft Store | `secureshellgo-mcp` |
+| deb / PPA, `.rpm`, Arch package, Microsoft Store | `secureshellgo-mcp` |
 | Snap | `secureshellgo.mcp` |
+| Flatpak | the command Flatpak exports for the app: `/var/lib/flatpak/exports/bin/com.dhivalabs.secure_shell_go` for a system install, `~/.local/share/flatpak/exports/bin/com.dhivalabs.secure_shell_go` (written out in full) for `flatpak install --user` |
+| AppImage | the full path of the `.AppImage` file itself |
 | Linux tarball, Windows zip | the full path of `secureshellgo-mcp` (`.exe` on Windows) next to the app |
+
+The Flatpak and the AppImage start the launcher instead of the app when they
+are run with `SSG_BRIDGE_TOKEN` set and stdin not a terminal, which is how
+an assistant starts them, so a single command with no arguments works there
+too. `flatpak run --command=secureshellgo-mcp com.dhivalabs.secure_shell_go`
+also starts the Flatpak's launcher, for a client that takes arguments. Move
+the `.AppImage` file and the command changes with it: pair the assistant
+again, or edit its launcher command.
 
 It can list those servers, read server stats, list services, read the end of
 a log, list folders, read text files and search for files by name. It cannot

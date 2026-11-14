@@ -125,12 +125,14 @@ void main() {
     bool windows = false,
     String exe = '/opt/secureshellgo/secureshellgo',
     Set<String> files = const {claude},
+    Set<String> paths = const {},
   }) => ClaudeCliConnector(
     runner: cli.run,
     environment: env,
     isWindows: windows,
     resolvedExecutable: exe,
     fileExists: files.contains,
+    pathExists: paths.contains,
   );
 
   Future<ClaudeConnectOutcome> connect(
@@ -180,6 +182,43 @@ void main() {
       ).find();
       expect(r, isA<ClaudeCliPresenceSandboxed>());
       expect(cli.calls, isEmpty);
+    });
+
+    test('the Flatpak is sandboxed, and runs nothing', () {
+      final cli = FakeCli();
+      // /.flatpak-info alone decides it, whatever the environment says.
+      final r = connector(
+        cli,
+        exe: '/app/lib/secureshellgo/secure_shell_go',
+        paths: {'/.flatpak-info'},
+      ).find();
+      expect(r, isA<ClaudeCliPresenceSandboxed>());
+      expect(cli.calls, isEmpty);
+    });
+
+    test('FLATPAK_ID with the app under /app is sandboxed', () {
+      final cli = FakeCli();
+      final r = connector(
+        cli,
+        env: {
+          'FLATPAK_ID': 'com.dhivalabs.secure_shell_go',
+          'PATH': '/usr/bin:/home/u/.local/bin',
+        },
+        exe: '/app/lib/secureshellgo/secure_shell_go',
+      ).find();
+      expect(r, isA<ClaudeCliPresenceSandboxed>());
+      expect(cli.calls, isEmpty);
+    });
+
+    test('a FLATPAK_ID passed on by another Flatpak is not sandboxed', () {
+      final r = connector(
+        FakeCli(),
+        env: {
+          'FLATPAK_ID': 'org.gnome.Terminal',
+          'PATH': '/usr/bin:/home/u/.local/bin',
+        },
+      ).find();
+      expect(r, isA<ClaudeCliPresent>());
     });
   });
 
@@ -302,6 +341,17 @@ void main() {
         cli,
         env: {'SNAP': '/snap/secureshellgo/12', 'PATH': '/home/u/.local/bin'},
         exe: '/snap/secureshellgo/12/secureshellgo',
+      ).detect();
+      expect(r, isA<ClaudeCliSandboxed>());
+      expect(cli.calls, isEmpty);
+    });
+
+    test('the Flatpak is sandboxed and runs nothing', () async {
+      final cli = FakeCli();
+      final r = await connector(
+        cli,
+        exe: '/app/lib/secureshellgo/secure_shell_go',
+        paths: {'/.flatpak-info'},
       ).detect();
       expect(r, isA<ClaudeCliSandboxed>());
       expect(cli.calls, isEmpty);

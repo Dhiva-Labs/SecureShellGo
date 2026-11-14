@@ -3,7 +3,7 @@
 The bridge (a local MCP server in the app plus the `secureshellgo-mcp`
 launcher an AI assistant starts) was built and tested on Linux. The
 packaging below could not be run there: no snapcraft run, no PPA build farm,
-no Windows. Tick each box on a real install before release, and note what you
+no Windows, no nfpm, appimagetool, docker or flatpak-builder. Tick each box on a real install before release, and note what you
 saw where one fails. Everything is off by default; every check starts with
 Settings, AI Bridge, switch on, and one host set to "AI access (read-only)".
 
@@ -15,17 +15,49 @@ Settings, AI Bridge, switch on, and one host set to "AI access (read-only)".
       Windows steps and the `tool/build_launcher.ps1` script have never run.
 - [ ] The Linux tarball and the Windows zip each hold `secureshellgo-mcp`
       (`.exe`) beside the app.
-- [ ] The snap jobs (amd64 and arm64) pass "Smoke-run secureshellgo.mcp
+- [ ] The snap jobs (amd64 and arm64) get past the part build (it failed on
+      the first run of the merge commit, see section 1), then pass the
+      architecture assertion and "Smoke-run secureshellgo.mcp
       confined": the launcher starts under the `mcp` app's confinement and
       answers with the "not running" error.
+- [ ] `Other distros` (x64 and arm64): `tree.sh` finds `secureshellgo-mcp`
+      in the archive and installs `/usr/bin/secureshellgo-mcp`; `pack.sh`
+      passes its launcher check; `verify.sh` runs `secureshellgo-mcp` after
+      installing the .rpm on Fedora and openSUSE and the Arch package on Arch
+      (x64), and the .AppImage file with `SSG_BRIDGE_TOKEN` set on Fedora,
+      each ending "exit code 1" with the JSON-RPC error; the arm64 Arch
+      static check lists the launcher and its wrapper.
+- [ ] `AUR PKGBUILD`: makepkg builds with the new
+      `secureshellgo-mcp.wrapper` source and checksum, `pacman -Qlq` lists
+      `/opt/secureshellgo/secureshellgo-mcp` and `/usr/bin/secureshellgo-mcp`,
+      and the launcher smoke run after install exits 1 with the JSON-RPC
+      error (`options=('!strip')` kept it whole).
+- [ ] `Flatpak` builds with the separate `secureshellgo-mcp` module
+      (`no-debuginfo`, `strip: false`). `Flatpak on Ubuntu`: `ldd` passes on
+      `/app/lib/secureshellgo/secureshellgo-mcp`, "Smoke-run the launcher in
+      the sandbox" passes for the exported command and for `flatpak run
+      --command=secureshellgo-mcp`, and the app's window still comes up
+      (its main command is now a script that hands over to the launcher only
+      with `SSG_BRIDGE_TOKEN` set and stdin not a terminal).
+- [ ] `Store MSIX` (x64 and arm64), first run with `tool\build_msix.ps1`:
+      the package is still `build\msix\SecureShellGo-<version>-<arch>.msix`,
+      the identity check passes, and "Check the AI Bridge launcher in the
+      package" finds `secureshellgo-mcp.exe`, its `Application` and alias,
+      and gets the JSON-RPC error from the copy taken out of the package.
+- [ ] `Attach release assets`: the asset list is unchanged (the launcher is
+      inside each package, not a separate asset).
 - [ ] macOS job unchanged (the bridge is not available on macOS in 1.6.0,
       and no launcher is built there).
-- [ ] Version strings bumped to 1.6.0 everywhere they are written by hand
-      (`pubspec.yaml` `version:` and `msix_version:`, `snap/snapcraft.yaml`,
-      `debian/changelog`, the plugin's `.claude-plugin/plugin.json`
-      `version`, already 1.6.0), and `appVersion` in `lib/app_version.dart`
-      (what the About box and the bridge's `initialize` report). All of the
-      others still say 1.5.0 on this branch.
+- [ ] Version strings bumped from 1.5.1 to 1.6.0 everywhere they are
+      written by hand: `main` is at 1.5.1, merged into this branch, so
+      `pubspec.yaml` `version:` (`1.5.1+15`) and `msix_version:`
+      (`1.5.1.0`), `snap/snapcraft.yaml` (`'1.5.1'`), `debian/changelog`
+      (a new `1.6.0~noble1` entry above `1.5.1~noble1`) and `appVersion` in
+      `lib/app_version.dart` (`1.5.1+15`; what the About box and the
+      bridge's `initialize` report). The plugin's
+      `.claude-plugin/plugin.json` `version` is already 1.6.0. The release
+      file names (rpm, Arch package, AppImage, Flatpak, AUR recipe, MSIX)
+      take the version from `pubspec.yaml`.
 - [ ] Privacy policy effective date set to the real release date, in both
       `docs/privacy-policy.md` and `docs/privacy-policy/index.html` (it says
       14 November 2026 today, the date it was written), and the date quoted
@@ -41,7 +73,12 @@ Settings, AI Bridge, switch on, and one host set to "AI access (read-only)".
 
 - [ ] `snapcraft --use-lxd` builds; the snap has `secureshellgo-mcp` at its
       root and `snap run secureshellgo.mcp` exists (`snap info`).
-- [ ] The part build found `dart` on PATH (the `override-build` step).
+- [ ] The part build found the Dart SDK at
+      `$CRAFT_PART_BUILD/flutter-distro/bin/cache/dart-sdk/bin/dart` (the
+      `override-build` step prints its version) and `tool/build_launcher.sh`
+      compiled with it. The first CI run of the merge failed here with
+      "'dart compile' does not support build hooks"; the fix (a temporary
+      package of its own) was checked only with Dart 3.12.2.
 - [ ] Bridge on in the snapped app. `endpoint.json` exists under
       `~/snap/secureshellgo/current/.local/share/com.dhivalabs.secure_shell_go/bridge/`.
       The app and `secureshellgo.mcp` resolve the same directory
@@ -72,6 +109,70 @@ Settings, AI Bridge, switch on, and one host set to "AI access (read-only)".
       "not running" error and exit 1 when it does not.
 - [ ] A paired assistant lists hosts end to end (section 5).
 
+## 2a. Fedora / openSUSE (.rpm) and Arch (.pkg.tar.zst, AUR)
+
+- [ ] `rpm -qlp` and `pacman -Qlp` (and the AUR package) list
+      `/opt/secureshellgo/secureshellgo-mcp` and `/usr/bin/secureshellgo-mcp`.
+- [ ] The installed launcher is not stripped: `file` shows the same size as
+      in the release tarball, and run with no app it prints the "not
+      running" error, never "Usage: dartvm". (nfpm never strips; the AUR
+      PKGBUILD keeps `options=('!strip')`.)
+- [ ] "Connect an assistant" shows `secureshellgo-mcp`, and that command
+      answers `initialize` with a result while the app runs with the bridge
+      on, on Fedora, openSUSE Tumbleweed and Arch.
+- [ ] "Connect Claude Code" appears when `claude` is installed, and works as
+      on the deb (section 5a).
+- [ ] A paired assistant lists hosts end to end (section 5).
+
+## 2b. AppImage
+
+- [ ] "Connect an assistant" shows the full path of the `.AppImage` file
+      (not a `/tmp/.mount_…` path), and that path, run by an assistant with
+      `SSG_BRIDGE_TOKEN` set, connects: `printf '%s\n'
+      '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}' |
+      SSG_BRIDGE_TOKEN=<token> ./SecureShellGo-<version>-x86_64.AppImage`
+      gives a JSON-RPC result while the app runs, with FUSE (the normal
+      case) and with `APPIMAGE_EXTRACT_AND_RUN=1`.
+- [ ] Started from a terminal or the desktop (no `SSG_BRIDGE_TOKEN`, or
+      stdin a terminal) the AppImage opens the app as before.
+- [ ] Moving the `.AppImage` file changes the command: after a restart from
+      the new place the connect screen shows the new path (an assistant set
+      up with the old one has to be paired again or edited).
+- [ ] "Connect Claude Code" appears when `claude` is installed and saves the
+      `.AppImage` path as the plugin's launcher; a new Claude Code session
+      lists hosts.
+
+## 2c. Flatpak
+
+- [ ] `flatpak run --command=sh com.dhivalabs.secure_shell_go -c 'ls -l
+      /app/bin /app/lib/secureshellgo/secureshellgo-mcp'` shows the launcher,
+      the `secureshellgo-mcp` symlink and the `secureshellgo` script, and the
+      launcher has the size it has in the release tarball (not stripped).
+- [ ] "Connect an assistant" shows the exported command: for a `--user`
+      install `~/.local/share/flatpak/exports/bin/com.dhivalabs.secure_shell_go`
+      written out in full, for a system install
+      `/var/lib/flatpak/exports/bin/com.dhivalabs.secure_shell_go`; the file
+      exists on the host.
+- [ ] With the app running and the bridge on, that command with
+      `SSG_BRIDGE_TOKEN=<token>` and the `initialize` line piped in gives a
+      JSON-RPC result (the token reaches the sandbox; `flatpak run` passes
+      the variable on), and so does `flatpak run
+      --command=secureshellgo-mcp com.dhivalabs.secure_shell_go`.
+- [ ] The socket: `endpoint.json` is in
+      `~/.var/app/com.dhivalabs.secure_shell_go/data/com.dhivalabs.secure_shell_go/bridge/`
+      and names `/run/user/<uid>/app/com.dhivalabs.secure_shell_go/secureshellgo-bridge.sock`
+      (the bridge directory is past the socket-path limit for most user
+      names). The launcher, in its own sandbox instance, reaches it; a
+      socket directly under `/run/user/<uid>` would not have been.
+- [ ] Started from the desktop or with `flatpak run
+      com.dhivalabs.secure_shell_go` from a terminal, the app opens as
+      before.
+- [ ] "Connect Claude Code" is absent and the note ("One-click connect is
+      not available in the snap or the Flatpak…") points to "Connect an
+      assistant"; the plugin's three-line block works with the exported
+      command as the launcher.
+- [ ] A paired assistant lists hosts end to end (section 5).
+
 ## 3. Windows zip
 
 - [ ] Unzipped on a clean machine, `secureshellgo-mcp.exe` next to the app
@@ -98,7 +199,10 @@ Settings, AI Bridge, switch on, and one host set to "AI access (read-only)".
 - [ ] `tool\build_msix.ps1` (x64 and arm64) ends with a package; the
       generated `AppxManifest.xml` has the second `Application` and the
       alias; the package holds `secureshellgo-mcp.exe`. This path (manifest
-      edit after `msix:build`) has never run: see `packaging/MSIX.md`.
+      edit after `msix:build`) has never run: see `packaging/MSIX.md`. The
+      Store workflow (`.github/workflows/store-msix.yml`) now builds the
+      Partner Center package through this script, so its artifact is the
+      package to test here.
 - [ ] Install; `secureshellgo-mcp` in a new terminal resolves to
       `%LOCALAPPDATA%\Microsoft\WindowsApps\secureshellgo-mcp.exe`.
 - [ ] The alias does not add a second Start menu entry or tile.
@@ -115,7 +219,7 @@ Settings, AI Bridge, switch on, and one host set to "AI access (read-only)".
       second executable and the alias.
 - [ ] Partner Center accepts the alias name.
 
-## 5. A paired assistant, on each platform (snap, deb, Windows zip, MSIX)
+## 5. A paired assistant, on each platform (snap, deb, rpm, Arch, AppImage, Flatpak, Windows zip, MSIX)
 
 - [ ] Pair an MCP-compatible AI assistant ("Connect an assistant" gives the
       command and the token); it starts the launcher and the tool list shows.
@@ -186,8 +290,8 @@ folder and warn). None of the Windows items has been run on Windows yet.
       `(`, `)`, `&`, `%` or `@` (for example `Program Files (x86)`) is
       refused, with the manual route as the fallback. No console window is
       left open, and a UNC path in `PATH` is never run.
-- [ ] **Snap:** the button is absent and the note pointing to "Connect an
-      assistant" is shown.
+- [ ] **Snap and Flatpak:** the button is absent and the note pointing to
+      "Connect an assistant" is shown.
 - [ ] **The token is not visible while it runs.** During the install and
       configure steps (run the flow with a slow network, or a stub `claude`
       that sleeps), `ps -ef | grep claude` on Linux and Process Explorer

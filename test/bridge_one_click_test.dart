@@ -420,7 +420,7 @@ void main() {
       expect(find.text('Connect Claude Code'), findsOneWidget);
     });
 
-    testWidgets('in the snap says so and points at the manual way', (
+    testWidgets('in the snap or Flatpak says so and points at the manual way', (
       tester,
     ) async {
       connector.presence = const ClaudeCliPresenceSandboxed();
@@ -428,7 +428,7 @@ void main() {
       expect(find.text('Connect Claude Code'), findsNothing);
       expect(
         find.text(
-          'One-click connect is not available in the snap. '
+          'One-click connect is not available in the snap or the Flatpak. '
           'Use "Connect an assistant" instead.',
         ),
         findsOneWidget,

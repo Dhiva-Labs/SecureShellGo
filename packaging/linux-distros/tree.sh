@@ -5,8 +5,11 @@
 # package's (debian/rules), so every Linux package installs the same files in
 # the same places:
 #
-#   /opt/secureshellgo/       secure_shell_go, lib/, data/ (the bundle as it is)
+#   /opt/secureshellgo/       secure_shell_go, secureshellgo-mcp (the AI Bridge
+#                             launcher), lib/, data/ (the bundle as it is)
 #   /usr/bin/secureshellgo    debian/secureshellgo.wrapper
+#   /usr/bin/secureshellgo-mcp  debian/secureshellgo-mcp.wrapper, the command the
+#                             app tells an AI assistant to run (as for the .deb)
 #   /usr/share/applications/com.dhivalabs.secure_shell_go.desktop
 #   /usr/share/icons/hicolor/256x256/apps/secureshellgo.png
 #   /usr/share/metainfo/com.dhivalabs.secure_shell_go.metainfo.xml
@@ -23,10 +26,11 @@ id=com.dhivalabs.secure_shell_go
 umask 022
 mkdir -p "$root/opt/secureshellgo"
 tar -xzf "$tarball" -C "$root/opt/secureshellgo" --strip-components=1 --no-same-owner
-for f in secure_shell_go lib/libapp.so lib/libflutter_linux_gtk.so data/icudtl.dat; do
+for f in secure_shell_go secureshellgo-mcp lib/libapp.so lib/libflutter_linux_gtk.so data/icudtl.dat; do
   [ -f "$root/opt/secureshellgo/$f" ] || { echo "$f is not in $tarball" >&2; exit 1; }
 done
 install -Dm755 "$repo/debian/secureshellgo.wrapper" "$root/usr/bin/secureshellgo"
+install -Dm755 "$repo/debian/secureshellgo-mcp.wrapper" "$root/usr/bin/secureshellgo-mcp"
 install -Dm644 "$repo/linux/$id.desktop" "$root/usr/share/applications/$id.desktop"
 install -Dm644 "$repo/linux/secureshellgo-256.png" "$root/usr/share/icons/hicolor/256x256/apps/secureshellgo.png"
 install -Dm644 "$repo/packaging/flatpak/$id.metainfo.xml" "$root/usr/share/metainfo/$id.metainfo.xml"

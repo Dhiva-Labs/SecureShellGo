@@ -128,15 +128,20 @@ parts:
         linux/flutter/ephemeral
     # The AI Bridge launcher goes next to the app in the snap. The build
     # script (tool/build_launcher.sh) explains why it is not a plain
-    # `dart compile exe`; it needs only the `dart` the flutter plugin put on
-    # PATH for this part (the SDK's own) and the package map the default
-    # build's `flutter pub get` wrote; no second `pub get`, no network. Snaps
-    # on this base are not stripped at prime, which matters: stripping a
-    # `dart compile exe` binary cuts off the program it carries.
+    # `dart compile exe`; it needs the Dart SDK of the Flutter the plugin
+    # cloned into flutter-distro/ (its own binary, not Flutter's bin/dart
+    # wrapper script, which would also re-run the flutter tool as root) and
+    # the package map the default build's `flutter pub get` wrote; no second
+    # `pub get`, no network. The plugin clones Flutter's `stable` channel, so
+    # this Dart can be newer than the one pinned elsewhere. Snaps on this
+    # base are not stripped at prime, which matters: stripping a `dart
+    # compile exe` binary cuts off the program it carries.
     override-build: |
       craftctl default
-      command -v dart > /dev/null || { echo "dart is not on PATH" >&2; exit 1; }
-      sh "$CRAFT_PART_BUILD/tool/build_launcher.sh" "$CRAFT_PART_INSTALL/secureshellgo-mcp"
+      DART="$CRAFT_PART_BUILD/flutter-distro/bin/cache/dart-sdk/bin/dart"
+      [ -x "$DART" ] || { echo "no Dart SDK at $DART after the flutter build" >&2; exit 1; }
+      "$DART" --version
+      DART="$DART" sh "$CRAFT_PART_BUILD/tool/build_launcher.sh" "$CRAFT_PART_INSTALL/secureshellgo-mcp"
     # GTK 3 itself comes from the gnome extension's content snap. Staging
     # libgtk-3-0 as well put Ubuntu's copies of it and its GL stack (libepoxy
     # and friends) in front of the content snap's: under software GL on an

@@ -1294,7 +1294,7 @@
   "settingsBridgeSharedHostsHelp": "Выберите, какие сохранённые хосты может читать ассистент. Каждый хост также можно переключить на его экране редактирования.",
   "bridgeOneClickButton": "Подключить Claude Code",
   "bridgeOneClickCheckAgain": "Проверить Claude Code ещё раз",
-  "bridgeOneClickSandboxed": "В snap подключение в один клик недоступно. Используйте вместо этого «{action}».",
+  "bridgeOneClickSandboxed": "В snap и Flatpak подключение в один клик недоступно. Используйте вместо этого «{action}».",
   "bridgeOneClickTitle": "Подключить Claude Code",
   "bridgeOneClickRunIntro": "SecureShell Go запустит эту программу, чтобы настроить плагин:",
   "bridgeOneClickVersion": "Версия: {version}",

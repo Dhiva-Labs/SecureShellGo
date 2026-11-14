@@ -1,6 +1,12 @@
 # Builds the Microsoft Store packages (unsigned MSIX; the Store signs them)
 # for x64 and arm64. Runs by hand, on a `v*` tag, and on pushes to `store/**`
 # branches, and uploads each package as an artifact for Partner Center.
+#
+# Each package carries the AI Bridge launcher, secureshellgo-mcp.exe, with an
+# app execution alias, which `dart run msix:create` cannot add (it only
+# aliases the main executable). tool/build_msix.ps1 builds the app and the
+# launcher and runs msix:build, adds the alias to the manifest, then
+# msix:pack; see packaging/MSIX.md.
 name: Store MSIX
 
 on:
@@ -53,17 +59,17 @@ jobs:
       - name: Install dependencies
         run: flutter pub get
 
-      - name: Build Windows release
-        run: flutter build windows --release
-
-      - name: Package MSIX
+      # Builds the Windows release and the launcher itself (`flutter build
+      # windows`, tool\build_launcher.ps1), then the package. `store: true`
+      # in pubspec.yaml's msix_config leaves signing to the Store, as
+      # `--store` did for msix:create.
+      - name: Build and package MSIX
         run: |
           $PSNativeCommandUseErrorActionPreference = $true
           $version = (Select-String -Path pubspec.yaml -Pattern '^version:\s*([0-9.]+)').Matches[0].Groups[1].Value
-          dart run msix:create --store --build-windows false `
-            --architecture ${{ matrix.arch }} `
-            --output-path build\msix `
-            --output-name "SecureShellGo-$version-${{ matrix.arch }}"
+          .\tool\build_msix.ps1 -Arch ${{ matrix.arch }} `
+            -OutputPath build\msix `
+            -OutputName "SecureShellGo-$version-${{ matrix.arch }}"
           Get-ChildItem build\msix
 
       - name: Check the package identity
@@ -82,6 +88,46 @@ jobs:
           if ($id.Name -ne 'Dhiva-Labs.SecureShellGo') { throw "wrong identity name $($id.Name)" }
           if ($id.Publisher -ne 'CN=0F69015A-AA5B-431D-970A-165099309E53') { throw "wrong publisher $($id.Publisher)" }
           if ($id.ProcessorArchitecture -ne '${{ matrix.arch }}') { throw "wrong architecture $($id.ProcessorArchitecture)" }
+
+      # The package holds the launcher and declares its alias on a second,
+      # hidden application, as tool\build_msix.ps1 writes it. The launcher
+      # is then run from a copy taken out of the package: with no app to
+      # reach it must answer a JSON-RPC error and exit 1, as in
+      # desktop-builds.yml. (Outside the package it has no package identity;
+      # SSG_BRIDGE_DIR points it at an empty folder.)
+      - name: Check the AI Bridge launcher in the package
+        run: |
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
+          $msix = Get-ChildItem build\msix\*.msix | Select-Object -First 1
+          $launcher = Join-Path $env:RUNNER_TEMP 'secureshellgo-mcp.exe'
+          $zip = [IO.Compression.ZipFile]::OpenRead($msix.FullName)
+          try {
+            $entry = $zip.Entries | Where-Object FullName -eq 'AppxManifest.xml'
+            $reader = New-Object IO.StreamReader($entry.Open())
+            [xml]$manifest = $reader.ReadToEnd()
+            $reader.Dispose()
+            $exe = $zip.Entries | Where-Object FullName -eq 'secureshellgo-mcp.exe'
+            if (-not $exe) { throw 'secureshellgo-mcp.exe is not in the package' }
+            [IO.Compression.ZipFileExtensions]::ExtractToFile($exe, $launcher, $true)
+          } finally { $zip.Dispose() }
+          $app = $manifest.Package.Applications.Application | Where-Object Executable -eq 'secureshellgo-mcp.exe'
+          if (-not $app) { throw 'no Application for secureshellgo-mcp.exe in AppxManifest.xml' }
+          $alias = $app.Extensions.Extension.AppExecutionAlias.ExecutionAlias.Alias
+          "launcher application $($app.Id), alias $alias"
+          if ($alias -ne 'secureshellgo-mcp.exe') { throw "wrong or missing alias '$alias'" }
+          $bridgeDir = Join-Path $env:RUNNER_TEMP 'launcher-bridge'
+          New-Item -ItemType Directory -Force -Path $bridgeDir | Out-Null
+          $env:SSG_BRIDGE_DIR = $bridgeDir
+          $env:SSG_BRIDGE_TOKEN = 'ci-token'
+          $out = '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}' | & $launcher
+          $code = $LASTEXITCODE
+          "exit code $code"
+          "stdout: $out"
+          if ($code -ne 1) { throw "launcher exited $code, expected 1" }
+          if ("$out" -notmatch '"jsonrpc":"2.0".*"error"') { throw 'launcher did not answer with a JSON-RPC error' }
+          # The runner ends a pwsh step with `exit $LASTEXITCODE`, which is
+          # still the launcher's expected 1 here.
+          exit 0
 
       - name: Upload MSIX
         uses: actions/upload-artifact@v7

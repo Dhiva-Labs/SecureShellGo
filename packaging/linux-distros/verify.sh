@@ -76,6 +76,12 @@ else
     [ "$n" -gt 0 ] || { echo "no ELF files in the package" >&2; exit 1; }
     echo "$n ELF files, all $elf_machine"
   fi
+  # The launcher cannot be run here; check it is in the package, executable.
+  if [ -n "${LAUNCHER_FILE:-}" ]; then
+    [ -x "$tmp/$LAUNCHER_FILE" ] || { echo "$LAUNCHER_FILE is not in the package" >&2; exit 1; }
+    [ -x "$tmp/usr/bin/$LAUNCHER_CMD" ] || { echo "/usr/bin/$LAUNCHER_CMD is not in the package" >&2; exit 1; }
+    echo "$LAUNCHER_FILE and /usr/bin/$LAUNCHER_CMD are in the package"
+  fi
   rm -rf "$tmp"
   echo "::endgroup::"
 fi

@@ -17,6 +17,7 @@ import 'package:secure_shell_go/services/settings_store.dart';
 
 import 'fake_exec_session.dart';
 import 'support/bridge_fakes.dart';
+import 'support/bridge_temp_dir.dart';
 
 /// One assistant on the far side of the launcher: MCP lines in and out.
 class _Peer {
@@ -112,7 +113,7 @@ void main() {
       createListener: (verify) async => BridgeListener(
         bridgeDir: bridgeDir(),
         verify: verify,
-        transport: BridgeTransportKind.unix,
+        transport: platformBridgeTransport,
       ),
     );
   }
@@ -133,7 +134,7 @@ void main() {
   }
 
   setUp(() async {
-    temp = await Directory.systemTemp.createTemp('bridge_svc');
+    temp = await bridgeTempDir('bridge_svc');
     settings = SettingsStore(file: File('${temp.path}/settings.json'));
     clients = BridgeClientStore(file: File('${temp.path}/clients.json'));
     final created = await clients.create('Desk assistant');
@@ -166,7 +167,7 @@ void main() {
     }
     peers.clear();
     await service.dispose();
-    await temp.delete(recursive: true);
+    await deleteTempDir(temp);
   });
 
   test('supported on Linux and Windows only', () {
@@ -252,7 +253,7 @@ void main() {
       createListener: (verify) async => BridgeListener(
         bridgeDir: bridgeDir(),
         verify: verify,
-        transport: BridgeTransportKind.unix,
+        transport: platformBridgeTransport,
       ),
     );
     await other.start();

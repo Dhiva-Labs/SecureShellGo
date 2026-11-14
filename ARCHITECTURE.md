@@ -876,12 +876,30 @@ AI client ──stdio──► launcher ──local channel──► app (lib/se
   the listener as the setting changes, reports status to the Settings
   section, and tears down client and SSH connections when the bridge stops.
 - `bridge_launcher_locator.dart` says which launcher command the connect
-  screen shows: `secureshellgo.mcp` when the app runs from the snap (its
-  executable is under `$SNAP`; `SNAP` alone is not trusted, since other snaps
-  pass theirs on), `secureshellgo-mcp` for the deb (`/opt/secureshellgo/`)
-  and the MSIX package (under `\WindowsApps\`), and otherwise the full path
-  of `secureshellgo-mcp` (`.exe` on Windows) beside the app's executable,
-  with a warning on the screen if that file is missing.
+  screen shows, checked in this order:
+  - the snap: `secureshellgo.mcp` (its executable is under `$SNAP`; `SNAP`
+    alone is not trusted, since other snaps pass theirs on);
+  - the Flatpak (`/.flatpak-info` exists, or `FLATPAK_ID` is set with the
+    executable under `/app/`): the host command Flatpak exports for the
+    app, `<installation>/exports/bin/<app id>`, the installation read from
+    `app-path` in `/.flatpak-info` (`/var/lib/flatpak` when it cannot be);
+  - the AppImage (`APPIMAGE` and `APPDIR` set, the executable under
+    `$APPDIR`): the `.AppImage` file itself, since the mount point changes
+    on every start, with the missing-file warning if it has been moved;
+  - the deb, `.rpm` and Arch package (`/opt/secureshellgo/`, with the
+    `/usr/bin/secureshellgo-mcp` wrapper) and the MSIX package (under
+    `\WindowsApps\`, with an execution alias): `secureshellgo-mcp`;
+  - otherwise the full path of `secureshellgo-mcp` (`.exe` on Windows)
+    beside the app's executable, with a warning on the screen if that file
+    is missing.
+
+  Every command is one word with no arguments, because the plugin's
+  `launcher` setting and the snippets' `command` take nothing else. The
+  Flatpak's main command and the AppImage's `AppRun` therefore start the
+  launcher instead of the app when `SSG_BRIDGE_TOKEN` is set and stdin is not
+  a terminal: every assistant starts it that way, and the app never needs the
+  variable. (`flatpak run --command=secureshellgo-mcp <app id>` reaches the
+  Flatpak's launcher directly, for clients that take arguments.)
 - The kit lives outside `lib/`, in `integrations/`: the skill, a plugin
   (`integrations/plugin/`, listed by the `dhiva-labs` marketplace in
   `.claude-plugin/marketplace.json` at the repository root; its `userConfig`
@@ -1015,10 +1033,13 @@ small and checked at run time.
   and a separate warning when it could not be read). `connect` reads the list
   again and stops before installing or sending anything if the source has
   changed since the confirmation.
-- **Why not in the snap.** A strictly confined snap may not start other
-  programs, so `find` and `detect` return "sandboxed" without looking (the same test as
-  the launcher locator: the executable is under `$SNAP`) and the screen shows
-  a note pointing to "Connect an assistant".
+- **Why not in the snap or the Flatpak.** A strictly confined snap may not
+  start other programs, and a Flatpak cannot start programs on the host
+  (only `flatpak-spawn --host` could, through a permission the app does not
+  ask for). So `find` and `detect` return "sandboxed" without looking (the
+  same tests as the launcher locator: the executable under `$SNAP`;
+  `/.flatpak-info`, or `FLATPAK_ID` with the executable under `/app/`) and
+  the screen shows a note pointing to "Connect an assistant".
 - **Shared hosts.** After success a checklist (`SharedHostsChecklist`, also
   reachable on its own from Settings) lists the saved hosts. It starts from
   each host's current AI access, so nothing is ticked that was not already
@@ -1033,7 +1054,12 @@ small and checked at run time.
   mode 0700, with the socket 0600. The kernel's file permissions are then the
   access control: another local user cannot open it. A path longer than the
   socket-path limit falls back to `$XDG_RUNTIME_DIR/secureshellgo-bridge.sock`
-  (per user and 0700 by the XDG spec; never `/tmp`). A stale socket is told
+  (per user and 0700 by the XDG spec; never `/tmp`). In a Flatpak, whose
+  bridge directory under `~/.var/app/<id>/data/<id>/` is usually past the
+  limit, `XDG_RUNTIME_DIR` is private to each sandbox instance and the
+  launcher runs in an instance of its own, so the fallback there is
+  `$XDG_RUNTIME_DIR/app/$FLATPAK_ID/`, the directory Flatpak shares between
+  an app's instances. A stale socket is told
   from a live one by trying to connect, so a second window reports "already
   running" instead of stealing it. The handshake is one line,
   `{"ssg_bridge":1,"token":…}`.

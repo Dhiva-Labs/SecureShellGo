@@ -14,10 +14,10 @@ files show how to point a client at the launcher.
 It sets up the server entry and the skill. Two ways, both described in
 `../plugin/README.md`:
 
-1. **One click.** In SecureShell Go (Linux deb or archive, or Windows):
-   Settings → AI Bridge → **Connect Claude Code**. The button appears only when
-   the app finds a file named `claude` (looking runs nothing); it is not
-   available in the snap. Pressing it runs `claude --version` and `claude
+1. **One click.** In SecureShell Go (Linux deb, rpm, Arch package, AppImage
+   or archive, or Windows): Settings → AI Bridge → **Connect Claude Code**.
+   The button appears only when the app finds a file named `claude` (looking
+   runs nothing); it is not available in the snap or the Flatpak. Pressing it runs `claude --version` and `claude
    plugin marketplace list --json` to show the program's path and version
    first; only after you confirm does the app run it to install the plugin and hands it the token on standard input only, and undoes its
    pairing if anything fails.
@@ -42,8 +42,8 @@ carries a copy of it that must be kept in step with it.
 2. Choose "Connect an assistant", name it, and copy the token. It is shown
    once.
 3. Paste the snippet into your client's MCP configuration, replace
-   `PASTE-TOKEN-HERE` with the token, and, if your install is not the deb or
-   the Microsoft Store one, replace `secureshellgo-mcp` with the command
+   `PASTE-TOKEN-HERE` with the token, and, if your install is not the deb,
+   rpm, Arch package or Microsoft Store one, replace `secureshellgo-mcp` with the command
    below. (The app's own snippet already has both filled in.) Treat that
    file as a secret: anyone who can read it can read from your shared
    servers while the app is running with the bridge on and unlocked.
@@ -57,10 +57,18 @@ carries a copy of it that must be kept in step with it.
 
 | Install | `command` |
 | --- | --- |
-| deb / PPA | `secureshellgo-mcp` |
+| deb / PPA, `.rpm`, Arch package | `secureshellgo-mcp` |
 | Microsoft Store (MSIX) | `secureshellgo-mcp` |
 | Snap | `secureshellgo.mcp` |
+| Flatpak | `/var/lib/flatpak/exports/bin/com.dhivalabs.secure_shell_go` (system install) or `/home/<you>/.local/share/flatpak/exports/bin/com.dhivalabs.secure_shell_go` (`--user` install) |
+| AppImage | the full path of the `.AppImage` file |
 | Linux tarball, Windows zip, or a build from source | the full path of `secureshellgo-mcp` (`secureshellgo-mcp.exe` on Windows) next to the app |
+
+The Flatpak and the AppImage run the launcher instead of the app when
+`SSG_BRIDGE_TOKEN` is set and stdin is not a terminal, as it is when a client
+starts them. A client that takes arguments can also use `"command":
+"flatpak", "args": ["run", "--command=secureshellgo-mcp",
+"com.dhivalabs.secure_shell_go"]` for the Flatpak.
 
 The token is passed in the environment variable `SSG_BRIDGE_TOKEN`. If the
 app is not running, or the bridge is off, the launcher answers every request

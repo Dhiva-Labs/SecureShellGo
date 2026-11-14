@@ -61,12 +61,27 @@ const int bridgeMaxSocketPathBytes = 100;
 /// runtime directory is per-user and 0700 by the XDG spec, so it keeps the
 /// same privacy as the bridge directory. No runtime directory and a long
 /// path is an error rather than a fallback to `/tmp`, which is shared.
+///
+/// Inside a Flatpak (`FLATPAK_ID` set) the fallback is
+/// `$XDG_RUNTIME_DIR/app/$FLATPAK_ID/` instead. There `XDG_RUNTIME_DIR`
+/// itself is a fresh directory for each sandbox instance, and the launcher
+/// runs in an instance of its own (`flatpak run --command=…`), so a socket
+/// there could not be reached; the `app/<id>` directory is the one Flatpak
+/// shares between all instances of the app. The Flatpak's bridge directory,
+/// under `~/.var/app/<id>/data/<id>/`, is usually too long for the socket,
+/// so this is the path a Flatpak normally uses.
 String bridgeSocketPath(String bridgeDir, Map<String, String> environment) {
   final preferred = '$bridgeDir/bridge.sock';
   if (utf8.encode(preferred).length <= bridgeMaxSocketPathBytes) {
     return preferred;
   }
-  final runtime = environment['XDG_RUNTIME_DIR'];
+  var runtime = environment['XDG_RUNTIME_DIR'];
+  final flatpakId = environment['FLATPAK_ID'] ?? '';
+  if (runtime != null && flatpakId.isNotEmpty) {
+    runtime = flatpakId.contains('/') || flatpakId.startsWith('.')
+        ? null
+        : '$runtime/app/$flatpakId';
+  }
   if (runtime != null && runtime.startsWith('/')) {
     final fallback = '$runtime/secureshellgo-bridge.sock';
     if (utf8.encode(fallback).length <= bridgeMaxSocketPathBytes) {

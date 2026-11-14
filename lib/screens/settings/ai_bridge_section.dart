@@ -255,8 +255,8 @@ class _AiBridgeSettingsSectionState extends State<AiBridgeSettingsSection> {
     }
   }
 
-  /// The one-click row: the button when `claude` was found, the snap's note,
-  /// and a small "check again" for the times it was not.
+  /// The one-click row: the button when `claude` was found, the sandbox note
+  /// (snap, Flatpak), and a small "check again" for the times it was not.
   Widget _oneClick(BuildContext context) {
     final l10n = context.l10n;
     final connector = widget.connector;

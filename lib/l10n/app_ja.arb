@@ -1294,7 +1294,7 @@
   "settingsBridgeSharedHostsHelp": "アシスタントが読み取れる保存済みホストを選びます。各ホストの編集画面でも切り替えられます。",
   "bridgeOneClickButton": "Claude Code を接続",
   "bridgeOneClickCheckAgain": "Claude Code をもう一度確認",
-  "bridgeOneClickSandboxed": "スナップではワンクリック接続は使えません。代わりに「{action}」を使ってください。",
+  "bridgeOneClickSandboxed": "スナップ版と Flatpak 版ではワンクリック接続は使えません。代わりに「{action}」を使ってください。",
   "bridgeOneClickTitle": "Claude Code を接続",
   "bridgeOneClickRunIntro": "SecureShell Go は、プラグインを設定するために次のプログラムを実行します:",
   "bridgeOneClickVersion": "バージョン: {version}",

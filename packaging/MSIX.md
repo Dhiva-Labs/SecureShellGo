@@ -28,7 +28,8 @@ Checked in `msix` 3.18.0 (the version `pubspec.lock` pins), `lib/src/appx_manife
 
 The package documents a manual route for features it does not support:
 `dart run msix:build`, edit the files in the build folder, `dart run msix:pack`.
-`tool/build_msix.ps1 [-Arch x64|arm64]` does exactly that:
+`tool/build_msix.ps1 [-Arch x64|arm64] [-OutputPath <dir>] [-OutputName <name>]`
+does exactly that:
 
 1. `flutter build windows --release`
 2. `tool\build_launcher.ps1` compiles the launcher into the Release folder
@@ -38,7 +39,23 @@ The package documents a manual route for features it does not support:
    Executable="secureshellgo-mcp.exe">` (`AppListEntry="none"`, so no Start
    menu entry) carrying the `windows.appExecutionAlias` extension with alias
    `secureshellgo-mcp.exe`, checks the XML still parses, and writes it back.
-5. `msix:pack` makes the package.
+5. `msix:pack` makes the package, at `<dir>\<name>.msix` when
+   `-OutputPath` and `-OutputName` are given (msix's `--output-path` and
+   `--output-name`; otherwise msix's defaults, the Release folder and the
+   app's name).
+
+`store: true` in `msix_config` leaves the package unsigned for the Store, so
+no `--store` flag is passed.
+
+The Store workflow, `.github/workflows/store-msix.yml`, runs this script for
+x64 and arm64 (`-OutputPath build\msix -OutputName
+SecureShellGo-<version>-<arch>`, the name `msix:create` used to get), then
+checks the package identity as before, checks that the package holds
+`secureshellgo-mcp.exe` and that the manifest declares its `Application` and
+alias, and runs a copy of the launcher taken out of the package with one
+`initialize` request (it must answer with a JSON-RPC error and exit 1, as in
+the desktop builds). It no longer runs `msix:create`, which would leave the
+alias out.
 
 Run it in PowerShell 7 on a machine of the target architecture: neither
 `flutter build windows` nor `dart compile exe` cross-compiles, so

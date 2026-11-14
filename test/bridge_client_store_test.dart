@@ -5,6 +5,8 @@ import 'dart:math';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:secure_shell_go/services/bridge/bridge_client_store.dart';
 
+import 'support/temp_dir.dart';
+
 void main() {
   late Directory tempDir;
   late File file;
@@ -22,7 +24,7 @@ void main() {
   });
 
   tearDown(() async {
-    if (await tempDir.exists()) await tempDir.delete(recursive: true);
+    await deleteTempDir(tempDir);
   });
 
   test('starts empty when there is no file', () async {
@@ -216,9 +218,12 @@ void main() {
     await Process.run('chmod', [locked ? '555' : '755', tempDir.path]);
   }
 
-  group('a save that fails changes nothing', () {
+  final readOnlyFolder = Platform.isWindows
+      ? 'needs chmod to make the folder read-only'
+      : null;
+
+  group('a save that fails changes nothing', skip: readOnlyFolder, () {
     test('create: nothing is kept, in memory or on disk', () async {
-      if (Platform.isWindows) return;
       final store = newStore();
       final a = await store.create('A');
       final lists = <List<BridgeClient>>[];
@@ -235,7 +240,6 @@ void main() {
     });
 
     test('revoke: the pairing is still there and still works', () async {
-      if (Platform.isWindows) return;
       final store = newStore();
       final a = await store.create('A');
       final b = await store.create('B');
@@ -254,7 +258,6 @@ void main() {
     });
 
     test('confirm: the pairing stays pending', () async {
-      if (Platform.isWindows) return;
       final store = newStore();
       final p = await store.create('P', pending: true);
       await lockFolder(true);

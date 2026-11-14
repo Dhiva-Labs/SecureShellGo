@@ -30,7 +30,8 @@ appears only when the app finds a file named `claude` on your computer. Looking
 runs nothing: opening Settings or pressing "Check again" only checks whether
 the file exists on the `PATH`, in `~/.local/bin` or in `~/.claude/local` (on
 Windows, the `PATH` and `%USERPROFILE%\.local\bin\claude.exe`). It is not
-available in the snap, which cannot start other programs; use route 2 there.
+available in the snap or the Flatpak, whose sandboxes cannot start programs
+on your computer; use route 2 there.
 
 When you press the button, the app runs `claude --version` and `claude plugin
 marketplace list --json` (10 seconds each) so it can show you the bridge's
@@ -99,9 +100,16 @@ adds the GitHub source, and says where the plugin comes from if the
 
 | Install | Launcher command |
 | --- | --- |
-| deb / PPA, Microsoft Store (MSIX) | `secureshellgo-mcp` (the default) |
+| deb / PPA, `.rpm`, Arch package, Microsoft Store (MSIX) | `secureshellgo-mcp` (the default) |
 | Snap | `secureshellgo.mcp` |
+| Flatpak | `/var/lib/flatpak/exports/bin/com.dhivalabs.secure_shell_go` (system install) or `/home/<you>/.local/share/flatpak/exports/bin/com.dhivalabs.secure_shell_go` (`--user` install) |
+| AppImage | the full path of the `.AppImage` file |
 | Linux tarball, Windows zip, or a build from source | the full path of `secureshellgo-mcp` (`secureshellgo-mcp.exe` on Windows) next to the app |
+
+The plugin's `launcher` setting is one command with no arguments. The Flatpak
+and the AppImage fit that because they start the launcher instead of the app
+when `SSG_BRIDGE_TOKEN` is set and stdin is not a terminal, which is how the
+plugin starts them.
 
 ## Limits
 

@@ -1294,7 +1294,7 @@
   "settingsBridgeSharedHostsHelp": "Escolha quais hosts salvos um assistente pode ler. Cada host também pode ser alterado na própria tela de edição.",
   "bridgeOneClickButton": "Conectar o Claude Code",
   "bridgeOneClickCheckAgain": "Verificar o Claude Code novamente",
-  "bridgeOneClickSandboxed": "A conexão com um clique não está disponível no snap. Use \"{action}\" em vez disso.",
+  "bridgeOneClickSandboxed": "A conexão com um clique não está disponível no snap nem no Flatpak. Use \"{action}\" em vez disso.",
   "bridgeOneClickTitle": "Conectar o Claude Code",
   "bridgeOneClickRunIntro": "O SecureShell Go vai executar este programa para configurar o plugin:",
   "bridgeOneClickVersion": "Versão: {version}",

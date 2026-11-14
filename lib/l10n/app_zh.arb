@@ -1294,7 +1294,7 @@
   "settingsBridgeSharedHostsHelp": "选择助手可以读取哪些已保存的主机。也可以在每台主机自己的编辑页面中切换。",
   "bridgeOneClickButton": "连接 Claude Code",
   "bridgeOneClickCheckAgain": "重新检查 Claude Code",
-  "bridgeOneClickSandboxed": "Snap 版不支持一键连接。请改用“{action}”。",
+  "bridgeOneClickSandboxed": "Snap 版和 Flatpak 版不支持一键连接。请改用“{action}”。",
   "bridgeOneClickTitle": "连接 Claude Code",
   "bridgeOneClickRunIntro": "SecureShell Go 将运行以下程序来设置插件：",
   "bridgeOneClickVersion": "版本：{version}",

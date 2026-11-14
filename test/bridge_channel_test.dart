@@ -7,6 +7,8 @@ import 'package:secure_shell_go/services/bridge/bridge_channel.dart';
 import 'package:secure_shell_go/services/bridge/bridge_client_store.dart';
 import 'package:secure_shell_go/services/bridge/bridge_locator.dart';
 
+import 'support/bridge_temp_dir.dart';
+
 final _client = BridgeClient(
   id: 'c1',
   name: 'Desk assistant',
@@ -65,10 +67,19 @@ class _Peer {
   }
 
   /// The next line, or null once the listener has closed the connection.
-  Future<String?> next() async =>
-      await _lines.moveNext().timeout(const Duration(seconds: 10))
-      ? _lines.current
-      : null;
+  ///
+  /// A reset counts as closed: a listener that drops a peer with some of
+  /// its bytes still unread resets the connection, which Windows reports
+  /// as an error where Linux usually shows an ordinary end.
+  Future<String?> next() async {
+    try {
+      return await _lines.moveNext().timeout(const Duration(seconds: 10))
+          ? _lines.current
+          : null;
+    } on SocketException {
+      return null;
+    }
+  }
 
   Future<Map<String, Object?>?> nextJson() async {
     final line = await next();
@@ -84,16 +95,18 @@ void main() {
 
   setUp(() async {
     // Short on purpose: unix socket paths are capped near 100 bytes.
-    temp = await Directory('/tmp').createTemp('ssgb');
+    temp = await bridgeTempDir('ssgb');
     bridgeDir = '${temp.path}/bridge';
   });
 
-  tearDown(() async {
-    if (await temp.exists()) await temp.delete(recursive: true);
-  });
+  // Runs after each test's own teardown, so its listener is stopped first.
+  tearDown(() => deleteTempDir(temp));
 
   for (final kind in BridgeTransportKind.values) {
-    group('${kind.name} transport', () {
+    final skip = kind == BridgeTransportKind.unix
+        ? skipUnixSocketOnWindows
+        : null;
+    group('${kind.name} transport', skip: skip, () {
       late BridgeListener listener;
       late List<BridgeConnection> accepted;
       late StreamSubscription<BridgeConnection> sub;
@@ -131,8 +144,11 @@ void main() {
           expect(endpoint, isA<BridgeTcpEndpoint>());
           expect((endpoint as BridgeTcpEndpoint).secret.length, 43);
         }
-        expect(BridgeLocator(bridgeDir).file.statSync().mode & 0x1ff, 0x180);
-        expect(Directory(bridgeDir).statSync().mode & 0x1ff, 0x1c0); // 0700
+        // Windows has no POSIX modes; the profile's ACL keeps these private.
+        if (!Platform.isWindows) {
+          expect(BridgeLocator(bridgeDir).file.statSync().mode & 0x1ff, 0x180);
+          expect(Directory(bridgeDir).statSync().mode & 0x1ff, 0x1c0); // 0700
+        }
       });
 
       test('accepts a good handshake and carries lines both ways', () async {
@@ -256,7 +272,7 @@ void main() {
       final first = BridgeListener(
         bridgeDir: bridgeDir,
         verify: _verify,
-        transport: BridgeTransportKind.unix,
+        transport: platformBridgeTransport,
         environment: const {},
       );
       await first.start();
@@ -264,7 +280,7 @@ void main() {
       final second = BridgeListener(
         bridgeDir: bridgeDir,
         verify: _verify,
-        transport: BridgeTransportKind.unix,
+        transport: platformBridgeTransport,
         environment: const {},
       );
       await expectLater(second.start(), throwsA(isA<BridgeAlreadyRunning>()));
@@ -279,7 +295,7 @@ void main() {
       final listener = BridgeListener(
         bridgeDir: bridgeDir,
         verify: (_) async => throw const FileSystemException('disk /secret/x'),
-        transport: BridgeTransportKind.unix,
+        transport: platformBridgeTransport,
         environment: const {},
       );
       await listener.start();
@@ -298,7 +314,7 @@ void main() {
     final listener = BridgeListener(
       bridgeDir: bridgeDir,
       verify: _verify,
-      transport: BridgeTransportKind.unix,
+      transport: platformBridgeTransport,
       environment: const {},
       // High enough that the backlog below is not dropped first: this is
       // about close() giving up on a peer that never drains.
@@ -307,22 +323,18 @@ void main() {
     final accepted = <BridgeConnection>[];
     listener.connections.listen(accepted.add);
     await listener.start();
-    // A raw socket nobody listens to: Dart does not read from it, so the
-    // kernel buffers fill and the listener's writes back up.
-    final path = (listener.endpoint! as BridgeUnixEndpoint).path;
-    final socket = await Socket.connect(
-      InternetAddress(path, type: InternetAddressType.unix),
-      0,
-    );
-    socket.write('${bridgeHandshakeLine(token: 'good-token')}\n');
-    await socket.flush();
-    await Future<void>.delayed(const Duration(milliseconds: 300));
+    // A peer that reads nothing past the handshake reply: its socket is
+    // paused, so the kernel buffers fill and the listener's writes back up.
+    final peer = await _Peer.connect(listener.endpoint!);
+    await peer.handshake(listener.endpoint!);
+    expect(await peer.nextJson(), {'ok': true});
+    await pumpUntil(() => accepted.isNotEmpty);
     final big = 'x' * 500000;
     for (var i = 0; i < 40; i++) {
       accepted.single.send(big);
     }
     await listener.stop().timeout(const Duration(seconds: 8));
-    socket.destroy();
+    peer.destroy();
   });
 
   test(
@@ -351,36 +363,40 @@ void main() {
     },
   );
 
-  test('unix clears a stale socket file left by a crash', () async {
-    await Directory(bridgeDir).create(recursive: true);
-    // A socket file nobody listens on any more, the way a killed process
-    // leaves it. Dart's own ServerSocket unlinks its file on close, so the
-    // leftover is made by a process that exits without cleaning up.
-    final path = '$bridgeDir/bridge.sock';
-    try {
-      await Process.run('python3', [
-        '-c',
-        'import socket,sys; s=socket.socket(socket.AF_UNIX); s.bind(sys.argv[1])',
-        path,
-      ]);
-    } on ProcessException {
-      // No python3: a plain file refuses connections the same way.
-    }
-    if (FileSystemEntity.typeSync(path, followLinks: false) ==
-        FileSystemEntityType.notFound) {
-      await File(path).writeAsString('');
-    }
-    final listener = BridgeListener(
-      bridgeDir: bridgeDir,
-      verify: _verify,
-      transport: BridgeTransportKind.unix,
-    );
-    await listener.start();
-    addTearDown(listener.stop);
-    final peer = await _Peer.connect(listener.endpoint!);
-    await peer.handshake(listener.endpoint!);
-    expect(await peer.nextJson(), {'ok': true});
-  });
+  test(
+    'unix clears a stale socket file left by a crash',
+    skip: skipUnixSocketOnWindows,
+    () async {
+      await Directory(bridgeDir).create(recursive: true);
+      // A socket file nobody listens on any more, the way a killed process
+      // leaves it. Dart's own ServerSocket unlinks its file on close, so the
+      // leftover is made by a process that exits without cleaning up.
+      final path = '$bridgeDir/bridge.sock';
+      try {
+        await Process.run('python3', [
+          '-c',
+          'import socket,sys; s=socket.socket(socket.AF_UNIX); s.bind(sys.argv[1])',
+          path,
+        ]);
+      } on ProcessException {
+        // No python3: a plain file refuses connections the same way.
+      }
+      if (FileSystemEntity.typeSync(path, followLinks: false) ==
+          FileSystemEntityType.notFound) {
+        await File(path).writeAsString('');
+      }
+      final listener = BridgeListener(
+        bridgeDir: bridgeDir,
+        verify: _verify,
+        transport: BridgeTransportKind.unix,
+      );
+      await listener.start();
+      addTearDown(listener.stop);
+      final peer = await _Peer.connect(listener.endpoint!);
+      await peer.handshake(listener.endpoint!);
+      expect(await peer.nextJson(), {'ok': true});
+    },
+  );
 
   test('tcp treats a stale locator file as stale', () async {
     await Directory(bridgeDir).create(recursive: true);
@@ -591,7 +607,7 @@ void main() {
     final listener = BridgeListener(
       bridgeDir: bridgeDir,
       verify: _verify,
-      transport: BridgeTransportKind.unix,
+      transport: platformBridgeTransport,
       environment: const {},
       failedHandshakeDelay: Duration.zero,
     );
@@ -620,7 +636,7 @@ void main() {
     final listener = BridgeListener(
       bridgeDir: bridgeDir,
       verify: (_) => lookup.future,
-      transport: BridgeTransportKind.unix,
+      transport: platformBridgeTransport,
       environment: const {},
     );
     final accepted = <BridgeConnection>[];
@@ -644,7 +660,7 @@ void main() {
     final listener = BridgeListener(
       bridgeDir: bridgeDir,
       verify: _verify,
-      transport: BridgeTransportKind.unix,
+      transport: platformBridgeTransport,
       environment: const {},
       handshakeTimeout: const Duration(seconds: 20),
     );
@@ -681,7 +697,7 @@ void main() {
     final listener = BridgeListener(
       bridgeDir: bridgeDir,
       verify: _verify,
-      transport: BridgeTransportKind.unix,
+      transport: platformBridgeTransport,
       environment: const {},
     );
     await listener.start();
@@ -702,7 +718,7 @@ void main() {
       listener = BridgeListener(
         bridgeDir: bridgeDir,
         verify: _verify,
-        transport: BridgeTransportKind.unix,
+        transport: platformBridgeTransport,
         environment: const {},
         maxQueuedOutputBytes: 256 * 1024,
       );
@@ -736,15 +752,10 @@ void main() {
     });
 
     test('while one that reads is not', () async {
-      final path = (listener.endpoint! as BridgeUnixEndpoint).path;
-      final socket = await Socket.connect(
-        InternetAddress(path, type: InternetAddressType.unix),
-        0,
-      );
-      addTearDown(socket.destroy);
+      final link = await dialBridge(listener.endpoint!, token: 'good-token');
+      addTearDown(link.socket.destroy);
       var received = 0;
-      socket.listen((b) => received += b.length);
-      socket.write('${bridgeHandshakeLine(token: 'good-token')}\n');
+      link.rest.listen((b) => received += b.length);
       await pumpUntil(() => accepted.isNotEmpty);
       expect(await pushUntilDropped(accepted.single, 100), isFalse);
       await pumpUntil(() => received >= 100 * 64 * 1024);
@@ -906,6 +917,43 @@ void main() {
         () => bridgeSocketPath(long, const {'XDG_RUNTIME_DIR': 'relative'}),
         throwsA(isA<BridgeChannelException>()),
       );
+    });
+
+    test('a Flatpak falls back to the directory its instances share', () {
+      // The Flatpak's real bridge directory for a 9-letter user name: 108
+      // bytes with the socket's name, past the limit.
+      const dir =
+          '/home/dhivakar/.var/app/com.dhivalabs.secure_shell_go/data/'
+          'com.dhivalabs.secure_shell_go/bridge';
+      expect(
+        bridgeSocketPath(dir, const {
+          'XDG_RUNTIME_DIR': '/run/user/1000',
+          'FLATPAK_ID': 'com.dhivalabs.secure_shell_go',
+        }),
+        '/run/user/1000/app/com.dhivalabs.secure_shell_go/'
+        'secureshellgo-bridge.sock',
+      );
+      // Short enough: the bridge directory, as everywhere else.
+      expect(
+        bridgeSocketPath('/h/bridge', const {
+          'XDG_RUNTIME_DIR': '/run/user/1000',
+          'FLATPAK_ID': 'com.dhivalabs.secure_shell_go',
+        }),
+        '/h/bridge/bridge.sock',
+      );
+    });
+
+    test('a Flatpak ID that is not a plain name is not used', () {
+      final long = '/home/u/${'d' * 100}/bridge';
+      for (final id in ['../x', 'a/b', '..']) {
+        expect(
+          () => bridgeSocketPath(long, {
+            'XDG_RUNTIME_DIR': '/run/user/1000',
+            'FLATPAK_ID': id,
+          }),
+          throwsA(isA<BridgeChannelException>()),
+        );
+      }
     });
   });
 }

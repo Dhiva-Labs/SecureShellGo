@@ -124,4 +124,24 @@ EOS
   mkdir -p "$HOME"
   xvfb-run -a -s '-screen 0 1280x800x24' dbus-run-session -- bash /tmp/smoke.sh "${gui[@]}"
 fi
+
+# A second command the package installs that reads one JSON-RPC request on
+# stdin (LAUNCHER_CMD in distro.conf; the AppImage runs the .AppImage file,
+# whose AppRun picks it from the environment). With nothing to connect to it
+# must answer with a JSON-RPC error and exit 1. SSG_BRIDGE_DIR points at an
+# empty folder so the result does not depend on the container's home.
+if [ -n "${LAUNCHER_CMD:-}" ]; then
+  if [ -n "$cmd_prefix" ]; then launcher=("$cmd_prefix"); else read -r -a launcher <<< "$LAUNCHER_CMD"; fi
+  mkdir -p /tmp/launcher-bridge
+  code=0
+  out="$(printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}' \
+    | SSG_BRIDGE_DIR=/tmp/launcher-bridge SSG_BRIDGE_TOKEN=ci-token "${launcher[@]}")" || code=$?
+  echo "${launcher[*]}: exit code $code"
+  echo "stdout: $out"
+  [ "$code" -eq 1 ] || { echo "${launcher[*]} exited $code, expected 1" >&2; exit 1; }
+  case "$out" in
+    *'"jsonrpc":"2.0"'*'"error"'*) ;;
+    *) echo "${launcher[*]} did not answer with a JSON-RPC error" >&2; exit 1 ;;
+  esac
+fi
 echo "$MODE: OK"

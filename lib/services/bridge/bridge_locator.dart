@@ -558,9 +558,22 @@ Future<int> runBridgeLauncher({
   }
 
   final socket = link.socket;
-  final toClient = link.rest
-      .listen(output.add, onError: (Object _) {}, cancelOnError: false)
-      .asFuture<void>();
+  // Ends with the app's side, whether it closes or resets. A reset is what
+  // Windows often reports when the app quits, and on Linux when it closes
+  // with input unread; it must end the run like a close, not escape as an
+  // exception (`asFuture` completes with the error).
+  final appSideDone = Completer<void>();
+  void appSideEnded([Object? _]) {
+    if (!appSideDone.isCompleted) appSideDone.complete();
+  }
+
+  link.rest.listen(
+    output.add,
+    onError: appSideEnded,
+    onDone: appSideEnded,
+    cancelOnError: true,
+  );
+  final toClient = appSideDone.future;
 
   var clientClosed = false;
   unawaited(() async {

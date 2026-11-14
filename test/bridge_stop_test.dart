@@ -12,6 +12,7 @@ import 'package:secure_shell_go/services/ssh_service.dart' show SessionTransport
 
 import 'fake_exec_session.dart';
 import 'support/bridge_fakes.dart';
+import 'support/temp_dir.dart';
 
 // How a bridge call is stopped: at its deadline, when its assistant is
 // revoked, when the bridge is switched off — and that stopping it ends the
@@ -27,7 +28,7 @@ void main() {
   });
 
   tearDown(() async {
-    await temp.delete(recursive: true);
+    await deleteTempDir(temp);
   });
 
   group('the supervised wrapper, against a real sh', () {

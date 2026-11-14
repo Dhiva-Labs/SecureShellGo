@@ -19,7 +19,7 @@
     "launcher": {
       "type": "string",
       "title": "Launcher command",
-      "description": "secureshellgo-mcp for the deb and the Microsoft Store install, secureshellgo.mcp for the snap, or the full path of secureshellgo-mcp next to the app for the Linux tarball or Windows zip. Connect an assistant in the app shows the right one.",
+      "description": "secureshellgo-mcp for the deb, rpm, Arch package and the Microsoft Store install, secureshellgo.mcp for the snap, the exported command (…/flatpak/exports/bin/com.dhivalabs.secure_shell_go) for the Flatpak, the full path of the .AppImage file for the AppImage, or the full path of secureshellgo-mcp next to the app for the Linux tarball or Windows zip. Connect an assistant in the app shows the right one.",
       "default": "secureshellgo-mcp"
     }
   }

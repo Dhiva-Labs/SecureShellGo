@@ -118,7 +118,10 @@ tarballs and how to refresh them.
 
 The package also ships `/opt/secureshellgo/secureshellgo-mcp` and a
 `/usr/bin/secureshellgo-mcp` wrapper (`debian/secureshellgo-mcp.wrapper`), the
-command an MCP-compatible AI assistant is configured with. `debian/rules`
+command an MCP-compatible AI assistant is configured with. The `.rpm`, the
+Arch package and the AUR recipe install the same wrapper from `debian/`
+(`packaging/linux-distros/tree.sh`, `packaging/arch/PKGBUILD.in`), so keep
+its path in step with them. `debian/rules`
 builds it right after `flutter build linux` with `tool/build_launcher.sh`,
 using the vendored SDK's own `dart` (`$(FLUTTER_ROOT)/bin/cache/dart-sdk/bin/dart`).
 
@@ -128,7 +131,9 @@ It is offline-safe for a reason worth knowing: a plain
 `path_provider`), and `dart build cli` would run those build hooks. The script
 instead copies the package map that `flutter pub get --offline` just wrote,
 leaves out every package with a build hook, and compiles the launcher against
-that copy from a temp directory outside the package. No second `pub get`, no
+that copy in a temporary package of its own (the entry script copied to
+`<tmp>/bin/`, the filtered map as `<tmp>/.dart_tool/package_config.json`,
+so newer Dart SDKs, which look near the entry script, find it too). No second `pub get`, no
 network and no hook runs; the launcher's pure Dart dependencies (such as
 `crypto`) come from the vendored pub cache like the app's. Stripping would
 break it (see `override_dh_strip`). The vendored (slim) SDK keeps

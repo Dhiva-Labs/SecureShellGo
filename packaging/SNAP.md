@@ -163,9 +163,16 @@ The snap has a second app, `mcp`, so the command an MCP-compatible AI
 assistant is configured with is `secureshellgo.mcp` (the app's own command is
 `secureshellgo`). The launcher is compiled in the `secureshellgo` part
 (`override-build`, after the Flutter build) by `tool/build_launcher.sh`, with
-the `dart` that the `flutter` plugin puts on PATH for the part, and installed
-at the snap's root as `secureshellgo-mcp`. A plain `dart compile exe` fails in
-this package because of build hooks; the script says why and avoids it.
+the Dart SDK binary of the Flutter the `flutter` plugin cloned
+(`$CRAFT_PART_BUILD/flutter-distro/bin/cache/dart-sdk/bin/dart`, passed as
+`DART`; not the `dart` on PATH, which is Flutter's wrapper script), and
+installed at the snap's root as `secureshellgo-mcp`. The plugin clones
+Flutter's `stable` channel, so that Dart can be newer than the 3.12.2 used
+elsewhere. A plain `dart compile exe` fails in this package because of build
+hooks; the script says why and avoids it. (The first 1.6 CI run failed here:
+with the newer Dart, compiling the repository's own entry script found the
+app's package config next to it despite `--packages`. The script now
+compiles from a temporary package of its own.)
 
 It reaches the app through `<appdata>/bridge/endpoint.json` and a unix
 socket in the same directory. Both apps must therefore resolve the same

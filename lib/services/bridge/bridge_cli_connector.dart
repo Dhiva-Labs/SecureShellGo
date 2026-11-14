@@ -228,8 +228,8 @@ final class ClaudeCliNotFound extends ClaudeCliAvailability {
   const ClaudeCliNotFound();
 }
 
-/// The app is the strictly confined snap, which may not start other
-/// programs; nothing was tried.
+/// The app is the strictly confined snap or the Flatpak, neither of which
+/// may start programs on the host; nothing was tried.
 final class ClaudeCliSandboxed extends ClaudeCliAvailability {
   const ClaudeCliSandboxed();
 }
@@ -262,8 +262,8 @@ final class ClaudeCliAbsent extends ClaudeCliPresence {
   const ClaudeCliAbsent();
 }
 
-/// The app is the strictly confined snap, which may not start other
-/// programs; nothing was looked for.
+/// The app is the strictly confined snap or the Flatpak, neither of which
+/// may start programs on the host; nothing was looked for.
 final class ClaudeCliPresenceSandboxed extends ClaudeCliPresence {
   const ClaudeCliPresenceSandboxed();
 }
@@ -361,17 +361,40 @@ class ClaudeCliConnector {
     bool? isWindows,
     String? resolvedExecutable,
     bool Function(String path)? fileExists,
+    bool Function(String path)? pathExists,
   }) : _runner = runner ?? runBridgeProcess,
        _environment = environment ?? Platform.environment,
        _windows = isWindows ?? Platform.isWindows,
        _executable = resolvedExecutable ?? Platform.resolvedExecutable,
-       _fileExists = fileExists ?? _isExecutableFile;
+       _fileExists = fileExists ?? _isExecutableFile,
+       _pathExists = pathExists ?? _pathIsThere;
 
   final BridgeProcessRunner _runner;
   final Map<String, String> _environment;
   final bool _windows;
   final String _executable;
   final bool Function(String path) _fileExists;
+
+  /// Any file at all, not only an executable one: the Flatpak test
+  /// ([runsInFlatpak]) looks for `/.flatpak-info`.
+  final bool Function(String path) _pathExists;
+
+  static bool _pathIsThere(String path) =>
+      FileSystemEntity.typeSync(path) != FileSystemEntityType.notFound;
+
+  /// The snap and the Flatpak may not start programs on the host, so
+  /// nothing is looked for there.
+  bool get _sandboxed =>
+      runsFromSnap(
+        environment: _environment,
+        resolvedExecutable: _executable,
+      ) ||
+      (!_windows &&
+          runsInFlatpak(
+            environment: _environment,
+            resolvedExecutable: _executable,
+            pathExists: _pathExists,
+          ));
 
   static const String marketplaceName = 'dhiva-labs';
   static const String marketplaceSource = 'Dhiva-Labs/SecureShellGo';
@@ -400,12 +423,7 @@ class ClaudeCliConnector {
 
   /// Looks for `claude` and asks it for its version.
   Future<ClaudeCliAvailability> detect() async {
-    if (runsFromSnap(
-      environment: _environment,
-      resolvedExecutable: _executable,
-    )) {
-      return const ClaudeCliSandboxed();
-    }
+    if (_sandboxed) return const ClaudeCliSandboxed();
     final candidates = findCandidates();
     if (candidates.isEmpty) return const ClaudeCliNotFound();
 
@@ -437,16 +455,11 @@ class ClaudeCliConnector {
   }
 
   /// Whether a `claude` could be here, from file-system checks alone: the
-  /// snap check and [findCandidates]. Starts no process, so it is what a
-  /// screen may call on its own; [detect], which runs the program, waits
-  /// until the user asks for it.
+  /// sandbox check (snap, Flatpak) and [findCandidates]. Starts no process,
+  /// so it is what a screen may call on its own; [detect], which runs the
+  /// program, waits until the user asks for it.
   ClaudeCliPresence find() {
-    if (runsFromSnap(
-      environment: _environment,
-      resolvedExecutable: _executable,
-    )) {
-      return const ClaudeCliPresenceSandboxed();
-    }
+    if (_sandboxed) return const ClaudeCliPresenceSandboxed();
     final candidates = findCandidates();
     if (candidates.isEmpty) return const ClaudeCliAbsent();
     return ClaudeCliPresent(List.unmodifiable(candidates));

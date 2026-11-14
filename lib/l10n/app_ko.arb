@@ -1294,7 +1294,7 @@
   "settingsBridgeSharedHostsHelp": "어시스턴트가 읽을 수 있는 저장된 호스트를 선택하세요. 각 호스트의 편집 화면에서도 바꿀 수 있습니다.",
   "bridgeOneClickButton": "Claude Code 연결",
   "bridgeOneClickCheckAgain": "Claude Code 다시 확인",
-  "bridgeOneClickSandboxed": "스냅에서는 원클릭 연결을 사용할 수 없습니다. 대신 \"{action}\"을(를) 사용하세요.",
+  "bridgeOneClickSandboxed": "스냅과 Flatpak에서는 원클릭 연결을 사용할 수 없습니다. 대신 \"{action}\"을(를) 사용하세요.",
   "bridgeOneClickTitle": "Claude Code 연결",
   "bridgeOneClickRunIntro": "SecureShell Go가 플러그인을 설정하기 위해 다음 프로그램을 실행합니다:",
   "bridgeOneClickVersion": "버전: {version}",

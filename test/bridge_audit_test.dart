@@ -4,6 +4,8 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:secure_shell_go/services/bridge/bridge_audit.dart';
 
+import 'support/temp_dir.dart';
+
 void main() {
   late Directory tempDir;
   late Directory bridgeDir;
@@ -16,7 +18,7 @@ void main() {
   });
 
   tearDown(() async {
-    if (await tempDir.exists()) await tempDir.delete(recursive: true);
+    await deleteTempDir(tempDir);
   });
 
   var tick = 0;

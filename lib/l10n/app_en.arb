@@ -7965,9 +7965,9 @@
   "@bridgeOneClickCheckAgain": {
     "description": "Settings > AI Bridge: tooltip of the button that looks again for the Claude Code command on this computer."
   },
-  "bridgeOneClickSandboxed": "One-click connect is not available in the snap. Use \"{action}\" instead.",
+  "bridgeOneClickSandboxed": "One-click connect is not available in the snap or the Flatpak. Use \"{action}\" instead.",
   "@bridgeOneClickSandboxed": {
-    "description": "Settings > AI Bridge: note shown instead of the one-click button in the snap, which may not start other programs. {action} is the label of the manual connect button.",
+    "description": "Settings > AI Bridge: note shown instead of the one-click button in the snap and in the Flatpak, neither of which may start programs outside their sandbox. \"snap\" and \"Flatpak\" are package format names. {action} is the label of the manual connect button.",
     "placeholders": {
       "action": {
         "type": "String"

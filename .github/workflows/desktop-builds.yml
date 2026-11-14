@@ -608,7 +608,11 @@ jobs:
   # there under Xvfb until the window and the data folder appear: the .rpm on
   # Fedora and openSUSE Tumbleweed, the Arch package on Arch (x64 only: Arch
   # has no official arm64 image, so the arm64 package gets a static check),
-  # the AppImage on Fedora.
+  # the AppImage on Fedora. Each also carries the AI Bridge launcher from the
+  # archive, never stripped (nfpm copies files as they are); verify.sh runs
+  # it in each container the way the app tells an assistant to: the
+  # /usr/bin/secureshellgo-mcp wrapper for the .rpm and Arch package, the
+  # .AppImage file itself for the AppImage.
   distros:
     name: Other distros ${{ matrix.arch }}
     needs: build-linux
@@ -829,12 +833,47 @@ jobs:
         run: |
           flatpak run --command=bash "$APP_ID" -c '
             missing=0
-            for f in /app/lib/secureshellgo/secure_shell_go /app/lib/secureshellgo/lib/*.so; do
+            for f in /app/lib/secureshellgo/secure_shell_go /app/lib/secureshellgo/secureshellgo-mcp /app/lib/secureshellgo/lib/*.so; do
               out="$(LD_LIBRARY_PATH=/app/lib/secureshellgo/lib ldd "$f")" || { echo "ldd failed on $f"; missing=1; continue; }
               if printf "%s\n" "$out" | grep "not found"; then echo "  in $f"; missing=1; fi
               echo "$f: ok"
             done
             [ "$missing" = 0 ]'
+
+      # The AI Bridge launcher, both ways an assistant can start it, with the
+      # app not running: the host command Flatpak exports for the app (what
+      # the app shows; its main command hands over to the launcher when
+      # SSG_BRIDGE_TOKEN is set and stdin is not a terminal) and `flatpak run
+      # --command=secureshellgo-mcp`. Each must answer the request with a
+      # JSON-RPC error and exit 1, which also proves flatpak-builder did not
+      # strip it. The bridge directory is the sandbox's own, empty here.
+      - name: Smoke-run the launcher in the sandbox
+        timeout-minutes: 5
+        run: |
+          if [ -z "${XDG_RUNTIME_DIR:-}" ]; then
+            export XDG_RUNTIME_DIR="$RUNNER_TEMP/xdg-runtime"
+            mkdir -p -m 0700 "$XDG_RUNTIME_DIR"
+          fi
+          exported="$HOME/.local/share/flatpak/exports/bin/$APP_ID"
+          ls -l "$exported"
+          bad=0
+          for how in exported command; do
+            case "$how" in
+              exported) cmd=("$exported") ;;
+              command) cmd=(flatpak run --command=secureshellgo-mcp "$APP_ID") ;;
+            esac
+            code=0
+            out="$(printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}' \
+              | SSG_BRIDGE_TOKEN=ci-token dbus-run-session -- "${cmd[@]}")" || code=$?
+            echo "${cmd[*]}: exit code $code"
+            echo "stdout: $out"
+            [ "$code" -eq 1 ] || { echo "::error::${cmd[*]} exited $code, expected 1"; bad=1; }
+            case "$out" in
+              *'"jsonrpc":"2.0"'*'"error"'*) ;;
+              *) echo "::error::${cmd[*]} did not answer with a JSON-RPC error"; bad=1 ;;
+            esac
+          done
+          [ "$bad" -eq 0 ]
 
       - name: Run the sandboxed app (Xvfb)
         timeout-minutes: 5

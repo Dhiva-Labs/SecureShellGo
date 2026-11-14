@@ -18,6 +18,7 @@ import 'package:secure_shell_go/services/systemd_units.dart';
 
 import 'fake_exec_session.dart';
 import 'support/bridge_fakes.dart';
+import 'support/temp_dir.dart';
 
 const String _probeOutput =
     '#=ssg=kernel\nLinux 6.1.0\n'
@@ -46,7 +47,7 @@ void main() {
 
   tearDown(() async {
     await rig.connections.closeAll();
-    await temp.delete(recursive: true);
+    await deleteTempDir(temp);
   });
 
   FakeExecTransport serveWeb(FakeExecSession Function(String c) respond) =>

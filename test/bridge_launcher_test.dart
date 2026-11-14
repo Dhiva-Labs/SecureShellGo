@@ -9,6 +9,8 @@ import 'package:secure_shell_go/services/bridge/bridge_locator.dart';
 import 'package:secure_shell_go/services/bridge/bridge_tool_types.dart';
 import 'package:secure_shell_go/services/bridge/mcp_server.dart';
 
+import 'support/bridge_temp_dir.dart';
+
 final _client = BridgeClient(
   id: 'c1',
   name: 'Desk assistant',
@@ -184,8 +186,8 @@ void main() {
 
   group('launcher with no app', () {
     late Directory temp;
-    setUp(() async => temp = await Directory('/tmp').createTemp('ssgl'));
-    tearDown(() => temp.delete(recursive: true));
+    setUp(() async => temp = await bridgeTempDir('ssgl'));
+    tearDown(() => deleteTempDir(temp));
 
     Future<(int, _Capture, _Capture)> run(
       List<String> lines, {
@@ -279,15 +281,36 @@ void main() {
       expect(sent, isNot(contains('real-secret')));
     });
 
-    test('a locator pointing at nothing reads as not running', () async {
-      await BridgeLocator(
-        temp.path,
-      ).write(BridgeUnixEndpoint('${temp.path}/gone.sock'));
-      final (code, out, _) = await run([
+    test(
+      'a locator pointing at nothing reads as not running',
+      skip: skipUnixSocketOnWindows,
+      () async {
+        await BridgeLocator(
+          temp.path,
+        ).write(BridgeUnixEndpoint('${temp.path}/gone.sock'));
+        final (code, out, _) = await run([
+          _line({'jsonrpc': '2.0', 'id': 1, 'method': 'ping'}),
+        ]);
+        expect(code, 1);
+        expect(out.text, contains(bridgeNotRunningMessage));
+      },
+    );
+
+    test('a locator pointing at a closed port reads as not running', () async {
+      // A port that was ours once and now has nobody on it.
+      final gone = await ServerSocket.bind(InternetAddress.loopbackIPv4, 0);
+      final port = gone.port;
+      await gone.close();
+      await BridgeLocator(temp.path).write(BridgeTcpEndpoint(port, 'old'));
+      final (code, out, err) = await run([
         _line({'jsonrpc': '2.0', 'id': 1, 'method': 'ping'}),
       ]);
       expect(code, 1);
-      expect(out.text, contains(bridgeNotRunningMessage));
+      expect(out.messages.single['error'], {
+        'code': -32000,
+        'message': bridgeNotRunningMessage,
+      });
+      expect(err.text.trim(), bridgeNotRunningMessage);
     });
 
     test('no bridge directory at all reads as not running', () async {
@@ -317,14 +340,61 @@ void main() {
     });
   });
 
+  test('an app that resets the connection ends the launcher with 1', () async {
+    final temp = await bridgeTempDir('ssgr');
+    addTearDown(() => deleteTempDir(temp));
+    // A stand-in app: proves the secret, accepts the token, then stops
+    // reading and closes with the launcher's bytes unread, which resets the
+    // connection rather than closing it. Windows does the same when the app
+    // quits under a live connection.
+    const secret = 'the-secret';
+    final app = await ServerSocket.bind(InternetAddress.loopbackIPv4, 0);
+    addTearDown(app.close);
+    app.listen((s) {
+      final lines = StreamIterator(
+        utf8.decoder.bind(s).transform(const LineSplitter()),
+      );
+      () async {
+        await lines.moveNext();
+        final nonce = (jsonDecode(lines.current) as Map)['hello'] as String;
+        s.write('${jsonEncode({'proof': bridgeProof(secret, nonce)})}\n');
+        await lines.moveNext();
+        s.write('{"ok":true}\n');
+        // The iterator is paused now: nothing more is read.
+        await Future<void>.delayed(const Duration(milliseconds: 300));
+        s.destroy();
+      }();
+    });
+    await BridgeLocator(temp.path).write(BridgeTcpEndpoint(app.port, secret));
+
+    final input = StreamController<List<int>>();
+    final out = _Capture();
+    final err = _Capture();
+    final run = runBridgeLauncher(
+      input: input.stream,
+      output: out.sink,
+      errors: err.sink,
+      bridgeDir: temp.path,
+      token: 'good',
+    );
+    final ping = _line({'jsonrpc': '2.0', 'id': 1, 'method': 'ping'});
+    input.add(utf8.encode(ping * 2000));
+    expect(await run.timeout(const Duration(seconds: 10)), 1);
+    expect(err.text, contains('closed'));
+    await input.close();
+  });
+
   for (final kind in BridgeTransportKind.values) {
-    group('end to end over ${kind.name}', () {
+    final skip = kind == BridgeTransportKind.unix
+        ? skipUnixSocketOnWindows
+        : null;
+    group('end to end over ${kind.name}', skip: skip, () {
       late Directory temp;
       late BridgeListener listener;
       late StreamSubscription<BridgeConnection> serving;
 
       setUp(() async {
-        temp = await Directory('/tmp').createTemp('ssge');
+        temp = await bridgeTempDir('ssge');
         listener = BridgeListener(
           bridgeDir: '${temp.path}/bridge',
           verify: (t) async => t == 'good' ? _client : null,
@@ -339,7 +409,7 @@ void main() {
       tearDown(() async {
         await serving.cancel();
         await listener.stop();
-        await temp.delete(recursive: true);
+        await deleteTempDir(temp);
       });
 
       test('a whole MCP session through the launcher', () async {

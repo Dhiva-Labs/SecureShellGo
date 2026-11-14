@@ -1,5 +1,12 @@
 # Builds the Microsoft Store package, with the AI Bridge launcher inside it
-# and an app execution alias for it: tool\build_msix.ps1 [-Arch x64|arm64]
+# and an app execution alias for it:
+#
+#   tool\build_msix.ps1 [-Arch x64|arm64] [-OutputPath <dir>] [-OutputName <name>]
+#
+# -OutputPath and -OutputName are msix's --output-path and --output-name
+# (the package is written to <dir>\<name>.msix); left out, msix's defaults
+# apply (the Release folder, and the app's name). The Store workflow
+# (.github/workflows/store-msix.yml) runs this script.
 #
 # `dart run msix:create` alone would ship a package without the launcher's
 # alias. The msix package can only alias the main executable (its manifest
@@ -10,7 +17,11 @@
 # Needs PowerShell 7 (build_launcher.ps1 does) and a machine of the target
 # architecture: neither `flutter build windows` nor `dart compile exe`
 # cross-compiles, so -Arch arm64 only works on a Windows arm64 machine.
-param([ValidateSet('x64', 'arm64')][string]$Arch = 'x64')
+param(
+  [ValidateSet('x64', 'arm64')][string]$Arch = 'x64',
+  [string]$OutputPath,
+  [string]$OutputName
+)
 $ErrorActionPreference = 'Stop'
 $PSNativeCommandUseErrorActionPreference = $true
 
@@ -65,4 +76,10 @@ $manifest = $manifest.Replace('</Applications>', $launcherApp)
 $null = [xml]$manifest   # well-formedness check before it is packed
 [IO.File]::WriteAllText($manifestPath, $manifest, (New-Object Text.UTF8Encoding($false)))
 
-Invoke-Step 'msix:pack' { dart run msix:pack --architecture $Arch }
+$packArgs = @('--architecture', $Arch)
+if ($OutputPath) {
+  New-Item -ItemType Directory -Force -Path $OutputPath | Out-Null
+  $packArgs += @('--output-path', $OutputPath)
+}
+if ($OutputName) { $packArgs += @('--output-name', $OutputName) }
+Invoke-Step 'msix:pack' { dart run msix:pack @packArgs }
