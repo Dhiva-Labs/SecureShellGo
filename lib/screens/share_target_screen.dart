@@ -123,8 +123,11 @@ class _ShareTargetScreenState extends State<ShareTargetScreen> {
         return;
       }
 
+      final stamp = DateTime.now();
       unawaited(
-        widget.hostStore.update(host.copyWith(lastConnectedAt: DateTime.now())),
+        widget.hostStore
+            .modify(host.id, (h) => h.copyWith(lastConnectedAt: stamp))
+            .catchError((Object _) {}),
       );
       setState(() {
         _connectingHostId = null;

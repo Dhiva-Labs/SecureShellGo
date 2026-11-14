@@ -3,6 +3,7 @@ import 'dart:typed_data';
 
 import '../models/app_settings.dart';
 import '../models/host.dart';
+import '../models/host_ai_access.dart';
 import '../models/known_host.dart';
 import '../models/path_bookmark.dart';
 import '../models/snippet.dart';
@@ -128,11 +129,16 @@ class BackupPayload {
         'payloadVersion': payloadVersion,
         if (exportedAt != null) 'exportedAt': exportedAt!.toIso8601String(),
         'includesCredentials': includesCredentials,
-        'hosts': [for (final host in hosts) host.toJson()],
+        // AI Bridge access is a decision about this device, so a file never
+        // carries it: it is dropped here, and forced off again on decode.
+        'hosts': [
+          for (final host in hosts)
+            host.copyWith(aiAccess: HostAiAccess.off).toJson(),
+        ],
         'snippets': [for (final snippet in snippets) snippet.toJson()],
         'tunnels': [for (final tunnel in tunnels) tunnel.toJson()],
         'bookmarks': [for (final bookmark in bookmarks) bookmark.toJson()],
-        'settings': settings.toJson(),
+        'settings': settings.withBridgeDefaults().toJson(),
         if (includesCredentials)
           'credentials': <String, dynamic>{
             for (final entry in credentials.entries)
@@ -191,13 +197,19 @@ class BackupPayload {
         decoded['includesCredentials'] as bool? ?? false;
     final includesKnownHosts = decoded['includesKnownHosts'] == true;
     return BackupPayload(
-      hosts: _list(decoded['hosts'], 'hosts', Host.fromJson),
+      // Whatever a file says, hosts land with AI access off; a backup (or
+      // one edited by hand) must not switch an assistant onto a server.
+      hosts: [
+        for (final host in _list(decoded['hosts'], 'hosts', Host.fromJson))
+          host.copyWith(aiAccess: HostAiAccess.off),
+      ],
       snippets: _list(decoded['snippets'], 'snippets', Snippet.fromJson),
       tunnels: _list(decoded['tunnels'], 'tunnels', TunnelProfile.fromJson),
       bookmarks:
           _list(decoded['bookmarks'], 'bookmarks', PathBookmark.fromJson),
       settings: switch (decoded['settings']) {
-        final Map<String, dynamic> json => AppSettings.fromJson(json),
+        final Map<String, dynamic> json =>
+          AppSettings.fromJson(json).withBridgeDefaults(),
         // Absent settings are not an error — a backup is still useful without
         // them, and AppSettings' own defaults are the sane fallback.
         _ => const AppSettings(),

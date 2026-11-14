@@ -31,6 +31,12 @@ class HostStore {
   /// [LinkedHashMap], so updating an existing key in place does not move it.
   final Map<String, Host> _hosts = {};
 
+  /// What the file holds as far as this store knows: the load, or the last
+  /// write that succeeded. A failed save puts back from here, not from what
+  /// memory held when that save was asked for, so two saves that both fail
+  /// cannot leave the first one's never-written host behind.
+  final Map<String, Host> _saved = {};
+
   final Random _random = Random.secure();
 
   Future<void>? _loading;
@@ -82,6 +88,9 @@ class HostStore {
       _hosts.clear();
       await setAsideUnreadable(_file);
     } finally {
+      _saved
+        ..clear()
+        ..addAll(_hosts);
       _loaded = true;
     }
   }
@@ -90,15 +99,19 @@ class HostStore {
 
   Future<void> _writeNow() async {
     final file = await _resolveFile();
+    final snapshot = Map<String, Host>.of(_hosts);
     final payload = <String, dynamic>{
       'version': 1,
-      'hosts': [for (final host in _hosts.values) host.toJson()],
+      'hosts': [for (final host in snapshot.values) host.toJson()],
     };
     await file.parent.create(recursive: true);
     await atomicWrite(
       file,
       (temp) => temp.writeAsString(jsonEncode(payload), flush: true),
     );
+    _saved
+      ..clear()
+      ..addAll(snapshot);
   }
 
   /// A fresh id for a new saved host: timestamp plus a random suffix, unique
@@ -123,17 +136,58 @@ class HostStore {
   }
 
   /// Adds a new saved host. [host.id] should come from [newId()].
+  ///
+  /// When the file cannot be written the host is not kept (see [update]).
   Future<void> add(Host host) async {
     await ensureLoaded();
     _hosts[host.id] = host;
-    await _persist();
+    await _persistOrPutBack(host);
   }
 
   /// Replaces an existing saved host, keeping its position in the list.
+  ///
+  /// When the file cannot be written, the host is put back as it was and
+  /// the error rethrown, so what this store serves (the host list, and what
+  /// the AI Bridge may read) never differs from the file: a change that held
+  /// only until the next start, such as a host taken out of AI access, would
+  /// otherwise come back silently.
   Future<void> update(Host host) async {
     await ensureLoaded();
     _hosts[host.id] = host;
-    await _persist();
+    await _persistOrPutBack(host);
+  }
+
+  /// Changes the saved host [id] by applying [change] to what the store
+  /// holds *now*, so a caller that is holding an older copy of the host (a
+  /// list built before the user changed something elsewhere, such as what
+  /// the AI Bridge may read) cannot write that older copy back over the
+  /// change. A no-op when the host is gone. Rolled back like [update].
+  Future<void> modify(String id, Host Function(Host current) change) async {
+    await ensureLoaded();
+    final current = _hosts[id];
+    if (current == null) return;
+    final next = change(current);
+    _hosts[id] = next;
+    await _persistOrPutBack(next);
+  }
+
+  /// Writes the file; if that fails, puts back what the file holds for
+  /// [written]'s id (or removes it when the file has none), unless something
+  /// else has replaced it meanwhile, and rethrows.
+  Future<void> _persistOrPutBack(Host written) async {
+    try {
+      await _persist();
+    } catch (_) {
+      if (identical(_hosts[written.id], written)) {
+        final onDisk = _saved[written.id];
+        if (onDisk == null) {
+          _hosts.remove(written.id);
+        } else {
+          _hosts[written.id] = onDisk;
+        }
+      }
+      rethrow;
+    }
   }
 
   /// Removes a saved host. A no-op if it is already gone.

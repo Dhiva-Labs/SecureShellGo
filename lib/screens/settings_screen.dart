@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import '../app_version.dart';
@@ -8,6 +9,10 @@ import '../models/app_settings.dart';
 import '../services/app_lock.dart';
 import '../services/app_lock_controller.dart';
 import '../services/backup_service.dart';
+import '../services/bridge/bridge_audit.dart';
+import '../services/bridge/bridge_cli_connector.dart';
+import '../services/bridge/bridge_client_store.dart';
+import '../services/bridge/bridge_service.dart';
 import '../services/host_store.dart';
 import '../services/known_hosts_service.dart';
 import '../services/settings_store.dart';
@@ -17,6 +22,7 @@ import '../theme.dart';
 import '../widgets/terminal_fonts.dart';
 import 'backup_screen.dart';
 import 'known_hosts_screen.dart';
+import 'settings/ai_bridge_section.dart';
 import 'settings/diagnostics_section.dart';
 import 'settings/editor_section.dart';
 import 'settings/input_section.dart';
@@ -44,6 +50,10 @@ class SettingsScreen extends StatefulWidget {
     this.hostStore,
     this.appLock,
     this.backupService,
+    this.bridge,
+    this.bridgeClients,
+    this.bridgeAudit,
+    this.claudeConnector,
   });
 
   final SettingsStore settingsStore;
@@ -56,6 +66,14 @@ class SettingsScreen extends StatefulWidget {
 
   /// Backs the "Backup" row.
   final BackupService? backupService;
+
+  /// The AI Bridge and the stores behind its screens. Built only on the
+  /// platforms that have it, so all three are null elsewhere and the section
+  /// is left out; a caller passes all of them or none.
+  final BridgeService? bridge;
+  final BridgeClientStore? bridgeClients;
+  final BridgeAuditLog? bridgeAudit;
+  final ClaudeCliConnector? claudeConnector;
 
   /// Backs the "Tunnels" row. Both this and [hostStore] are needed to open
   /// that screen at all — a tunnel is a profile plus the host that carries
@@ -99,11 +117,33 @@ class _SettingsScreenState extends State<SettingsScreen> {
   /// switches and the colour-scheme picker want both; the font slider calls
   /// [_previewFontSize] + [_persist] separately so dragging does not write to
   /// disk on every frame.
+  ///
+  /// A change to the AI Bridge settings that cannot be saved is undone, in the
+  /// store and on screen, and then rethrown for the section to report: a
+  /// bridge the user switched off must not come back on at the next start
+  /// because the file could not be written. Everything else keeps the
+  /// settings it was given, as before.
   Future<void> _apply(AppSettings Function(AppSettings current) change) async {
     final next = change(_settings);
+    final touchesBridge = _bridgeDiffers(_settings, next);
     setState(() => _settings = next);
-    await widget.settingsStore.save(next);
+    try {
+      await widget.settingsStore.save(next, revertOnFailure: touchesBridge);
+    } catch (_) {
+      if (touchesBridge && mounted) {
+        setState(() {
+          _settings = _settings.withBridgeFrom(widget.settingsStore.current);
+        });
+      }
+      rethrow;
+    }
   }
+
+  static bool _bridgeDiffers(AppSettings a, AppSettings b) =>
+      a.bridgeEnabled != b.bridgeEnabled ||
+      a.bridgeShowAddress != b.bridgeShowAddress ||
+      a.bridgeReadSensitivePaths != b.bridgeReadSensitivePaths ||
+      !listEquals(a.bridgeExtraBlockedPaths, b.bridgeExtraBlockedPaths);
 
   /// Which of a [UiStyle]'s two variants the style previews below — and the
   /// running app, once [ThemeBrightness.system] is chosen — should render
@@ -493,6 +533,20 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   onTap: _openBackup,
                 ),
               const Divider(height: 32),
+              if (widget.bridge != null &&
+                  widget.bridgeClients != null &&
+                  widget.bridgeAudit != null) ...[
+                AiBridgeSettingsSection(
+                  settings: _settings,
+                  apply: _apply,
+                  bridge: widget.bridge!,
+                  clients: widget.bridgeClients!,
+                  audit: widget.bridgeAudit!,
+                  hostStore: widget.hostStore,
+                  connector: widget.claudeConnector,
+                ),
+                const Divider(height: 32),
+              ],
               DiagnosticsSettingsSection(settings: _settings, apply: _apply),
               const Divider(height: 32),
               ListTile(

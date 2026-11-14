@@ -1,0 +1,11 @@
+{
+  "servers": {
+    "secureshellgo": {
+      "type": "stdio",
+      "command": "secureshellgo-mcp",
+      "env": {
+        "SSG_BRIDGE_TOKEN": "PASTE-TOKEN-HERE"
+      }
+    }
+  }
+}

@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 import 'dart:typed_data';
 
@@ -285,6 +286,59 @@ void main() {
       );
       expect(error.jumpHost.displayName, 'Bastion');
       expect(error.message, contains('jump host'));
+    });
+  });
+
+  group('a jump host whose credential lookup throws', () {
+    // The AI Bridge's lookup throws when the store needs a person. The hop's
+    // TCP socket is already open by then and must not be left behind.
+    test('closes the hop socket and passes the error on', () async {
+      final bastion = await ServerSocket.bind(InternetAddress.loopbackIPv4, 0);
+      addTearDown(bastion.close);
+      final hangup = Completer<void>();
+      bastion.listen((s) {
+        s.listen((_) {}, onDone: () {
+          if (!hangup.isCompleted) hangup.complete();
+        }, onError: (Object _) {
+          if (!hangup.isCompleted) hangup.complete();
+        });
+      });
+      final hop = Host(
+        id: 'bastion',
+        label: 'Bastion',
+        hostname: '127.0.0.1',
+        port: bastion.port,
+        username: 'nobody',
+        authMethod: SshAuthMethod.password,
+      );
+      final target = Host(
+        id: 'target',
+        label: 'Target',
+        hostname: '127.0.0.1',
+        port: 1,
+        username: 'nobody',
+        authMethod: SshAuthMethod.password,
+        jumpHostId: 'bastion',
+      );
+      final svc = SshService(
+        knownHosts: KnownHostsService(
+          file: File('${tempDir.path}/known_hosts.json'),
+        ),
+        jumpHosts: JumpHostResolver(
+          lookupHost: (id) async => id == 'bastion' ? hop : null,
+          loadCredentials: (_) async => throw StateError('sealed'),
+        ),
+      );
+      await expectLater(
+        svc.connect(
+          host: target,
+          credentials: const SshCredentials(password: 'x'),
+          verifyHostKey: (_) async => true,
+          timeout: const Duration(seconds: 5),
+        ),
+        throwsA(isA<StateError>()),
+      );
+      await hangup.future.timeout(const Duration(seconds: 5));
     });
   });
 

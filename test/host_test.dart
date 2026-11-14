@@ -1,5 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:secure_shell_go/models/host.dart';
+import 'package:secure_shell_go/models/host_ai_access.dart';
 
 void main() {
   const host = Host(
@@ -293,6 +294,49 @@ void main() {
       final cleared = all.withCertificate(null);
       expect(cleared.certificate, isNull);
       expect(cleared.toJson().containsKey('certificate'), isFalse);
+    });
+  });
+
+  group('Host.aiAccess', () {
+    test('defaults to off and is omitted from JSON', () {
+      expect(host.aiAccess, HostAiAccess.off);
+      expect(host.toJson().containsKey('aiAccess'), isFalse);
+    });
+
+    test('readOnly round-trips through JSON', () {
+      final on = host.copyWith(aiAccess: HostAiAccess.readOnly);
+      expect(on.toJson()['aiAccess'], 'readOnly');
+      expect(Host.fromJson(on.toJson()).aiAccess, HostAiAccess.readOnly);
+    });
+
+    test('absent, unknown or mistyped values read as off', () {
+      Host read(Object? value) => Host.fromJson({
+        'id': 'x',
+        'hostname': 'example.com',
+        'username': 'dev',
+        'aiAccess': value,
+      });
+      expect(read(null).aiAccess, HostAiAccess.off);
+      expect(read('readWrite').aiAccess, HostAiAccess.off);
+      expect(read(true).aiAccess, HostAiAccess.off);
+      expect(read(1).aiAccess, HostAiAccess.off);
+      expect(HostAiAccess.fromJson('off'), HostAiAccess.off);
+      expect(HostAiAccess.fromJson('readOnly'), HostAiAccess.readOnly);
+    });
+
+    test('copyWith can switch it off again and keeps other fields', () {
+      final on = host.copyWith(aiAccess: HostAiAccess.readOnly);
+      final off = on.copyWith(aiAccess: HostAiAccess.off);
+      expect(off.aiAccess, HostAiAccess.off);
+      expect(off.label, host.label);
+      expect(on.copyWith(label: 'Other').aiAccess, HostAiAccess.readOnly);
+    });
+
+    test('survives the helpers that rebuild a host field by field', () {
+      final on = host.copyWith(aiAccess: HostAiAccess.readOnly);
+      expect(on.withGroup(null).aiAccess, HostAiAccess.readOnly);
+      expect(on.withJumpHost('j').aiAccess, HostAiAccess.readOnly);
+      expect(on.withCertificate('cert').aiAccess, HostAiAccess.readOnly);
     });
   });
 }

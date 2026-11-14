@@ -77,6 +77,12 @@ if [ -n "${LICENSE_FILE:-}" ]; then
 fi
 # Whatever umask built the tree, ship world-readable, root-writable modes.
 chmod -R u+rwX,go+rX,go-w "$tree"
+# A second program the package must carry (distro.conf), checked here so a
+# tree without it fails the build instead of shipping.
+if [ -n "${LAUNCHER_FILE:-}" ] && [ ! -x "$tree/$LAUNCHER_FILE" ]; then
+  echo "LAUNCHER_FILE $LAUNCHER_FILE is not an executable in the tree" >&2
+  exit 1
+fi
 
 # --- 2. Runtime dependencies ------------------------------------------------
 # rpm: every shared library the ELF files need that the package does not ship
@@ -130,6 +136,10 @@ mapfile -t rpm_requires < <(printf '%s\n' "${rpm_requires[@]}" | sed '/^$/d' | s
 arch_depends=("${ARCH_DEPENDS[@]}")
 
 # --- 3. nfpm config ---------------------------------------------------------
+# nfpm writes every file exactly as it is in the tree: it never strips, and
+# neither rpm nor pacman strips on install. That matters for binaries made
+# with `dart compile exe` (the AI Bridge launcher), which carry their program
+# appended to the ELF file, where strip would cut it off.
 q() { printf "'%s'" "${1//\'/\'\'}"; }   # YAML single-quoted scalar
 
 # $1: full | short. Arch shows pkgdesc as one line, so it gets the summary
@@ -278,6 +288,9 @@ if [ "${APPIMAGE:-0}" = 1 ]; then
     echo 'export XDG_DATA_DIRS="$here/usr/share:${XDG_DATA_DIRS:-/usr/local/share:/usr/share}"'
     # Extra environment the .deb's /usr/bin launcher sets, if any.
     if [ -n "${APPRUN_ENV:-}" ]; then printf '%s\n' "$APPRUN_ENV"; fi
+    # Lines that may exec something else instead of EXEC (distro.conf
+    # explains when); they can use $here.
+    if [ -n "${APPRUN_PRE_EXEC:-}" ]; then printf '%s\n' "$APPRUN_PRE_EXEC"; fi
     echo "exec \"\$here/$EXEC\" \"\$@\""
   } > "$appdir/AppRun"
   chmod 0755 "$appdir/AppRun"

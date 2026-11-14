@@ -112,6 +112,12 @@ jobs:
       - name: Build Linux release
         run: flutter build linux --release
 
+      # The AI Bridge launcher, placed beside the app executable. The script
+      # explains why this is not a plain `dart compile exe`. It compiles for
+      # the CPU of the runner, like the Flutter build above.
+      - name: Build the AI Bridge launcher
+        run: sh tool/build_launcher.sh "$BUNDLE/secureshellgo-mcp"
+
       # Every ELF file in a bundle must be the CPU of the runner: an x64
       # binary that ends up in the arm64 archive (or the reverse) would
       # install fine and then not start.
@@ -121,7 +127,7 @@ jobs:
             x64) machine="x86-64" ;;
             arm64) machine="ARM aarch64" ;;
           esac
-          for f in secure_shell_go lib/libapp.so lib/libflutter_linux_gtk.so; do
+          for f in secure_shell_go secureshellgo-mcp lib/libapp.so lib/libflutter_linux_gtk.so; do
             [ -f "$BUNDLE/$f" ] || { echo "::error::missing $BUNDLE/$f"; exit 1; }
           done
           checked=0
@@ -137,7 +143,7 @@ jobs:
             esac
           done < <(find "$BUNDLE" -type f -print0)
           echo "checked $checked ELF files"
-          [ "$checked" -ge 3 ] && [ "$bad" -eq 0 ]
+          [ "$checked" -ge 4 ] && [ "$bad" -eq 0 ]
 
       - name: Package bundle
         run: |
@@ -154,9 +160,29 @@ jobs:
           ls -l "SecureShellGo-linux-$ARCH.tar.gz"
           mkdir "$RUNNER_TEMP/tarball"
           tar -xzf "SecureShellGo-linux-$ARCH.tar.gz" -C "$RUNNER_TEMP/tarball"
-          for f in secure_shell_go lib/libapp.so lib/libflutter_linux_gtk.so; do
+          for f in secure_shell_go secureshellgo-mcp lib/libapp.so lib/libflutter_linux_gtk.so; do
             file "$RUNNER_TEMP/tarball/SecureShellGo-linux-$ARCH/$f" | tee /dev/stderr | grep "$machine"
           done
+
+      # The app is not running here, so the launcher cannot reach it. What it
+      # must do then is answer the request on its stdin with a JSON-RPC
+      # error, so the assistant that started it can show the reason, and exit
+      # 1 when stdin closes. SSG_BRIDGE_DIR points at an empty folder so the
+      # result does not depend on the runner's home.
+      - name: Smoke-run the launcher from the archive
+        run: |
+          launcher="$RUNNER_TEMP/tarball/SecureShellGo-linux-$ARCH/secureshellgo-mcp"
+          mkdir "$RUNNER_TEMP/launcher-bridge"
+          code=0
+          out="$(printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}' \
+            | SSG_BRIDGE_DIR="$RUNNER_TEMP/launcher-bridge" SSG_BRIDGE_TOKEN=ci-token "$launcher")" || code=$?
+          echo "exit code $code"
+          echo "stdout: $out"
+          [ "$code" -eq 1 ] || { echo "::error::launcher exited $code, expected 1"; exit 1; }
+          case "$out" in
+            *'"jsonrpc":"2.0"'*'"error"'*) ;;
+            *) echo "::error::launcher did not answer with a JSON-RPC error"; exit 1 ;;
+          esac
 
       # Starts the app from the archive under Xvfb with an empty home. The
       # native runner shows the window only after Flutter has drawn its first
@@ -260,6 +286,12 @@ jobs:
       - name: Build Windows release
         run: flutter build windows --release
 
+      # The AI Bridge launcher, placed beside the app executable. The script
+      # explains why this is not a plain `dart compile exe`. Dart compiles
+      # for the architecture of the runner, like the Flutter build above.
+      - name: Build the AI Bridge launcher
+        run: .\tool\build_launcher.ps1 "$env:RELEASE_DIR\secureshellgo-mcp.exe"
+
       - name: Assert every PE file is ${{ matrix.pe_machine }}
         run: |
           function Get-PeMachine([string]$Path) {
@@ -274,8 +306,8 @@ jobs:
           }
           $expected = [Convert]::ToUInt16($env:PE_MACHINE, 16)
           $files = Get-ChildItem -Path $env:RELEASE_DIR -Recurse -File -Include *.exe, *.dll
-          if (-not ($files.Name -contains 'secure_shell_go.exe') -or -not ($files.Name -contains 'flutter_windows.dll')) {
-            throw "secure_shell_go.exe or flutter_windows.dll missing from $env:RELEASE_DIR"
+          if (-not ($files.Name -contains 'secure_shell_go.exe') -or -not ($files.Name -contains 'secureshellgo-mcp.exe') -or -not ($files.Name -contains 'flutter_windows.dll')) {
+            throw "secure_shell_go.exe, secureshellgo-mcp.exe or flutter_windows.dll missing from $env:RELEASE_DIR"
           }
           $bad = 0
           foreach ($f in $files) {
@@ -346,14 +378,41 @@ jobs:
           $name = "SecureShellGo-windows-$env:ARCH"
           $zip = [IO.Compression.ZipFile]::OpenRead((Resolve-Path "$name.zip"))
           try {
-            $entry = $zip.GetEntry("$name/secure_shell_go.exe")
-            if (-not $entry) { throw "$name/secure_shell_go.exe not in the zip" }
-            $tmp = Join-Path $env:RUNNER_TEMP 'zip_secure_shell_go.exe'
-            [IO.Compression.ZipFileExtensions]::ExtractToFile($entry, $tmp, $true)
-            $m = Get-PeMachine $tmp
-            'zip: {0} entries, secure_shell_go.exe 0x{1:X4}' -f $zip.Entries.Count, $m
-            if ($m -ne [Convert]::ToUInt16($env:PE_MACHINE, 16)) { throw 'zip holds the wrong architecture' }
+            foreach ($exe in 'secure_shell_go.exe', 'secureshellgo-mcp.exe') {
+              $entry = $zip.GetEntry("$name/$exe")
+              if (-not $entry) { throw "$name/$exe not in the zip" }
+              # Kept for the launcher smoke step below.
+              $tmp = Join-Path $env:RUNNER_TEMP "zip_$exe"
+              [IO.Compression.ZipFileExtensions]::ExtractToFile($entry, $tmp, $true)
+              $m = Get-PeMachine $tmp
+              'zip: {0} entries, {1} 0x{2:X4}' -f $zip.Entries.Count, $exe, $m
+              if ($m -ne [Convert]::ToUInt16($env:PE_MACHINE, 16)) { throw "zip holds the wrong architecture for $exe" }
+            }
           } finally { $zip.Dispose() }
+
+      # The app is not running here, so the launcher cannot reach it. What it
+      # must do then is answer the request on its stdin with a JSON-RPC
+      # error, so the assistant that started it can show the reason, and exit
+      # 1 when stdin closes. SSG_BRIDGE_DIR points at an empty folder so the
+      # result does not depend on the runner's profile.
+      - name: Smoke-run the launcher from the archive
+        run: |
+          $bridgeDir = Join-Path $env:RUNNER_TEMP 'launcher-bridge'
+          New-Item -ItemType Directory -Force -Path $bridgeDir | Out-Null
+          $env:SSG_BRIDGE_DIR = $bridgeDir
+          $env:SSG_BRIDGE_TOKEN = 'ci-token'
+          $errFile = Join-Path $env:RUNNER_TEMP 'launcher.err'
+          $out = '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}' |
+            & (Join-Path $env:RUNNER_TEMP 'zip_secureshellgo-mcp.exe') 2> $errFile
+          $code = $LASTEXITCODE
+          "exit code $code"
+          "stdout: $out"
+          "stderr: $(Get-Content -Raw $errFile)"
+          if ($code -ne 1) { throw "launcher exited $code, expected 1" }
+          if ("$out" -notmatch '"jsonrpc":"2.0".*"error"') { throw 'launcher did not answer with a JSON-RPC error' }
+          # The runner ends a pwsh step with `exit $LASTEXITCODE`, which is
+          # still the launcher's expected 1 here.
+          exit 0
 
       - name: Upload artifact
         uses: actions/upload-artifact@v7
@@ -457,10 +516,11 @@ jobs:
             *) echo "::error::unexpected snap file name $SNAP_FILE"; exit 1 ;;
           esac
           command -v unsquashfs > /dev/null || sudo apt-get install -y squashfs-tools
-          unsquashfs -q -d "$RUNNER_TEMP/snap" "$SNAP_FILE" meta/snap.yaml secure_shell_go
+          unsquashfs -q -d "$RUNNER_TEMP/snap" "$SNAP_FILE" meta/snap.yaml secure_shell_go secureshellgo-mcp
           sed -n '/^architectures:/,/^[a-z]/p' "$RUNNER_TEMP/snap/meta/snap.yaml"
           grep -qx -- '- ${{ matrix.arch }}' "$RUNNER_TEMP/snap/meta/snap.yaml"
           file "$RUNNER_TEMP/snap/secure_shell_go" | tee /dev/stderr | grep -q "$ELF_MACHINE"
+          file "$RUNNER_TEMP/snap/secureshellgo-mcp" | tee /dev/stderr | grep -q "$ELF_MACHINE"
 
       # The snap is strictly confined, so a bundle that looks right can still
       # fail to start (missing library, denied access). Install the snap that
@@ -520,6 +580,24 @@ jobs:
           # no window maps. Software GL is what a GPU-less machine uses anyway.
           LIBGL_ALWAYS_SOFTWARE=1 xvfb-run -a -s "-screen 0 1280x800x24 -ac +extension GLX" bash "$RUNNER_TEMP/snap-smoke.sh"
 
+      # The launcher app, confined, with the app not running (and its bridge
+      # off by default): it must start, find no endpoint in the snap's data
+      # directory, answer with a JSON-RPC error and exit 1. This proves the
+      # binary survived the snap build and runs under the mcp app's (empty)
+      # plugs; reaching a running app is a release-checklist item.
+      - name: Smoke-run secureshellgo.mcp confined
+        run: |
+          code=0
+          out="$(printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}' \
+            | SSG_BRIDGE_TOKEN=ci-token snap run secureshellgo.mcp)" || code=$?
+          echo "exit code $code"
+          echo "stdout: $out"
+          [ "$code" -eq 1 ] || { echo "::error::secureshellgo.mcp exited $code, expected 1"; exit 1; }
+          case "$out" in
+            *'"jsonrpc":"2.0"'*'"error"'*) ;;
+            *) echo "::error::secureshellgo.mcp did not answer with a JSON-RPC error"; exit 1 ;;
+          esac
+
       # Not published from here: the Snap Store upload is done by hand.
 
   # The .rpm (Fedora, RHEL, openSUSE), the Arch package and the AppImage. The
@@ -530,7 +608,11 @@ jobs:
   # there under Xvfb until the window and the data folder appear: the .rpm on
   # Fedora and openSUSE Tumbleweed, the Arch package on Arch (x64 only: Arch
   # has no official arm64 image, so the arm64 package gets a static check),
-  # the AppImage on Fedora.
+  # the AppImage on Fedora. Each also carries the AI Bridge launcher from the
+  # archive, never stripped (nfpm copies files as they are); verify.sh runs
+  # it in each container the way the app tells an assistant to: the
+  # /usr/bin/secureshellgo-mcp wrapper for the .rpm and Arch package, the
+  # .AppImage file itself for the AppImage.
   distros:
     name: Other distros ${{ matrix.arch }}
     needs: build-linux
@@ -751,12 +833,47 @@ jobs:
         run: |
           flatpak run --command=bash "$APP_ID" -c '
             missing=0
-            for f in /app/lib/secureshellgo/secure_shell_go /app/lib/secureshellgo/lib/*.so; do
+            for f in /app/lib/secureshellgo/secure_shell_go /app/lib/secureshellgo/secureshellgo-mcp /app/lib/secureshellgo/lib/*.so; do
               out="$(LD_LIBRARY_PATH=/app/lib/secureshellgo/lib ldd "$f")" || { echo "ldd failed on $f"; missing=1; continue; }
               if printf "%s\n" "$out" | grep "not found"; then echo "  in $f"; missing=1; fi
               echo "$f: ok"
             done
             [ "$missing" = 0 ]'
+
+      # The AI Bridge launcher, both ways an assistant can start it, with the
+      # app not running: the host command Flatpak exports for the app (what
+      # the app shows; its main command hands over to the launcher when
+      # SSG_BRIDGE_TOKEN is set and stdin is not a terminal) and `flatpak run
+      # --command=secureshellgo-mcp`. Each must answer the request with a
+      # JSON-RPC error and exit 1, which also proves flatpak-builder did not
+      # strip it. The bridge directory is the sandbox's own, empty here.
+      - name: Smoke-run the launcher in the sandbox
+        timeout-minutes: 5
+        run: |
+          if [ -z "${XDG_RUNTIME_DIR:-}" ]; then
+            export XDG_RUNTIME_DIR="$RUNNER_TEMP/xdg-runtime"
+            mkdir -p -m 0700 "$XDG_RUNTIME_DIR"
+          fi
+          exported="$HOME/.local/share/flatpak/exports/bin/$APP_ID"
+          ls -l "$exported"
+          bad=0
+          for how in exported command; do
+            case "$how" in
+              exported) cmd=("$exported") ;;
+              command) cmd=(flatpak run --command=secureshellgo-mcp "$APP_ID") ;;
+            esac
+            code=0
+            out="$(printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}' \
+              | SSG_BRIDGE_TOKEN=ci-token dbus-run-session -- "${cmd[@]}")" || code=$?
+            echo "${cmd[*]}: exit code $code"
+            echo "stdout: $out"
+            [ "$code" -eq 1 ] || { echo "::error::${cmd[*]} exited $code, expected 1"; bad=1; }
+            case "$out" in
+              *'"jsonrpc":"2.0"'*'"error"'*) ;;
+              *) echo "::error::${cmd[*]} did not answer with a JSON-RPC error"; bad=1 ;;
+            esac
+          done
+          [ "$bad" -eq 0 ]
 
       - name: Run the sandboxed app (Xvfb)
         timeout-minutes: 5

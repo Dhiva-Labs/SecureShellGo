@@ -878,7 +878,15 @@ class SshService {
     required Duration timeout,
   }) async {
     final resolver = jumpHosts!;
-    final credentials = await resolver.loadCredentials(hop.id);
+    final SshCredentials? credentials;
+    try {
+      credentials = await resolver.loadCredentials(hop.id);
+    } catch (_) {
+      // A lookup that cannot answer without a person (the AI Bridge's) says
+      // so by throwing; the hop's socket is ours to close either way.
+      socket.destroy();
+      rethrow;
+    }
     if (credentials == null) {
       socket.destroy();
       throw JumpHostAuthException(

@@ -1,6 +1,7 @@
 import 'dart:typed_data';
 
 import '../models/host.dart';
+import '../models/host_ai_access.dart';
 import '../models/known_host.dart';
 import '../models/path_bookmark.dart';
 import 'backup_crypto.dart';
@@ -151,7 +152,7 @@ class BackupService {
       snippets: snippets,
       tunnels: tunnels,
       bookmarks: bookmarks,
-      settings: settingsStore.current,
+      settings: settingsStore.current.withBridgeDefaults(),
       includesCredentials: includeCredentials,
       credentials: credentials,
       includesKnownHosts: withKnownHosts,
@@ -235,20 +236,25 @@ class BackupService {
     required ImportMode mode,
     bool trustKnownHosts = false,
   }) async {
+    // A payload built in code rather than decoded still must not carry AI
+    // access or bridge settings in; decode already guarantees it for files.
     final existingHosts = await hostStore.all();
     final existingHostIds = {for (final h in existingHosts) h.id};
-    final importedHostIds = {for (final h in payload.hosts) h.id};
+    final importedHosts = [
+      for (final h in payload.hosts) h.copyWith(aiAccess: HostAiAccess.off),
+    ];
+    final importedHostIds = {for (final h in importedHosts) h.id};
 
     // Assembled in full before a single write, so that whatever this method
     // is going to put on disk is already decided by the time it starts.
     final List<Host> nextHosts;
     final List<PathBookmark> nextBookmarks;
     if (mode == ImportMode.replace) {
-      nextHosts = payload.hosts;
+      nextHosts = importedHosts;
       nextBookmarks = payload.bookmarks;
     } else {
       final merged = {for (final h in existingHosts) h.id: h};
-      for (final host in payload.hosts) {
+      for (final host in importedHosts) {
         merged[host.id] = host;
       }
       nextHosts = merged.values.toList(growable: false);
@@ -280,7 +286,11 @@ class BackupService {
 
     await hostStore.replaceAll(nextHosts);
     await snippetStore.replaceAll(nextSnippets);
-    await settingsStore.save(payload.settings);
+    // The file's settings win, except the bridge ones: those are this
+    // device's own decision and stay exactly as they are.
+    await settingsStore.ensureLoaded();
+    await settingsStore
+        .save(payload.settings.withBridgeFrom(settingsStore.current));
 
     // Tunnels: no bulk write available on TunnelStore (see the class doc), so
     // the old set is cleared and the new one added row by row.

@@ -1,6 +1,6 @@
 # Privacy Policy — SecureShell Go
 
-**Effective date:** 21 October 2026
+**Effective date:** 14 November 2026
 **Applies to:** SecureShell Go 1.5 and later, published by Dhiva Labs, on
 Android (Google Play, `com.dhivalabs.secure_shell_go`), Windows (Microsoft
 Store and the `.zip` builds on GitHub) and Linux (Snap Store, the Launchpad
@@ -22,6 +22,11 @@ Data Protection, or your Linux desktop keyring.
 
 A backup or a diagnostics log leaves your device only if you save it or copy
 it somewhere yourself.
+
+On Linux and Windows there is an optional AI Bridge, off until you switch it
+on. If you do, an AI assistant on your own computer can read from the servers
+you choose. The app gives what it reads to that assistant, which sends it to
+its own provider. Dhiva Labs receives nothing. See "The AI Bridge" below.
 
 ## Who is responsible
 
@@ -70,13 +75,15 @@ Those files are:
 
 | File | What is in it |
 | --- | --- |
-| `hosts.json` | Your saved servers: the name you gave each one, its address, port and user name, the sign-in method, group, colour, jump host, startup command, terminal connection (SSH or Mosh), whether to keep the shell in tmux or screen, the agent forwarding, X11 forwarding and legacy-algorithm switches, an SSH certificate if you added one (certificates are public), and when you last connected. No passwords or private keys. |
+| `hosts.json` | Your saved servers: the name you gave each one, its address, port and user name, the sign-in method, group, colour, jump host, startup command, terminal connection (SSH or Mosh), whether to keep the shell in tmux or screen, the agent forwarding, X11 forwarding and legacy-algorithm switches, an SSH certificate if you added one (certificates are public), whether AI access is on (Windows and Linux), and when you last connected. No passwords or private keys. |
 | `known_hosts.json` | The host keys you have trusted: server address, port, key type, fingerprint, and when you trusted it. Fingerprints are public information. The file is sealed with an HMAC whose key is kept in protected storage, so tampering is detected. |
-| `settings.json` | Your preferences: appearance, terminal and editor options, keyboard, app lock, diagnostics log on or off. |
+| `settings.json` | Your preferences: appearance, terminal and editor options, keyboard, app lock, diagnostics log on or off, and the AI Bridge settings (Windows and Linux). |
 | `snippets.json`, `tunnels.json`, `bookmarks.json` | Your command snippets, saved port forwards, and folder bookmarks. |
 | `server_jobs.json` | Server-to-server copies that are still running on a server: which servers, which paths, and when they started. An entry is removed once the app has seen the copy finish. |
 | `secure_storage_state.json` | Whether a system keyring has ever worked on this device. No secrets. |
 | `diagnostics.log` | Only if you turn on the diagnostics log. See below. |
+| `bridge_clients.json` | Windows and Linux only, only if you pair an AI assistant: the name you gave each one, a one-way hash of its token (not the token), and when it was paired and last connected. |
+| `bridge/` folder | Windows and Linux only, once the AI Bridge has been switched on: `audit.log` and `audit.log.1` (the activity log), and, while the bridge is on, `endpoint.json` saying how the launcher reaches the app, plus the socket `bridge.sock` on Linux. See "The AI Bridge" below. |
 
 ### Passwords, private keys and passphrases
 
@@ -137,6 +144,10 @@ When you import a backup that has host keys in it, you see each new server
 and its fingerprint, and they are trusted only if you tick "Trust these
 keys". Keys this device already trusts are never replaced by a backup.
 
+A backup never contains AI Bridge settings, AI access or paired assistants,
+and importing one never switches the AI Bridge on or gives a server AI
+access.
+
 ### Session logs
 
 If you choose **Record session log…** in a session's menu, everything that
@@ -191,6 +202,16 @@ traffic is disabled. These are all the connections it makes:
    `xauth` to give each forwarded program its own cookie where your display
    supports it.
 
+6. **Your own AI assistant, on the same computer** (Windows and Linux only,
+   only if you switch on the AI Bridge). A launcher program started by the
+   assistant connects to the app over a local channel: on Linux a socket file
+   only your user account can open; on Windows a port on `127.0.0.1`, where
+   the app first proves it holds a secret written for this launch, and the
+   launcher then sends the assistant's token. Nothing listens on your
+   network. If you press "Connect Claude Code", the app also runs the
+   `claude` program you installed, at your request. See "The AI Bridge"
+   below.
+
 Nothing else. In particular:
 
 - **Links in the terminal.** When you click or tap an `http` or `https`
@@ -239,6 +260,143 @@ keys leaving your device:
 - Closing a Mosh tab ends its `mosh-server`. A `mosh-server` started for a
   connection that never got through is stopped again.
 
+## The AI Bridge (Windows and Linux only)
+
+It is not available on Android or macOS: those apps never start it, and no
+launcher ships with them.
+
+**What it is.** An optional feature that lets an MCP-compatible AI assistant
+that you run on your own computer read from your servers, through
+SecureShell Go. It is **off by default**. It does nothing until you switch on
+**Settings → AI Bridge** (the app explains what it does and asks you to
+confirm every time you switch it on), pair an assistant with **Connect an
+assistant** (which shows you a token, once), and switch on "AI access
+(read-only)" for each server you want it to see.
+
+**What an assistant can do.** List the servers you shared, by name; read
+server stats; list services; read the end of a log; list folders; read text
+files; and search for files by name. It cannot run commands, write files or
+change anything. It is never given passwords, private keys or passphrases.
+By default it is not given a server's address, port or user name either
+("Show address and username" is off), and those are also removed from the
+error messages it gets. Common secret locations (`~/.ssh`, `.env` files, key
+files, shell histories, `/etc/shadow`, cloud and package-registry credential
+files, and more) are blocked from reading and left out of folder listings,
+and you can block more under "Extra blocked paths". Private keys and secrets
+the app knows are removed from what it reads, and one call returns at most
+64 KiB. While the app is locked, the bridge refuses everything. Switching the
+bridge off, or revoking an assistant, stops its calls in progress, and
+nothing they found is passed on.
+
+**Signing in.** The bridge signs in to a server with what you saved for it,
+without asking you anything: SecureShell Go never shows a prompt for a bridge
+call. If a server would need you (a locked vault, a password or passphrase
+that is not saved, a question at login, a host key you have not checked yet),
+the call fails, and the assistant is told to ask you to connect to it once in
+SecureShell Go. Software outside the app can still ask you something while
+the bridge signs in: your SSH agent may ask you to confirm a key's use or
+touch a hardware key, and your desktop keyring may show its own unlock
+dialog.
+
+**Connect Claude Code starts another program on your computer.** On Windows
+and Linux, not in the snap (which cannot start other programs, and where the
+app does not even look), the app can run the `claude` command-line program you
+have installed. It does so in two steps, and only at your request.
+
+- *Looking, which runs nothing.* Opening Settings, or pressing "Check again",
+  never runs a program. The app only checks whether a file named `claude`
+  exists on your `PATH`, in `~/.local/bin` or in `~/.claude/local` (on
+  Windows: on the `PATH` with its executable extensions, and
+  `%USERPROFILE%\.local\bin\claude.exe`).
+- *Showing you what it found, which changes nothing.* When you press
+  **Connect Claude Code**, the app runs that program with `--version` and
+  with `plugin marketplace list --json` (10 seconds each) so it can show you
+  its full path, its version and where its plugin would be loaded from (a
+  warning if that is not the published SecureShell Go plugin on GitHub). If a
+  found file does not answer the version check, the next one is tried. This
+  happens before the confirmation, and Cancel then leaves everything as it was.
+- *Setting up, only after you press **Connect** on the confirmation.* The app
+  runs, in order: `plugin marketplace list --json`; `plugin marketplace add
+  Dhiva-Labs/SecureShellGo` only if that source is not already there; `plugin
+  install secureshellgo@dhiva-labs`; `plugin configure
+  secureshellgo@dhiva-labs --values-stdin`; and `plugin configure
+  secureshellgo@dhiva-labs --json` to check the token was saved (90 seconds
+  each). It runs only a local file named `claude`, with these fixed arguments.
+
+The pairing token is handed to that program on its standard input, in the
+`--values-stdin` step only: not on the command line, in an environment
+variable, on screen, on the clipboard or in a log. That program is yours, not
+ours: what it does with the token afterwards (it keeps it in its own plugin
+settings), and what it contacts to install the plugin (the plugin comes from
+GitHub), is governed by its own terms and privacy policy. If a step fails, the
+app revokes the pairing it just made. Until the setup is confirmed that
+pairing cannot be used, and one left behind because the app was closed
+part way is removed the next time the app starts. **Nothing is sent to Dhiva Labs.** The
+manual route (pasting commands into a terminal) never has the app run
+anything; there the token lands in your shell's history file until you delete
+that line.
+
+On Linux the app also runs the system's `chmod` on its own bridge files, to
+make them readable only by your user account: the file of paired assistants,
+the connection file and socket, and a newly created activity log.
+
+**What leaves your device, and to whom.** The app gives the result of each
+call only to the AI client you paired, on the same computer, through the
+launcher program that client starts. Nothing listens on your network. That
+client then sends what it received to its own provider, under that
+provider's terms and privacy policy, as part of your conversation. **Dhiva
+Labs receives nothing**: there is no Dhiva Labs server involved, and the app
+itself connects only to the servers you configured and to the launcher on
+your computer. But your AI provider does receive what the assistant reads,
+so share only servers and files you are happy to send there.
+
+**Limits you should know.**
+
+- The blocked-path list is a default set, not a guarantee that no secret on
+  a server can be read; for a hard guarantee, use a server account with
+  limited read rights.
+- Text on a server, such as a log line or a file, can contain instructions
+  aimed at the assistant.
+- The token is stored in the assistant's configuration on your computer.
+  Anyone who has it can read from the servers you shared while the app is
+  running with the bridge on and unlocked. Revoking the assistant stops the
+  token at once.
+- On Windows the launcher reaches the app over a port on `127.0.0.1`. The app
+  must first prove it holds a secret written for this launch in your
+  profile; only then does the launcher send the token, unencrypted, over
+  that local connection. Programs running under your own account can read
+  the token anyway.
+
+**Where it is stored, and how to delete it.**
+
+- **Paired assistants** are in `bridge_clients.json` in the data folder: the
+  name you gave each one, a one-way hash of its token (never the token), when
+  it was paired and when it last connected. Revoke an assistant under
+  Settings → AI Bridge → Paired assistants and its entry is deleted and its
+  token stops working.
+- **The activity log** is `audit.log` (and one older file, `audit.log.1`) in
+  the `bridge` folder of the data folder. Each entry has the time, the
+  assistant's name, the server name it asked for, the tool, the arguments
+  (with private keys and known secrets removed, cut to 500 characters), the
+  outcome (OK, refused or error) with the refusal code or error message, and
+  how long it took. It never holds what was read. The file is created so that only your user
+  account can read it. It keeps about 512 KB plus
+  the older file, and the oldest entries are dropped. Open it under Settings
+  → AI Bridge → Activity; Clear deletes both files. It is never sent
+  anywhere.
+- **While the bridge is on**, the `bridge` folder also holds `endpoint.json`,
+  which tells the launcher how to reach the app (on Windows, a port and the
+  secret for this launch), and on Linux the socket `bridge.sock` (or
+  `secureshellgo-bridge.sock` in your private runtime folder when the data
+  folder's path is too long). Both are removed when the bridge stops.
+- **Your bridge choices** are in `settings.json`, and whether each server has
+  AI access is in `hosts.json`.
+- **Backups** never contain AI access, bridge settings or paired assistants.
+  A server imported from a backup always has AI access off, and importing a
+  backup keeps this device's own bridge settings.
+- Turning the bridge off stops it listening at once. Deleting the data folder
+  removes all of the above.
+
 ## Files on your device
 
 - **Downloads** from a server go to the shared Downloads collection on
@@ -278,6 +436,8 @@ of screenshots and out of the recent-apps preview.
 - **App lock on Windows** uses Windows Hello (your PIN, fingerprint or face).
   Windows shows the prompt, and the app learns only whether you passed. App
   lock is not available on Linux or macOS.
+- **The AI Bridge** is available on Windows and Linux only. The macOS app
+  never starts it.
 - **The Linux snap** reaches your keyring through the
   `password-manager-service` interface, which snapd does not connect
   automatically (`sudo snap connect secureshellgo:password-manager-service`).
@@ -305,6 +465,10 @@ children, and it collects no data from anyone, including children.
 - **Forget a trusted host key** from the host's menu or Settings → Known
   hosts, the equivalent of `ssh-keygen -R`.
 - **Diagnostics log:** clear it in Settings, or turn it off to delete it.
+- **AI Bridge:** switch it off in Settings → AI Bridge, revoke any paired
+  assistant under Paired assistants, and clear the log under Activity.
+  Switch off "AI access (read-only)" on a server to take that server away
+  from every assistant.
 - **Uninstall.** On Android, uninstalling removes everything the app stored,
   including the Keystore key. On a computer, uninstalling removes the
   program. Delete the data folder listed above to remove its data as well.

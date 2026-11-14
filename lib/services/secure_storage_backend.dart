@@ -29,6 +29,54 @@ abstract class SecureStorageBackend {
   Future<void> delete(String key);
 }
 
+/// A backend whose [SecureStorageBackend.read] can stop to ask a person —
+/// the credential vault's passphrase — and which can also read without
+/// asking. Its own interface, rather than a method on the seam, so the many
+/// test fakes that `implements SecureStorageBackend` do not all have to grow
+/// it; [readSecureStorageQuietly] picks it up where it exists.
+abstract interface class QuietSecureStorageRead {
+  /// Like `read`, but never asks anyone. Returns null when nothing is saved
+  /// under [key]; throws [SecureStorageSealed] when the store is there but
+  /// cannot be opened without a person.
+  Future<String?> readQuiet(String key);
+}
+
+/// Why a quiet read could not see the store.
+enum SecureStorageSealedKind {
+  /// The credential vault is sealed with a passphrase nobody typed yet.
+  vault,
+
+  /// The system keyring this install uses is locked or not answering.
+  keyring,
+}
+
+/// Thrown by [QuietSecureStorageRead.readQuiet]: a secret may be stored, but
+/// reaching it needs a person. Distinct from "nothing saved", so a caller
+/// with nobody to ask (the AI Bridge) can say "open the app once" instead of
+/// "no saved password".
+class SecureStorageSealed implements Exception {
+  const SecureStorageSealed(this.kind);
+
+  final SecureStorageSealedKind kind;
+
+  @override
+  String toString() => switch (kind) {
+    SecureStorageSealedKind.vault => 'The credential vault is locked.',
+    SecureStorageSealedKind.keyring =>
+      'The system keyring could not be reached or unlocked.',
+  };
+}
+
+/// [key] from [backend] without ever prompting: the backend's quiet read
+/// where it has one, else its ordinary read, which for every other backend
+/// never prompts in the first place.
+Future<String?> readSecureStorageQuietly(
+  SecureStorageBackend backend,
+  String key,
+) => backend is QuietSecureStorageRead
+    ? (backend as QuietSecureStorageRead).readQuiet(key)
+    : backend.read(key);
+
 /// Thrown by [FlutterSecureStorageBackend.write] when the platform could not
 /// protect the secret — a locked or absent Linux keyring being the case this
 /// project treats as certain rather than hypothetical: a headless box, a

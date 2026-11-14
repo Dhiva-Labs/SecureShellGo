@@ -343,4 +343,128 @@ void main() {
       expect(store.current.terminalFontSize, 15);
     });
   });
+
+  group('the bridge settings', () {
+    test('default to off, empty, and are omitted from JSON', () {
+      const settings = AppSettings();
+      expect(settings.bridgeEnabled, isFalse);
+      expect(settings.bridgeShowAddress, isFalse);
+      expect(settings.bridgeReadSensitivePaths, isFalse);
+      expect(settings.bridgeExtraBlockedPaths, isEmpty);
+      expect(
+        settings.toJson().keys.where((k) => k.startsWith('bridge')),
+        isEmpty,
+      );
+    });
+
+    test('a settings.json from before 1.6 reads as bridge off', () {
+      final restored = AppSettings.fromJson(const {'terminalFontSize': 16});
+      expect(restored.bridgeEnabled, isFalse);
+      expect(restored.bridgeShowAddress, isFalse);
+      expect(restored.bridgeReadSensitivePaths, isFalse);
+      expect(restored.bridgeExtraBlockedPaths, isEmpty);
+    });
+
+    test('every field round-trips through JSON', () {
+      const settings = AppSettings(
+        bridgeEnabled: true,
+        bridgeShowAddress: true,
+        bridgeReadSensitivePaths: true,
+        bridgeExtraBlockedPaths: ['/srv/secret/**', '**/*.sqlite'],
+      );
+      final restored = AppSettings.fromJson(settings.toJson());
+      expect(restored.bridgeEnabled, isTrue);
+      expect(restored.bridgeShowAddress, isTrue);
+      expect(restored.bridgeReadSensitivePaths, isTrue);
+      expect(restored.bridgeExtraBlockedPaths, [
+        '/srv/secret/**',
+        '**/*.sqlite',
+      ]);
+    });
+
+    test('mangled values fall back instead of switching anything on', () {
+      final restored = AppSettings.fromJson(const {
+        'bridgeEnabled': 'yes',
+        'bridgeShowAddress': 1,
+        'bridgeReadSensitivePaths': 'true',
+        'bridgeExtraBlockedPaths': ['/a', 3, '  ', null, ' /b '],
+      });
+      expect(restored.bridgeEnabled, isFalse);
+      expect(restored.bridgeShowAddress, isFalse);
+      expect(restored.bridgeReadSensitivePaths, isFalse);
+      expect(restored.bridgeExtraBlockedPaths, ['/a', '/b']);
+      expect(
+        AppSettings.fromJson(const {
+          'bridgeExtraBlockedPaths': 'oops',
+        }).bridgeExtraBlockedPaths,
+        isEmpty,
+      );
+    });
+
+    test('copyWith, withLocaleOverride and withBridgeDefaults', () {
+      final on = const AppSettings().copyWith(
+        bridgeEnabled: true,
+        bridgeExtraBlockedPaths: ['/x'],
+        keepScreenAwake: true,
+      );
+      expect(on.bridgeEnabled, isTrue);
+      expect(on.bridgeExtraBlockedPaths, ['/x']);
+      expect(on.copyWith(keepScreenAwake: false).bridgeEnabled, isTrue);
+      expect(on.withLocaleOverride('pt-BR').bridgeEnabled, isTrue);
+
+      final reset = on.withBridgeDefaults();
+      expect(reset.bridgeEnabled, isFalse);
+      expect(reset.bridgeExtraBlockedPaths, isEmpty);
+      expect(
+        reset.keepScreenAwake,
+        isTrue,
+        reason: 'only the bridge fields are reset',
+      );
+    });
+
+    test('SettingsStore persists them across a reload', () async {
+      final store = SettingsStore(file: storeFile);
+      await store.save(
+        const AppSettings(
+          bridgeEnabled: true,
+          bridgeExtraBlockedPaths: ['/srv/x'],
+        ),
+      );
+      final reloaded = SettingsStore(file: storeFile);
+      await reloaded.ensureLoaded();
+      expect(reloaded.current.bridgeEnabled, isTrue);
+      expect(reloaded.current.bridgeExtraBlockedPaths, ['/srv/x']);
+    });
+
+    test('a failed save keeps current by default, and reverts on request',
+        () async {
+      await File('${tempDir.path}/blocker').writeAsString('x');
+      final store =
+          SettingsStore(file: File('${tempDir.path}/blocker/settings.json'));
+      await store.ensureLoaded();
+      final seen = <AppSettings>[];
+      final watch = store.changes.listen(seen.add);
+
+      await expectLater(
+        store.save(const AppSettings(keepScreenAwake: true)),
+        throwsA(isA<FileSystemException>()),
+      );
+      expect(store.current.keepScreenAwake, isTrue,
+          reason: 'the long-standing behaviour for every other setting');
+
+      await expectLater(
+        store.save(
+          store.current.copyWith(bridgeEnabled: true),
+          revertOnFailure: true,
+        ),
+        throwsA(isA<FileSystemException>()),
+      );
+      expect(store.current.bridgeEnabled, isFalse);
+      expect(store.current.keepScreenAwake, isTrue);
+      await Future<void>.delayed(Duration.zero);
+      expect(seen, isEmpty, reason: 'nothing was stored, so nothing changed');
+      await watch.cancel();
+      store.dispose();
+    });
+  });
 }

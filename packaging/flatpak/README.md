@@ -49,6 +49,47 @@ X11 forwarding asks the local X server for an untrusted cookie with `xauth`.
 Where the sandbox has no `xauth`, the app falls back to the trusted mode (as
 `ssh -Y` does) and says so at the top of the shell.
 
+## The AI Bridge launcher
+
+The tree holds the launcher, `secureshellgo-mcp`, beside the app. The
+manifest installs it from a module of its own, `secureshellgo-mcp`, with
+`build-options: { no-debuginfo: true, strip: false }`: flatpak-builder's
+default debuginfo step strips every ELF file a module installs, and stripping
+a `dart compile exe` binary cuts off the program appended to it (what is left
+only prints the Dart VM's usage). The app module keeps the default. The
+launcher ends up at `/app/lib/secureshellgo/secureshellgo-mcp`, with
+`/app/bin/secureshellgo-mcp` linking to it.
+
+An AI assistant runs on the host, so it needs a host command. The app shows
+the one Flatpak exports for every installed app,
+`<installation>/exports/bin/com.dhivalabs.secure_shell_go`
+(`/var/lib/flatpak/...` for a system install, `~/.local/share/flatpak/...`
+for `--user`; the app reads which from `/.flatpak-info`). That runs the app's
+main command, `/app/bin/secureshellgo`, a script that starts the launcher
+instead of the app when `SSG_BRIDGE_TOKEN` is set and stdin is not a
+terminal, which is how every assistant starts it (`flatpak run` passes the
+variable into the sandbox). This keeps it one command with no arguments,
+which is all the Claude Code plugin's `launcher` setting takes. A client that
+takes arguments can instead run `flatpak run --command=secureshellgo-mcp
+com.dhivalabs.secure_shell_go`.
+
+The launcher runs in a new sandbox instance of the same app. It finds the
+app's `endpoint.json` because both resolve the same data directory
+(`XDG_DATA_HOME` is `~/.var/app/com.dhivalabs.secure_shell_go/data` in every
+instance). The socket is not placed in the plain `XDG_RUNTIME_DIR`, which
+Flatpak makes private to each instance: the bridge directory under
+`~/.var/app/…` is usually past the socket-path limit, and the fallback inside
+a Flatpak is `$XDG_RUNTIME_DIR/app/com.dhivalabs.secure_shell_go/`, which
+Flatpak shares between all instances of the app (and with the host).
+
+"Connect Claude Code" is not offered: a Flatpak cannot start the host's
+`claude` program. The app shows a note pointing to "Connect an assistant"
+instead, as in the snap.
+
+CI (`flatpak-run`) runs `ldd` on the launcher inside the sandbox and starts
+it both ways, with the app not running: each must answer one `initialize`
+request with a JSON-RPC error and exit 1.
+
 ## Submitting to Flathub
 
 Flathub builds from a manifest in its own repository and from published
@@ -57,7 +98,9 @@ sources only, so a submission differs from this file in one place: the
 per architecture with `only-arches`, sha256 from the release) plus
 `linux/com.dhivalabs.secure_shell_go.desktop`, `linux/secureshellgo-256.png`
 and the metainfo file as `type: file` sources, and the build commands remove
-`lib/libdartjni.so` as `tree.sh` and `pack.sh` do. Reviewers will look at
+`lib/libdartjni.so` as `tree.sh` and `pack.sh` do. The launcher module then
+takes `secureshellgo-mcp` from the same archive, still with
+`no-debuginfo: true`. Reviewers will look at
 `--socket=x11` next to Wayland (X11 forwarding) and expect `<screenshots>` in
 the metainfo file, which has none yet. The submission (a PR to
 `flathub/flathub`) needs a Flathub account and is not automated here.

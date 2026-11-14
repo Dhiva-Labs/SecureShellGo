@@ -272,7 +272,8 @@ Releases from 1.5.1 on also carry these, for x64 (`x86_64`) and arm64
 
 Replace `x86_64` with `aarch64` on ARM64. The `.rpm` and the Arch package
 install the same files as the PPA's `.deb` (`/opt/secureshellgo`, started as
-`secureshellgo`) and recommend a Secret Service provider the way it does. The
+`secureshellgo`, with the AI Bridge launcher as `secureshellgo-mcp`) and
+recommend a Secret Service provider the way it does. The
 `.rpm` is not signed, hence `--allow-unsigned-rpm` on openSUSE; check the
 files against the release page. The builds are made on Ubuntu 24.04 (glibc
 2.39), so use a current distribution: Fedora 40 or later, openSUSE
@@ -344,12 +345,142 @@ instead, with a key kept beside it that only your user account can read.
 That protects them from other users, not from programs running as you, so
 install a keyring where you can.
 
+## AI Bridge (Linux and Windows)
+
+An optional, read-only bridge that lets an MCP-compatible AI assistant on
+your computer look at your servers by name, without ever being given a
+password, key or passphrase. It is **off by default**, and it is not
+available on Android or macOS.
+
+Set it up:
+
+1. Settings → AI Bridge: switch on **AI Bridge**. The app explains what it
+   does and asks you to confirm, every time you switch it on. (The one-click
+   route below does this for you, with the same explanation.)
+2. Connect an assistant. Three routes; use the first that fits.
+   - **One click, for Claude Code (Linux deb, rpm, Arch package, AppImage or
+     archive, and Windows).**
+     **Connect Claude Code** appears in Settings → AI Bridge only when the
+     app finds a file named `claude` on your computer. Finding it runs
+     nothing: opening Settings or pressing "Check again" only checks whether
+     the file exists on your `PATH`, in `~/.local/bin` or in `~/.claude/local`
+     (on Windows, the `PATH` and `%USERPROFILE%\.local\bin\claude.exe`). It is not
+     available in the snap or the Flatpak, whose sandboxes cannot start
+     programs on your computer (the app does not look there at all); snap and
+     Flatpak users take a route below. When you press
+     the button, the app runs `claude --version` and `claude plugin
+     marketplace list --json` (10 seconds each) to show you the same
+     explanation as when switching the bridge on, the full path and version
+     of the program and, if the plugin would not come from the published
+     GitHub source, where it would be loaded from, with a warning. Those two
+     read-only commands change nothing, and Cancel leaves everything as it
+     was. Only on **Connect** does anything
+     change: the app switches the bridge on if it was off, creates a pairing,
+     and runs `claude` to add the plugin source if missing, install the
+     plugin, save the token and launcher command, and check that the token
+     was saved (90 seconds a step). The token goes to
+     `claude` on its standard input only: not on the command line, in an
+     environment variable, on screen, in the clipboard or in a log. The
+     pairing cannot be used until Claude Code has confirmed the setup, and one
+     left behind because the app was closed part way is removed the next time
+     the app starts. If any step fails, the pairing it just created is revoked
+     and the bridge is put back the way it was before (switched off again if
+     this attempt switched it on); if either cannot be saved, the screen says
+     so. Afterwards a checklist, **Shared hosts**, lets you
+     tick which saved hosts the assistant may read (nothing is ticked that was
+     not already shared). The GitHub plugin source only resolves once this
+     release is on the default branch of the repository.
+   - **Claude Code plugin, by hand.** **Connect an assistant**: name it, choose
+     "Claude Code plugin" and paste the one block of three terminal commands it
+     shows (add the plugin source, install the plugin, and a third line that
+     pipes a small JSON object holding the token, and the launcher path when
+     the install needs one, into `claude plugin configure
+     secureshellgo@dhiva-labs --values-stdin`). The token is shown once.
+     Pasting the third line **puts the token in your shell's history file**
+     (the screen says so under the commands); one-click does not. Afterwards you can delete that line from the history,
+     or, if the history is shared or synced, revoke the assistant and pair it
+     again. (`/plugin configure secureshellgo@dhiva-labs` does the same but is
+     typed **inside a Claude Code session, not in a terminal**.)
+   - **A config file, for any other client.** Choose the config, VS Code or
+     "Other" kind in **Connect an assistant** and paste the snippet. The token
+     goes in the environment variable `SSG_BRIDGE_TOKEN`. Ready-made snippets,
+     an agent skill and the plugin are in [`integrations/`](integrations/).
+3. Choose which servers it may see: tick them in **Shared hosts**
+   (Settings → AI Bridge, "Shared hosts — N of M", also shown at the end of
+   one-click), or edit a server and switch on **AI access (read-only)**.
+   Servers without it are invisible to the assistant. A quick connect that was
+   not saved cannot be shared.
+
+The launcher command the app shows depends on how you installed it:
+
+| Install | Launcher command |
+| --- | --- |
+| deb / PPA, `.rpm`, Arch package, Microsoft Store | `secureshellgo-mcp` |
+| Snap | `secureshellgo.mcp` |
+| Flatpak | the command Flatpak exports for the app: `/var/lib/flatpak/exports/bin/com.dhivalabs.secure_shell_go` for a system install, `~/.local/share/flatpak/exports/bin/com.dhivalabs.secure_shell_go` (written out in full) for `flatpak install --user` |
+| AppImage | the full path of the `.AppImage` file itself |
+| Linux tarball, Windows zip | the full path of `secureshellgo-mcp` (`.exe` on Windows) next to the app |
+
+The Flatpak and the AppImage start the launcher instead of the app when they
+are run with `SSG_BRIDGE_TOKEN` set and stdin not a terminal, which is how
+an assistant starts them, so a single command with no arguments works there
+too. `flatpak run --command=secureshellgo-mcp com.dhivalabs.secure_shell_go`
+also starts the Flatpak's launcher, for a client that takes arguments. Move
+the `.AppImage` file and the command changes with it: pair the assistant
+again, or edit its launcher command.
+
+It can list those servers, read server stats, list services, read the end of
+a log, list folders, read text files and search for files by name. It cannot
+run commands, write files or change anything in 1.6.0. By default it does not
+see a server's address, port or user name (**Show address and username** is
+off). Common secret locations (`~/.ssh`, `.env` files, key files, shell
+histories, `/etc/shadow`, cloud and registry credential files) are blocked
+and simply left out of listings; you can add more under **Extra blocked
+paths**. Output is capped at 64 KiB a call with private keys removed, and
+every call goes in **Activity**, a log on your computer you can read and
+clear. While the app is locked it refuses everything. Switching the bridge
+off, or revoking an assistant under **Paired assistants**, stops its calls in
+progress on the server.
+
+The app never prompts for a bridge call: a server that needs a person to sign
+in (a locked vault, an unsaved passphrase, a login question, an unchecked
+host key) fails with a message asking you to connect to it once in the app.
+Prompts from outside the app can still appear: an SSH agent that asks you to
+confirm or touch a key, or your desktop keyring's own unlock dialog.
+
+A pairing or an AI-access change that cannot be written to disk is undone
+and reported, so what the app shows always matches what is stored; a revoke
+that cannot be saved says the pairing still works.
+
+Backups never carry AI access or bridge settings: an imported server always
+has AI access off, and importing keeps this computer's own bridge settings.
+
+Limits, plainly:
+
+- **What the assistant reads is sent by your AI client to its own provider.**
+  SecureShell Go and Dhiva Labs receive nothing, but your AI provider does.
+- **The blocked-path list is a default set, not a guarantee** that no secret
+  on a server can be read. For a hard guarantee, use a server account with
+  limited read rights.
+- **Text on a server can contain instructions aimed at the assistant**, in a
+  log line or a file. Treat what an assistant does after reading
+  untrusted logs with care.
+- **The token in the assistant's configuration is a key to your shared
+  servers** while the app runs with the bridge on. Revoke the assistant if it
+  leaks.
+
+How it is built: [ARCHITECTURE.md](ARCHITECTURE.md#ai-bridge).
+
 ## Privacy
 
 SecureShell Go collects nothing: no analytics, no ads, no account, no update
 check, and no Dhiva Labs server for anything to be sent to. Credentials stay
 on the device in the platform's protected storage, and the only hosts the app
-connects to are the ones you configure. Full text: [Privacy policy](docs/privacy-policy.md).
+connects to are the ones you configure. The optional AI Bridge (Linux and
+Windows) gives what an assistant reads to that assistant on your computer,
+which sends it to its own provider; Dhiva Labs receives nothing. If you press
+**Connect Claude Code**, the app runs the `claude` program you installed, at
+your request, and hands it the pairing token; nothing goes to Dhiva Labs. Full text: [Privacy policy](docs/privacy-policy.md).
 
 ## Build from source
 

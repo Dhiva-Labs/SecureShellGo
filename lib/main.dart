@@ -7,13 +7,24 @@ import 'l10n/l10n.dart';
 import 'models/app_settings.dart';
 import 'screens/host_list_screen.dart';
 import 'services/app_lock.dart';
+import 'services/app_data_paths.dart';
 import 'services/app_lock_controller.dart';
 import 'services/backup_service.dart';
 import 'services/bookmark_store.dart';
+import 'services/bridge/bridge_audit.dart';
+import 'services/bridge/bridge_channel.dart';
+import 'services/bridge/bridge_cli_connector.dart';
+import 'services/bridge/bridge_client_store.dart';
+import 'services/bridge/bridge_connections.dart';
+import 'services/bridge/bridge_locator.dart';
+import 'services/bridge/bridge_redactor.dart';
+import 'services/bridge/bridge_service.dart';
+import 'services/bridge/bridge_tools.dart';
 import 'services/composite_secure_storage.dart';
 import 'services/credential_store.dart';
 import 'services/diagnostics_log.dart';
 import 'services/fleet_push_run_registry.dart';
+import 'services/headless_dialer.dart';
 import 'services/host_store.dart';
 import 'services/input_profile.dart';
 import 'services/known_hosts_integrity.dart';
@@ -336,6 +347,72 @@ class _SecureShellGoAppState extends State<SecureShellGoApp> {
   // transfer panel offers a way back into it) share the one instance.
   final FleetPushRunRegistry _fleetPushRegistry = FleetPushRunRegistry();
 
+  // The AI Bridge: a local MCP server an assistant on this computer can ask
+  // read-only questions of the servers the user has shared with it. Off
+  // until switched on in Settings, and never built on a platform that does
+  // not ship the launcher — so `_bridge` is null there and nothing below
+  // touches the stores that only it uses.
+  //
+  // Everything it needs is something that already lives here: the sessions
+  // (a host with a session open is read over that session's transport), the
+  // credential store and `SshService` (anything else is dialled with nobody
+  // to ask, through `HeadlessDialer`), the settings and the app lock (read
+  // on every call). See `lib/services/bridge/`.
+  late final BridgeClientStore _bridgeClients = BridgeClientStore();
+  late final BridgeAuditLog _bridgeAudit = BridgeAuditLog(
+    scrub: DiagnosticsLog.instance.scrubber.scrub,
+  );
+  late final BridgeService? _bridge = BridgeService.supported
+      ? _buildBridge()
+      : null;
+  late final ClaudeCliConnector _claudeConnector = ClaudeCliConnector();
+
+  BridgeService _buildBridge() {
+    final connections = BridgeConnections(
+      openTransport: (hostId) {
+        for (final session in _sessions.liveForHost(hostId)) {
+          final transport = session.controller.connection;
+          if (!transport.isClosed) return transport;
+        }
+        return null;
+      },
+      // Never a prompt for a bridge call: `loadQuiet` reports a sealed
+      // vault instead of asking for its passphrase, for the host and for
+      // every jump host on the way (hence an `SshService` of its own, with
+      // the same known-hosts store).
+      credentialLookup: _credentialStore.loadQuiet,
+      dialer: HeadlessDialer(
+        SshService(
+          knownHosts: _knownHosts,
+          jumpHosts: JumpHostResolver(
+            lookupHost: _hostStore.get,
+            loadCredentials: _credentialStore.loadQuiet,
+          ),
+        ),
+      ).dial,
+    );
+    return BridgeService(
+      settingsStore: _settingsStore,
+      clients: _bridgeClients,
+      connections: connections,
+      tools: BridgeTools(
+        loadHosts: _hostStore.all,
+        settings: () => _settingsStore.current,
+        isAppLocked: () => _appLock.isLocked,
+        connections: connections,
+        redactor: BridgeRedactor(scrub: DiagnosticsLog.instance.scrubber.scrub),
+        audit: _bridgeAudit,
+      ),
+      createListener: (verify) async {
+        final data = await AppDataPaths.resolveDirectory();
+        return BridgeListener(
+          bridgeDir: bridgeDirectoryFor(data.path),
+          verify: verify,
+        );
+      },
+    );
+  }
+
   @override
   void initState() {
     super.initState();
@@ -364,6 +441,8 @@ class _SecureShellGoAppState extends State<SecureShellGoApp> {
     );
     _settingsWatch = _settingsStore.changes.listen(_appLock.applySettings);
     _diagnosticsWatch = DiagnosticsLog.instance.follow(_settingsStore);
+    // Starts listening only if the user switched the bridge on.
+    unawaited(_bridge?.start());
     _themeWatch = _settingsStore.changes.listen((settings) {
       if (settings.uiStyle == _uiStyle &&
           settings.themeBrightness == _themeBrightness &&
@@ -389,6 +468,12 @@ class _SecureShellGoAppState extends State<SecureShellGoApp> {
     unawaited(_tunnels.dispose());
     unawaited(_workspace.dispose());
     _fleetPushRegistry.dispose();
+    // Closes assistant connections and the SSH connections the bridge
+    // dialled, and removes the endpoint file.
+    final bridge = _bridge;
+    if (bridge != null) {
+      unawaited(bridge.dispose().whenComplete(_bridgeAudit.dispose));
+    }
     unawaited(_settingsWatch?.cancel());
     unawaited(_diagnosticsWatch?.cancel());
     unawaited(_themeWatch?.cancel());
@@ -433,6 +518,10 @@ class _SecureShellGoAppState extends State<SecureShellGoApp> {
         snippetStore: _snippetStore,
         appLock: _appLock,
         backupService: _backupService,
+        bridge: _bridge,
+        bridgeClients: _bridge == null ? null : _bridgeClients,
+        bridgeAudit: _bridge == null ? null : _bridgeAudit,
+        claudeConnector: _bridge == null ? null : _claudeConnector,
         fleetPushRegistry: _fleetPushRegistry,
       ),
     );

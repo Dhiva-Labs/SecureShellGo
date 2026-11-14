@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 import 'dart:typed_data';
 
@@ -398,6 +399,84 @@ void main() {
         () async {
       keyringWorks = false;
       await expectLater(backend.delete('credentials:host-1'), completes);
+    });
+
+    group('readQuiet, for a caller with nobody to ask', () {
+      test('a passphrase vault is reported sealed and nobody is asked',
+          () async {
+        keyringWorks = false;
+        await plantLegacyVault(const {'credentials:host-1': 'secret'});
+        var asked = 0;
+        final restarted = build(
+          requestUnlockPassphrase: () async {
+            asked++;
+            return passphrase;
+          },
+        );
+        await expectLater(
+          restarted.readQuiet('credentials:host-1'),
+          throwsA(
+            isA<SecureStorageSealed>().having(
+              (e) => e.kind,
+              'kind',
+              SecureStorageSealedKind.vault,
+            ),
+          ),
+        );
+        expect(asked, 0);
+        // Once a person has opened it, the quiet read sees it.
+        expect(await restarted.read('credentials:host-1'), 'secret');
+        expect(asked, 1);
+        expect(await restarted.readQuiet('credentials:host-1'), 'secret');
+        expect(asked, 1);
+      });
+
+      test('an unlock prompt already on screen is not waited on', () async {
+        keyringWorks = false;
+        await plantLegacyVault(const {'credentials:host-1': 'secret'});
+        final answer = Completer<String?>();
+        final restarted = build(requestUnlockPassphrase: () => answer.future);
+        final prompted = restarted.read('credentials:host-1');
+        await Future<void>.delayed(Duration.zero);
+        await expectLater(
+          restarted.readQuiet('credentials:host-1'),
+          throwsA(isA<SecureStorageSealed>()),
+        );
+        answer.complete(passphrase);
+        expect(await prompted, 'secret');
+      });
+
+      test('a device-encrypted vault opens with its key, asking nobody',
+          () async {
+        keyringWorks = false;
+        await backend.write('credentials:host-1', 'secret');
+        final restarted = build(
+          requestUnlockPassphrase: () async => fail('must not prompt'),
+        );
+        expect(await restarted.readQuiet('credentials:host-1'), 'secret');
+      });
+
+      test('a keyring that has worked here but is locked now is sealed too',
+          () async {
+        await backend.write('credentials:host-1', 'secret');
+        keyringWorks = false;
+        await expectLater(
+          build().readQuiet('credentials:host-1'),
+          throwsA(
+            isA<SecureStorageSealed>().having(
+              (e) => e.kind,
+              'kind',
+              SecureStorageSealedKind.keyring,
+            ),
+          ),
+        );
+      });
+
+      test('a working keyring and an empty install read as usual', () async {
+        await backend.write('credentials:host-1', 'secret');
+        expect(await backend.readQuiet('credentials:host-1'), 'secret');
+        expect(await backend.readQuiet('credentials:none'), isNull);
+      });
     });
   });
 

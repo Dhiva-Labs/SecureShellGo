@@ -9,6 +9,10 @@ import '../models/host.dart';
 import '../models/snippet.dart';
 import '../services/app_lock_controller.dart';
 import '../services/backup_service.dart';
+import '../services/bridge/bridge_audit.dart';
+import '../services/bridge/bridge_cli_connector.dart';
+import '../services/bridge/bridge_client_store.dart';
+import '../services/bridge/bridge_service.dart';
 import '../services/credential_store.dart';
 import '../services/device_storage.dart';
 import '../services/fleet_push_run_registry.dart';
@@ -73,6 +77,10 @@ class HostListScreen extends StatefulWidget {
     this.tunnels,
     this.appLock,
     this.backupService,
+    this.bridge,
+    this.bridgeClients,
+    this.bridgeAudit,
+    this.claudeConnector,
     this.fleetPushRegistry,
   });
 
@@ -120,6 +128,14 @@ class HostListScreen extends StatefulWidget {
 
   /// Backs the Backup row in Settings. Null hides it.
   final BackupService? backupService;
+
+  /// The AI Bridge and the stores behind its Settings section and activity
+  /// log. Null where the platform has no bridge, which also hides the "AI
+  /// access" switch in the host form.
+  final BridgeService? bridge;
+  final BridgeClientStore? bridgeClients;
+  final BridgeAuditLog? bridgeAudit;
+  final ClaudeCliConnector? claudeConnector;
 
   /// Where a running fleet push is kept reachable once its own setup screen
   /// is left — held above this route like [sessions], so both this screen
@@ -322,6 +338,7 @@ class _HostListScreenState extends State<HostListScreen> {
           settingsStore: widget.settingsStore,
           sessions: widget.sessions,
           host: host,
+          aiBridgeAvailable: widget.bridge != null,
         ),
       ),
     );
@@ -404,8 +421,14 @@ class _HostListScreenState extends State<HostListScreen> {
       // connection, not just an attempt — record it for "last connected" on
       // the list. Best-effort: a write failure here should not block the
       // session the user is already in.
+      // Applied to the host as the store holds it now, not to this screen's
+      // older copy: a change made while the connection was being set up
+      // (a host taken out of AI access, say) must not be written back over.
+      final stamp = DateTime.now();
       unawaited(
-        widget.hostStore.update(host.copyWith(lastConnectedAt: DateTime.now())),
+        widget.hostStore
+            .modify(host.id, (h) => h.copyWith(lastConnectedAt: stamp))
+            .catchError((Object _) {}),
       );
 
       setState(() => _connectingHostId = null);
@@ -831,7 +854,7 @@ class _HostListScreenState extends State<HostListScreen> {
     }
 
     if (newGroup == host.group) return;
-    await widget.hostStore.update(host.withGroup(newGroup));
+    await widget.hostStore.modify(host.id, (h) => h.withGroup(newGroup));
     if (!mounted) return;
     _refresh();
   }
@@ -1049,8 +1072,8 @@ class _HostListScreenState extends State<HostListScreen> {
     _refresh();
   }
 
-  void _openSettings() {
-    Navigator.of(context).push(
+  Future<void> _openSettings() async {
+    await Navigator.of(context).push<void>(
       MaterialPageRoute<void>(
         builder: (_) => SettingsScreen(
           settingsStore: widget.settingsStore,
@@ -1060,9 +1083,16 @@ class _HostListScreenState extends State<HostListScreen> {
           hostStore: widget.hostStore,
           appLock: widget.appLock,
           backupService: widget.backupService,
+          bridge: widget.bridge,
+          bridgeClients: widget.bridgeClients,
+          bridgeAudit: widget.bridgeAudit,
+          claudeConnector: widget.claudeConnector,
         ),
       ),
     );
+    // What Settings may have changed (hosts shared with the AI Bridge, a
+    // restored backup) must not be read from this list's older copy.
+    if (mounted) _refresh();
   }
 
   /// The tunnel manager. Pushed rather than owned here, the same way the

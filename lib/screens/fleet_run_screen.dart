@@ -8,6 +8,7 @@ import '../models/host.dart';
 import '../models/snippet.dart';
 import '../services/credential_store.dart';
 import '../services/fleet_exec_service.dart';
+import '../services/headless_dialer.dart';
 import '../services/host_grouping.dart';
 import '../services/session_manager.dart';
 import '../services/snippet_placeholders.dart';
@@ -98,7 +99,10 @@ class _FleetRunScreenState extends State<FleetRunScreen> {
       command: _command.text.trim(),
       openTransport: _openTransport,
       credentialLookup: widget.credentialStore.load,
-      dialer: widget.dialer ?? _dial,
+      // Signs in with what is saved and nobody to ask: what would have
+      // needed a person comes back as [FleetSignInNeedsPerson], so the host
+      // is skipped with a reason rather than reported as broken.
+      dialer: widget.dialer ?? HeadlessDialer(widget.sshService).dial,
     );
     _service = service;
     setState(() => _step = _Step.results);
@@ -111,61 +115,6 @@ class _FleetRunScreenState extends State<FleetRunScreen> {
       if (!transport.isClosed) return transport;
     }
     return null;
-  }
-
-  /// Signs in with what is saved and nobody to ask. What would have needed
-  /// a person — a question at login, a host key not yet trusted — comes
-  /// back as [FleetSignInNeedsPerson], so the host is skipped with a reason
-  /// rather than reported as broken.
-  Future<SessionTransport> _dial(Host host, SshCredentials credentials) async {
-    HostKeyPrompt? key;
-    LoginPrompt? asked;
-    try {
-      return await widget.sshService.connect(
-        host: host,
-        credentials: credentials,
-        verifyHostKey: (prompt) async {
-          key ??= prompt;
-          return false;
-        },
-        answerPrompts: (prompt) async {
-          asked ??= prompt;
-          return null;
-        },
-      );
-    } on SshConnectionException {
-      final keyPrompt = key;
-      if (keyPrompt != null) {
-        if (keyPrompt.kind == HostKeyPromptKind.changed) {
-          throw SshConnectionException(
-            'The host key of ${keyPrompt.hostLabel} has CHANGED since it was '
-            'trusted. Not connecting — check it from the host list.',
-          );
-        }
-        throw FleetSignInNeedsPerson(
-          'The host key of ${keyPrompt.hostLabel} has not been checked yet. '
-          'Connect once from the host list to check and trust it.',
-        );
-      }
-      final prompt = asked;
-      if (prompt != null) {
-        final who = prompt.jumpHostFor == null
-            ? 'It'
-            : 'Its jump host "${prompt.host.displayName}"';
-        if (prompt.savedPasswordRejected) {
-          throw FleetSignInNeedsPerson(
-            '$who turned the saved password down and asks for another.',
-          );
-        }
-        final label = prompt.fields.isEmpty ? '' : prompt.fields.first.label;
-        throw FleetSignInNeedsPerson(
-          label.isEmpty
-              ? '$who asks a question at login, which needs you.'
-              : '$who asks "$label" at login, which needs you.',
-        );
-      }
-      rethrow;
-    }
   }
 
   Future<void> _pickSnippet() async {

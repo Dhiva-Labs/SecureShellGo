@@ -143,11 +143,15 @@ flutter:
   # For details regarding fonts from package dependencies,
   # see https://flutter.dev/to/font-from-package
 
-# Microsoft Store packaging: built on Windows with `dart run msix:create` by
-# .github/workflows/store-msix.yml. identity_name, publisher and
-# publisher_display_name are the Partner Center product identity of
-# SecureShell Go (Store ID 9N8MC5KC6XXL) and must match it exactly.
-# `store: true` leaves signing to the Store.
+# Microsoft Store packaging: built on Windows by
+# .github/workflows/store-msix.yml, which runs `tool\build_msix.ps1`. The
+# package also carries the AI Bridge launcher and its execution alias, which
+# this config cannot express: the script builds the launcher into the Release
+# folder and adds the alias between `msix:build` and `msix:pack` (see
+# packaging/MSIX.md).
+# identity_name, publisher and publisher_display_name are the Partner Center
+# product identity of SecureShell Go (Store ID 9N8MC5KC6XXL) and must match it
+# exactly. `store: true` leaves signing to the Store.
 msix_config:
   display_name: SecureShell Go
   publisher_display_name: Dhiva-Labs

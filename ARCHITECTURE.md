@@ -23,6 +23,7 @@ lib/
 
   models/                       plain data, no I/O, no Flutter imports
     host.dart                   Host (persistable) + SshCredentials (in-memory only)
+    host_ai_access.dart         HostAiAccess: off / readOnly, unknown reads as off
     known_host.dart             KnownHostKey — one trusted host key
     remote_entry.dart           RemoteEntry — one row of a remote directory
     syntax_token.dart           TokenKind + HighlightSpan for the editor
@@ -54,6 +55,24 @@ lib/
     syntax_highlighter.dart     hand-rolled per-language tokenizers, no deps
     editor_search.dart          find/replace: plain and regex, counts, go-to-line
     editor_save.dart            the conflict guard + temp-then-rename save-back
+    headless_dialer.dart        the no-prompt SSH dial shared by fleet and the bridge
+    bridge/                     the AI Bridge: read-only MCP for local assistants
+      bridge_policy.dart          the one place that allows or refuses a call
+      bridge_paths.dart           the path guard: blocked secret locations
+      bridge_redactor.dart        64 KiB cap, private-key blocks, scrub
+      bridge_audit.dart           the on-device activity log (audit.log)
+      bridge_host_directory.dart  the names an assistant sees for shared hosts
+      bridge_client_store.dart    paired assistants: hashed tokens (bridge_clients.json)
+      bridge_channel.dart         the local listener, the handshake, one line = one message
+      bridge_locator.dart         endpoint.json + the launcher's half of the channel
+      bridge_tool_types.dart      BridgeToolHost, BridgeToolSpec, BridgeToolKind
+      mcp_server.dart             hand-written JSON-RPC / MCP over a connection
+      bridge_tools.dart           the seven read tools; each call goes through policy
+      bridge_connections.dart     SSH transports for tools: open session, or headless dial
+      bridge_service.dart         the facade main.dart builds; start/stop, lock, status
+      bridge_launcher_locator.dart  the launcher command to show, per install kind
+      bridge_cli_connector.dart   finds `claude`, runs the fixed plugin commands (the process seam)
+      bridge_plugin_command.dart  the three manual terminal commands for the connect screen
 
   screens/
     host_list_screen.dart       home: saved hosts, connect, "browse files"
@@ -65,12 +84,20 @@ lib/
     file_browser_pane.dart      SFTP browser, uploads and downloads
     remote_editor_screen.dart   the tabbed text editor: find, save, conflicts
     workspace_view.dart         draws the pane tree: dividers, headers, focus
+    settings/ai_bridge_section.dart  Settings → AI Bridge: switches, blocked paths, paired assistants
+    bridge_connect_screen.dart  "Connect an assistant": name, token once, launcher + snippet
+    bridge_one_click_screen.dart  "Connect Claude Code": confirm, pair, run `claude`, undo on failure
+    bridge_shared_hosts_screen.dart  "Shared hosts": the checklist of hosts an assistant may read
+    bridge_audit_screen.dart    "AI Bridge activity": the activity log, newest first
 
   widgets/
     host_key_dialog.dart        the accept/reject host key UI
     terminal_key_bar.dart       Esc/Tab/Ctrl-x/arrows row for soft keyboards
     transfer_panel.dart         transfer summary bar + transfers bottom sheet
     code_editor_field.dart      highlighting controller + scroll-synced gutter
+
+bin/
+  secureshellgo_mcp.dart        the AI Bridge launcher: a stdio-to-channel pipe, no Flutter
 
 android/app/src/main/kotlin/.../StorageBridge.kt
                                 MediaStore Downloads writer + SAF file picker
@@ -785,6 +812,442 @@ a resolver injected in `main.dart` turns one into a `LiveWorkspaceSession`
 over the real `SessionController`. `writeInput` goes through
 `Terminal.textInput`, the same door the extra-key bar and the soft keyboard
 use, so a broadcast write is indistinguishable from typing.
+
+---
+
+## AI Bridge
+
+On Linux and Windows the app can act as a local MCP server, so an AI
+assistant on the same computer can **read** from the servers the user shares,
+by name. 1.6.0 has no tool that changes a server. The bridge is off by
+default. On Android and macOS it is never started: `BridgeService.supported`
+is true only on Linux and Windows, `main.dart` builds no `BridgeService`
+elsewhere, and the Settings section, the connect screen and the activity
+screen are not shown. (The Dart code is still compiled into those apps,
+since the check is made at run time; it is unreachable there, and no
+launcher ships with them.)
+
+```
+AI client ──stdio──► launcher ──local channel──► app (lib/services/bridge/) ──SSH──► server
+ (own process)      (bin/…mcp.dart)             McpServer → tools → policy
+```
+
+### Layers
+
+- `bridge_channel.dart` is the transport and nothing else: it accepts a
+  connection, runs the handshake (below), asks `BridgeClientStore.verify`
+  whether the token is a paired assistant's, and from then on hands lines to
+  whoever is listening. It knows no MCP. Until the handshake is done the peer
+  is any local process, so it gets little: at most 8 connections in the
+  handshake at once (newer ones are dropped on arrival), lines of at most
+  4 KiB, 5 seconds for the whole exchange, and a refusal only after half a
+  second. After it, a line is capped at 1 MiB, and a peer that lets more
+  than 4 MiB of answers pile up unread is dropped.
+- `mcp_server.dart` is JSON-RPC 2.0 over those lines: `initialize`, `ping`,
+  `tools/list`, `tools/call`. It is hand-written because the bridge uses a
+  sliver of the protocol and every pub dependency has to be vendored for the
+  PPA build. A connection may have 16 requests in flight, and a batch may
+  hold 16; past that a request is answered at once with "Too many requests
+  in progress". It knows nothing about SSH; the tools come from a
+  `BridgeToolHost`.
+- `bridge_tools.dart` implements the seven tools (`list_hosts`,
+  `server_stats`, `list_services`, `tail_log`, `list_dir`, `read_file`,
+  `search_files`), reusing `ServerProbeCommands`, `SystemdCommands`,
+  `LogTailCommands` and SFTP. Arguments are checked against each tool's
+  schema (unknown keys refused, strings without NUL or line breaks, numbers
+  in range) and everything that reaches a shell is quoted by
+  `shell_quote.dart`. The assistant never supplies command text. At most 4
+  calls run at once with 32 waiting (a 33rd is refused as busy), and each
+  call has 30 seconds, waiting included. `list_hosts` and `server_stats`
+  answer in JSON, the others in text; `server_stats` leaves the server's own
+  hostname out unless "Show address and username" is on, since it is often
+  the address.
+- `bridge_connections.dart` gives a tool an SSH transport: the open session's,
+  if the user has one (one more channel, no second sign-in), else a headless
+  dial (`headless_dialer.dart`, the same no-prompt dial the fleet screens
+  use) cached for 60 seconds after its last call, and never reused once the
+  host has been edited. Credentials are read with
+  `CredentialStore.loadQuiet`, for the host and every jump host, so a bridge
+  call never shows a prompt in the app: a sealed vault, a keyring that cannot
+  be read, an unsaved password or passphrase, a login question or a host key
+  nobody has checked fails with "Ask the user to connect to it once in
+  SecureShell Go". A changed host key fails as the alarm it is.
+- `bridge_service.dart` is the facade `main.dart` builds. It starts and stops
+  the listener as the setting changes, reports status to the Settings
+  section, and tears down client and SSH connections when the bridge stops.
+- `bridge_launcher_locator.dart` says which launcher command the connect
+  screen shows, checked in this order:
+  - the snap: `secureshellgo.mcp` (its executable is under `$SNAP`; `SNAP`
+    alone is not trusted, since other snaps pass theirs on);
+  - the Flatpak (`/.flatpak-info` exists, or `FLATPAK_ID` is set with the
+    executable under `/app/`): the host command Flatpak exports for the
+    app, `<installation>/exports/bin/<app id>`, the installation read from
+    `app-path` in `/.flatpak-info` (`/var/lib/flatpak` when it cannot be);
+  - the AppImage (`APPIMAGE` and `APPDIR` set, the executable under
+    `$APPDIR`): the `.AppImage` file itself, since the mount point changes
+    on every start, with the missing-file warning if it has been moved;
+  - the deb, `.rpm` and Arch package (`/opt/secureshellgo/`, with the
+    `/usr/bin/secureshellgo-mcp` wrapper) and the MSIX package (under
+    `\WindowsApps\`, with an execution alias): `secureshellgo-mcp`;
+  - otherwise the full path of `secureshellgo-mcp` (`.exe` on Windows)
+    beside the app's executable, with a warning on the screen if that file
+    is missing.
+
+  Every command is one word with no arguments, because the plugin's
+  `launcher` setting and the snippets' `command` take nothing else. The
+  Flatpak's main command and the AppImage's `AppRun` therefore start the
+  launcher instead of the app when `SSG_BRIDGE_TOKEN` is set and stdin is not
+  a terminal: every assistant starts it that way, and the app never needs the
+  variable. (`flatpak run --command=secureshellgo-mcp <app id>` reaches the
+  Flatpak's launcher directly, for clients that take arguments.)
+- The kit lives outside `lib/`, in `integrations/`: the skill, a plugin
+  (`integrations/plugin/`, listed by the `dhiva-labs` marketplace in
+  `.claude-plugin/marketplace.json` at the repository root; its `userConfig`
+  asks for `bridge_token`, stored as sensitive, and `launcher`, default
+  `secureshellgo-mcp`, and passes them to the launcher), and config snippets
+  for other clients. None of it is app code and none of it holds a secret.
+
+### The trust boundary
+
+The line that matters is between the assistant and the app. Everything on the
+assistant's side, including its arguments, is untrusted input. Everything the
+**server** returns is also untrusted: it goes to the assistant as data and is
+never interpreted by the app. The app holds the credentials; they are used
+inside `SshService` and never appear in a tool's input or output, a locator
+file, an audit entry or a message to the client. Hosts are visible only when
+the user has switched on "AI access (read-only)" for them, and they are known
+by their label (`label#xxxx` when two share one); a hidden host never causes
+a visible one to be renamed. With "Show address and username" off, the
+address, port and user name of the host and of every jump host on its way,
+and IPv4 literals, are also taken out of any error text before it leaves.
+
+### One choke point
+
+`bridge_policy.dart` is the only place that decides. `decideBridgeCall` is a
+pure function over: is the bridge on, is the app locked, what kind of tool is
+it, and does the host exist and have access on. The order is fixed (off,
+locked, change, host). Every tool call goes through it, in the one
+dispatcher in `bridge_tools.dart`, before anything else, so a new tool cannot
+forget a check, and the whole table is tested without I/O.
+
+Two choices are deliberate. A host that does not exist and a host with access
+off are refused with the **same** code and message, so a call cannot probe for
+hidden hosts. And the policy already refuses any tool of kind `change`, though
+none exists: a command the assistant types is, by definition, a change,
+because the app cannot tell a harmless one from a harmful one, so the day a
+way to send commands is added it arrives as a `change` tool, and the policy
+refuses it until that path has its own design. In 1.6.0 the refusal is a rule
+with no tool behind it.
+
+### Stopping a call
+
+Every remote command runs under a small `sh` wrapper
+(`BridgeCommands.supervised`): the command runs in its own process group
+(`setsid` where there is one), and a watcher waits on the channel's stdin.
+When a call passes its 30 seconds, or is abandoned because its assistant was
+revoked or the bridge was switched off, the app closes stdin, the group is
+sent TERM, and the call's SFTP channel is closed. Nothing new is started for
+a halted call. An abandoned call is answered with the reason and never with
+what it found, even one that finished in the gap; a revoked or switched-off
+connection is cut, so nothing more is sent on it at all.
+
+### Why the launcher is a dumb pipe
+
+An MCP client starts a program and talks to it over stdio. That program
+(`bin/secureshellgo_mcp.dart`, compiled with `dart compile exe` as
+`secureshellgo-mcp`) could have been the server, but then it would need the
+credentials, the host list and the policy, and would be a second app to keep
+in step and to secure. Instead it reads the locator file, connects, does the
+handshake with the token from `SSG_BRIDGE_TOKEN`, and copies bytes both ways.
+It has no Flutter import, parses no MCP, and holds nothing worth stealing
+except the token the client already gave it. If it cannot reach the app it
+answers each request with a plain error and exits when stdin closes, so the
+client shows why instead of hanging.
+
+### One-click connect
+
+"Connect Claude Code" (Settings → AI Bridge) does what the manual block of
+three terminal commands does, by running the `claude` command itself. It is
+the only place the app starts another program for the bridge, so it is kept
+small and checked at run time.
+
+- **Finding `claude` runs nothing.** `ClaudeCliConnector.find` is file-system
+  checks alone, and is what Settings calls on opening and on "Check again":
+  the snap test (then it does not look at all), then `findCandidates`, which
+  reads the `PATH` itself (absolute, local entries only; an empty or relative
+  entry is skipped, and on Windows so is a network share; with `PATHEXT`
+  order and only `.exe`, `.cmd`, `.bat` on Windows) plus `~/.local/bin/claude`
+  and `~/.claude/local/claude` (`%USERPROFILE%\.local\bin\claude.exe` on
+  Windows), without asking `which`. The button exists when a candidate does.
+- **Running it starts when the user presses the button.** The one-click screen
+  calls `detect`, which runs each candidate with `--version` (10 s) until one
+  answers, then `plugin marketplace list --json` (10 s) so the confirmation
+  can show the path, version and where the plugin would come from. Both are
+  read-only. Nothing that changes anything runs before the user presses
+  Connect on that confirmation.
+- **The process seam.** Every process is started through one injected
+  `BridgeProcessRunner`, so tests use a fake instead of the real CLI. The
+  default runner calls `Process.start` with an argument list (never one
+  command string), caps each output stream at 256 KiB, writes stdin and closes
+  it at once (a program that asks a question gets end-of-file), and kills it
+  on a timeout (10 seconds for `--version`, 90 for each plugin command).
+- **Fixed argument lists, checked at run time.** The arguments are the
+  constants of the `ClaudeConnectStep` enum (list, add, install, configure,
+  verify) and `--version`. `_start` throws unless the list it was given is
+  one of those objects. This is a runtime check, not an assert, because it is
+  a security property: nothing a caller passes, the token above all, can reach
+  a command line (visible to other users in the process list, and
+  interpreted by a Windows shell). Only an absolute, local, existing file
+  named `claude` (`claude.exe`, `.cmd`, `.bat` on Windows) is run, and
+  that is checked again inside `_start`.
+- **The token on stdin only.** It is passed as JSON on the stdin of
+  `claude plugin configure secureshellgo@dhiva-labs --values-stdin`, with the
+  launcher command, and nowhere else: not an argument, not the environment
+  (the child gets only `NO_COLOR=1` added), not the screen, clipboard or a log.
+  Any text from the program that is kept for the "Technical details" view is
+  scrubbed of the token (whole, JSON-escaped and as runs of 8 or more
+  characters from either end) and cut to 2 KiB. The screen holds the token
+  only as a local of one function and never in state.
+- **Strict verify.** The last step is `claude plugin configure ... --json`,
+  and "connected" is reported only if its answer lists `bridge_token` as
+  configured. A timeout, an error or an answer of another shape is a failure.
+  A failed marketplace add alone is not (the install says whether the plugin
+  can be had), but a failed install, configure or verify is.
+- **A pending pairing, revoke on failure.** The screen creates the pairing
+  with `pending: true` (stored as `"pending": true` in `bridge_clients.json`).
+  `BridgeClientStore.verify` refuses a pending pairing, so its token cannot
+  sign in, even if the plugin already holds it. Only after the connector
+  reports success does the screen call `confirm`; a `confirm` that cannot be
+  saved counts as a failure. A pairing still pending when the app next starts
+  belongs to a setup that never finished, and is removed on the first load.
+  On any failure the screen revokes the pairing it just made, so no unused
+  token is left, and puts the bridge switch back as it was: if this attempt
+  switched it on, it is switched off again, whoever else is paired. The manual
+  route stays available from the failure screen. If the revoke, or the switch
+  back, cannot be saved, the screen says which (the pairing's name and where to
+  remove it, or that the bridge is still on) and does not claim otherwise.
+- **The plugin-source check.** Claude Code finds a plugin by the name of its
+  marketplace, and anything can be added as `dhiva-labs`; whatever it serves
+  receives the token. So the confirmation shows where the marketplace
+  points when it is not the published GitHub repository (with a warning,
+  and a separate warning when it could not be read). `connect` reads the list
+  again and stops before installing or sending anything if the source has
+  changed since the confirmation.
+- **Why not in the snap or the Flatpak.** A strictly confined snap may not
+  start other programs, and a Flatpak cannot start programs on the host
+  (only `flatpak-spawn --host` could, through a permission the app does not
+  ask for). So `find` and `detect` return "sandboxed" without looking (the
+  same tests as the launcher locator: the executable under `$SNAP`;
+  `/.flatpak-info`, or `FLATPAK_ID` with the executable under `/app/`) and
+  the screen shows a note pointing to "Connect an assistant".
+- **Shared hosts.** After success a checklist (`SharedHostsChecklist`, also
+  reachable on its own from Settings) lists the saved hosts. It starts from
+  each host's current AI access, so nothing is ticked that was not already
+  shared, and on Save it writes exactly the ticked set (ticked read-only, the
+  rest off), re-reading each host just before writing it. The per-host
+  "AI access (read-only)" switch is unchanged. A quick connect is not a saved
+  host, so it is not listed.
+
+### The local channel, per platform
+
+- **Linux:** a unix socket at `<data>/bridge/bridge.sock`, in a directory of
+  mode 0700, with the socket 0600. The kernel's file permissions are then the
+  access control: another local user cannot open it. A path longer than the
+  socket-path limit falls back to `$XDG_RUNTIME_DIR/secureshellgo-bridge.sock`
+  (per user and 0700 by the XDG spec; never `/tmp`). In a Flatpak, whose
+  bridge directory under `~/.var/app/<id>/data/<id>/` is usually past the
+  limit, `XDG_RUNTIME_DIR` is private to each sandbox instance and the
+  launcher runs in an instance of its own, so the fallback there is
+  `$XDG_RUNTIME_DIR/app/$FLATPAK_ID/`, the directory Flatpak shares between
+  an app's instances. A stale socket is told
+  from a live one by trying to connect, so a second window reports "already
+  running" instead of stealing it. The handshake is one line,
+  `{"ssg_bridge":1,"token":…}`.
+- **Windows:** Dart cannot use unix sockets there, so the app binds a TCP
+  port on `127.0.0.1` only, chosen by the system, and writes the port and a
+  random 32-byte secret for this launch to `endpoint.json` in the bridge
+  folder under `%APPDATA%`, which only the user's account can read. Any local
+  process can connect to a loopback port, and after a crash the port in a
+  stale `endpoint.json` can belong to anything, so the handshake is mutual:
+  the launcher sends a nonce (`{"ssg_bridge":1,"hello":…}`), the app answers
+  with `HMAC-SHA256(secret, nonce)`, and only a launcher satisfied with that
+  proof sends the token and the secret, which the app checks in constant
+  time. A new instance checks a previous `endpoint.json` the same way (a
+  live owner must prove it holds the old secret), so a stale port is never
+  mistaken for a running window.
+
+Both write `endpoint.json` atomically and remove it on stop.
+
+### The path guard
+
+`BridgePathGuard` (`bridge_paths.dart`) blocks reads of common secret
+locations: `~/.ssh`, `~/.gnupg`, `.env` files, `/etc/shadow` and friends,
+`/etc/sudoers`, SSH host keys, key and certificate files (`id_*`, `*.pem`,
+`*.key`, `*.p12`, `*.pfx`, `*.ppk`), password databases, shell and client
+histories, `.npmrc`, `.pypirc`, `.git/config`, `.git-credentials`, `.netrc`,
+`.pgpass`, `.my.cnf`, `.htpasswd`, cloud and container credentials (`.aws`,
+`.kube`, `.docker`, `gh`, `gcloud`, `.azure`, `.vault-token`) and process
+environments under `/proc`. The full list is `builtInPatterns`, and the app
+shows it under "View built-in blocked paths". The user can add patterns
+under "Extra blocked paths", and can set the built-ins aside with "Read
+sensitive paths"; their own patterns apply either way.
+
+The order matters. The guard is given a path only **after the server has
+canonicalised it** (SFTP `realpath`), because a name checked before is not the
+file that is opened: a symlink named `notes.txt` can point at
+`~/.ssh/id_ed25519`. An absolute path is also checked as asked, for a server
+whose `realpath` does not follow links. The guard normalises `.`, `..` and
+`//` itself, and a path is blocked when it or any directory above it
+matches, so listing `~/.ssh` is refused as well as reading inside it.
+
+A blocked path leaves no trace. Asking for one gives the same refusal
+(`path_not_available`) as a path the server cannot resolve, and `list_dir`
+and `search_files` drop blocked entries from their results without a count
+or a note. It is a default set. It cannot know that a file called
+`deploy-notes.txt` contains a password, and the README says so.
+
+### Redaction
+
+Output passes `redact` in this order: private-key blocks (PEM, and the
+private lines of a PuTTY key) are replaced with `[private key redacted]`
+across the **whole** output, then the app's diagnostics `scrub` removes
+known secrets and common secret shapes, and only then is the result capped at
+64 KiB (cut on a UTF-8 boundary, with a marker saying how much was dropped; a
+log keeps its tail, a file its head). The cap comes last on purpose: cutting
+first could land inside a key and leave half of it behind as
+ordinary-looking text, and the scrubber should always see a secret whole. A
+key cut off by the caller's own `offset` or a log tail is handled too: a
+BEGIN with no END is redacted to the end, and an END with no BEGIN takes the
+key-like lines above it. If redaction itself fails, nothing is returned. The
+redactor is a second line behind the path guard, not a replacement for it.
+The reads are bounded before that, too: `tail_log` on a file reads only its
+last 256 KiB, `read_file` fetches only the window asked for, and
+`search_files` runs `find -maxdepth` under `timeout 20` where the server has
+it.
+
+### Audit log
+
+`bridge_audit.dart` appends one JSON line per call to
+`<data>/bridge/audit.log`: time, assistant, host name as asked, tool,
+arguments (private keys and secrets removed, cut to 500 characters), outcome
+(`ok`, `refused` or `error`), detail (the refusal code or the error message,
+scrubbed) and milliseconds. It records refusals and errors too, and **never
+the output**: the log lasts longer than the output and is shown more freely.
+The file is created owner-only (`chmod 600` on POSIX, best effort) and so is the rotated copy. It rotates at 512 KiB to `audit.log.1`, keeping one older file. The
+"Activity" screen ("AI Bridge activity") reads both; "Clear" deletes both. A
+write that fails never fails the call; the screen says the log has a gap.
+
+### Stores that agree with their files
+
+`BridgeClientStore.create`, `confirm` and `revoke`, and `HostStore.add` and
+`update`, write the file and, when the write fails, put the in-memory state
+back as it was and rethrow. What the app shows and, above all, what the bridge
+uses (which tokens sign in, which hosts an assistant may read) therefore
+never differs from what is stored: a change that held only until the next
+start, such as a host taken out of AI access that would come back at restart,
+or a revoked token that is revived, cannot happen silently. A revoke that
+cannot be saved leaves the pairing in place and the Settings screen says the
+pairing still works. The host store's rollback covers every host save in the app
+(an edit, a quick-connect save, the checklist), not only AI access.
+
+### Backups, and the lock
+
+Backups never carry the bridge. An exported host has `aiAccess` off and the
+exported settings carry the bridge fields at their defaults; on import every
+host arrives with access off, whatever the file says, so restoring an old
+backup on a new machine cannot hand an assistant a server. Importing keeps
+**this device's** bridge settings (`withBridgeFrom`): a backup can neither
+switch the bridge on nor weaken its blocked paths. `bridge_clients.json` is
+not part of a backup, so tokens (or their hashes) are never exported.
+
+While the app is locked, `decideBridgeCall` refuses everything, `list_hosts`
+included, so a client that is already connected gets nothing until the user
+unlocks the app.
+
+The consent dialog ("Turn on the AI Bridge?") is shown every time the bridge
+is switched on, not only the first time: pairing does not need the bridge on,
+so a paired assistant does not mean the explanation was ever read.
+
+### Threat model
+
+- **Another process of the same user.** Not defended against, and said so.
+  It can read the token from the client's config, the locator file, or the app
+  itself. The bridge's protections are about what an assistant can do, not
+  about hiding it from the user's own account. This is the same stance as the
+  Linux credential file.
+- **Another local user.** On Linux the socket and its directory are not
+  openable. On Windows the locator file sits in the user's profile, so the
+  secret and port are hidden, and the handshake needs both the secret and a
+  valid token, which the app stores only as a SHA-256 hash.
+- **A malicious or compromised server.** Its output is data. It can try to
+  steer the assistant (prompt injection); the skill and the instructions tell
+  the assistant to treat it as data, but that is advice to a model and not
+  enforcement. What stops damage is that nothing in 1.6.0 can change a
+  server, and the guard, the cap and the audit log bound what can be read.
+  A malicious server cannot reach another host through the bridge, as each
+  tool call names one host.
+- **A leaked client config.** It holds the token. Whoever has it can read
+  from the shared servers, only while the app is running with the bridge on
+  and unlocked, and never anything the policy refuses. Revoking the
+  assistant in Settings invalidates the token at once and stops its calls in
+  progress; the activity log shows what was asked for.
+- **The AI provider.** Out of scope for the app by construction: whatever the
+  assistant reads is sent by its client to that client's own provider.
+  The privacy policy says this plainly.
+- **A planted `claude` on the user's `PATH`.** One-click runs the first
+  `claude` that answers `--version`, and hands it the token. A program
+  planted earlier on the user's `PATH` would be run and would receive it.
+  The confirmation shows the full path and version before anything runs, and
+  the user's `PATH` is the user's own trust: this is the same stance as for
+  any command typed in a terminal. A file not named `claude`, a relative
+  path and a network share are never run. A marketplace named `dhiva-labs`
+  that points somewhere else is shown and warned about for the same reason.
+- **Windows `.cmd` shims.** A `claude.cmd` or `.bat` must be started through
+  the shell. Its path is the one string on that command line that is not a
+  constant, so a path with a character `cmd.exe` interprets (quotes,
+  `& | < > ^ % !`, `, ; =`, and `( ) @`, which also makes it drop the
+  quotes round a path with a space) is refused rather than escaped; a
+  `Program Files (x86)` shim is therefore not run, and the manual route is
+  the fallback.
+- **A timeout ends the program, not what it started.** On timeout the
+  connector kills the process it started (on Windows through a shim, that is
+  the shell). Anything that process had already started, such as a child or a
+  clone, is not tracked and may run on; the connector only stops waiting for
+  its pipes after two seconds.
+- **Prompts outside the app.** The app never prompts for a bridge call, but
+  it cannot stop other software from doing so: an SSH agent may ask the user
+  to confirm a signature or touch a hardware key, and a desktop keyring may
+  show its own unlock dialog when the saved sign-in is read.
+
+#### Known limits
+
+- **Windows, the token on the wire.** The proof step keeps the launcher from
+  sending its token to whatever holds a stale port after a crash. After the
+  proof, the token (and the secret) cross the loopback connection in clear.
+  If another local program could share the app's live port, it could relay
+  the proof and read the token. Whether the Windows bind is exclusive
+  (`SO_EXCLUSIVEADDRUSE`) is not verified; `store/release-checklist-1.6.md`
+  has the check.
+- **Windows, availability.** Any local program can connect to the port.
+  One that keeps 8 handshakes open, reconnecting as each times out, can keep
+  a real launcher out. It learns nothing and can read nothing; it only
+  denies service. (On Linux only the user's own account can connect.)
+- **One-click on Windows has never run on Windows.** The `.cmd` shim
+  handling, the refusal of paths with shell characters, the drive-letter and
+  network-share checks, and `PATHEXT` ordering are written from the
+  documentation and unit-tested with a fake runner on Linux. The release
+  checklist has the checks to make on a real install.
+- **The manual route and shell history.** The third pasted command puts the
+  token in the shell's history file. One-click avoids it; the connect screen
+  carries a one-line note saying so under the commands, and the docs tell the
+  user to delete the line, or revoke and pair again if the history is shared.
+- **Resolve, then read.** A path is resolved and checked, then read, in two
+  steps. Something that can write on the server could swap a symlink in
+  between. Exploiting that already needs write access on the server, which
+  is more than the bridge would give it.
+- **Empty-looking folders.** A directory that holds only blocked entries
+  lists as `[empty]`, and a search through it finds nothing. That is the
+  price of leaving no trace.
 
 ---
 

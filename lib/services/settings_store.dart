@@ -96,10 +96,27 @@ class SettingsStore {
   }
 
   /// Replaces the stored settings and persists them.
-  Future<void> save(AppSettings settings) async {
+  ///
+  /// A write that fails throws, and by default [current] keeps the value it
+  /// was given, as it always has. With [revertOnFailure], [current] goes back
+  /// to what it was before the call (unless something newer has been saved
+  /// meanwhile), for a caller that must not carry on as if a setting it could
+  /// not store had been stored. [changes] never fires for a failed save.
+  Future<void> save(
+    AppSettings settings, {
+    bool revertOnFailure = false,
+  }) async {
     await ensureLoaded();
+    final previous = _settings;
     _settings = settings;
-    await _persist();
+    try {
+      await _persist();
+    } catch (_) {
+      if (revertOnFailure && identical(_settings, settings)) {
+        _settings = previous;
+      }
+      rethrow;
+    }
     if (!_changes.isClosed) _changes.add(_settings);
   }
 

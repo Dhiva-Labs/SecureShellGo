@@ -42,15 +42,50 @@ modules:
       - type: dir
         path: tree
         dest: tree
+      # The app's command. It starts the AI Bridge launcher instead of the
+      # app when an AI assistant runs it: the assistant puts its pairing
+      # token in SSG_BRIDGE_TOKEN and talks over a pipe, while the app never
+      # needs the variable and is started from a terminal or with no stdin.
+      # That lets the host command Flatpak exports for the app
+      # (<installation>/exports/bin/com.dhivalabs.secure_shell_go, a single
+      # command with no arguments) be the launcher command the app shows; see
+      # lib/services/bridge/bridge_launcher_locator.dart. `flatpak run
+      # --command=secureshellgo-mcp com.dhivalabs.secure_shell_go` starts the
+      # launcher directly.
+      - type: script
+        dest-filename: secureshellgo.sh
+        commands:
+          - if [ -n "${SSG_BRIDGE_TOKEN+x}" ] && [ ! -t 0 ]; then
+          - '  exec /app/lib/secureshellgo/secureshellgo-mcp "$@"'
+          - fi
+          - exec /app/lib/secureshellgo/secure_shell_go "$@"
     build-commands:
       # The bundle as it is; Flutter finds lib/ and data/ next to its
-      # executable.
+      # executable. The launcher is installed by the next module.
       - mkdir -p /app/lib /app/bin
       - cp -a tree/opt/secureshellgo /app/lib/secureshellgo
-      - ln -s ../lib/secureshellgo/secure_shell_go /app/bin/secureshellgo
+      - rm -f /app/lib/secureshellgo/secureshellgo-mcp
+      - install -Dm755 secureshellgo.sh /app/bin/secureshellgo
       # The desktop file is already named after the application ID; the icon
       # gets that name too, as Flatpak requires.
       - install -Dm644 -t /app/share/applications tree/usr/share/applications/com.dhivalabs.secure_shell_go.desktop
       - desktop-file-edit --set-icon=com.dhivalabs.secure_shell_go /app/share/applications/com.dhivalabs.secure_shell_go.desktop
       - install -Dm644 tree/usr/share/icons/hicolor/256x256/apps/secureshellgo.png /app/share/icons/hicolor/256x256/apps/com.dhivalabs.secure_shell_go.png
       - install -Dm644 -t /app/share/metainfo tree/usr/share/metainfo/com.dhivalabs.secure_shell_go.metainfo.xml
+
+  # The AI Bridge launcher, in a module of its own so that flatpak-builder's
+  # debuginfo step, which strips every ELF file a module installs, is turned
+  # off for this file alone. `dart compile exe` appends the program to the
+  # ELF file outside any section, and stripping cuts it off (what is left
+  # only prints the Dart VM's usage). The app module above keeps the default.
+  - name: secureshellgo-mcp
+    buildsystem: simple
+    build-options:
+      no-debuginfo: true
+      strip: false
+    sources:
+      - type: file
+        path: tree/opt/secureshellgo/secureshellgo-mcp
+    build-commands:
+      - install -Dm755 secureshellgo-mcp /app/lib/secureshellgo/secureshellgo-mcp
+      - ln -s ../lib/secureshellgo/secureshellgo-mcp /app/bin/secureshellgo-mcp

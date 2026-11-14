@@ -1,6 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:secure_shell_go/models/host.dart';
 import 'package:secure_shell_go/services/credential_store.dart';
+import 'package:secure_shell_go/services/secure_storage_backend.dart';
 
 /// An in-memory stand-in for the Keystore-backed [SecureStorageBackend], the
 /// same way [HostStore]/[KnownHostsService] tests substitute a temp [File]
@@ -141,4 +142,70 @@ void main() {
       throwsA(isA<SecureStorageUnavailableException>()),
     );
   });
+
+  group('loadQuiet', () {
+    test('reads like load from a backend that never prompts', () async {
+      await store.save('host-1', const SshCredentials(password: 'hunter2'));
+      final quiet = await store.loadQuiet('host-1');
+      expect(quiet?.password, 'hunter2');
+      expect(await store.loadQuiet('none'), isNull);
+    });
+
+    test('a sealed store throws CredentialsNeedPerson and never prompts',
+        () async {
+      final sealed = _SealedQuietBackend();
+      final quietStore = CredentialStore(backend: sealed);
+      await expectLater(
+        quietStore.loadQuiet('host-1'),
+        throwsA(
+          isA<CredentialsNeedPerson>().having(
+            (e) => e.kind,
+            'kind',
+            SecureStorageSealedKind.vault,
+          ),
+        ),
+      );
+      expect(sealed.promptingReads, 0);
+      // The ordinary load is unchanged: it is the one allowed to prompt.
+      await quietStore.load('host-1');
+      expect(sealed.promptingReads, 1);
+    });
+
+    test('a quiet read that finds a value decodes it', () async {
+      final quietStore = CredentialStore(
+        backend: _SealedQuietBackend(quietValue: '{"password":"pw"}'),
+      );
+      expect((await quietStore.loadQuiet('host-1'))?.password, 'pw');
+    });
+  });
+}
+
+/// A backend whose ordinary read stands for one that would prompt.
+class _SealedQuietBackend
+    implements SecureStorageBackend, QuietSecureStorageRead {
+  _SealedQuietBackend({this.quietValue});
+
+  final String? quietValue;
+  var promptingReads = 0;
+
+  @override
+  Future<String?> read(String key) async {
+    promptingReads++;
+    return null;
+  }
+
+  @override
+  Future<String?> readQuiet(String key) async {
+    final value = quietValue;
+    if (value == null) {
+      throw const SecureStorageSealed(SecureStorageSealedKind.vault);
+    }
+    return value;
+  }
+
+  @override
+  Future<void> write(String key, String value) async {}
+
+  @override
+  Future<void> delete(String key) async {}
 }

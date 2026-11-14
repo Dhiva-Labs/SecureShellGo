@@ -5,8 +5,8 @@
 #
 # Fills PKGBUILD.in with the version, the release download URL and the
 # sha256 of both release tarballs and of the files it takes from the tagged
-# tree (LICENSE, launcher, desktop file, icon, metainfo; this checkout's
-# copies), then,
+# tree (LICENSE, the two /usr/bin wrappers, desktop file, icon, metainfo;
+# this checkout's copies), then,
 # in an archlinux:latest container, generates .SRCINFO, runs makepkg on the
 # x86_64 sources (all placed next to the PKGBUILD, so makepkg verifies their
 # checksums without downloading), installs the result and runs ldd on every
@@ -37,6 +37,7 @@ sed -e "s|@NAME@|$NAME|g" -e "s|@VERSION@|$VERSION|g" \
     -e "s|@RELEASE_URL@|https://github.com/$GITHUB_REPO/releases/download/$tag|g" \
     -e "s|@SHA_LICENSE@|$(sha "$repo/LICENSE")|g" \
     -e "s|@SHA_WRAPPER@|$(sha "$repo/debian/secureshellgo.wrapper")|g" \
+    -e "s|@SHA_MCP_WRAPPER@|$(sha "$repo/debian/secureshellgo-mcp.wrapper")|g" \
     -e "s|@SHA_DESKTOP@|$(sha "$repo/linux/com.dhivalabs.secure_shell_go.desktop")|g" \
     -e "s|@SHA_ICON@|$(sha "$repo/linux/secureshellgo-256.png")|g" \
     -e "s|@SHA_METAINFO@|$(sha "$repo/packaging/flatpak/com.dhivalabs.secure_shell_go.metainfo.xml")|g" \
@@ -47,7 +48,8 @@ if grep -n '@[A-Z0-9_]*@' "$work/PKGBUILD"; then echo "unfilled placeholder" >&2
 # the names the PKGBUILD gives them.
 cp "$tar_x64" "$work/SecureShellGo-$VERSION-linux-x64.tar.gz"
 cp "$repo/LICENSE" "$work/LICENSE"
-cp "$repo/debian/secureshellgo.wrapper" "$repo/linux/com.dhivalabs.secure_shell_go.desktop" \
+cp "$repo/debian/secureshellgo.wrapper" "$repo/debian/secureshellgo-mcp.wrapper" \
+  "$repo/linux/com.dhivalabs.secure_shell_go.desktop" \
   "$repo/linux/secureshellgo-256.png" "$repo/packaging/flatpak/com.dhivalabs.secure_shell_go.metainfo.xml" "$work/"
 
 # makepkg refuses to run as root, so the work directory goes to a build user
@@ -64,6 +66,8 @@ docker run --rm -v "$work:/build" -e HOST_UID="$(id -u)" -e HOST_GID="$(id -g)" 
   namcap PKGBUILD
   pacman -U --noconfirm ./*-x86_64.pkg.tar.zst
   pacman -Qlq secureshellgo-bin | grep -x /opt/secureshellgo/secure_shell_go
+  pacman -Qlq secureshellgo-bin | grep -x /opt/secureshellgo/secureshellgo-mcp
+  pacman -Qlq secureshellgo-bin | grep -x /usr/bin/secureshellgo-mcp
   [ ! -e /opt/secureshellgo/lib/libdartjni.so ]
   # Every ELF file the package installed finds its libraries (the depends
   # are complete), as in verify.sh.
@@ -73,6 +77,16 @@ docker run --rm -v "$work:/build" -e HOST_UID="$(id -u)" -e HOST_GID="$(id -g)" 
     if LD_LIBRARY_PATH=/opt/secureshellgo/lib ldd "$f" | grep "not found"; then echo "in $f"; missing=1; fi
   done
   [ "$missing" = 0 ]
+  # The AI Bridge launcher survived makepkg (options=(!strip)): with no app
+  # to reach it answers a request with a JSON-RPC error and exits 1, where a
+  # stripped one would only print the Dart VM usage.
+  mkdir -p /tmp/launcher-bridge
+  code=0
+  out="$(printf "%s\n" "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{}}" \
+    | SSG_BRIDGE_DIR=/tmp/launcher-bridge SSG_BRIDGE_TOKEN=ci-token secureshellgo-mcp)" || code=$?
+  echo "secureshellgo-mcp: exit code $code, stdout: $out"
+  [ "$code" -eq 1 ]
+  case "$out" in *"\"jsonrpc\":\"2.0\""*"\"error\""*) ;; *) echo "no JSON-RPC error from secureshellgo-mcp"; exit 1 ;; esac
   cat .SRCINFO
 '
 tar -C "$work" -czf "$out/$NAME-bin-$VERSION-aur.tar.gz" PKGBUILD .SRCINFO
