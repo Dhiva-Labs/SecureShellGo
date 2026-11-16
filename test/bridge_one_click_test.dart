@@ -1125,8 +1125,14 @@ void main() {
       await tester.ensureVisible(find.text('Shared hosts — 0 of 3'));
       await tester.tap(find.text('Shared hosts — 0 of 3'));
       await settle(tester);
-      await tester.tap(find.text('Host a'));
-      await tester.tap(find.text('Host c'));
+      for (final id in ['a', 'c']) {
+        await tester.tap(
+          find.descendant(
+            of: find.byKey(ValueKey('shared-host-$id')),
+            matching: find.byType(Checkbox),
+          ),
+        );
+      }
       await tester.pump();
       await tester.tap(find.text('Save'));
       await settle(tester);
@@ -1142,8 +1148,11 @@ void main() {
       await tester.runAsync(() async => saved = await hostStore.all());
       final stored = {for (final h in saved) h.id: h.aiAccess};
       bool ticked(String id) => tester
-          .widget<CheckboxListTile>(
-            find.widgetWithText(CheckboxListTile, 'Host $id'),
+          .widget<Checkbox>(
+            find.descendant(
+              of: find.byKey(ValueKey('shared-host-$id')),
+              matching: find.byType(Checkbox),
+            ),
           )
           .value!;
       for (final id in ['a', 'b', 'c']) {
@@ -1167,15 +1176,29 @@ void main() {
       await settle(tester);
 
       bool ticked(String id) => tester
-          .widget<CheckboxListTile>(
-            find.widgetWithText(CheckboxListTile, 'Host $id'),
+          .widget<Checkbox>(
+            find.descendant(
+              of: find.byKey(ValueKey('shared-host-$id')),
+              matching: find.byType(Checkbox),
+            ),
           )
           .value!;
       expect([ticked('a'), ticked('b'), ticked('c')], [true, false, true]);
-      expect(find.text('Prod · Read only'), findsOneWidget);
+      expect(find.text('Prod'), findsOneWidget);
+      expect(
+        find.descendant(
+          of: find.byKey(const ValueKey('ai-chip-a')),
+          matching: find.text('Read only'),
+        ),
+        findsOneWidget,
+      );
 
-      await tester.tap(find.text('Host b'));
-      await tester.tap(find.text('Host c'));
+      Finder tick(String id) => find.descendant(
+        of: find.byKey(ValueKey('shared-host-$id')),
+        matching: find.byType(Checkbox),
+      );
+      await tester.tap(tick('b'));
+      await tester.tap(tick('c'));
       await tester.pump();
       await tester.tap(find.text('Save'));
       await settle(tester);

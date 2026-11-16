@@ -480,6 +480,32 @@ void main() {
       await lock.close();
     });
 
+    test('switching the built-in assistant off ends its cards and grants, '
+        'and nothing of a paired client\'s', () async {
+      await service.dispose();
+      service = build(builtinOn: () => settings.current.assistantEnabled);
+      await settings.save(
+        settings.current.copyWith(bridgeEnabled: true, assistantEnabled: true),
+      );
+      await service.start();
+      final builtin = ask(service, BridgeClient.builtin);
+      final paired = ask(service, client);
+      service.grants.grant(
+        BridgeClient.builtinId,
+        'web1',
+        const Duration(minutes: 5),
+      );
+      service.grants.grant(client.id, 'web1', const Duration(minutes: 5));
+
+      await settings.update((s) => s.copyWith(assistantEnabled: false));
+      expect(await builtin, BridgeApprovalOutcome.withdrawn);
+      await until(() => service.grants.current.length == 1);
+      expect(service.grants.current.single.clientId, client.id);
+      expect(service.approvals.current.single.client.id, client.id);
+      service.approvals.withdrawAll();
+      expect(await paired, BridgeApprovalOutcome.withdrawn);
+    });
+
     test('revoking a client, connected or not, ends its cards and grants '
         'only', () async {
       final second = (await clients.create('Second assistant')).client;

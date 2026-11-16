@@ -5,17 +5,21 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../l10n/l10n.dart';
+import '../models/app_settings.dart';
 import '../models/host.dart';
 import '../models/snippet.dart';
 import '../services/app_lock_controller.dart';
 import '../services/backup_service.dart';
+import '../services/assistant/assistant_service.dart';
 import '../services/bridge/bridge_audit.dart';
 import '../services/bridge/bridge_cli_connector.dart';
 import '../services/bridge/bridge_client_store.dart';
+import '../services/bridge_remote/remote_controller_token_store.dart';
 import '../services/bridge/bridge_service.dart';
 import '../services/credential_store.dart';
 import '../services/device_storage.dart';
 import '../services/fleet_push_run_registry.dart';
+import '../services/headless_dialer.dart';
 import '../services/host_grouping.dart';
 import '../services/host_store.dart';
 import '../services/input_profile.dart';
@@ -36,10 +40,13 @@ import '../widgets/login_prompt_dialog.dart';
 import '../widgets/host_list_presentation.dart';
 import '../widgets/quick_connect_bar.dart';
 import '../widgets/snippet_picker.dart' show runSnippetOnSession;
+import 'assistant_chat_screen.dart';
+import 'bridge_shared_hosts_screen.dart';
 import 'fleet_push_screen.dart';
 import 'fleet_run_screen.dart';
 import 'host_edit_screen.dart';
 import 'quick_connect_screen.dart';
+import 'remote_approvals_screen.dart';
 import 'session_screen.dart';
 import 'settings_screen.dart';
 import 'share_target_screen.dart';
@@ -81,6 +88,8 @@ class HostListScreen extends StatefulWidget {
     this.bridgeClients,
     this.bridgeAudit,
     this.claudeConnector,
+    this.assistant,
+    this.controllerTokens,
     this.fleetPushRegistry,
   });
 
@@ -136,6 +145,15 @@ class HostListScreen extends StatefulWidget {
   final BridgeClientStore? bridgeClients;
   final BridgeAuditLog? bridgeAudit;
   final ClaudeCliConnector? claudeConnector;
+
+  /// The built-in assistant. Its chat is offered in the app bar only while
+  /// the assistant is switched on in Settings. Null hides the entry.
+  final AssistantService? assistant;
+
+  /// The controller tokens this phone holds, one per host that is the user's
+  /// own computer. Null hides "AI approvals on this computer" from the host
+  /// menu.
+  final RemoteControllerTokenStore? controllerTokens;
 
   /// Where a running fleet push is kept reachable once its own setup screen
   /// is left — held above this route like [sessions], so both this screen
@@ -594,6 +612,13 @@ class _HostListScreenState extends State<HostListScreen> {
         subtitle: l10n.hostListActionBrowseFilesSubtitle,
         run: () => _connect(host, view: SessionView.files),
       ),
+      if (widget.controllerTokens != null)
+        _HostAction(
+          icon: Icons.phonelink_lock_outlined,
+          title: l10n.hostListActionRemoteApprovals,
+          subtitle: l10n.hostListActionRemoteApprovalsSubtitle,
+          run: () => unawaited(_openRemoteApprovals(host)),
+        ),
       _HostAction(
         icon: Icons.edit_outlined,
         title: l10n.hostListActionEdit,
@@ -1066,11 +1091,34 @@ class _HostListScreenState extends State<HostListScreen> {
 
     await widget.hostStore.delete(host.id);
     await widget.credentialStore.delete(host.id);
+    // The computer's controller token goes with the host that held it, on a
+    // best-effort basis: the host is already deleted.
+    await widget.controllerTokens?.deleteQuietly(host.id);
     if (forgetKeys) {
       await widget.knownHosts.forgetHost(host.hostname, host.port);
     }
     if (!mounted) return;
     _refresh();
+  }
+
+  /// "AI approvals on this computer": the remote control of the host's AI
+  /// Bridge. Signs in with what is saved and nobody to ask, so no terminal
+  /// opens and no prompt can appear; the screen says when that is not enough.
+  Future<void> _openRemoteApprovals(Host host) async {
+    final tokens = widget.controllerTokens;
+    if (tokens == null) return;
+    await Navigator.of(context).push<void>(
+      MaterialPageRoute<void>(
+        builder: (_) => RemoteApprovalsScreen(
+          host: host,
+          tokens: tokens,
+          open: headlessRemoteLinkOpener(
+            credentials: widget.credentialStore.loadQuiet,
+            dialer: HeadlessDialer(widget.sshService).dial,
+          ),
+        ),
+      ),
+    );
   }
 
   Future<void> _openSettings() async {
@@ -1088,11 +1136,35 @@ class _HostListScreenState extends State<HostListScreen> {
           bridgeClients: widget.bridgeClients,
           bridgeAudit: widget.bridgeAudit,
           claudeConnector: widget.claudeConnector,
+          assistant: widget.assistant,
         ),
       ),
     );
     // What Settings may have changed (hosts shared with the AI Bridge, a
     // restored backup) must not be read from this list's older copy.
+    if (mounted) _refresh();
+  }
+
+  /// The chat with the built-in assistant. It ends with the route; the
+  /// approval cards it raises come from the app-wide approval host.
+  Future<void> _openAssistant() async {
+    final assistant = widget.assistant;
+    if (assistant == null) return;
+    await Navigator.of(context).push<void>(
+      MaterialPageRoute<void>(
+        builder: (_) => AssistantChatScreen(
+          service: assistant,
+          hostStore: widget.hostStore,
+          onOpenSettings: () => unawaited(_openSettings()),
+          onOpenSharedHosts: () => Navigator.of(context).push<void>(
+            MaterialPageRoute<void>(
+              builder: (_) =>
+                  BridgeSharedHostsScreen(hostStore: widget.hostStore),
+            ),
+          ),
+        ),
+      ),
+    );
     if (mounted) _refresh();
   }
 
@@ -1321,6 +1393,19 @@ class _HostListScreenState extends State<HostListScreen> {
                               child: Text(l10n.sshConfigImportTitle),
                             ),
                           ],
+                        ),
+                      if (widget.assistant != null)
+                        StreamBuilder<AppSettings>(
+                          initialData: widget.settingsStore.current,
+                          stream: widget.settingsStore.changes,
+                          builder: (context, snapshot) =>
+                              (snapshot.data?.assistantEnabled ?? false)
+                              ? IconButton(
+                                  tooltip: l10n.assistantChatTitle,
+                                  icon: const Icon(Icons.smart_toy_outlined),
+                                  onPressed: () => unawaited(_openAssistant()),
+                                )
+                              : const SizedBox.shrink(),
                         ),
                       if (widget.tunnels != null)
                         IconButton(

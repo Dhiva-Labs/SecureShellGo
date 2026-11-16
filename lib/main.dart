@@ -5,21 +5,28 @@ import 'package:flutter/services.dart';
 
 import 'l10n/l10n.dart';
 import 'models/app_settings.dart';
+import 'screens/assistant_desktop_screen.dart';
 import 'screens/host_list_screen.dart';
+import 'screens/remote_desktop_launch.dart';
 import 'services/app_lock.dart';
 import 'services/app_data_paths.dart';
 import 'services/app_lock_controller.dart';
 import 'services/backup_service.dart';
 import 'services/bookmark_store.dart';
+import 'services/assistant/assistant_service.dart';
 import 'services/bridge/bridge_audit.dart';
 import 'services/bridge/bridge_change_tools.dart';
 import 'services/bridge/bridge_channel.dart';
 import 'services/bridge/bridge_cli_connector.dart';
 import 'services/bridge/bridge_client_store.dart';
 import 'services/bridge/bridge_connections.dart';
+import 'services/bridge/bridge_control.dart';
+import 'services/bridge/bridge_desktops.dart';
+import 'services/bridge/bridge_jobs.dart';
 import 'services/bridge/bridge_locator.dart';
 import 'services/bridge/bridge_redactor.dart';
 import 'services/bridge/bridge_service.dart';
+import 'services/bridge_remote/remote_controller_token_store.dart';
 import 'services/bridge/bridge_terminals.dart';
 import 'services/bridge/bridge_tools.dart';
 import 'services/composite_secure_storage.dart';
@@ -334,6 +341,7 @@ class _SecureShellGoAppState extends State<SecureShellGoApp> {
     settingsStore: _settingsStore,
     credentialStore: _credentialStore,
     knownHosts: _knownHosts,
+    controllerTokens: _controllerTokens,
   );
 
   late final TerminalWorkspace _workspace = TerminalWorkspace(
@@ -372,6 +380,25 @@ class _SecureShellGoAppState extends State<SecureShellGoApp> {
   );
   late final BridgeService _bridge = _buildBridge();
 
+  // The phone side of Phone control: the controller token for each saved host
+  // that is the user's own computer. Secure storage only, never a backup.
+  late final RemoteControllerTokenStore _controllerTokens =
+      RemoteControllerTokenStore(_secureStorage);
+
+  // The built-in assistant (the chat in the app): reads its settings and API
+  // key, and runs the model's tool calls through `_bridge.tools` as the
+  // built-in client. The key lives in secure storage only and is taught to
+  // the log scrubber, so it never reaches the diagnostics or activity logs.
+  late final AssistantService _assistant = AssistantService(
+    storage: _secureStorage,
+    settings: () => _settingsStore.current,
+    settingsChanges: _settingsStore.changes,
+    appLockChanges: _appLock.changes.map((s) => s.isLocked).distinct(),
+    tools: _bridge.tools,
+    approvals: _bridge.approvals.pending,
+    learnSecret: DiagnosticsLog.instance.scrubber.learn,
+  );
+
   /// The bridge as the screens see it today: only where the local channel
   /// exists, so Android shows no pairing or launcher settings.
   BridgeService? get _channelBridge =>
@@ -382,6 +409,11 @@ class _SecureShellGoAppState extends State<SecureShellGoApp> {
   // server, shown over whatever screen is in front, one at a time. Never
   // while the app is locked. See `widgets/bridge_approval_host.dart`.
   BridgeApprovalHost? _approvalHost;
+
+  // The assistant's desktop (`open_desktop`), built with the bridge, and
+  // what puts each one in front of the user in a viewer the moment it opens.
+  BridgeDesktops? _bridgeDesktops;
+  AssistantDesktopHost? _desktopHost;
 
   BridgeService _buildBridge() {
     final connections = BridgeConnections(
@@ -413,6 +445,29 @@ class _SecureShellGoAppState extends State<SecureShellGoApp> {
       sessions: _sessions,
       dial: connections.dialOwned,
     );
+    // The assistant's desktop: the server's signed-in desktop, opened as
+    // "Remote desktop… → This desktop" opens it, on a connection of its own
+    // dialled with nobody to ask (no agent or X11 forwarding), and shown to
+    // the user in a viewer (`AssistantDesktopHost`). English for what the
+    // opener says: it goes to the assistant, not to the screen.
+    final desktops = _bridgeDesktops = BridgeDesktops(
+      open: (host) => AssistantDesktopLink.open(
+        dial: () => connections.dialOwned(host),
+        opener: (transport, {required progress, required attach}) =>
+            openSignedInDesktop(
+              lookupAppLocalizations(const Locale('en')),
+              transport,
+              progress: progress,
+              attach: attach,
+            ),
+      ),
+    );
+    // Long-running jobs: a tool group, and what a paired phone sees and
+    // stops under Phone control.
+    final jobs = BridgeJobs(
+      registry: BridgeJobRegistry(),
+      redactor: BridgeRedactor(scrub: DiagnosticsLog.instance.scrubber.scrub),
+    );
     return BridgeService(
       settingsStore: _settingsStore,
       clients: _bridgeClients,
@@ -435,12 +490,17 @@ class _SecureShellGoAppState extends State<SecureShellGoApp> {
         terminalUseTools: terminals.useTools,
         // Tool groups that live in their own files (`BridgeToolModule`) are
         // registered here, one entry each.
-        modules: const [],
+        modules: [jobs, desktops],
         // The built-in assistant's own switch, used instead of the channel
-        // switch for its calls. Off until it has a setting.
-        builtinAssistantEnabled: () => false,
+        // switch for its calls.
+        builtinAssistantEnabled: () => _settingsStore.current.assistantEnabled,
       ),
       terminals: terminals,
+      // What a paired phone may stop besides terminals (Phone control).
+      controlSources: [
+        BridgeDesktopsControlSource(desktops),
+        BridgeJobsControlSource(jobs),
+      ],
       // A lock withdraws pending approvals and ends time-limited ones.
       appLockChanges: _appLock.changes.map((s) => s.isLocked).distinct(),
       // A host un-shared, stepped down or re-pointed loses its approvals.
@@ -463,6 +523,9 @@ class _SecureShellGoAppState extends State<SecureShellGoApp> {
     // not show a spinner on a cold start.
     _knownHosts.ensureLoaded();
     _hostStore.ensureLoaded();
+    // Reads the assistant's saved key (never asking for anything), which
+    // also teaches the log scrubber the key before anything can log it.
+    unawaited(_assistant.load());
     // Same reasoning as the lock below: the *loaded* settings, not the
     // defaults the store reads as before its first disk read completes,
     // otherwise a user on `aws`+light would get one frame of aurora dark on
@@ -494,6 +557,14 @@ class _SecureShellGoAppState extends State<SecureShellGoApp> {
       lockChanges: _appLock.changes.map((s) => s.isLocked).distinct(),
       timedMinutes: () => _settingsStore.current.bridgeTimedApprovalMinutes,
     )..start();
+    final desktops = _bridgeDesktops;
+    if (desktops != null) {
+      _desktopHost = AssistantDesktopHost(
+        navigatorKey: _navigatorKey,
+        desktops: desktops,
+        lockChanges: _appLock.changes.map((s) => s.isLocked).distinct(),
+      )..start();
+    }
     _themeWatch = _settingsStore.changes.listen((settings) {
       if (settings.uiStyle == _uiStyle &&
           settings.themeBrightness == _themeBrightness &&
@@ -522,6 +593,8 @@ class _SecureShellGoAppState extends State<SecureShellGoApp> {
     // Closes assistant connections and the SSH connections the bridge
     // dialled, and removes the endpoint file.
     unawaited(_approvalHost?.dispose());
+    unawaited(_desktopHost?.dispose());
+    _assistant.dispose();
     unawaited(_bridge.dispose().whenComplete(_bridgeAudit.dispose));
     unawaited(_settingsWatch?.cancel());
     unawaited(_diagnosticsWatch?.cancel());
@@ -567,10 +640,16 @@ class _SecureShellGoAppState extends State<SecureShellGoApp> {
         snippetStore: _snippetStore,
         appLock: _appLock,
         backupService: _backupService,
-        bridge: _channelBridge,
-        bridgeClients: _channelBridge == null ? null : _bridgeClients,
-        bridgeAudit: _channelBridge == null ? null : _bridgeAudit,
+        // The AI settings, per-host access and activity log exist on every
+        // platform (the built-in assistant works everywhere); only the
+        // pairing and launcher parts need the local channel and hide
+        // themselves without it.
+        bridge: _bridge,
+        bridgeClients: _bridgeClients,
+        bridgeAudit: _bridgeAudit,
         claudeConnector: _channelBridge == null ? null : _claudeConnector,
+        assistant: _assistant,
+        controllerTokens: _controllerTokens,
         fleetPushRegistry: _fleetPushRegistry,
       ),
     );

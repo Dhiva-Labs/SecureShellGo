@@ -79,6 +79,7 @@ class BridgeAuditEntry {
     required this.detail,
     required this.ms,
     this.approval = BridgeAuditApproval.none,
+    this.via,
   });
 
   final DateTime ts;
@@ -102,6 +103,11 @@ class BridgeAuditEntry {
   /// a read.
   final BridgeAuditApproval approval;
 
+  /// Where the card's answer came from when it was not this computer, e.g.
+  /// `controller:<phone name>`; null for an answer given here, and on every
+  /// line written before 1.8.0.
+  final String? via;
+
   Map<String, Object?> toJson() => {
     'ts': ts.toUtc().toIso8601String(),
     'client': client,
@@ -112,6 +118,7 @@ class BridgeAuditEntry {
     'detail': detail,
     'ms': ms,
     'approval': approval.wire,
+    'via': ?via,
   };
 
   /// Null for anything that is not a whole, well-formed entry, which is how a
@@ -154,6 +161,12 @@ class BridgeAuditEntry {
       detail: detail,
       ms: ms,
       approval: BridgeAuditApproval.fromJson(decoded['approval']),
+      // Absent before 1.8.0; anything but a string is passed over, not the
+      // whole line.
+      via: switch (decoded['via']) {
+        final String v => v,
+        _ => null,
+      },
     );
   }
 
@@ -248,6 +261,7 @@ class BridgeAuditLog {
     String detail = '',
     required int ms,
     BridgeAuditApproval approval = BridgeAuditApproval.none,
+    String? via,
   }) async {
     final BridgeAuditEntry entry;
     try {
@@ -266,6 +280,7 @@ class BridgeAuditLog {
         detail: _clip(scrub(detail), maxFieldChars),
         ms: ms < 0 ? 0 : ms,
         approval: approval,
+        via: via == null ? null : _clip(via, maxFieldChars),
       );
     } catch (e) {
       // A scrubber that throws is a bug elsewhere; it still must not reach

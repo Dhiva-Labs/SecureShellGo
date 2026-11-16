@@ -1,3 +1,18 @@
+secureshellgo (1.8.0~noble1) noble; urgency=medium
+
+  * AI access is one level per server: off, read only, ask before each
+    change, or full control (changes, terminals and the desktop without
+    asking). All off by default.
+  * Assistants can start long-running jobs that outlive the connection,
+    and follow or stop them; and can see and control a server's desktop
+    in a viewer you can watch, take over or stop.
+  * A built-in assistant, on every platform, that uses your own AI
+    service key and the same approval cards.
+  * Answer this computer's approval cards from the app on your phone.
+    The full list is in CHANGELOG.md.
+
+ -- Dhiva Labs <dhivakar1010@gmail.com>  Tue, 17 Nov 2026 09:00:00 +0530
+
 secureshellgo (1.7.0~noble1) noble; urgency=medium
 
   * AI Bridge: an assistant you paired can now ask to change a server

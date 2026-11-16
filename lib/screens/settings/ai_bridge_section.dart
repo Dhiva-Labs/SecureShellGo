@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import '../../l10n/l10n.dart';
 import '../../models/app_settings.dart';
 import '../../models/host_ai_access.dart';
+import '../../services/assistant/assistant_service.dart';
 import '../../services/bridge/bridge_audit.dart';
 import '../../services/bridge/bridge_cli_connector.dart';
 import '../../services/bridge/bridge_client_store.dart';
@@ -18,15 +19,17 @@ import '../bridge_audit_screen.dart';
 import '../bridge_connect_screen.dart';
 import '../bridge_one_click_screen.dart';
 import '../bridge_shared_hosts_screen.dart';
+import 'assistant_settings_section.dart';
+import 'phone_control_section.dart';
 import 'settings_section.dart';
 
-/// The AI Bridge: the switch, what an assistant may see and read, who is
-/// paired, and the activity log.
+/// The AI Bridge, in groups: assistants on this computer (the switch, pairing),
+/// the built-in assistant and phone control (slots), what assistants can read,
+/// approvals, shared hosts, and the activity log.
 ///
-/// Built only where the local channel exists
-/// (`BridgeService.channelSupported`); the caller holds the three services
-/// as null elsewhere and leaves this out, so nothing about it is on screen
-/// on a phone.
+/// Shown on every platform. Without the local channel
+/// (`BridgeService.channelSupported`, e.g. on a phone) the "assistants on this
+/// computer" group (the switch, pairing) is left out, and the rest stays.
 class AiBridgeSettingsSection extends StatefulWidget {
   const AiBridgeSettingsSection({
     super.key,
@@ -37,6 +40,7 @@ class AiBridgeSettingsSection extends StatefulWidget {
     required this.audit,
     this.hostStore,
     this.connector,
+    this.assistant,
     this.clock = DateTime.now,
   });
 
@@ -53,6 +57,10 @@ class AiBridgeSettingsSection extends StatefulWidget {
   /// Runs the `claude` command for "Connect Claude Code"; without it the
   /// one-click button is never offered.
   final ClaudeCliConnector? connector;
+
+  /// The built-in assistant; without it the "Built-in assistant" group is
+  /// left out.
+  final AssistantService? assistant;
 
   /// The time "Approvals in force" counts down against.
   final DateTime Function() clock;
@@ -506,6 +514,197 @@ class _AiBridgeSettingsSectionState extends State<AiBridgeSettingsSection> {
     );
   }
 
+  /// A group heading with its one-line explanation. A group with nothing in
+  /// it is left out whole, so no heading stands over an empty space.
+  List<Widget> _group(
+    BuildContext context,
+    String title,
+    String help,
+    List<Widget> children,
+  ) {
+    if (children.isEmpty) return const [];
+    final theme = Theme.of(context);
+    return [
+      _subHeading(context, title),
+      Padding(
+        padding: const EdgeInsets.fromLTRB(16, 0, 16, 4),
+        child: Text(
+          help,
+          style: theme.textTheme.bodySmall?.copyWith(
+            color: theme.colorScheme.onSurfaceVariant,
+          ),
+        ),
+      ),
+      ...children,
+    ];
+  }
+
+  /// Slot for the built-in assistant's settings. The assistant's own part of
+  /// the app fills this in; until it does, the group is not shown.
+  List<Widget> _builtInAssistantSlot(BuildContext context) {
+    final assistant = widget.assistant;
+    if (assistant == null) return const [];
+    return [
+      AssistantSettingsSection(
+        settings: widget.settings,
+        apply: widget.apply,
+        service: assistant,
+      ),
+    ];
+  }
+
+  /// Slot for the phone-control settings. That part of the app fills this in;
+  /// until it does, the group is not shown.
+  List<Widget> _phoneControlSlot(BuildContext context) {
+    // A phone connects through the same local channel assistants use.
+    if (!widget.bridge.localChannel) return const [];
+    return [
+      PhoneControlSettings(
+        settings: widget.settings,
+        apply: widget.apply,
+        bridge: widget.bridge,
+        clients: widget.clients,
+      ),
+    ];
+  }
+
+  /// The switch, the address, the one-click and manual connect buttons, and
+  /// the paired assistants: what only exists where assistants run on this
+  /// computer (the local channel).
+  List<Widget> _computerGroup(BuildContext context) {
+    final l10n = context.l10n;
+    final settings = widget.settings;
+    if (!widget.bridge.localChannel) return const [];
+    return [
+      StreamBuilder<BridgeStatus>(
+        initialData: widget.bridge.status,
+        stream: widget.bridge.statusChanges,
+        builder: (context, snapshot) => SwitchListTile(
+          secondary: const Icon(Icons.hub_outlined),
+          title: Text(l10n.settingsBridge),
+          subtitle: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(l10n.settingsBridgeHelp),
+              const SizedBox(height: 2),
+              _status(context, snapshot.data ?? BridgeStatus.off),
+            ],
+          ),
+          value: settings.bridgeEnabled,
+          onChanged: (on) => unawaited(_setEnabled(on)),
+        ),
+      ),
+      SwitchListTile(
+        secondary: const Icon(Icons.dns_outlined),
+        title: Text(l10n.settingsBridgeAddress),
+        subtitle: Text(l10n.settingsBridgeAddressHelp),
+        value: settings.bridgeShowAddress,
+        onChanged: (on) =>
+            unawaited(_save((s) => s.copyWith(bridgeShowAddress: on))),
+      ),
+      _oneClick(context),
+      Padding(
+        padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
+        child: Align(
+          alignment: AlignmentDirectional.centerStart,
+          child: FilledButton.tonalIcon(
+            icon: const Icon(Icons.add_link),
+            label: Text(l10n.settingsBridgeConnect),
+            onPressed: () =>
+                _push(BridgeConnectScreen(clients: widget.clients)),
+          ),
+        ),
+      ),
+      _subHeading(context, l10n.settingsBridgePaired),
+      StreamBuilder<List<BridgeClient>>(
+        initialData: widget.bridge.connectedClients,
+        stream: widget.bridge.connectedClientsChanges,
+        builder: (context, snapshot) {
+          final connected = <String>{
+            for (final c in snapshot.data ?? <BridgeClient>[]) c.id,
+          };
+          // Phones have their own list under "Phone control".
+          final assistants = [
+            for (final c in _paired)
+              if (c.role == BridgeClientRole.assistant) c,
+          ];
+          if (assistants.isEmpty) {
+            return Padding(
+              padding: const EdgeInsets.fromLTRB(16, 4, 16, 4),
+              child: Text(l10n.settingsBridgePairedNone),
+            );
+          }
+          return Column(
+            children: [
+              for (final c in assistants) _clientTile(context, c, connected),
+            ],
+          );
+        },
+      ),
+    ];
+  }
+
+  /// Which files and secrets an assistant may read: the sensitive-paths switch
+  /// and the blocked-path list. Applies to every assistant.
+  List<Widget> _readGroup(BuildContext context) {
+    final l10n = context.l10n;
+    final theme = Theme.of(context);
+    final settings = widget.settings;
+    return [
+      SwitchListTile(
+        secondary: const Icon(Icons.key_outlined),
+        title: Text(l10n.settingsBridgeSensitive),
+        subtitle: Text(l10n.settingsBridgeSensitiveHelp),
+        value: settings.bridgeReadSensitivePaths,
+        onChanged: (on) => unawaited(_setSensitive(on)),
+      ),
+      _subHeading(context, l10n.settingsBridgeBlocked),
+      Padding(
+        padding: const EdgeInsets.fromLTRB(16, 0, 16, 4),
+        child: Text(
+          l10n.settingsBridgeBlockedHelp,
+          style: theme.textTheme.bodySmall?.copyWith(
+            color: theme.colorScheme.onSurfaceVariant,
+          ),
+        ),
+      ),
+      if (settings.bridgeExtraBlockedPaths.isEmpty)
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 4, 16, 4),
+          child: Text(l10n.settingsBridgeBlockedNone),
+        )
+      else
+        for (final pattern in settings.bridgeExtraBlockedPaths)
+          ListTile(
+            dense: true,
+            title: Text(
+              pattern,
+              style: TextStyle(
+                fontFamily: AppTheme.monoFontFamily,
+                fontFamilyFallback: AppTheme.monoFontFamilyFallback,
+                fontSize: 13,
+              ),
+            ),
+            trailing: IconButton(
+              tooltip: l10n.settingsBridgeBlockedRemove(pattern),
+              icon: const Icon(Icons.close),
+              onPressed: () => unawaited(_removePattern(pattern)),
+            ),
+          ),
+      ListTile(
+        leading: const Icon(Icons.add),
+        title: Text(l10n.settingsBridgeBlockedAdd),
+        onTap: () => unawaited(_addPattern()),
+      ),
+      ListTile(
+        leading: const Icon(Icons.shield_outlined),
+        title: Text(l10n.settingsBridgeBuiltInView),
+        trailing: const Icon(Icons.chevron_right),
+        onTap: () => _push(const BridgeBuiltInPathsScreen()),
+      ),
+    ];
+  }
+
   @override
   Widget build(BuildContext context) {
     final l10n = context.l10n;
@@ -516,152 +715,82 @@ class _AiBridgeSettingsSectionState extends State<AiBridgeSettingsSection> {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         SettingsSectionHeader(l10n.settingsBridge, style: settings.uiStyle),
-        StreamBuilder<BridgeStatus>(
-          initialData: widget.bridge.status,
-          stream: widget.bridge.statusChanges,
-          builder: (context, snapshot) => SwitchListTile(
-            secondary: const Icon(Icons.hub_outlined),
-            title: Text(l10n.settingsBridge),
-            subtitle: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(l10n.settingsBridgeHelp),
-                const SizedBox(height: 2),
-                _status(context, snapshot.data ?? BridgeStatus.off),
-              ],
-            ),
-            value: settings.bridgeEnabled,
-            onChanged: (on) => unawaited(_setEnabled(on)),
-          ),
+        ..._group(
+          context,
+          l10n.settingsAiGroupComputer,
+          l10n.settingsAiGroupComputerHelp,
+          _computerGroup(context),
         ),
-        SwitchListTile(
-          secondary: const Icon(Icons.dns_outlined),
-          title: Text(l10n.settingsBridgeAddress),
-          subtitle: Text(l10n.settingsBridgeAddressHelp),
-          value: settings.bridgeShowAddress,
-          onChanged: (on) =>
-              unawaited(_save((s) => s.copyWith(bridgeShowAddress: on))),
+        ..._group(
+          context,
+          l10n.settingsAiGroupBuiltIn,
+          l10n.settingsAiGroupBuiltInHelp,
+          _builtInAssistantSlot(context),
         ),
-        SwitchListTile(
-          secondary: const Icon(Icons.key_outlined),
-          title: Text(l10n.settingsBridgeSensitive),
-          subtitle: Text(l10n.settingsBridgeSensitiveHelp),
-          value: settings.bridgeReadSensitivePaths,
-          onChanged: (on) => unawaited(_setSensitive(on)),
+        ..._group(
+          context,
+          l10n.settingsAiGroupPhone,
+          l10n.settingsAiGroupPhoneHelp,
+          _phoneControlSlot(context),
         ),
-        _timedChoice(context),
-        _grants(context),
-        _subHeading(context, l10n.settingsBridgeBlocked),
-        Padding(
-          padding: const EdgeInsets.fromLTRB(16, 0, 16, 4),
-          child: Text(
-            l10n.settingsBridgeBlockedHelp,
-            style: theme.textTheme.bodySmall?.copyWith(
-              color: theme.colorScheme.onSurfaceVariant,
-            ),
-          ),
+        ..._group(
+          context,
+          l10n.settingsAiGroupRead,
+          l10n.settingsAiGroupReadHelp,
+          _readGroup(context),
         ),
-        if (settings.bridgeExtraBlockedPaths.isEmpty)
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 4, 16, 4),
-            child: Text(l10n.settingsBridgeBlockedNone),
-          )
-        else
-          for (final pattern in settings.bridgeExtraBlockedPaths)
-            ListTile(
-              dense: true,
-              title: Text(
-                pattern,
-                style: TextStyle(
-                  fontFamily: AppTheme.monoFontFamily,
-                  fontFamilyFallback: AppTheme.monoFontFamilyFallback,
-                  fontSize: 13,
+        ..._group(
+          context,
+          l10n.settingsAiGroupApprovals,
+          l10n.settingsAiGroupApprovalsHelp,
+          [_timedChoice(context), _grants(context)],
+        ),
+        if (widget.hostStore != null)
+          ..._group(
+            context,
+            l10n.settingsAiGroupHosts,
+            l10n.settingsAiGroupHostsHelp,
+            [
+              ListTile(
+                leading: const Icon(Icons.dns_outlined),
+                title: Text(
+                  l10n.settingsBridgeSharedHosts(shared ?? 0, _totalHosts),
+                ),
+                subtitle: Text(l10n.settingsBridgeSharedHostsHelp),
+                trailing: const Icon(Icons.chevron_right),
+                onTap: () => unawaited(
+                  _pushThenCount(
+                    BridgeSharedHostsScreen(hostStore: widget.hostStore!),
+                  ),
                 ),
               ),
-              trailing: IconButton(
-                tooltip: l10n.settingsBridgeBlockedRemove(pattern),
-                icon: const Icon(Icons.close),
-                onPressed: () => unawaited(_removePattern(pattern)),
+            ],
+          ),
+        ..._group(
+          context,
+          l10n.settingsAiGroupActivity,
+          l10n.settingsAiGroupActivityHelp,
+          [
+            ListTile(
+              leading: const Icon(Icons.history),
+              title: Text(l10n.settingsBridgeActivity),
+              subtitle: Text(l10n.settingsBridgeActivityHelp),
+              trailing: const Icon(Icons.chevron_right),
+              onTap: () => _push(BridgeAuditScreen(audit: widget.audit)),
+            ),
+            if (widget.audit.lastWriteError != null)
+              ListTile(
+                leading: Icon(
+                  Icons.warning_amber_outlined,
+                  color: theme.colorScheme.error,
+                ),
+                title: Text(
+                  l10n.settingsBridgeActivityWriteError,
+                  style: TextStyle(color: theme.colorScheme.error),
+                ),
               ),
-            ),
-        ListTile(
-          leading: const Icon(Icons.add),
-          title: Text(l10n.settingsBridgeBlockedAdd),
-          onTap: () => unawaited(_addPattern()),
+          ],
         ),
-        ListTile(
-          leading: const Icon(Icons.shield_outlined),
-          title: Text(l10n.settingsBridgeBuiltInView),
-          trailing: const Icon(Icons.chevron_right),
-          onTap: () => _push(const BridgeBuiltInPathsScreen()),
-        ),
-        _subHeading(context, l10n.settingsBridgePaired),
-        StreamBuilder<List<BridgeClient>>(
-          initialData: widget.bridge.connectedClients,
-          stream: widget.bridge.connectedClientsChanges,
-          builder: (context, snapshot) {
-            final connected = <String>{
-              for (final c in snapshot.data ?? <BridgeClient>[]) c.id,
-            };
-            if (_paired.isEmpty) {
-              return Padding(
-                padding: const EdgeInsets.fromLTRB(16, 4, 16, 4),
-                child: Text(l10n.settingsBridgePairedNone),
-              );
-            }
-            return Column(
-              children: [
-                for (final c in _paired) _clientTile(context, c, connected),
-              ],
-            );
-          },
-        ),
-        _oneClick(context),
-        Padding(
-          padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
-          child: Align(
-            alignment: AlignmentDirectional.centerStart,
-            child: FilledButton.tonalIcon(
-              icon: const Icon(Icons.add_link),
-              label: Text(l10n.settingsBridgeConnect),
-              onPressed: () =>
-                  _push(BridgeConnectScreen(clients: widget.clients)),
-            ),
-          ),
-        ),
-        const SizedBox(height: 8),
-        ListTile(
-          leading: const Icon(Icons.history),
-          title: Text(l10n.settingsBridgeActivity),
-          subtitle: Text(l10n.settingsBridgeActivityHelp),
-          trailing: const Icon(Icons.chevron_right),
-          onTap: () => _push(BridgeAuditScreen(audit: widget.audit)),
-        ),
-        if (widget.audit.lastWriteError != null)
-          ListTile(
-            leading: Icon(
-              Icons.warning_amber_outlined,
-              color: theme.colorScheme.error,
-            ),
-            title: Text(
-              l10n.settingsBridgeActivityWriteError,
-              style: TextStyle(color: theme.colorScheme.error),
-            ),
-          ),
-        if (widget.hostStore != null)
-          ListTile(
-            leading: const Icon(Icons.dns_outlined),
-            title: Text(
-              l10n.settingsBridgeSharedHosts(shared ?? 0, _totalHosts),
-            ),
-            subtitle: Text(l10n.settingsBridgeSharedHostsHelp),
-            trailing: const Icon(Icons.chevron_right),
-            onTap: () => unawaited(
-              _pushThenCount(
-                BridgeSharedHostsScreen(hostStore: widget.hostStore!),
-              ),
-            ),
-          ),
       ],
     );
   }

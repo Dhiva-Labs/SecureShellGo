@@ -78,6 +78,11 @@ abstract class BridgeToolModule {
   Map<String, Object?> auditArgs(String tool, Map<String, Object?> args) =>
       args;
 
+  /// Called once by the tool host when it is built, with the way a module
+  /// may reach a server for something the USER asked for (see
+  /// [BridgeModuleServices]). Nothing an assistant asks for may use it.
+  void attach(BridgeModuleServices services) {}
+
   /// Every saved host after a change (`HostStore.changes`).
   Future<void> hostsChanged(List<Host> hosts) async {}
 
@@ -92,11 +97,36 @@ abstract class BridgeToolModule {
   Future<void> ended(BridgeModuleEnd reason) async {}
 }
 
+/// What the tool host gives a module for actions the user takes themselves
+/// (the Stop of a job from the app or the phone). These do NOT go through
+/// the assistant policy: the person is acting, not the assistant, as with
+/// the Stop button on an assistant terminal. The module must never reach
+/// this from an assistant's call; that goes through [BridgeModuleCall].
+abstract interface class BridgeModuleServices {
+  /// Whether the app is locked now. A user-side action must not run then.
+  bool get isAppLocked;
+
+  /// Every saved host, read now.
+  Future<List<Host>> hosts();
+
+  /// Runs [body] with a server context for [host], the same connection
+  /// cache and deadline a tool call gets, but with no policy decision.
+  Future<T> withServerAsUser<T>(
+    Host host,
+    Future<T> Function(BridgeCallContext call) body, {
+    Duration? timeout,
+  });
+}
+
 /// Why [BridgeToolModule.ended] was called.
 enum BridgeModuleEnd {
   /// The channel bridge was switched off: what clients on the local channel
   /// hold ends; the built-in assistant's ([BridgeClient.builtin]) does not.
   bridgeOff,
+
+  /// The built-in assistant ([BridgeClient.builtin]) was switched off: what
+  /// it holds ends; what clients on the local channel hold does not.
+  builtinOff,
 
   /// The app locked: everything interactive ends (a job on a server is not
   /// interactive and may keep running; that is the jobs module's call).

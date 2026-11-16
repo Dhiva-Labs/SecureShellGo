@@ -50,18 +50,26 @@ carries a copy of it that must be kept in step with it.
    allowed commands and any approval for a while you gave this assistant,
    while the app is running with the bridge on and unlocked.
    Revoking the assistant in the app stops the token at once.
-4. For each server you want the assistant to see, tick it in "Shared hosts"
-   (Settings → AI Bridge), or edit it and switch on "Share with AI assistants".
-5. Only if you want the assistant to be able to ask for changes: edit the
-   server (or use the settings button of its row in "Shared hosts") and
-   switch on "Let the assistant request changes". Nothing changes on a server
-   without your answer on a card in the app, except commands you put under
-   "Allowed commands" for that host and, if you turn on Settings → AI Bridge →
-   "Allow for a while", the approvals for a number of minutes you give on a
-   card. "Full control terminal" is a separate switch beneath it. All of these
-   are off until you switch them on. The card does not alert you, so keep the
-   app in view when you expect one; an unanswered card is denied after two
-   minutes.
+4. For each server you want the assistant to see, edit it (or tap its row in
+   "Shared hosts", Settings → AI Bridge) and pick a level under "AI access":
+   - **Off**: the assistant cannot see the server. This is the default.
+   - **Read only**: it can look (stats, services, logs, files) and change
+     nothing.
+   - **Ask before each change**: it can ask to run commands, write files,
+     manage services and start long-running jobs. Each one needs your yes on a
+     card in the app. Under it you can tick "May ask for a terminal" and "May
+     ask for the desktop" (each still asks on a card every time), and, under
+     "Advanced", list commands that run without asking. If you turn on
+     Settings → AI Bridge → "Allow for a while", the card also offers an
+     approval for a number of minutes.
+   - **Full control**: it can change the server, open terminals and the
+     desktop **without asking you**. No card appears. The app asks you to
+     confirm, and it is for servers you would hand over completely.
+
+   Nothing changes on a server without your answer on a card, except the
+   exceptions you set up above and full control. The card does not alert you,
+   so keep the app in view when you expect one; an unanswered card is denied
+   after two minutes.
 
 ## The launcher command
 
@@ -103,15 +111,25 @@ to be running for anything to work.
   sign in fails with "connect to it once in SecureShell Go". Prompts from
   outside the app can still appear: an SSH agent that asks you to confirm or
   touch a key, or your desktop keyring's own unlock dialog.
-- Version 1.7.0 can change a server (`run_command`, `write_file`,
-  `service_action`, `run_on_hosts`) and open a terminal (`open_terminal`,
-  `send_input`, `read_screen`, `close_terminal`), only on hosts where you
-  switched that on and with your approval on a card in the app, unless you
-  allowed the exact command beforehand or gave an approval for a while. An
-  approved terminal can run any command as the account the app signs in as,
-  with no further question; the blocked-path list does not apply inside it or
-  to commands. What a command or terminal prints is sent to your AI provider.
-  The `INSTRUCTIONS.md` rules ask the assistant to say what it will ask for
-  first, to ask for one change at a time, to stop if you deny, and never to
-  ask you to switch these on; that is advice to a model, and the card is what
-  protects you.
+- Version 1.8.0 can change a server (`run_command`, `write_file`,
+  `service_action`, `run_on_hosts`), keep a long-running command going
+  (`start_job`, `list_jobs`, `job_status`, `job_output`, `stop_job`,
+  `remove_job`), open a terminal (`open_terminal`, `send_input`,
+  `read_screen`, `close_terminal`) and see and use a server's desktop
+  (`open_desktop`, `desktop_screenshot`, `desktop_click`, `desktop_move`,
+  `desktop_scroll`, `desktop_type`, `desktop_key`, `close_desktop`), only on
+  servers where you chose a level that allows it, and with your approval on a
+  card in the app, unless you allowed the exact command beforehand, gave an
+  approval for a while, or gave that server full control (no card at all). A
+  job keeps running on the server after the assistant, the connection and the
+  app are gone. An approved terminal or desktop can do anything the account
+  can, with no further question; the blocked-path list does not apply inside
+  them, to commands or to jobs. What a command, job, terminal or screenshot
+  shows is sent to your AI provider. The `INSTRUCTIONS.md` rules ask the
+  assistant to say what it will ask for first, to ask for one change at a
+  time, to look before it acts on a desktop, to stop if you deny, and never to
+  ask you to raise a level; that is advice to a model, and the card (or, on a
+  full-control server, your choice of level) is what protects you.
+- Your phone can answer the app's approval cards for you, and the app also has
+  a built-in assistant (a chat that uses your own API key, on every platform
+  including Android). Neither uses these files: see the main README.

@@ -212,7 +212,8 @@ class BridgeChangeTools {
           'Runs one shell command on a server and returns its exit code, '
           'stdout and stderr (redacted and cut to the newest 30 KB each). '
           'The command is stopped after timeout_seconds (default 60, at most '
-          '300), connecting included.$_askNote',
+          '300), connecting included. For anything long-running (a dev '
+          'server, a build, a watcher), use start_job instead.$_askNote',
       inputSchema: {
         'type': 'object',
         'properties': {

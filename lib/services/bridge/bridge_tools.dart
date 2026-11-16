@@ -633,6 +633,10 @@ class _Ticket {
   /// as withdrawn.
   BridgeAuditApproval approval = BridgeAuditApproval.none;
 
+  /// Where the card's answer came from when not this computer (a paired
+  /// phone, `controller:<name>`), for the audit entry.
+  String? via;
+
   /// True from the user's yes until the change starts running. A call that
   /// ends in between (refused by the re-check, revoked, cancelled, the bridge
   /// switched off, no run slot) is audited as refused after approval, so the
@@ -1228,6 +1232,10 @@ class BridgeTools implements BridgeToolHost {
         _moduleTools[name] = (module, spec);
       }
     }
+    final services = _ModuleServices(this);
+    for (final module in modules) {
+      module.attach(services);
+    }
   }
 
   static bool _off() => false;
@@ -1494,6 +1502,7 @@ class BridgeTools implements BridgeToolHost {
       detail: outcome.detail,
       ms: watch.elapsedMilliseconds,
       approval: ticket.approval,
+      via: ticket.via,
     );
     final image = outcome.image;
     if (image != null && outcome.outcome == BridgeAuditOutcome.ok) {
@@ -1804,6 +1813,7 @@ class BridgeTools implements BridgeToolHost {
         ticket.approval = BridgeAuditApproval.withdrawn;
         unawaited(ticket.abandoned.then((_) => approvals.withdraw(request.id)));
         final answer = await approvals.ask(request);
+        ticket.via = answer.via;
         switch (answer.kind) {
           case BridgeApprovalOutcomeKind.busy:
             ticket.approval = BridgeAuditApproval.none;
@@ -2131,6 +2141,7 @@ class BridgeTools implements BridgeToolHost {
         ticket.approval = BridgeAuditApproval.withdrawn;
         unawaited(ticket.abandoned.then((_) => approvals.withdraw(request.id)));
         final answer = await approvals.ask(request);
+        ticket.via = answer.via;
         switch (answer.kind) {
           case BridgeApprovalOutcomeKind.busy:
             ticket.approval = BridgeAuditApproval.none;
@@ -2786,6 +2797,39 @@ class BridgeTools implements BridgeToolHost {
       out.writeln('[stopped at $maxResults results]');
     }
     return _Outcome.ok(out.toString());
+  }
+}
+
+/// What a module may do for the user's own actions: the same server access
+/// a tool call gets, without a policy decision (see [BridgeModuleServices]).
+class _ModuleServices implements BridgeModuleServices {
+  _ModuleServices(this._tools);
+
+  final BridgeTools _tools;
+
+  @override
+  bool get isAppLocked => _tools.isAppLocked();
+
+  @override
+  Future<List<Host>> hosts() => _tools.loadHosts();
+
+  @override
+  Future<T> withServerAsUser<T>(
+    Host host,
+    Future<T> Function(BridgeCallContext call) body, {
+    Duration? timeout,
+  }) async {
+    final call = _Call._(
+      host: host,
+      settings: _tools.settings(),
+      connections: _tools.connections,
+      deadline: DateTime.now().add(timeout ?? _tools.callTimeout),
+    );
+    try {
+      return await body(call);
+    } finally {
+      await call.close();
+    }
   }
 }
 

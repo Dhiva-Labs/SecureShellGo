@@ -60,6 +60,16 @@ lib/
     allowed_command_check.dart  why an allowed-commands entry is refused (names the reason)
     assistant_drive.dart        who has the keyboard in an assistant's terminal session
     visible_text.dart           makes hidden or look-alike characters visible (the card, the allowed list)
+    assistant/                  the built-in assistant: providers, loop, key, settings
+      assistant_service.dart      settings + key, builds the provider, creates conversations
+      assistant_conversation.dart the tool loop as the built-in client; transcript; 40-call cap
+      anthropic_provider.dart     Anthropic Messages API
+      openai_provider.dart        any OpenAI-compatible chat completions endpoint
+      assistant_http.dart         dart:io HttpClient, https-or-localhost rule, limits
+    bridge_remote/              the phone side of phone control
+      remote_bridge_controller.dart  one control session as state + actions
+      remote_exec_channel.dart    the SSH exec command that starts `secureshellgo-mcp control`
+      remote_controller_token_store.dart  the phone's saved token per computer (secure storage)
     bridge/                     the AI Bridge: MCP for local assistants; reads, and changes with permission
       bridge_policy.dart          the one place that allows, refuses or asks (decideBridgeCall)
       bridge_approvals.dart       the cards waiting for a person: caps, timeout, withdrawal
@@ -74,6 +84,12 @@ lib/
       bridge_channel.dart         the local listener, the handshake, one line = one message
       bridge_locator.dart         endpoint.json + the launcher's half of the channel
       bridge_tool_types.dart      BridgeToolHost, BridgeToolSpec, BridgeToolKind
+      bridge_tool_module.dart     the seam for tool groups in their own files
+      bridge_jobs.dart            start_job and its tools; the server-side job layout; the registry
+      bridge_desktops.dart        open_desktop and the desktop_* tools; the assistant desktop's lifecycle
+      bridge_control.dart         the phone controller's app side: sessions, actions, sources
+      bridge_control_protocol.dart  the phone controller's wire messages (pure Dart)
+      bridge_control_launcher.dart  the launcher's `control` mode (first line = token, then relay)
       mcp_server.dart             hand-written JSON-RPC / MCP over a connection
       bridge_tools.dart           the seven read tools and the dispatcher every call goes through
       bridge_connections.dart     SSH transports for tools: open session, or headless dial
@@ -97,6 +113,12 @@ lib/
     bridge_one_click_screen.dart  "Connect Claude Code": confirm, pair, run `claude`, undo on failure
     bridge_shared_hosts_screen.dart  "Shared hosts": the checklist of hosts an assistant may read
     bridge_audit_screen.dart    "AI Bridge activity": the activity log, newest first, with how each change was allowed
+    assistant_chat_screen.dart  the built-in assistant's chat
+    assistant_desktop_screen.dart  the viewer of an assistant's desktop (Take over / Stop)
+    pair_phone_screen.dart      "Pair a phone": name, token once
+    remote_approvals_screen.dart  the phone's "AI approvals" screen for one computer
+    settings/assistant_settings_section.dart  Settings → Built-in assistant
+    settings/phone_control_section.dart  Settings → Phone control
 
   widgets/
     host_key_dialog.dart        the accept/reject host key UI
@@ -105,7 +127,11 @@ lib/
     code_editor_field.dart      highlighting controller + scroll-synced gutter
     bridge_approval_card.dart   the approval card: what an assistant asks to change, and the answer
     bridge_approval_host.dart   raises that card over whatever screen is in front, one at a time
-    host_ai_controls.dart       the per-host AI switches, allowed commands and terminal switch
+    host_ai_controls.dart       the per-host "AI access" section
+    host_ai_level_picker.dart   the level choice, its ticks, confirmations and summary line
+    host_ai_level_chip.dart     the level as a chip (host list, shared hosts)
+    assistant_transcript.dart   the chat transcript
+    remote_approval_card.dart   the approval card as the phone draws it
 
 bin/
   secureshellgo_mcp.dart        the AI Bridge launcher: a stdio-to-channel pipe, no Flutter
@@ -828,15 +854,17 @@ use, so a broadcast write is indistinguishable from typing.
 
 ## AI Bridge
 
-On Linux and Windows the app can act as a local MCP server, so an AI
-assistant on the same computer can **read** from the servers the user shares,
-by name. 1.6.0 could only read. 1.7.0 adds tools that **change** a server, each
-only where the user allowed it for that host and with a person's yes in the app
+On Linux and Windows the app can act as a local MCP server, so an AI assistant
+on the same computer can **read** from the servers the user shares, by name.
+1.6.0 could only read. 1.7.0 adds tools that **change** a server, each only
+where the user allowed it for that host and with a person's yes in the app
 (the sections "Levels", "Changing, with permission" and "The terminal" below).
-The bridge is off by default, and everything new in 1.7.0 is off until the user
-switches it on. 1.8.0 adds full control per host, the tool kinds for desktops
-and long-running jobs, client roles, and a seam for tool groups in their own
-files (below).
+The bridge is off by default, and everything new in 1.7.0 is off until the
+user switches it on. 1.8.0 adds full control per host, long-running jobs, a
+desktop the assistant can see and use, a built-in assistant that works on
+every platform, a phone that answers the approval cards, and a seam for tool
+groups in their own files (the sections "Jobs", "The assistant desktop", "The
+built-in assistant", "Phone control" and "The permission screens" below).
 
 The bridge has two halves since 1.8.0. The **AI tools** (the tool host,
 policy, approvals and their cards, timed approvals, the activity log) are
@@ -846,10 +874,12 @@ CLI connector) exists only where the launcher ships:
 `BridgeService.channelSupported` is true only on Linux and Windows, and
 `BridgeService.localChannel` is false elsewhere, so no listener is ever
 started there whatever the setting says. `main.dart` builds the
-`BridgeService` everywhere but hands the screens only the channel half
-(`_channelBridge`), so the Settings section, the connect screen and the
-activity screen are still not shown on a phone. With nothing calling it, the
-tool host sits idle there.
+`BridgeService` everywhere and hands it to Settings and the host screens, so
+the AI section of Settings, the per-host "AI access" controls, the activity
+screen and the built-in assistant's chat exist on every platform. The groups
+that need the channel (assistants on this computer, Phone control) hide
+themselves when `bridge.localChannel` is false; the connect screens and
+one-click still get only the channel half (`_channelBridge`).
 
 ```
 AI client ──stdio──► launcher ──local channel──► app (lib/services/bridge/) ──SSH──► server
@@ -919,19 +949,19 @@ AI client ──stdio──► launcher ──local channel──► app (lib/se
   everything it held. Switching the channel bridge off ends what channel
   clients hold and spares the built-in assistant's.
 - `bridge_tool_module.dart` is the seam for tool groups in their own files
-  (jobs, the desktop). A `BridgeToolModule` is registered with one entry in
-  `BridgeTools(modules: [...])` in `main.dart`. Its `changeTools` (kinds
-  `change`, `terminal`, `desktop`) are ordinary `BridgeChangeTool`s and run
-  through the same path as `run_command`, card included; its own `specs`
-  may only be `read`, `terminalUse`, `desktopUse` or `jobUse` (the tool host
-  refuses anything else at construction), served by `call`. A module call
-  gets a `BridgeModuleCall`: host resolution, `decide` (the policy with the
-  spec's kind, this client's switch and the lock filled in), `withServer`
-  (only for a host the last decision allowed), the abandon signal and
-  `auditHost`. The tool host writes the one audit entry and redacts the text;
-  an outcome from a module whose last decision was not an allow is replaced
-  by a `not_decided` refusal. The bridge service tells modules about host
-  and client changes, the channel going off, a lock and shutdown.
+  (jobs and the desktop are the first two). A `BridgeToolModule` is registered
+  with one entry in `BridgeTools(modules: [...])` in `main.dart`. Its
+  `changeTools` (kinds `change`, `terminal`, `desktop`) are ordinary
+  `BridgeChangeTool`s and run through the same path as `run_command`, card
+  included; its own `specs` may only be `read`, `terminalUse`, `desktopUse` or
+  `jobUse` (the tool host refuses anything else at construction), served by
+  `call`. A module call gets a `BridgeModuleCall`: host resolution, `decide`
+  (the policy with the spec's kind, this client's switch and the lock filled
+  in), `withServer` (only for a host the last decision allowed), the abandon
+  signal and `auditHost`. The tool host writes the one audit entry and redacts
+  the text; an outcome from a module whose last decision was not an allow is
+  replaced by a `not_decided` refusal. The bridge service tells modules about
+  host and client changes, the channel going off, a lock and shutdown.
 - `bridge_launcher_locator.dart` says which launcher command the connect
   screen shows, checked in this order:
   - the snap: `secureshellgo.mcp` (its executable is under `$SNAP`; `SNAP`
@@ -972,19 +1002,20 @@ assistant's side, including its arguments, is untrusted input. Everything the
 never interpreted by the app. The app holds the credentials; they are used
 inside `SshService` and never appear in a tool's input or output, a locator
 file, an audit entry or a message to the client. Hosts are visible only when
-the user has switched on "Share with AI assistants" for them, and they are known
-by their label (`label#xxxx` when two share one); a hidden host never causes
-a visible one to be renamed. With "Show address and username" off, the
-address, port and user name of the host and of every jump host on its way,
-and IPv4 literals, are also taken out of any error text before it leaves.
+the user has given them an AI access level above Off, and they are known by
+their label (`label#xxxx` when two share one); a hidden host never causes a
+visible one to be renamed. With "Show address and username" off, the address,
+port and user name of the host and of every jump host on its way, and IPv4
+literals, are also taken out of any error text before it leaves.
 
 ### Levels
 
 A host has one of four levels, stored as `aiAccess` in `hosts.json`, and an
-order of trust: **off < readOnly < askToChange < fullControl**. In the app they
-read "Share with AI assistants" (read-only), and beneath it, "Let the assistant
-request changes"; 1.8.0's UI replaces these with one level picker. Anything
-the file holds that this build does not recognise reads as `off`: a
+order of trust: **off < readOnly < askToChange < fullControl**. In the app
+they are one choice, "AI access" (Off, Read only, Ask before each change, Full
+control; "The permission screens" below); 1.7.0 had two switches, "Share with
+AI assistants" and "Let the assistant request changes", for the middle two.
+Anything the file holds that this build does not recognise reads as `off`: a
 `hosts.json` from a later version must not hand an assistant more than the
 user chose, and 1.6.0 reads `askToChange` (1.7.0 reads `fullControl`) as `off`
 the same way. `fullControl` means changes, terminals and desktops run
@@ -1017,13 +1048,13 @@ an assistant nothing; the timed-approval setting is exported at its default
 `bridge_policy.dart` is the only place that decides. `decideBridgeCall` is a
 pure function over: is the bridge on, is the app locked, what kind of tool it
 is, and the host. It answers allow, refuse (with a stable code and the message
-the assistant is given) or **needs approval**. The order is fixed: off,
-locked (full control included), then the kind. `bridgeEnabled` is the calling
+the assistant is given) or **needs approval**. The order is fixed: off, locked
+(full control included), then the kind. `bridgeEnabled` is the calling
 client's own switch: `AppSettings.bridgeEnabled` for a channel client, the
 built-in assistant's setting for `BridgeClient.builtin`
-(`BridgeTools.builtinAssistantEnabled`, off until it exists). At
-`fullControl`, `change`, `terminal` and `desktop` answer
-`BridgeAllow.fullControl()` and the audit entry records
+(`BridgeTools.builtinAssistantEnabled`, wired to
+`AppSettings.assistantEnabled`). At `fullControl`, `change`, `terminal` and
+`desktop` answer `BridgeAllow.fullControl()` and the audit entry records
 `approval: full_control`; nothing else differs from `askToChange`. A second
 test copies 1.7.0's function and compares it over every input for the levels
 and kinds 1.7.0 knew, refusal texts byte for byte.
@@ -1136,18 +1167,19 @@ the call is allowed without a card only if a live timed approval exists for
 `bridge_approvals.dart` holds the questions waiting for the user, in memory
 only. A request carries the assistant, the host's bridge name, the tool, and a
 summary the **tool** built from its validated arguments (a command with its
-host names, a file write, a service action, a terminal); nothing the
-assistant wrote in prose reaches the card. At most 8 requests wait at once and
-at most 3 from one assistant, so one assistant cannot crowd another's cards
-out; a further ask is refused at once as busy (`approvals_busy`). One call has
-at most one pending request. Silence is a no: a request not answered in 120
-seconds ends as timed out, and an answer that arrives after expiry is a
-timeout, whatever the timer says. Every request ends exactly once (answered,
-timed out or withdrawn), and a late or second answer is ignored. A request is
-**withdrawn** when its call is abandoned (the client cancelled, the assistant
-was revoked, the bridge switched off) and by the app: every card on a lock, a
-host's cards when that host is un-shared, stepped down, deleted or changed to
-another server (`HostStore.changes` makes this immediate).
+host names, a file write, a service action, a job start with its command,
+folder and name, a terminal, a desktop); nothing the assistant wrote in prose
+reaches the card. At most 8 requests wait at once and at most 3 from one
+assistant, so one assistant cannot crowd another's cards out; a further ask is
+refused at once as busy (`approvals_busy`). One call has at most one pending
+request. Silence is a no: a request not answered in 120 seconds ends as timed
+out, and an answer that arrives after expiry is a timeout, whatever the timer
+says. Every request ends exactly once (answered, timed out or withdrawn), and
+a late or second answer is ignored. A request is **withdrawn** when its call
+is abandoned (the client cancelled, the assistant was revoked, the bridge
+switched off) and by the app: every card on a lock, a host's cards when that
+host is un-shared, stepped down, deleted or changed to another server
+(`HostStore.changes` makes this immediate).
 
 A **timed approval** ("Allow for a while", a button on the card only when
 Settings → AI Bridge → "Allow for a while" is 5, 15 or 60 minutes) is a
@@ -1158,10 +1190,11 @@ host. It lives in memory only and is gone on restart, when the bridge is
 switched off, when the assistant is revoked, when the host is un-shared,
 stepped down, deleted or changed to another server, when the app locks and
 when the setting is switched off (choosing another length leaves running ones
-as they were granted); "Stop now" in "Approvals in force" ends one. It
-**never covers a terminal**: on a terminal's card the button is not offered,
-and an "allow for a while" answer counts as once. If the setting was lowered
-while a card waited, the grant is for the shorter time.
+as they were granted); "Stop now" in "Approvals in force" ends one. It covers
+`start_job` like the other change tools, and **never covers a terminal or a
+desktop**: on their cards the button is not offered, and an "allow for a
+while" answer counts as once. If the setting was lowered while a card waited,
+the grant is for the shorter time.
 
 ### The allowed list
 
@@ -1345,6 +1378,147 @@ closes it as it lands. A taken-over terminal is the user's and none of this
 closes it. Input is audited call by call (scrubbed, cut at 500 characters),
 the screen never.
 
+### Jobs
+
+`bridge_jobs.dart`, a `BridgeToolModule` registered in `main.dart`.
+`start_job` is its one change tool (kind `change`): it goes through the same
+path as `run_command`, so it gets a card, or a live timed approval, or full
+control's allow, and the plan never sets `matchesAllowedCommand`, so the
+allowed list cannot start a job. `list_jobs`, `job_status` and `job_output`
+are `read` specs (they work wherever reading does); `stop_job` and
+`remove_job` are `jobUse`, held to the owner rule and to a host that still
+lets changes be requested.
+
+On the server, `BridgeJobCommands` is a set of POSIX `/bin/sh` scripts, each
+run as the fixed command inside `BridgeCommands.supervised`. Nothing from the
+assistant is spliced into a script: the job id (16 characters of `[a-z0-9]`,
+made by the app), the command, the folder and a line count arrive as
+positional parameters set by one `set --` line whose words are each quoted
+with `posixSingleQuote`, and the folder is only ever used as `cd -- "$5"`. A
+job lives in `~/.cache/secureshellgo/jobs/<id>/`, created owner-only (umask
+077; the command itself runs with the account's own umask), with these files:
+
+- `cmd` (the command as run), `started` (server clock) and `boot` (the boot id
+  where Linux has one, so a pid seen after a reboot is never taken for the
+  job);
+- `pid` (the runner's process id) and `group` (`1` when the runner leads a
+  session and process group of its own, `0` when the server has no `setsid`);
+- `log` (stdout and stderr together);
+- `exit` (`<status> <ended>`, written by the runner through a rename, or by
+  `stop_job` as 137 when it had to KILL the runner) and `stopped` (present
+  when `stop_job` stopped it).
+
+The runner is a small `sh` that starts the command with the account's own
+shell (`"${SHELL:-/bin/sh}" -c`, as `run_command` does), passes TERM and HUP
+on to it, waits, and writes `exit`. It is started in the background with stdin
+from `/dev/null` and all output to `log`, under `setsid` where there is one,
+so the SSH channel holds nothing of it and closes at once, and the end of the
+supervised call never reaches the job. Without `setsid` it runs under `nohup`
+in the calling shell's group: it still outlives the connection, but a stop
+reaches only the runner (which passes TERM on), not what the command started.
+The server's files are the truth for state: `running`, `exited`, `unknown`
+(its processes are gone without an exit code) or `missing` (its folder was
+deleted). `stop_job` sends TERM to the group, KILL three seconds later
+(`BridgeCommands.stopGraceSeconds`) if anything is left. `job_output` returns
+the last `lines` (default 200, at most 5000) of the newest 64 KiB of the log,
+through the redactor like every other output.
+
+The app keeps a small registry, `BridgeJobRegistry`:
+`<data>/bridge/bridge_jobs.json` (version 1, written atomically through
+`SerialFileWriter`, `chmod 600` where there is one; an unreadable file is set
+aside and the registry starts empty). A record holds the job id, the starting
+client's id, the server's identity as `bridgeSameServer` compares it (host id,
+address, port, user, transport, jump host id), the host's bridge name, the
+start time, the name and the command cut to 500 characters. It says whose a
+job is and where; it is not the state. It is written **before** the job
+starts, so a start cut short by a stop or a dropped connection cannot leave a
+job nobody knows about.
+
+Ownership is the registry's `find(clientId, id)`: a job another client started
+and an unknown id read alike (`job_not_available`, checked before the host, so
+nothing about another client's job shows), and `ownsJob` feeds
+`decideBridgeCall`. At most 20 jobs per client per server, ended ones
+included, checked at plan time and again by `addIfRoom` at run time, since the
+card may have waited. When the bridge service reports host changes,
+`retainHosts` forgets the jobs of a deleted or re-pointed host;
+`clientsChanged` forgets a removed client's. Forgetting stops nothing on the
+server. Stepping a host down below `askToChange` leaves its jobs running;
+reads of them still work, `stop_job` and `remove_job` get
+`changes_not_allowed`.
+
+What is not there: no screen lists or stops jobs, and phone control does not
+stop them (the protocol has a `job` item kind, but no control source is
+registered for it in `main.dart`). A job is the user's process on the user's
+server; the way to end one the assistant cannot reach is `kill` on the server.
+
+### The assistant desktop
+
+`bridge_desktops.dart` (a `BridgeToolModule`),
+`screens/assistant_desktop_screen.dart` and, in
+`screens/remote_desktop_launch.dart`, `openSignedInDesktop`. It rides the
+remote-desktop stack: the same probe, agent deployment, tunnel and
+`RemoteScreenSession` as "Remote desktop… → This desktop", with nobody to ask.
+
+**Opening.** `open_desktop` is kind `desktop`: no timed approval and no
+allowed command ever opens one; a card every time at `askToChange` with the
+desktop tick, no card at `fullControl`, `desktop_not_allowed` otherwise. Its
+plan is refused with `desktop_limit` before any card when the one desktop slot
+is taken. The run dials a connection of its own with
+`BridgeConnections.dialOwned` (no prompt; agent and X11 forwarding stripped
+whatever the host says) and calls `openSignedInDesktop`, which runs
+`RemoteDesktopProbe` and refuses, in the chooser's own words, a Mac (its
+Screen Sharing needs a typed password), an unsupported system, another user's
+desktop and a headless server; then `AgentDeployer` (purpose desktop),
+`AgentLauncher.launchDesktop` and the shared `_connect` that opens the agent's
+channel through the tunnel. Opening has 180 seconds. `AssistantDesktopLink`
+owns that connection and the session for the desktop's life and hangs up on
+close.
+
+**Seeing and using.** `desktop_screenshot` encodes the screen the viewer is
+drawing, with `dart:ui`, as a PNG scaled so the longest side is at most 1280
+pixels (the pointer is not drawn; 20 seconds). `BridgeToolResult` and
+`BridgeModuleOutcome` carry optional image content, which `mcp_server.dart`
+sends as MCP image content and the built-in assistant's Anthropic provider as
+an image block. `desktop_click`, `desktop_move` and `desktop_scroll` take x
+and y in screenshot pixels, mapped back to the real screen (`toScreen`), and
+are refused when the real screen size changed since the last screenshot, so a
+coordinate cannot land elsewhere than meant. `desktop_type` sends key strokes
+for a US layout, at most 2000 characters, and refuses the whole text when any
+character has no key; `desktop_key` takes a key or combination from a fixed
+table (`ctrl`, `alt`, `shift`, `super` plus the listed keys, as evdev codes);
+scroll is at most 50 notches. A session the remote side only lets be watched
+answers every input tool with an error. All of these are kind `desktopUse`: no
+card per call, but each goes through `decideBridgeCall` with `ownsLiveDesktop`
+(the caller's own, still the assistant's) and the host still allowing a
+desktop.
+
+**The viewer and who has it.** `AssistantDesktopHost` is mounted once from
+`main.dart` with the navigator key, like the approval host, and pushes
+`AssistantDesktopScreen` the moment a desktop appears, before its first frame:
+the user sees what the assistant sees. It uses the same `AssistantDrive` model
+as terminals: the assistant drives until the user presses Take over (or Stop,
+or leaves the viewer), the state only moves forward, and a taken-over desktop
+is the user's, an ordinary remote desktop the assistant can no longer see or
+use. A lock makes the viewer give up the keyboard so keys typed at the lock
+screen never reach the remote desktop.
+
+**Lifecycle.** At most one (`maxDesktops`), across all clients. Each desktop
+tool call restarts a 10-minute idle timer. A desktop the assistant drives ends
+on `close_desktop`, Stop, the viewer closing, idle, the remote session ending,
+the bridge going off (the built-in assistant's desktop is spared, as it is not
+the channel's), a lock, the assistant being revoked, its host being deleted,
+un-shared, stepped down, losing the desktop tick or pointing at another
+server, and shutdown. `AssistantDesktopEnd` names each, and a call on an ended
+desktop gets the matching message under `desktop_not_available`.
+`desktop_type`'s arguments are replaced in the audit log by a character count.
+
+**What one yes allows.** The assistant sees whatever the signed-in user's
+screen shows (passwords on screen, messages, other windows) and can click and
+type anything that user can, until one of the above ends it. That is why it is
+off per host by default, needs a card every time, is always on screen, and is
+audited call by call. A screenshot cannot be redacted, and it goes to the
+assistant's provider as an image.
+
 ### Cancellation
 
 `mcp_server.dart` handles `notifications/cancelled` with `params.requestId`
@@ -1462,11 +1636,11 @@ small and checked at run time.
   each host's current AI access, so nothing is ticked that was not already
   shared, and on Save it writes only the hosts whose tick changed (a newly
   ticked host becomes read-only, an unticked one off; a ticked host keeps the
-  level it has), re-reading each host just before writing it. Each ticked row
-  shows its level ("Read only", "Can request changes", "Can request changes
-  and a terminal") and a settings button for the per-host controls. The
-  per-host "Share with AI assistants" switch is unchanged. A quick connect is not a saved
-  host, so it is not listed.
+  level it has), re-reading each host just before writing it. Each row shows
+  its level as a chip (Off, Read only, Asks first, Full control), and tapping
+  it opens the per-host sheet with the same level picker and confirmations as
+  the host edit screen ("The permission screens"). A quick connect is not a
+  saved host, so it is not listed.
 
 ### The local channel, per platform
 
@@ -1497,6 +1671,197 @@ small and checked at run time.
   mistaken for a running window.
 
 Both write `endpoint.json` atomically and remove it on stop.
+
+### The built-in assistant
+
+`lib/services/assistant/`. A chat inside the app, on every platform, that
+talks to an AI service with the user's own key and calls the same
+`BridgeToolHost.call` a paired assistant's connection does, as
+`BridgeClient.builtin`. It adds no policy of its own: levels, cards, timed
+approvals, terminals, desktops, jobs and the audit log are the tool host's,
+and the entries carry the name "Built-in assistant".
+
+- **Providers.** `AssistantProvider.send(messages, tools, system, cancel)`
+  returns one `AssistantTurn` (text, tool calls and a stop reason).
+  `AnthropicProvider` posts to `{base}/v1/messages` (default base
+  `https://api.anthropic.com`) with `x-api-key` and `anthropic-version:
+  2023-06-01`, `max_tokens` 4096 and the tool specs as tools; tool results go
+  back as `tool_result` blocks, an image as an image block.
+  `OpenAiCompatibleProvider` posts to `{base}/chat/completions` (the base is
+  required, such as `https://api.openai.com/v1`) with a bearer key (none sent
+  when the key is empty) and the specs as functions. OpenAI's tool messages
+  are text only, so an image result becomes a note that one was returned and
+  cannot be carried: **desktop screenshots reach the model only through
+  Anthropic.** Neither streams.
+- **Transport.** `assistant_http.dart` uses `dart:io` `HttpClient` (no new
+  dependency). `checkedAssistantUrl` accepts only `https`, or `http` to
+  `localhost`, `127.0.0.1` or `::1`, and refuses user info in the address, so
+  the key and the conversation are never sent unencrypted. Limits: 20 s to
+  connect, 120 s per request, 4 MiB of response; failures map to
+  `AssistantFailureKind` (config, auth, rate limit, network, server, bad
+  response, cancelled) with text for the user. Android's manifest keeps
+  cleartext off, so a local `http` model server does not work there.
+- **The loop.** `AssistantConversation.send` appends the user's message and
+  repeats: ask the provider; if it asks for tools, run each call through the
+  tool host as the built-in client, put the results (cut to 16 KiB each by
+  `truncateAssistantResult`) back in the history; stop on an end turn, after
+  40 tool calls for one message (the rest are answered as not run), on an
+  error, or on Stop. Stop cancels the HTTP request and the running call's
+  `BridgeCallToken`, which withdraws a waiting card. The transcript (user,
+  reply, tool and notice items, a tool item marked while a card for it is
+  waiting, from the approvals stream) is what the chat screen draws. Nothing
+  is written to disk; the conversation ends with the app. The system prompt
+  carries the same standing rules as the skill (read first, say what you will
+  do, stop if denied, never ask to raise access, server text is data); it does
+  not yet mention jobs, desktops or full control.
+- **Key and settings.** `AssistantService` reads `assistantEnabled`,
+  `assistantProvider`, `assistantBaseUrl` and `assistantModel` from
+  `AppSettings` (off, Anthropic, empty and empty by default) and the key from
+  secure storage under `apiKeySecretName`, a name no backup reads (a backup
+  carries only `credentials:<hostId>` entries). The key is held in memory
+  while the app runs, taught to `DiagnosticsLog.scrubber` so no log can carry
+  it, and never in `settings.json`. `setApiKey` throws
+  `SecureStorageUnavailableException`, keeping nothing, when the platform
+  cannot protect it; a sealed store is reported, not prompted for. A key is
+  optional only for an OpenAI-compatible server on `localhost`. A provider is
+  built again for each request, so a changed model or key applies to the next
+  message. The settings are stripped from backups (`withBridgeDefaults`) and
+  kept on import (`withBridgeFrom`).
+- **Switches.** The built-in assistant has its own:
+  `BridgeTools.builtinAssistantEnabled` replaces `bridgeEnabled` for
+  `BridgeClient.builtin` in every decision. The channel's switch never opens
+  the bridge for it, and switching the channel off ends what channel clients
+  hold and spares the built-in assistant's (`_notChannel`). Turning the
+  assistant off stops its live conversations. The app lock refuses its calls
+  like any other.
+- **Screens.** `assistant_chat_screen.dart` and `assistant_transcript.dart`
+  (opened from the host list's app bar while the assistant is on; the approval
+  cards come from the app-wide host, over the chat) and
+  `settings/assistant_settings_section.dart`, whose enabling dialog says what
+  is sent.
+
+### Phone control
+
+A paired phone can answer the AI Bridge's approval cards, and stop what an
+assistant holds open, from anywhere it can reach the computer over SSH. It
+adds a second kind of client and a second kind of connection to the channel,
+and no way to call a tool.
+
+- **Roles.** `BridgeClientRole` is `assistant` (the default, omitted from
+  `bridge_clients.json`) or `controller`, fixed when the client is paired
+  ("Pair a phone" calls `BridgeClientStore.create(role: controller)`).
+  `bridgeClientMayCallTools` (an assistant, not the built-in client) and
+  `bridgeClientMayControl` (a controller, not the built-in client) are the
+  only two tests; neither role passes the other's.
+- **Handshake routing.** The handshake line may carry `session: "control"`;
+  its absence means MCP, as every launcher before 1.8.0 sends.
+  `bridge_channel.dart` verifies the token, then requires the client's role to
+  fit the session: the wrong pairing for a session reads exactly like an
+  unknown token, and any other `session` value is a version mismatch.
+  `BridgeService._verifyClient` accepts a controller token only while
+  `AppSettings.bridgePhoneControl` is on, so with it off a phone's token reads
+  as unknown. `_onConnection` hands a controller's connection to
+  `BridgeControlServer.serve`, never to an `McpServer`. A controller's
+  `tools/call` is refused three times over (the token check, `McpServer`,
+  `BridgeTools.call`).
+- **The launcher's control mode.** `secureshellgo-mcp control`
+  (`bridge_control_launcher.dart`) reads the token from the first line of
+  stdin (at most 4096 bytes), never from argv or the environment, dials the
+  app with `session: "control"` and relays bytes both ways. With no app, or a
+  refusal, it writes one JSON `error` line (`not_running` or `refused`) and
+  exits 1; it exits 0 when the phone closed first. It parses nothing, like the
+  MCP mode.
+- **The phone's side.** `services/bridge_remote/`. `remoteControlCommand()` is
+  one `sh -c` script, quoted with `loginShellQuote` so fish reads it as
+  written, that execs the first launcher found of `secureshellgo-mcp`,
+  `secureshellgo.mcp`, `/snap/bin/secureshellgo.mcp` and
+  `/opt/secureshellgo/secureshellgo-mcp`, then `flatpak run
+  --command=secureshellgo-mcp <app id>`, else prints a `launcher_not_found`
+  error and exits 127. It reads no stdin, so the token line reaches the
+  launcher untouched. `remoteExecOver` runs it on the SSH connection of the
+  saved host (`SessionTransport.execute`), dialled with nobody to ask
+  (`headlessRemoteLinkOpener`). `RemoteBridgeController` moves through idle,
+  connecting, syncing, live and closed, holds a `RemoteBridgeState`
+  (approvals, grants, items, activity, lock, the allowed "for a while" length)
+  and exposes the actions. `RemoteControllerTokenStore` keeps the token in
+  secure storage under `bridge_controller_token:<hostId>`, never in
+  `hosts.json` or a backup; a host counts as "my computer" exactly while one
+  is saved.
+- **The protocol.** `bridge_control_protocol.dart`, pure Dart so launcher, app
+  and phone share it: JSON, one message per line, version 1, an inbound line
+  at most 64 KiB, an outbound line at most 1 MiB. App to phone: `snapshot`
+  (lock, "for a while" minutes, controller name, grants, items, activity of at
+  most 50 entries; it replaces everything the phone holds), then one
+  `approval` per waiting card and `synced`; afterwards `approval`,
+  `approval_removed`, `grants`, `items`, `activity`, `state`, `result`
+  (answers one request by its `re`) and `error`. Phone to app: `answer`
+  (`deny`, `once` or `for_minutes`), `stop_grant`, `stop_item`, `ping`.
+  Nothing else exists, so a phone cannot pair, change a setting or a host's
+  access, or call a tool. Every text in an approval (assistant, host, command,
+  path, preview, job fields) is made visible-safe on the computer before it is
+  sent (`visibleLine`, `ControlVisibleText`), the host as its bridge name,
+  never its address or user, so the card cannot hide anything on the phone
+  either.
+- **The app's side.** `BridgeControlServer` serves at most 2 sessions,
+  replying `too_many_sessions` to a third. An action goes through exactly what
+  the app's own button calls: `BridgeApprovals.answer` (the audit entry
+  records `via: controller:<name>`), `BridgeGrants.revoke`, and
+  `BridgeControlSource.stop` for the sources `main.dart` registers, which
+  today are the assistant terminals and desktops. The tool host then re-checks
+  after a yes as for a tap (same server, still allowed, bridge on, unlocked).
+  "Allow for N minutes" is accepted only when `bridgeTimedApprovalMinutes` is
+  above 0, only for exactly that length, and never for a terminal or desktop
+  (`timedAllowedFor`). While the app is locked a session stays open with an
+  empty snapshot flagged `locked`, and every action is refused. Sessions are
+  closed when Phone control is switched off, the bridge goes off, or the
+  phone's pairing is removed (`closeClientsExcept`).
+- **What a controller cannot do.** Call a tool; pair or revoke anything;
+  change a setting, a host's level or its allowed commands; see an address or
+  a user name; keep a card alive past its 120 seconds; or do anything while
+  the app is locked. What it can do is deny, allow once, allow for the
+  configured time, and stop an approval, a terminal or a desktop: the same
+  things the person at the computer can do from the cards and banners.
+- **Limits.** The phone's command is a POSIX `sh` script, so the computer's
+  SSH login shell must run it; it has not been run on a Windows computer. A
+  launcher in a folder of its own (an unpacked tarball elsewhere, an AppImage)
+  is not found. A session lives only while the phone's "AI approvals" screen
+  is open (the screen's own help says so): nothing on the phone listens in the
+  background, so a card raised meanwhile is answered by nobody and ends as a
+  denial after 120 seconds. Jobs are not a control source yet.
+
+### The permission screens
+
+One model under the screens: a host's `aiAccess` and, beneath `askToChange`,
+`aiTerminal`, `aiDesktop` and the allowed commands.
+
+- **`HostAiEdit`** (pure Dart) is what a form or sheet did, with a `*Chosen`
+  flag per field. `applyTo(stored)` starts from the host as the store holds it
+  **at save time** and changes only the fields the user touched in this form,
+  so a form opened earlier cannot undo an edit made since, or raise what an
+  assistant may do by writing stale values back.
+- **`HostAiControls`** is the "AI access" section, shared by the host edit
+  screen and the per-server sheet of the shared-hosts list. It shows
+  `HostAiLevelPicker`, which owns the choice and its confirmations, and a "Not
+  saved yet" hint while the form differs from what is saved.
+- **`HostAiLevelPicker`**: Off, Read only, Ask before each change, Full
+  control, each with a line saying what it allows. Under Ask: "May ask for a
+  terminal" and "May ask for the desktop" (each confirms, and says a card is
+  still needed every time), and the allowed commands list folded under
+  "Advanced". A summary line is composed from the level, the two ticks and the
+  command count ("Assistants can read this server. Changes need your yes each
+  time."). Full control shows a standing warning and a confirmation whose
+  Cancel button holds the focus; going up to Ask lists the commands and any
+  tick that come back into force; going down never asks. Nothing takes effect
+  until the host is saved.
+- **`HostAiLevelChip`** shows the level on the shared-hosts rows (Off, Read
+  only, Asks first, Full control). `list_hosts` still does not tell an
+  assistant its level.
+- **Settings → AI Bridge** is grouped, each group with a line: Assistants on
+  this computer (switch, address, connect, paired assistants; only with the
+  local channel), Built-in assistant, Phone control (only with the local
+  channel), What assistants can read (blocked paths, sensitive paths),
+  Approvals ("Allow for a while", approvals in force), Shared hosts and
+  Activity.
 
 ### The path guard
 
@@ -1551,24 +1916,31 @@ it.
 `<data>/bridge/audit.log`: time, assistant, host name as asked, tool,
 arguments (private keys and secrets removed, cut to 500 characters), outcome
 (`ok`, `refused` or `error`), detail (the refusal code or the error message,
-scrubbed), milliseconds and, since 1.7.0, `approval`: how a change was
-allowed or why not (`none`, `allowed_command`, `grant`, `once`, `for_a_while`,
-`denied`, `timed_out`, `withdrawn`). A line from 1.6.0, with no such field,
-reads as `none` and is kept. A call the user approved but that was then refused
-or stopped before it ran is recorded as refused or error with its `approval`
-as given (`once` or `for_a_while`) and a `detail` that starts
-`refused_after_approval: `: approved, but not run. `write_file` records the
-path, the byte count and `if_exists`, **never the content**; `run_command` and
-`run_on_hosts` record the command, cut to 500 characters; `send_input`
-records its arguments, the terminal id and the text typed, scrubbed and cut to
-500 characters together; `read_screen` records nothing of the screen. It
-records refusals and errors too, and **never the output**: the log lasts
-longer than the output and is shown more freely. (An error's message is the
-`detail`, and some quote a short error the server printed, such as a failed
-`systemctl`'s stderr, scrubbed and cut to 500 characters.)
-The file is created owner-only (`chmod 600` on POSIX, best effort) and so is the rotated copy. It rotates at 512 KiB to `audit.log.1`, keeping one older file. The
-"Activity" screen ("AI Bridge activity") reads both; "Clear" deletes both. A
-write that fails never fails the call; the screen says the log has a gap.
+scrubbed), milliseconds and, since 1.7.0, `approval`: how a change was allowed
+or why not (`none`, `allowed_command`, `grant`, `full_control`, `once`,
+`for_a_while`, `denied`, `timed_out`, `withdrawn`) and, since 1.8.0, `via`:
+where a card's answer came from when it was not this computer
+(`controller:<phone name>`; absent on older lines and local answers). A line
+from 1.6.0, with no such field, reads as `none` and is kept. A call the user
+approved but that was then refused or stopped before it ran is recorded as
+refused or error with its `approval` as given (`once` or `for_a_while`) and a
+`detail` that starts `refused_after_approval: `: approved, but not run.
+`write_file` records the path, the byte count and `if_exists`, **never the
+content**; `run_command` and `run_on_hosts` record the command, cut to 500
+characters; `send_input` records its arguments, the terminal id and the text
+typed, scrubbed and cut to 500 characters together; `read_screen` records
+nothing of the screen; `desktop_type` records only the desktop id and `[N
+characters, not recorded]`, since what is typed on a desktop may be a password
+(the desktop module's `auditArgs` hook); `start_job` records the command (cut
+to 500), name and folder. It records refusals and errors too, and **never the
+output**: the log lasts longer than the output and is shown more freely. (An
+error's message is the `detail`, and some quote a short error the server
+printed, such as a failed `systemctl`'s stderr, scrubbed and cut to 500
+characters.) The file is created owner-only (`chmod 600` on POSIX, best
+effort) and so is the rotated copy. It rotates at 512 KiB to `audit.log.1`,
+keeping one older file. The "Activity" screen ("AI Bridge activity") reads
+both; "Clear" deletes both. A write that fails never fails the call; the
+screen says the log has a gap.
 
 ### Stores that agree with their files
 
@@ -1586,14 +1958,17 @@ pairing still works. The host store's rollback covers every host save in the app
 ### Backups, and the lock
 
 Backups never carry the bridge. An exported host has `aiAccess` off (and no
-allowed commands and no terminal switch) and the
-exported settings carry the bridge fields at their defaults; on import every
-host arrives with access off, no allowed commands and the terminal switch off,
-whatever the file says, so restoring an old
-backup on a new machine cannot hand an assistant a server. Importing keeps
-**this device's** bridge settings (`withBridgeFrom`): a backup can neither
-switch the bridge on nor weaken its blocked paths. `bridge_clients.json` is
-not part of a backup, so tokens (or their hashes) are never exported.
+allowed commands and no terminal or desktop switch) and the exported settings
+carry the bridge fields at their defaults; on import every host arrives with
+access off, no allowed commands and the terminal and desktop switches off,
+whatever the file says, so restoring an old backup on a new machine cannot
+hand an assistant a server. Importing keeps **this device's** bridge settings
+(`withBridgeFrom`): a backup can neither switch the bridge on nor weaken its
+blocked paths. `bridge_clients.json` is not part of a backup, so tokens (or
+their hashes) are never exported, and neither are `bridge_jobs.json`, the
+built-in assistant's switch and service settings (stripped like the other
+bridge fields), its API key (a secure-storage entry no backup reads), the
+phone pairings or a phone's saved controller token.
 
 While the app is locked, `decideBridgeCall` refuses everything, `list_hosts`
 included, so a client that is already connected gets nothing until the user
@@ -1648,9 +2023,35 @@ so a paired assistant does not mean the explanation was ever read.
   says so when it is partial, and the card gives the exact size. Revoking the
   assistant in Settings invalidates the token at once and stops its calls in
   progress; the activity log shows what was asked for.
-- **The AI provider.** Out of scope for the app by construction: whatever the
-  assistant reads is sent by its client to that client's own provider.
-  The privacy policy says this plainly.
+- **The AI provider.** Out of scope for the app by construction: whatever an
+  assistant reads is sent to a provider the user chose. For an assistant on
+  the computer, its client sends it to the client's own provider. For the
+  built-in assistant, the app sends it itself, from the device straight to the
+  address the user configured, over https (or to `localhost`), with the user's
+  key; nothing passes through Dhiva Labs. The privacy policy says this
+  plainly. A model address the user types is the user's trust: the app only
+  checks the scheme. - **Full control.** A host at `fullControl` removes the
+  card, which is the control everything above rests on. It is the user's
+  explicit choice, behind a confirmation that says so, off by default, never
+  in a backup, and recorded in the audit log as `full_control`; the app lock
+  and the bridge switch still refuse everything. A mistaken or misled
+  assistant (a prompt injection in a log line) can do anything the sign-in
+  user can on that host, with no check but its own care. The skill and the
+  instructions say so, and ask it to behave as if a card were there. - **A
+  job.** It outlives the call, the connection and the app, is the user's
+  process on the user's server, and its log holds whatever the command
+  printed. It is started with a card (or full control or a timed approval,
+  never an allowed command). Only the starting client can read or stop it;
+  nothing in the app lists or stops jobs, and a stopped host's jobs keep
+  running. - **A desktop.** One yes shows the assistant everything on the
+  signed-in user's screen and lets it act as that user, until Take over, Stop,
+  idle, or one of the lifecycle ends. See "The assistant desktop". A
+  screenshot goes to the provider as an image and cannot be redacted; what is
+  typed is never logged. - **A lost phone.** Its controller token can answer
+  the user's cards while Phone control is on, and reaches the computer only
+  through the phone's own SSH login; it can never call a tool. Removing its
+  pairing (or switching Phone control off) ends the session at once. The token
+  on the phone is in secure storage, never in a backup.
 - **A planted `claude` on the user's `PATH`.** One-click runs the first
   `claude` that answers `--version`, and hands it the token. A program
   planted earlier on the user's `PATH` would be run and would receive it.
@@ -1743,15 +2144,28 @@ so a paired assistant does not mean the explanation was ever read.
   backslash is inside single quotes, which is correct for fish, but only sh and
   bash were run; fish itself was not (`store/release-checklist-1.7.md` has the
   check).
-- **Nothing of 1.7.0 has run on Windows yet.** The loopback channel carrying
-  the new tools, the card, the terminal session and the stop on a server are
-  written from the code and tested on Linux; the release checklist lists what to
-  check on a real install. The commands and the stop wrapper run on the
-  *server*, so they need a POSIX `sh` there; a Windows server is not supported
-  for changes, and process stop on one is out of scope.
-- **macOS and Android have no local channel.** `BridgeService.channelSupported`
-  is true only on Linux and Windows, so no paired assistant can reach those
-  apps; the AI tools are built there for the built-in assistant only.
+- **Nothing of 1.7.0 or 1.8.0 has run on Windows yet.** The loopback channel
+  carrying the new tools, the card, the terminal session and the stop on a
+  server are written from the code and tested on Linux; the release checklist
+  lists what to check on a real install. The commands and the stop wrapper run
+  on the *server*, so they need a POSIX `sh` there; a Windows server is not
+  supported for changes, and process stop on one is out of scope.
+- **macOS and Android have no local channel.**
+  `BridgeService.channelSupported` is true only on Linux and Windows, so no
+  paired assistant can reach those apps and no phone controls them; the AI
+  tools, the per-host levels, the cards and the built-in assistant do run
+  there. - **Desktop screenshots need Anthropic.** The OpenAI-compatible
+  connection carries text only, so the model is told an image came back and
+  cannot see it. A local `http` model server does not work on Android
+  (cleartext is off, and `localhost` is the phone). - **The built-in
+  assistant's prompt predates the new tools.** It states the standing rules
+  but does not yet mention jobs, desktops or full control, and a long request
+  can fail if the system pauses the app in the background. - **Phone control
+  on Windows is unproven.** The phone's command is a POSIX `sh` script; a
+  Windows computer needs an SSH login shell that can run it. The launcher
+  search finds the package installs and the snap and Flatpak, not a tarball or
+  AppImage kept elsewhere. - **Jobs are not stoppable from the phone or from
+  any screen.** The protocol has the item kind; no source is registered.
 - **The translations of the new 1.7.0 text** (the eight languages other than
   English) were written by machine and have not been read by native speakers.
 - **Empty-looking folders.** A directory that holds only blocked entries

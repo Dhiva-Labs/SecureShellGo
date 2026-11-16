@@ -30,7 +30,7 @@ An SSH and Mosh terminal with an SFTP file browser, for servers you run. Host ke
 ---
 
 ## Description
-*(Required. Limit 10,000 characters. This is 6,394.)*
+*(Required. Limit 10,000 characters. This is 6,985.)*
 
 ```
 SecureShell Go is an SSH terminal and SFTP file client for servers you run. It checks host keys the way OpenSSH does, signs in with your SSH agent or Pageant if you want it to, and keeps what it stores on this PC. There is no account, no advertising and no analytics. The app connects only to the servers you add, and to your own SSH agent or X server when you switch those on.
@@ -82,8 +82,8 @@ FILES
 • Drag a file onto another session's tab to copy it between servers, directly from one to the other or through this PC. Direct copies, compress and extract keep running on the server if the app closes
 • Built-in editor with syntax colouring for 20 languages, find and replace, tabs for several files, and a save that checks nobody changed the file first and keeps its permissions
 
-AI BRIDGE (OPTIONAL, OFF BY DEFAULT)
-Let an MCP-compatible AI assistant on this PC read from servers you choose, by name. It can read stats, services, log tails, folders and text files, and search by file name. Where you allow it, it can also make changes, each needing your approval in the app unless you set up an exception beforehand. It never receives passwords or keys. Common secret locations are blocked, every call is logged on this PC, and what the assistant reads, and what its commands print, goes to that assistant's own provider, not to us.
+AI ASSISTANTS (OPTIONAL, OFF BY DEFAULT)
+Let an MCP-compatible AI assistant on this PC, or the app's built-in assistant, which uses your own API key, look at servers you choose, by name. For each server you pick one level: off, read only, ask before each change, or full control. Read only gives stats, services, log tails, folders and text files, and search by file name. At "ask before each change" the assistant can ask to run commands, write files, restart services and start long-running jobs, and, if you allow it, open a terminal or see and use the server's desktop. Each one needs your approval on a card in the app, unless you set up an exception beforehand. Full control skips the cards on that one server, so use it only where you would hand everything over. It never receives passwords or keys. Common secret locations are blocked, every call is logged on this PC, and what the assistant reads goes to the AI service you chose, not to us: through the assistant's own provider, or, for the built-in assistant, from the app straight to the service you configured. Your phone can also answer this PC's approval cards for you, over SSH.
 
 ACROSS YOUR SERVERS
 • Groups, colour tags and search, with a Ctrl+K command palette over hosts, snippets and actions
@@ -137,8 +137,8 @@ SecureShell Go 1.5.0 is the first release in the Microsoft Store. New in 1.5: Mo
 | 16 | Up to four terminal panes side by side, with optional broadcast input | 69 |
 | 17 | Ctrl+K command palette, groups, colour tags and search across saved servers | 75 |
 | 18 | Snippets with placeholders; run a command on many servers at once and compare the results | 89 |
-| 19 | Server stats, live log tail, systemd services and processes | 59 |
-| 20 | Encrypted backups (Argon2id, AES-256-GCM); no account, no ads, no analytics | 75 |
+| 19 | Server stats, live log tail, systemd services and processes; encrypted backups (Argon2id, AES-256-GCM) | 102 |
+| 20 | Optional AI assistants, off by default. Per server: read only, ask before each change, or full control. A built-in assistant uses your own API key. Changes, jobs, terminals and desktops need your yes | 199 |
 
 ---
 
@@ -213,29 +213,44 @@ or fewer, no bullets):
 | Privacy policy URL | https://dhiva-labs.github.io/SecureShellGo/privacy-policy |
 | Website | https://github.com/Dhiva-Labs/SecureShellGo |
 | Support contact | dhivakar1010@gmail.com |
-| Does the app access, collect or transmit personal information? | No. It collects nothing and has no server; see `docs/privacy-policy.md` and `store/play-data-safety.md`. Give the privacy policy URL anyway: Microsoft may ask for one because of the package's network capabilities. |
+| Does the app access, collect or transmit personal information? | No. It collects nothing and has no server, and Dhiva Labs receives nothing. If the user switches on the built-in assistant, the app sends what the user types and what the assistant reads to the AI service the user configured, with the user's own key, directly from the PC; say so if Partner Center asks about third parties. See `docs/privacy-policy.md` and `store/play-data-safety.md`. Give the privacy policy URL anyway: Microsoft may ask for one because of the package's network capabilities. |
 
 ---
 
 ## Verification notes
 
-AI Bridge
+AI assistants
 - **Optional, off by default, no passwords or keys, blocked secret
   paths, call log, provider note** — `lib/services/bridge/` (policy, path
-  guard, redactor, audit, tools), the 1.6.0 section of `CHANGELOG.md`,
-  `CHANGELOG.md` (1.7.0), `docs/privacy-policy.md`. "Stats, services, log tails, folders and text
-  files, and search by file name" are the seven read tools in `bridge_tools.dart`
-  (`list_hosts`, `server_stats`, `list_services`, `tail_log`, `list_dir`,
-  `read_file`, `search_files`); "logged on this PC" is
-  `bridge/audit.log`. Checked against the 1.6.0 branch. 1.7.0 adds `run_command`, `write_file`,
-  `service_action`, `run_on_hosts` and the terminal tools
-  (`bridge_change_tools.dart`, `bridge_terminals.dart`): "can also make
-  changes, each needing your approval in the app" is the approval card
-  (`bridge_approvals.dart`), off per host by default; "unless you set up an
-  exception beforehand" is a host's allowed-commands list and a time-limited
-  approval (`bridge_policy.dart`, `bridge_grants.dart`); "what its commands
-  print" is the command output returned to the assistant. Re-check if a tool
-  is added before submitting.
+  guard, redactor, audit, tools), `CHANGELOG.md` (1.6.0, 1.7.0),
+  `docs/privacy-policy.md`. "Stats, services, log tails, folders and text
+  files, and search by file name" are the seven read tools in
+  `bridge_tools.dart` (`list_hosts`, `server_stats`, `list_services`,
+  `tail_log`, `list_dir`, `read_file`, `search_files`); "logged on this PC" is
+  `bridge/audit.log`.
+- **Run commands, write files, restart services** — `run_command`,
+  `write_file`, `service_action`, `run_on_hosts` (`bridge_change_tools.dart`);
+  **terminal** — `bridge_terminals.dart`; **long-running jobs** —
+  `bridge_jobs.dart` (`CHANGELOG.md` (1.8.0)); **desktop** —
+  `bridge_desktops.dart` (`CHANGELOG.md` (1.8.0)). "Each needs your
+  approval on a card" is `bridge_approvals.dart`, off per server by default;
+  "unless you set up an exception beforehand" is a server's allowed-commands
+  list and a time-limited approval (`bridge_policy.dart`, `bridge_grants.dart`)
+  and full control (below).
+- **One level per server; full control skips the cards** —
+  `lib/models/host_ai_access.dart` (`off`, `readOnly`, `askToChange`,
+  `fullControl`), `decideBridgeCall` in `bridge_policy.dart`;
+  `CHANGELOG.md` (1.8.0).
+- **Built-in assistant, your own key, straight to the service you
+  configured** — `lib/services/assistant/` (`assistant_http.dart` sends each
+  request from the device over https, or to localhost);
+  `CHANGELOG.md` (1.8.0).
+- **Your phone can answer this PC's approval cards, over SSH** —
+  `bridge_control.dart`, `bridge_control_launcher.dart`
+  (`secureshellgo-mcp control`), `lib/services/bridge_remote/`;
+  `CHANGELOG.md` (1.8.0). Not tested on a Windows PC: the phone's
+  command is a POSIX `sh` script, so the PC's SSH login shell must run it.
+  Re-check if a tool is added before submitting.
 
 Terminal
 - **xterm-256color, ten colour schemes, JetBrains Mono** — `lib/services/ssh_service.dart`
@@ -372,6 +387,9 @@ Mouse, keyboard and touch
   translations.
 - Anything about how a Windows X server, agent or Hello behaves beyond what
   the app does with them.
+- That the assistant desktop or phone control has been run on Windows: the
+  1.8.0 checklist (`store/release-checklist-1.8.md`) lists what is unproven.
+- Anything about what an AI service does with what it receives.
 
 ---
 
@@ -380,8 +398,9 @@ Mouse, keyboard and touch
 - Reserve the name and fill `msix_config` (`identity_name`, `publisher`) in
   `pubspec.yaml` from Partner Center, and set the minimum Windows version
   there. Another piece of work is setting up that config now.
-- Check the package capabilities. The app needs outbound TCP (SSH), UDP
-  (Mosh), listening sockets on localhost (port forwards), and connections to
+- Check the package capabilities. The app needs outbound TCP (SSH), outbound
+  HTTPS to the AI service the user configures (the built-in assistant, 1.8.0),
+  UDP (Mosh), listening sockets on localhost (port forwards), and connections to
   localhost:6000 or more (X11). It also needs the named pipes of the Windows
   OpenSSH agent and Pageant. Run the Windows App Certification Kit on the
   package (`store/release-checklist-1.5.md`).

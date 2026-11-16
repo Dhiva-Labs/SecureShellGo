@@ -371,8 +371,22 @@ class BridgeListener {
     if (token is! String || token.isEmpty) {
       return const _Refusal(_notPaired);
     }
+    // What the connection is for: MCP (no `session`, as every launcher
+    // before 1.8.0 sends) or a phone's control session. Anything else is
+    // not a session this build has.
+    final session = json['session'];
+    if (session != null && session != bridgeControlSession) {
+      return const _Refusal(_versionMismatch);
+    }
     final client = await verify(token);
-    return client ?? const _Refusal(_notPaired);
+    if (client == null) return const _Refusal(_notPaired);
+    // An assistant's token opens only MCP, a controller's only control; the
+    // wrong pairing for the session reads exactly like an unknown token.
+    final wantsControl = session == bridgeControlSession;
+    final allowed = wantsControl
+        ? bridgeClientMayControl(client)
+        : bridgeClientMayCallTools(client);
+    return allowed ? client : const _Refusal(_notPaired);
   }
 
   static Object? _decode(String line) {

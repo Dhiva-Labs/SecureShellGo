@@ -13,6 +13,7 @@ import 'package:secure_shell_go/services/backup_payload.dart';
 import 'package:secure_shell_go/services/backup_service.dart';
 import 'package:secure_shell_go/services/bridge/bridge_client_store.dart';
 import 'package:secure_shell_go/services/bookmark_store.dart';
+import 'package:secure_shell_go/services/bridge_remote/remote_controller_token_store.dart';
 import 'package:secure_shell_go/services/credential_store.dart';
 import 'package:secure_shell_go/services/host_store.dart';
 import 'package:secure_shell_go/services/settings_store.dart';
@@ -38,6 +39,13 @@ class FakeSecureStorageBackend implements SecureStorageBackend {
   }
 }
 
+/// A store whose deletes fail, as a locked keyring's do.
+class _DeleteFails extends FakeSecureStorageBackend {
+  @override
+  Future<void> delete(String key) async =>
+      throw const SecureStorageUnavailableException('locked');
+}
+
 /// One device's worth of stores, all pointed at a temp directory.
 class Fixture {
   Fixture(this.dir)
@@ -49,6 +57,7 @@ class Fixture {
         settingsStore = SettingsStore(file: File('${dir.path}/settings.json')),
         backend = FakeSecureStorageBackend() {
     credentialStore = CredentialStore(backend: backend);
+    controllerTokens = RemoteControllerTokenStore(backend);
     service = BackupService(
       hostStore: hostStore,
       snippetStore: snippetStore,
@@ -56,6 +65,7 @@ class Fixture {
       bookmarkStore: bookmarkStore,
       settingsStore: settingsStore,
       credentialStore: credentialStore,
+      controllerTokens: controllerTokens,
     );
   }
 
@@ -67,6 +77,7 @@ class Fixture {
   final SettingsStore settingsStore;
   final FakeSecureStorageBackend backend;
   late final CredentialStore credentialStore;
+  late final RemoteControllerTokenStore controllerTokens;
   late final BackupService service;
 }
 
@@ -539,6 +550,33 @@ void main() {
           .apply(payload: payload, mode: ImportMode.replace);
       expect(await target.credentialStore.has('local1'), isFalse);
       expect(result.credentialsDropped, 1);
+    });
+
+    test('replace forgets the controller tokens of the hosts it removed; '
+        'merge keeps them', () async {
+      await target.controllerTokens.save('local1', 'token-local1');
+      await target.controllerTokens.save('h1', 'token-h1');
+      await target.service.apply(payload: payload, mode: ImportMode.merge);
+      expect(await target.controllerTokens.has('local1'), isTrue);
+      await target.service.apply(payload: payload, mode: ImportMode.replace);
+      expect(await target.controllerTokens.has('local1'), isFalse);
+      // h1 survives the replace, and so does its token.
+      expect(await target.controllerTokens.load('h1'), 'token-h1');
+    });
+
+    test('a token store that cannot delete does not fail the import',
+        () async {
+      final locked = BackupService(
+        hostStore: target.hostStore,
+        snippetStore: target.snippetStore,
+        tunnelStore: target.tunnelStore,
+        bookmarkStore: target.bookmarkStore,
+        settingsStore: target.settingsStore,
+        credentialStore: target.credentialStore,
+        controllerTokens: RemoteControllerTokenStore(_DeleteFails()),
+      );
+      await locked.apply(payload: payload, mode: ImportMode.replace);
+      expect(await target.hostStore.get('local1'), isNull);
     });
 
     test('replace clears bookmarks belonging to removed hosts', () async {

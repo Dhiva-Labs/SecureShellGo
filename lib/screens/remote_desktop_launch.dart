@@ -242,8 +242,10 @@ Future<AgentBundle> _agentBundle() => _bundle ??= AgentBundle.load(
   loadBytes: (key) async => (await rootBundle.load(key)).buffer.asUint8List(),
 );
 
-TunnelCarrier _carrierOf(SessionController session) {
-  final transport = session.connection;
+TunnelCarrier _carrierOf(SessionController session) =>
+    _carrierFor(session.connection);
+
+TunnelCarrier _carrierFor(SessionTransport transport) {
   if (transport is SshConnection) {
     // Borrowed, as tunnels borrow it: closing the viewer must not hang up
     // on the shell.
@@ -281,7 +283,7 @@ void Function(int, int) _uploadProgress(
 /// running that the person did not ask to keep.
 Future<RemoteScreenHandle> _connect({
   required AppLocalizations l10n,
-  required SessionController session,
+  required SessionTransport transport,
   required AgentEndpoint endpoint,
   required RemoteScreenProgress progress,
   required void Function(RemoteScreenSession) attach,
@@ -291,7 +293,7 @@ Future<RemoteScreenHandle> _connect({
 }) async {
   try {
     progress(l10n.remoteDesktopConnecting);
-    final socket = await openAgentChannel(_carrierOf(session), endpoint);
+    final socket = await openAgentChannel(_carrierFor(transport), endpoint);
     final client = CsrdClient(input: socket.stream, output: socket.sink);
     attach(client);
     await client.connect(
@@ -337,13 +339,68 @@ RemoteScreenOpener _desktopOpener(
     );
     return _connect(
       l10n: l10n,
-      session: session,
+      transport: session.connection,
       endpoint: endpoint,
       progress: progress,
       attach: attach,
       release: endpoint.stop,
     );
   };
+}
+
+/// The desktop signed in on the server behind [transport], opened the way
+/// "Remote desktop… → This desktop" opens it, with nobody to ask anything:
+/// for the AI assistant's desktop (`BridgeDesktops`), on a connection of
+/// its own. Refused, in the chooser's own words, where the chooser would
+/// not offer it: a Mac (its Screen Sharing needs a password typed in), an
+/// unsupported system, a desktop of another user, or no desktop at all.
+Future<RemoteScreenHandle> openSignedInDesktop(
+  AppLocalizations l10n,
+  SessionTransport transport, {
+  required RemoteScreenProgress progress,
+  required void Function(RemoteScreenSession session) attach,
+}) async {
+  progress(l10n.remoteDesktopStatusPreparing);
+  final probe = await RemoteDesktopProbe.run(transport);
+  final AgentFailure? refused =
+      probe.family == RemoteOsFamily.macos || !probe.isSupported
+      ? AgentFailure(
+          AgentFailureKind.unsupportedRemote,
+          l10n.remoteDesktopLaunchUnsupported,
+        )
+      : switch (probe.desktop) {
+          DesktopAvailable() => null,
+          DesktopOfAnotherUser(:final users) => AgentFailure(
+            AgentFailureKind.desktopOfAnotherUser,
+            l10n.remoteDesktopLaunchOtherUser(users.join(', ')),
+          ),
+          Headless() => AgentFailure(
+            AgentFailureKind.noDesktop,
+            l10n.remoteDesktopLaunchNoDesktop,
+          ),
+        };
+  if (refused != null) throw refused;
+  final bundle = await _agentBundle();
+  final agent = await AgentDeployer(bundle).deploy(
+    transport,
+    probe,
+    purpose: AgentPurpose.desktop,
+    onProgress: _uploadProgress(l10n, progress),
+  );
+  progress(l10n.remoteDesktopStatusStarting);
+  final endpoint = await const AgentLauncher().launchDesktop(
+    transport,
+    probe,
+    agent,
+  );
+  return _connect(
+    l10n: l10n,
+    transport: transport,
+    endpoint: endpoint,
+    progress: progress,
+    attach: attach,
+    release: endpoint.stop,
+  );
 }
 
 /// A new virtual desktop. One kept running is started once: Reconnect on
@@ -383,7 +440,7 @@ RemoteScreenOpener _virtualOpener(
     kept = desktop.record;
     final handle = await _connect(
       l10n: l10n,
-      session: session,
+      transport: session.connection,
       endpoint: desktop.endpoint,
       progress: progress,
       attach: attach,
@@ -428,7 +485,7 @@ RemoteScreenOpener _reattachOpener(
     );
     return _connect(
       l10n: l10n,
-      session: session,
+      transport: session.connection,
       endpoint: endpoint,
       progress: progress,
       attach: attach,

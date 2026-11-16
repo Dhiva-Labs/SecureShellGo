@@ -10,6 +10,7 @@ import 'package:secure_shell_go/models/host.dart';
 import 'package:secure_shell_go/screens/host_edit_screen.dart';
 import 'package:secure_shell_go/screens/host_list_screen.dart';
 import 'package:secure_shell_go/screens/quick_connect_screen.dart';
+import 'package:secure_shell_go/services/bridge_remote/remote_controller_token_store.dart';
 import 'package:secure_shell_go/services/credential_store.dart';
 import 'package:secure_shell_go/services/host_grouping.dart';
 import 'package:secure_shell_go/services/host_store.dart';
@@ -40,6 +41,22 @@ class _MemoryBackend implements SecureStorageBackend {
 
   @override
   Future<void> delete(String key) async => data.remove(key);
+}
+
+/// A secure store that cannot be reached: every call throws, as a locked
+/// keyring does.
+class _LockedBackend implements SecureStorageBackend {
+  @override
+  Future<void> write(String key, String value) async =>
+      throw const SecureStorageUnavailableException('locked');
+
+  @override
+  Future<String?> read(String key) async =>
+      throw const SecureStorageUnavailableException('locked');
+
+  @override
+  Future<void> delete(String key) async =>
+      throw const SecureStorageUnavailableException('locked');
 }
 
 /// Refuses every connection, the way a wrong password does, and counts.
@@ -147,6 +164,7 @@ void main() {
     required InputProfile profile,
     TargetPlatform platform = TargetPlatform.android,
     CredentialStore? credentials,
+    RemoteControllerTokenStore? controllerTokens,
   }) async {
     final sessions = SessionManager();
     addTearDown(sessions.dispose);
@@ -161,6 +179,7 @@ void main() {
         sshService: ssh,
         settingsStore: settings,
         sessions: sessions,
+        controllerTokens: controllerTokens,
       ),
     ));
     await settle(tester);
@@ -214,6 +233,61 @@ void main() {
       expect(find.byType(BottomSheet), findsOneWidget);
       expect(find.text('Undoes trust-on-first-use for this server'),
           findsOneWidget);
+    });
+
+    void phone(WidgetTester tester) {
+      tester.view.physicalSize = const Size(400, 900);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+    }
+
+    Future<void> deleteFromSheet(WidgetTester tester) async {
+      await tester.tap(find.descendant(
+        of: find.byType(ListTile),
+        matching: find.byTooltip('More'),
+      ));
+      await settle(tester);
+      await tester.tap(find.descendant(
+        of: find.byType(BottomSheet),
+        matching: find.text('Delete'),
+      ));
+      await settle(tester);
+      await tester.tap(find.widgetWithText(FilledButton, 'Delete'));
+      await settle(tester);
+    }
+
+    testWidgets('Delete forgets the controller token saved for that host',
+        (tester) async {
+      final backend = _MemoryBackend();
+      final tokens = RemoteControllerTokenStore(backend);
+      await tester.runAsync(() async {
+        await tokens.save('h1', 'token-for-h1');
+        await tokens.save('other', 'token-for-other');
+      });
+      phone(tester);
+      await pumpHostList(
+        tester,
+        profile: _profileOf(_touch),
+        controllerTokens: tokens,
+      );
+      await deleteFromSheet(tester);
+      expect(await tester.runAsync(hosts.all), isEmpty);
+      expect(await tester.runAsync(() => tokens.has('h1')), isFalse);
+      expect(await tester.runAsync(() => tokens.has('other')), isTrue);
+    });
+
+    testWidgets('Delete still deletes the host when the token store is locked',
+        (tester) async {
+      phone(tester);
+      await pumpHostList(
+        tester,
+        profile: _profileOf(_touch),
+        controllerTokens: RemoteControllerTokenStore(_LockedBackend()),
+      );
+      await deleteFromSheet(tester);
+      expect(tester.takeException(), isNull);
+      expect(await tester.runAsync(hosts.all), isEmpty);
+      expect(find.text('Build box'), findsNothing);
     });
 
     group('in the AWS table', () {

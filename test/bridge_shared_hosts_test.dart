@@ -211,18 +211,62 @@ void main() {
       return hosts;
     }
 
-    testWidgets('shows each shared host\'s level', (tester) async {
+    Finder rowOf(String id) => find.byKey(ValueKey('shared-host-$id'));
+    Finder tickOf(String id) =>
+        find.descendant(of: rowOf(id), matching: find.byType(Checkbox));
+    Finder chipOf(String id) =>
+        find.byKey(ValueKey('ai-chip-$id'));
+    String chipText(WidgetTester tester, String id) => tester
+        .widget<Text>(
+            find.descendant(of: chipOf(id), matching: find.byType(Text)))
+        .data!;
+
+    /// Picks a level in the open sheet; [confirm] answers its confirmation.
+    Future<void> pick(
+      WidgetTester tester,
+      HostAiAccess level, {
+      String? confirm,
+    }) async {
+      final tile = find.byKey(ValueKey('ai-level-${level.name}'));
+      await tester.ensureVisible(tile);
+      await tester.pumpAndSettle();
+      await tester.tap(tile);
+      await tester.pumpAndSettle();
+      if (confirm != null) {
+        await tester.tap(find.text(confirm));
+        await tester.pumpAndSettle();
+      }
+    }
+
+    Future<void> saveSheet(WidgetTester tester) async {
+      await tester.runAsync(
+        () => tester.tap(
+          find.descendant(
+            of: find.byType(BottomSheet),
+            matching: find.text('Save'),
+          ),
+        ),
+      );
+      await settle(tester);
+      await tester.pumpAndSettle();
+    }
+
+    testWidgets('shows each host\'s level as a chip', (tester) async {
       await seed(tester, [
         host('a', 'Alpha', access: HostAiAccess.readOnly),
         host('b', 'Beta', access: HostAiAccess.askToChange),
         host('c', 'Gamma', access: HostAiAccess.askToChange, terminal: true),
         host('d', 'Delta'),
+        host('e', 'Epsilon', access: HostAiAccess.fullControl),
       ]);
       await pump(tester);
-      expect(find.text('Read only'), findsOneWidget);
-      expect(find.text('Can request changes'), findsOneWidget);
-      expect(find.text('Can request changes and a terminal'), findsOneWidget);
-      expect(find.byIcon(Icons.tune), findsNWidgets(3));
+      expect(chipText(tester, 'a'), 'Read only');
+      expect(chipText(tester, 'b'), 'Asks first');
+      expect(chipText(tester, 'c'), 'Asks first');
+      expect(chipText(tester, 'd'), 'Off');
+      expect(chipText(tester, 'e'), 'Full control');
+      expect(find.byIcon(Icons.warning_amber_rounded), findsOneWidget,
+          reason: 'only full control is drawn differently');
     });
 
     testWidgets('a full-control host shows as full control, and unticking '
@@ -231,9 +275,10 @@ void main() {
         host('a', 'Alpha', access: HostAiAccess.fullControl),
       ]);
       await pump(tester);
-      expect(find.text('Full control, no approval cards'), findsOneWidget);
+      expect(chipText(tester, 'a'), 'Full control');
       await tester.tap(find.byType(Checkbox));
       await tester.pump();
+      expect(chipText(tester, 'a'), 'Off');
       await tester.runAsync(() => tester.tap(find.text('Save')));
       await settle(tester);
       final hosts = await read(tester);
@@ -257,8 +302,9 @@ void main() {
         );
       });
       // The user ticks Beta only.
-      await tester.tap(find.text('Beta'));
+      await tester.tap(tickOf('b'));
       await tester.pump();
+      expect(chipText(tester, 'b'), 'Read only');
       await tester.runAsync(() => tester.tap(find.text('Save')));
       await settle(tester);
       await tester.pumpAndSettle();
@@ -276,7 +322,7 @@ void main() {
             access: HostAiAccess.askToChange, commands: ['uptime'], terminal: true),
       ]);
       await pump(tester);
-      await tester.tap(find.text('Alpha'));
+      await tester.tap(tickOf('a'));
       await tester.pump();
       await tester.runAsync(() => tester.tap(find.text('Save')));
       await settle(tester);
@@ -286,17 +332,75 @@ void main() {
       expect(a.aiTerminal, isTrue);
     });
 
+    testWidgets('tapping a row opens the sheet with the level picker',
+        (tester) async {
+      await seed(tester, [host('a', 'Alpha', access: HostAiAccess.readOnly)]);
+      await pump(tester);
+      await tester.tap(find.text('Alpha'));
+      await tester.pumpAndSettle();
+      expect(find.text('AI assistant: Alpha'), findsOneWidget);
+      for (final level in HostAiAccess.values) {
+        expect(find.byKey(ValueKey('ai-level-${level.name}')), findsOneWidget);
+      }
+      expect(find.text('Not saved yet'), findsNothing,
+          reason: 'the sheet has its own Save and says so instead');
+    });
+
+    testWidgets('Off and Read only in the sheet are the old tick',
+        (tester) async {
+      await seed(tester, [host('a', 'Alpha')]);
+      await pump(tester);
+      expect(tester.widget<Checkbox>(tickOf('a')).value, isFalse);
+      await tester.tap(find.text('Alpha'));
+      await tester.pumpAndSettle();
+      await pick(tester, HostAiAccess.readOnly);
+      expect(find.byType(AlertDialog), findsNothing);
+      await saveSheet(tester);
+      expect((await read(tester)).single.aiAccess, HostAiAccess.readOnly);
+      expect(chipText(tester, 'a'), 'Read only');
+      expect(tester.widget<Checkbox>(tickOf('a')).value, isTrue);
+
+      await tester.tap(find.text('Alpha'));
+      await tester.pumpAndSettle();
+      await pick(tester, HostAiAccess.off);
+      await saveSheet(tester);
+      expect((await read(tester)).single.aiAccess, HostAiAccess.off);
+      expect(chipText(tester, 'a'), 'Off');
+      expect(tester.widget<Checkbox>(tickOf('a')).value, isFalse);
+    });
+
+    testWidgets('the sheet asks before full control, and cancel leaves the '
+        'level', (tester) async {
+      await seed(tester, [host('a', 'Alpha', access: HostAiAccess.readOnly)]);
+      await pump(tester);
+      await tester.tap(find.text('Alpha'));
+      await tester.pumpAndSettle();
+      await pick(tester, HostAiAccess.fullControl);
+      expect(find.text('Give full control of this server?'), findsOneWidget);
+      await tester.tap(find.descendant(
+          of: find.byType(AlertDialog), matching: find.text('Cancel')));
+      await tester.pumpAndSettle();
+      await saveSheet(tester);
+      expect((await read(tester)).single.aiAccess, HostAiAccess.readOnly);
+
+      await tester.tap(find.text('Alpha'));
+      await tester.pumpAndSettle();
+      await pick(tester, HostAiAccess.fullControl, confirm: 'Give full control');
+      await saveSheet(tester);
+      expect((await read(tester)).single.aiAccess, HostAiAccess.fullControl);
+      expect(chipText(tester, 'a'), 'Full control');
+    });
+
     testWidgets('the per-host sheet writes only what was touched',
         (tester) async {
       await seed(tester, [
         host('a', 'Alpha', access: HostAiAccess.readOnly, commands: ['uptime']),
       ]);
       await pump(tester);
-      await tester.tap(find.byIcon(Icons.tune));
+      await tester.tap(find.text('Alpha'));
       await tester.pumpAndSettle();
       expect(find.text('AI assistant: Alpha'), findsOneWidget);
-      await tester.tap(find.byKey(const ValueKey('ai-changes')));
-      await tester.pumpAndSettle();
+      await pick(tester, HostAiAccess.askToChange);
       expect(find.text('• uptime'), findsOneWidget);
       await tester.tap(find.text('Allow requests'));
       await tester.pumpAndSettle();
@@ -304,50 +408,55 @@ void main() {
       await tester.pumpAndSettle();
       await tester.tap(find.text('Allow terminal'));
       await tester.pumpAndSettle();
-      await tester.runAsync(
-        () => tester.tap(
-          find.descendant(
-            of: find.byType(BottomSheet),
-            matching: find.text('Save'),
-          ),
-        ),
-      );
-      await settle(tester);
-      await tester.pumpAndSettle();
+      await saveSheet(tester);
       final a = (await read(tester)).single;
       expect(a.aiAccess, HostAiAccess.askToChange);
       expect(a.aiTerminal, isTrue);
+      expect(a.aiDesktop, isFalse);
       expect(a.aiAllowedCommands, ['uptime']);
-      expect(find.text('Can request changes and a terminal'), findsOneWidget);
+      expect(chipText(tester, 'a'), 'Asks first');
     });
 
     testWidgets('cancelling the sheet writes nothing', (tester) async {
       await seed(tester, [host('a', 'Alpha', access: HostAiAccess.readOnly)]);
       await pump(tester);
-      await tester.tap(find.byIcon(Icons.tune));
+      await tester.tap(find.text('Alpha'));
       await tester.pumpAndSettle();
-      await tester.tap(find.byKey(const ValueKey('ai-changes')));
-      await tester.pumpAndSettle();
-      await tester.tap(find.text('Allow requests'));
-      await tester.pumpAndSettle();
-      await tester.tap(find.text('Cancel'));
+      await pick(tester, HostAiAccess.askToChange, confirm: 'Allow requests');
+      await tester.tap(
+        find.descendant(
+          of: find.byType(BottomSheet),
+          matching: find.text('Cancel'),
+        ),
+      );
       await tester.pumpAndSettle();
       expect((await read(tester)).single.aiAccess, HostAiAccess.readOnly);
+      expect(chipText(tester, 'a'), 'Read only');
     });
 
     for (final (size, scale) in [
       (const Size(320, 568), 1.5),
+      (const Size(360, 740), 1.0),
       (const Size(1920, 1080), 1.0),
     ]) {
       testWidgets('fits ${size.width.toInt()} wide', (tester) async {
         await seed(tester, [
           host('a', 'A host with a rather long label ${'x' * 40}',
-              access: HostAiAccess.askToChange, terminal: true),
+              access: HostAiAccess.fullControl, terminal: true),
         ]);
         await pump(tester, size: size, textScale: scale);
         expect(tester.takeException(), isNull);
-        await tester.scrollUntilVisible(find.byIcon(Icons.tune), 100);
-        await tester.tap(find.byIcon(Icons.tune));
+        await tester.scrollUntilVisible(rowOf('a'), 100);
+        await tester.ensureVisible(rowOf('a'));
+        await tester.pumpAndSettle();
+        await tester.tap(rowOf('a'));
+        await tester.pumpAndSettle();
+        expect(tester.takeException(), isNull);
+        await pick(tester, HostAiAccess.readOnly);
+        await pick(tester, HostAiAccess.askToChange);
+        expect(find.byType(AlertDialog), findsOneWidget);
+        await tester.tap(find.descendant(
+            of: find.byType(AlertDialog), matching: find.text('Cancel')));
         await tester.pumpAndSettle();
         expect(tester.takeException(), isNull);
       });

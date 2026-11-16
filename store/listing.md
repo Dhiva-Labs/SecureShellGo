@@ -7,8 +7,12 @@ and the per-feature notes in `docs/changes/*.md`. The verification notes say
 where each one comes from. This is the Android listing, so features that
 exist only on Windows, Linux and macOS (agent sign-in, X11 forwarding,
 importing `~/.ssh/config`, uploading whole folders) are left out, and so is
-the AI Bridge (1.6.0, extended in 1.7.0), which is available on Linux and Windows only. They are
-in `store/microsoft-store-listing.md`.
+the part of the AI Bridge that pairs an assistant running on a computer (Linux
+and Windows only). They are in `store/microsoft-store-listing.md`. From 1.8.0
+the Android app does have AI features: the built-in assistant (your own API
+key), per-server AI access, and remote approvals from the phone. They are in
+the description below, and `store/play-data-safety.md` says what the Data
+safety form must now declare.
 
 ---
 
@@ -36,7 +40,7 @@ OpenSSH checks them. No superlatives, no repeated keywords.
 ---
 
 ## Full description
-*(Play limit: 4000 characters. This is 3288.)*
+*(Play limit: 4000 characters. This is 3969.)*
 
 ```
 SecureShell Go is an SSH terminal and SFTP file client for servers you run. It checks host keys the way OpenSSH does, keeps your sessions connected while you use other apps, and keeps what it stores on your phone. No account, no ads, no analytics.
@@ -75,6 +79,12 @@ FILES
 • Copy between two servers, directly from one to the other or through the phone. Direct copies, compress and extract keep running on the server if the app closes
 • Share files into the app from any other app to upload them
 • Built-in editor with syntax colouring for 20 languages, find and replace, and a save that checks nobody changed the file first
+
+AI ASSISTANT (OPTIONAL, OFF BY DEFAULT)
+• A chat inside the app that uses your own API key (Anthropic, or any service that speaks the OpenAI chat format) to look at servers you choose: stats, services, logs and files
+• Per server you pick what it may do: nothing, read only, ask before each change, or full control. Changes, long-running jobs, terminals and desktops each need your yes on a card in the app, unless you give a server full control
+• Your key stays on your phone, in protected storage, and is not in backups. What the assistant reads goes to the AI service you chose, not to us
+• Answer the approval cards of the AI Bridge on your computer from your phone, over SSH
 
 ACROSS YOUR SERVERS
 • Groups, colour tags, search, and quick connect with user@host:port
@@ -207,6 +217,30 @@ Across your servers
   `lib/services/server_probe.dart`, `lib/services/log_tail.dart`,
   `lib/services/systemd_units.dart`, `lib/services/process_table.dart`.
 
+AI assistant (1.8.0)
+- **Optional, off by default; chat; your own key; Anthropic or an
+  OpenAI-compatible service** — `lib/services/assistant/`
+  (`assistant_service.dart`, `anthropic_provider.dart`,
+  `openai_provider.dart`), the switch and provider settings in
+  `lib/screens/settings/assistant_settings_section.dart`,
+  `AppSettings.assistantEnabled` (default false);
+  `CHANGELOG.md` (1.8.0).
+- **Key stays on the phone, protected, not in backups** — `AssistantService`
+  stores it in secure storage under `apiKeySecretName`, which no backup
+  reads; the settings are stripped by `AppSettings.withBridgeDefaults`.
+- **Per server: nothing, read only, ask before each change, full control;
+  cards for changes, jobs, terminals and desktops** —
+  `lib/models/host_ai_access.dart`, `lib/services/bridge/bridge_policy.dart`
+  (`decideBridgeCall`), `lib/widgets/host_ai_level_picker.dart`;
+  `CHANGELOG.md` (1.8.0), `CHANGELOG.md` (1.8.0).
+- **What the assistant reads goes to the service you chose** — the app sends
+  each request itself, over https, from the device to the configured address
+  (`assistant_http.dart`); Dhiva Labs is not in the path.
+- **Approval cards of the computer's AI Bridge, from the phone** —
+  `lib/services/bridge_remote/`, `lib/screens/remote_approvals_screen.dart`;
+  `CHANGELOG.md` (1.8.0). It needs the Linux or Windows app on
+  the computer and an SSH login to it.
+
 Every screen
 - **Hinge split** — `lib/services/display_hinge.dart`,
   `lib/widgets/hinge_split.dart`.
@@ -223,6 +257,14 @@ does not state it.
 
 ### Deliberately not claimed
 
+- That the assistant works offline or on a model on the phone: on Android a
+  local `http` model server is not allowed (cleartext traffic is off), so the
+  service must be reached over https.
+- That the assistant can see a server's desktop on every provider: only the
+  Anthropic connection carries screenshots.
+- That an assistant program on a computer can be paired with the Android app
+  (pairing exists on Linux and Windows only).
+- Anything about what an AI service does with what it receives.
 - Anything that exists only on computers: agent sign-in, FIDO2 keys, X11
   forwarding, `~/.ssh/config` import, folder upload, Windows Hello.
 - "Resumes transfers": an interrupted transfer starts again by itself after
@@ -251,6 +293,18 @@ session logs); `file-browser.md` and `remote-ops.md` (file actions, commands
 on many servers); `editor.md` (indentation, seven new languages: C/C++, Go,
 Rust, Java, Kotlin, Ruby, PHP); `layouts.md` (hinge split); `standalone.md`
 (backups with host keys, "Save to…").
+
+---
+
+## What's new in 1.8.0
+*(Play limit: 500 characters. This is 434.)*
+
+```
+1.8.0: An optional AI assistant in the app, using your own API key. Choose per server: nothing, read only, ask before each change, or full control. Changes, long-running jobs, terminals and a server's desktop each need your yes on a card, unless a server has full control. Answer your computer's AI approval cards from your phone. All off until you switch them on. What the assistant reads goes to the AI service you chose, not to us.
+```
+
+Sources: `CHANGELOG.md` (1.8.0). Check the length in the
+Play Console before pasting (the field counts characters).
 
 ---
 

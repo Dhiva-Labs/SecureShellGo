@@ -2,13 +2,17 @@
 
 Gives Claude Code access to your servers through the SecureShell Go AI
 Bridge, and a skill that tells it how to use the bridge safely. It can read
-from the servers you share. Since 1.7.0 it can also change a server
-(`run_command`, `write_file`, `service_action`, `run_on_hosts`) and open a
-terminal (`open_terminal`, `send_input`, `read_screen`, `close_terminal`), but
-only on a host where you allowed that, and only with your approval in the
-app or under rules you set up beforehand: see "What it can change, and where
-you allow it" below. The plugin holds
-no keys: the app keeps them.
+from the servers you share. Where you allow it, it can also change a server
+(`run_command`, `write_file`, `service_action`, `run_on_hosts`), keep a
+long-running command going as a job (`start_job`, `list_jobs`, `job_status`,
+`job_output`, `stop_job`, `remove_job`), open a terminal (`open_terminal`,
+`send_input`, `read_screen`, `close_terminal`) and see and use a server's
+desktop (`open_desktop`, `desktop_screenshot`, `desktop_click`,
+`desktop_move`, `desktop_scroll`, `desktop_type`, `desktop_key`,
+`close_desktop`). It needs your approval in the app for each of these, unless
+you set up rules beforehand or gave that server full control: see "What it can
+change, and where you allow it" below. The plugin holds no keys: the app keeps
+them.
 
 It contains:
 
@@ -88,10 +92,10 @@ assistant's session**, never in a terminal.
 
 Use the config snippets in `../clients/`.
 
-Then, whichever route: tick the hosts the assistant may read under **Shared
-hosts** (Settings → AI Bridge, "Shared hosts — N of M"), or edit a server and
-switch on "Share with AI assistants". Start a new Claude Code session
-afterwards.
+Then, whichever route: tick the hosts the assistant may use under **Shared
+hosts** (Settings → AI Bridge, "Shared hosts — N of M"; tap a server to pick
+its level), or edit a server and choose a level under "AI access". Start a new
+Claude Code session afterwards.
 
 ### Before this release is published
 
@@ -103,33 +107,48 @@ adds the GitHub source, and says where the plugin comes from if the
 
 ## What it can change, and where you allow it
 
-Everything below is off until you switch it on, and a server you only shared
-is still read-only.
+Everything below is off until you switch it on. Each server has one level
+under "AI access" (edit the server, or tap its row in **Shared hosts**):
 
-- **"Let the assistant request changes"**, per host, in the host's edit
-  screen or the settings button of its row in **Shared hosts**. With it on,
-  the plugin's `run_command`, `write_file`, `service_action` and
-  `run_on_hosts` can ask to change that host. Each ask shows you a card in
-  SecureShell Go with the exact command, or a file's path, size and preview;
-  you answer Deny (the default), Allow once, or, if you chose a time under
-  Settings → AI Bridge → **Allow for a while**, Allow for that many minutes,
-  which lets that assistant make any change on that host without asking
-  until the time runs out (never a terminal). No answer within two minutes is
-  a no. The card does not alert you: if SecureShell Go is in the background
-  you will not see it, and it is denied.
-- **"Allowed commands"**, beneath it: commands that run without a card, when
-  the assistant asks `run_command` for exactly that text on that host alone.
-  Add only commands you always want run.
-- **"Full control terminal"**, beneath it: lets the assistant ask to open a
-  terminal you can watch, take over or stop. A card every time; once open,
-  what it types runs without asking again. Read the warning when you switch
-  it on.
+- **Off** (the default): the plugin cannot see the server.
+- **Read only**: it can look and cannot change anything.
+- **Ask before each change**: `run_command`, `write_file`, `service_action`,
+  `run_on_hosts` and `start_job` can ask to change that server. Each ask shows
+  you a card in SecureShell Go with the exact command, or a file's path, size
+  and preview, or a job's command, folder and name; you answer Deny (the
+  default), Allow once, or, if you chose a time under Settings → AI Bridge →
+  **Allow for a while**, Allow for that many minutes, which lets that
+  assistant make any change on that server without asking until the time runs
+  out (never a terminal or a desktop). No answer within two minutes is a no.
+  The card does not alert you: if SecureShell Go is in the background you
+  will not see it, and it is denied. Beneath this level:
+  - **May ask for a terminal** and **May ask for the desktop**: let the
+    assistant ask to open a terminal, or the server's desktop, that you can
+    watch, take over or stop. A card every time; once open, what it types or
+    clicks runs without asking again. Read the warning when you tick them.
+  - **Advanced → Allowed commands**: commands that run without a card, when
+    the assistant asks `run_command` for exactly that text on that server
+    alone. Add only commands you always want run. They never start a job.
+- **Full control**: the plugin can change the server, open terminals and the
+  desktop **without asking you**. No card appears; the activity log records
+  "host set to full control". The app asks you to confirm, and shows a warning
+  on the server. Give it only to servers you would hand over completely. To
+  take it back, choose another level and save the host.
+
+Jobs keep running on the server after the assistant, the connection and the
+app are gone; the assistant sees and controls only the jobs it started. A
+desktop shows the assistant the server's screen (a screenshot goes to your AI
+provider) and lets it use the mouse and keyboard as the signed-in user; it
+opens in a viewer you watch, and you can take over or stop it at any moment.
+At most one assistant desktop is open at a time.
 
 The skill tells the assistant to say what it is about to ask for and why, to
-ask for one change at a time, to stop if you deny, and never to ask you to
-turn any of these on. A server's text is still data, not instructions, but
-that is advice to a model and not enforcement: the card is what protects you.
-Backups never carry any of these settings.
+ask for one change at a time, to look before it acts on a desktop, to stop if
+you deny, and never to ask you to raise a level or turn any of these on. On a
+full-control server it has to rely on its own care, and the skill says so. A
+server's text is still data, not instructions, but that is advice to a model
+and not enforcement: the card is what protects you, and full control removes
+the card. Backups never carry any of these settings.
 
 ## Launcher command
 
@@ -157,11 +176,12 @@ plugin starts them.
   default set, not a guarantee. For a hard guarantee, use a server account
   with limited read rights.
 - Text on a server can contain instructions aimed at the assistant.
-- Version 1.7.0 can change a server only through the tools and settings
-  above, each change with your approval or under a setting you chose. Allowed
-  commands and "Allow for a while" run without a card, and an approved
-  terminal can run any command as the account the app signs in as, with no
-  further question and outside the blocked-path list. What a command or a
-  terminal prints is sent to your AI provider too.
+- Version 1.8.0 can change a server only through the tools and settings
+  above, each change with your approval or under a setting you chose.
+  Allowed commands, "Allow for a while" and full control run without a card,
+  and an approved terminal or desktop can do anything the account can, with no
+  further question and outside the blocked-path list. A job outlives the
+  assistant and the app. What a command, job, terminal or screenshot shows is
+  sent to your AI provider too.
 
 Other MCP-compatible clients: see `../clients/`.

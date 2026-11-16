@@ -6,6 +6,7 @@ import '../models/path_bookmark.dart';
 import 'backup_crypto.dart';
 import 'backup_payload.dart';
 import 'bookmark_store.dart';
+import 'bridge_remote/remote_controller_token_store.dart';
 import 'credential_store.dart';
 import 'host_store.dart';
 import 'known_hosts_service.dart';
@@ -67,6 +68,7 @@ class BackupService {
     required this.settingsStore,
     required this.credentialStore,
     this.knownHosts,
+    this.controllerTokens,
   });
 
   /// The extension, and what the export screen names the file.
@@ -82,6 +84,11 @@ class BackupService {
   /// Backs the "Include trusted host keys" option. Optional so a caller that
   /// has none still gets backups, without that option.
   final KnownHostsService? knownHosts;
+
+  /// The phone's controller tokens ("Remote approvals"), one per host. Not
+  /// part of a backup; a [ImportMode.replace] that removes a host forgets
+  /// its token along with its credentials. Optional: null leaves tokens be.
+  final RemoteControllerTokenStore? controllerTokens;
 
   /// Builds the encrypted file.
   ///
@@ -330,6 +337,9 @@ class BackupService {
       for (final hostId in existingHostIds.difference(importedHostIds)) {
         if (await credentialStore.has(hostId)) droppedCredentials++;
         await credentialStore.delete(hostId);
+        // Nothing can reach that host's token any more either; best effort,
+        // so a locked store does not fail an import that already wrote.
+        await controllerTokens?.deleteQuietly(hostId);
       }
     }
 

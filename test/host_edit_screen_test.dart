@@ -731,32 +731,26 @@ void main() {
       });
     });
 
-    testWidgets('the AI access switch is not there without the bridge',
+    testWidgets('the AI access section is not there without the bridge',
         (tester) async {
       await pumpForm(tester, noKeyringStore());
-      expect(find.text('Share with AI assistants'), findsNothing);
+      expect(find.text('AI access'), findsNothing);
+      expect(find.byKey(const ValueKey('ai-level-off')), findsNothing);
     });
 
-    testWidgets(
-        'a new host starts with AI access off, and the switch turns it on',
-        (tester) async {
+    testWidgets('a new host starts with AI access off, and Read only turns '
+        'it on without asking', (tester) async {
       await pumpForm(tester, noKeyringStore(), aiBridge: true);
-      expect(
-        tester
-            .widget<SwitchListTile>(
-                find.widgetWithText(SwitchListTile, 'Share with AI assistants'))
-            .value,
-        isFalse,
-      );
+      expect(aiSummary(tester), 'Assistants cannot see this server.');
       await fillIn(tester);
-      await tester.tap(find.text('Share with AI assistants'));
-      await tester.pump();
+      await chooseLevel(tester, HostAiAccess.readOnly);
+      expect(find.byType(AlertDialog), findsNothing);
       await tapAndRun(tester, 'Save host', checks: () async {
         expect((await hosts.all()).single.aiAccess, HostAiAccess.readOnly);
       });
     });
 
-    testWidgets('an unchanged switch saves off', (tester) async {
+    testWidgets('an unchanged picker saves off', (tester) async {
       await pumpForm(tester, noKeyringStore(), aiBridge: true);
       await fillIn(tester);
       await tapAndRun(tester, 'Save host', checks: () async {
@@ -764,7 +758,7 @@ void main() {
       });
     });
 
-    testWidgets('the switch shows a host\'s access and turns it off',
+    testWidgets('the picker shows a host\'s level and turns it off',
         (tester) async {
       final original = Host(
         id: hosts.newId(),
@@ -777,108 +771,254 @@ void main() {
       );
       await withRealIo(tester, () => hosts.add(original));
       await pumpForm(tester, noKeyringStore(), host: original, aiBridge: true);
-      expect(
-        tester
-            .widget<SwitchListTile>(
-                find.widgetWithText(SwitchListTile, 'Share with AI assistants'))
-            .value,
-        isTrue,
-      );
+      expect(aiSummary(tester), startsWith('Assistants can read this server'));
       await tester.enterText(
         find.widgetWithText(TextFormField, 'Password'),
         'hunter2',
       );
-      await tester.tap(find.text('Share with AI assistants'));
-      await tester.pump();
+      await chooseLevel(tester, HostAiAccess.off);
       await tapAndRun(tester, 'Save changes', checks: () async {
         expect((await hosts.all()).single.aiAccess, HostAiAccess.off);
       });
     });
 
-    Host changingHost() => Host(
+    for (final (level, confirm) in [
+      (HostAiAccess.off, null),
+      (HostAiAccess.readOnly, null),
+      (HostAiAccess.askToChange, 'Allow requests'),
+      (HostAiAccess.fullControl, 'Give full control'),
+    ]) {
+      testWidgets('each level can be chosen and saved: ${level.name}',
+          (tester) async {
+        // Start from the other side of every level so each pick is a change.
+        final start = level == HostAiAccess.off
+            ? HostAiAccess.fullControl
+            : HostAiAccess.off;
+        final original = Host(
           id: hosts.newId(),
           label: 'Web',
           hostname: 'web.example.com',
           port: 22,
           username: 'dev',
           authMethod: SshAuthMethod.password,
-          aiAccess: HostAiAccess.askToChange,
-          aiAllowedCommands: const ['uptime'],
-          aiTerminal: true,
+          aiAccess: start,
         );
-
-    for (final down in [HostAiAccess.off, HostAiAccess.readOnly]) {
-      testWidgets(
-          'access stepped down to ${down.name} while the form is open '
-          'stays down after an unrelated edit', (tester) async {
-        final original = changingHost();
         await withRealIo(tester, () => hosts.add(original));
         await pumpForm(tester, noKeyringStore(),
             host: original, aiBridge: true);
-        // Elsewhere (the shared-hosts list, an approval card) the user steps
-        // the host down while this form still holds the old copy.
-        await withRealIo(
-          tester,
-          () => hosts.modify(original.id, (h) => h.copyWith(aiAccess: down)),
-        );
-
-        await tester.enterText(
-          find.widgetWithText(TextFormField, 'Web'),
-          'Web 2',
-        );
         await tester.enterText(
           find.widgetWithText(TextFormField, 'Password'),
           'hunter2',
         );
+        await chooseLevel(tester, level, confirm: confirm);
         await tapAndRun(tester, 'Save changes', checks: () async {
-          final saved = (await hosts.all()).single;
-          expect(saved.label, 'Web 2');
-          expect(saved.aiAccess, down,
-              reason: 'a stale form must not raise access back up');
-          expect(saved.aiAllowedCommands, ['uptime'],
-              reason: 'stored but inert, as stepping down leaves it');
-          expect(saved.aiTerminal, isTrue);
+          expect((await hosts.all()).single.aiAccess, level);
         });
       });
     }
 
-    testWidgets('switching off then on again keeps change access',
-        (tester) async {
-      final original = changingHost();
+    testWidgets('full control asks first, in words that say what it means; '
+        'cancel keeps the previous level', (tester) async {
+      final original = Host(
+        id: hosts.newId(),
+        label: 'Web',
+        hostname: 'web.example.com',
+        port: 22,
+        username: 'dev',
+        authMethod: SshAuthMethod.password,
+        aiAccess: HostAiAccess.readOnly,
+      );
       await withRealIo(tester, () => hosts.add(original));
       await pumpForm(tester, noKeyringStore(), host: original, aiBridge: true);
       await tester.enterText(
         find.widgetWithText(TextFormField, 'Password'),
         'hunter2',
       );
-      await tester.tap(find.text('Share with AI assistants'));
-      await tester.pump();
-      await tester.tap(find.text('Share with AI assistants'));
-      await tester.pump();
+      await chooseLevel(tester, HostAiAccess.fullControl);
+      expect(find.text('Give full control of this server?'), findsOneWidget);
+      expect(find.textContaining('No approval cards'), findsOneWidget);
+      expect(find.textContaining('any command as the saved sign-in user'),
+          findsOneWidget);
+      expect(find.textContaining('terminals and the desktop'), findsOneWidget);
+      expect(find.textContaining('choose another level here'),
+          findsOneWidget);
+      // The safe button holds the focus; the grant is not the default.
+      expect(
+        tester
+            .widget<TextButton>(find.widgetWithText(TextButton, 'Cancel'))
+            .autofocus,
+        isTrue,
+      );
+      expect(
+        tester
+            .widget<FilledButton>(
+                find.widgetWithText(FilledButton, 'Give full control'))
+            .autofocus,
+        isFalse,
+      );
+      await tester.tap(find.text('Cancel'));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('ai-full-warning')), findsNothing);
+      expect(aiSummary(tester), startsWith('Assistants can read this server'));
       await tapAndRun(tester, 'Save changes', checks: () async {
-        final saved = (await hosts.all()).single;
-        expect(saved.aiAccess, HostAiAccess.askToChange);
-        expect(saved.aiAllowedCommands, ['uptime']);
+        expect((await hosts.all()).single.aiAccess, HostAiAccess.readOnly);
       });
     });
 
-    testWidgets('switching on a host turned off elsewhere gives read-only',
+    testWidgets('full control shows a standing warning and its summary',
         (tester) async {
-      final original = changingHost().copyWith(aiAccess: HostAiAccess.off);
+      final original = Host(
+        id: hosts.newId(),
+        label: 'Web',
+        hostname: 'web.example.com',
+        port: 22,
+        username: 'dev',
+        authMethod: SshAuthMethod.password,
+        aiAccess: HostAiAccess.fullControl,
+      );
       await withRealIo(tester, () => hosts.add(original));
       await pumpForm(tester, noKeyringStore(), host: original, aiBridge: true);
-      await tester.enterText(
-        find.widgetWithText(TextFormField, 'Password'),
-        'hunter2',
+      expect(find.byKey(const ValueKey('ai-full-warning')), findsOneWidget);
+      expect(aiSummary(tester), contains('without asking you'));
+      expect(find.byKey(const ValueKey('ai-terminal')), findsNothing);
+      expect(find.byKey(const ValueKey('ai-desktop')), findsNothing);
+    });
+
+    testWidgets('lowering never asks', (tester) async {
+      final original = Host(
+        id: hosts.newId(),
+        label: 'Web',
+        hostname: 'web.example.com',
+        port: 22,
+        username: 'dev',
+        authMethod: SshAuthMethod.password,
+        aiAccess: HostAiAccess.fullControl,
       );
-      await tester.tap(find.text('Share with AI assistants'));
-      await tester.pump();
-      await tapAndRun(tester, 'Save changes', checks: () async {
-        final saved = (await hosts.all()).single;
-        expect(saved.aiAccess, HostAiAccess.readOnly,
-            reason: 'the plain switch never turns change access on');
-        expect(saved.aiMayRequestChanges, isFalse);
-      });
+      await withRealIo(tester, () => hosts.add(original));
+      await pumpForm(tester, noKeyringStore(), host: original, aiBridge: true);
+      await chooseLevel(tester, HostAiAccess.askToChange);
+      expect(find.byType(AlertDialog), findsNothing);
+      await chooseLevel(tester, HostAiAccess.readOnly);
+      expect(find.byType(AlertDialog), findsNothing);
+      await chooseLevel(tester, HostAiAccess.off);
+      expect(find.byType(AlertDialog), findsNothing);
+    });
+
+    testWidgets('the summary follows the level and the ticks', (tester) async {
+      final original = Host(
+        id: hosts.newId(),
+        label: 'Web',
+        hostname: 'web.example.com',
+        port: 22,
+        username: 'dev',
+        authMethod: SshAuthMethod.password,
+        aiAccess: HostAiAccess.askToChange,
+      );
+      await withRealIo(tester, () => hosts.add(original));
+      await pumpForm(tester, noKeyringStore(), host: original, aiBridge: true);
+      expect(
+        aiSummary(tester),
+        'Assistants can read this server. Changes need your yes each time. '
+        'Neither a terminal nor the desktop can be requested.',
+      );
+      await tester.tap(find.byKey(const ValueKey('ai-terminal')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Allow terminal'));
+      await tester.pumpAndSettle();
+      expect(aiSummary(tester), endsWith(
+          'A terminal can be requested; the desktop cannot.'));
+      await tester.tap(find.byKey(const ValueKey('ai-desktop')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Allow desktop'));
+      await tester.pumpAndSettle();
+      expect(aiSummary(tester),
+          endsWith('A terminal and the desktop can be requested.'));
+      await tester.tap(find.byKey(const ValueKey('ai-terminal')));
+      await tester.pumpAndSettle();
+      expect(aiSummary(tester),
+          endsWith('The desktop can be requested; a terminal cannot.'));
+      await chooseLevel(tester, HostAiAccess.readOnly);
+      expect(aiSummary(tester),
+          'Assistants can read this server. They cannot change anything.');
+    });
+
+    testWidgets('the ticks and Advanced exist only under "Ask before each '
+        'change"', (tester) async {
+      final original = Host(
+        id: hosts.newId(),
+        label: 'Web',
+        hostname: 'web.example.com',
+        port: 22,
+        username: 'dev',
+        authMethod: SshAuthMethod.password,
+        aiAccess: HostAiAccess.askToChange,
+      );
+      await withRealIo(tester, () => hosts.add(original));
+      await pumpForm(tester, noKeyringStore(), host: original, aiBridge: true);
+      void expectFlags(bool shown) {
+        for (final key in ['ai-terminal', 'ai-desktop', 'ai-advanced']) {
+          expect(find.byKey(ValueKey(key)), shown ? findsOneWidget : findsNothing,
+              reason: key);
+        }
+      }
+
+      expectFlags(true);
+      await chooseLevel(tester, HostAiAccess.readOnly);
+      expectFlags(false);
+      await chooseLevel(tester, HostAiAccess.off);
+      expectFlags(false);
+      await chooseLevel(tester, HostAiAccess.readOnly);
+      await chooseLevel(tester, HostAiAccess.askToChange,
+          confirm: 'Allow requests');
+      expectFlags(true);
+      await chooseLevel(tester, HostAiAccess.fullControl,
+          confirm: 'Give full control');
+      expectFlags(false);
+    });
+
+    testWidgets('"Not saved yet" shows while the level differs from the '
+        'saved one', (tester) async {
+      final original = Host(
+        id: hosts.newId(),
+        label: 'Web',
+        hostname: 'web.example.com',
+        port: 22,
+        username: 'dev',
+        authMethod: SshAuthMethod.password,
+        aiAccess: HostAiAccess.readOnly,
+      );
+      await withRealIo(tester, () => hosts.add(original));
+      await pumpForm(tester, noKeyringStore(), host: original, aiBridge: true);
+      expect(find.text('Not saved yet'), findsNothing);
+      await chooseLevel(tester, HostAiAccess.off);
+      expect(find.text('Not saved yet'), findsOneWidget);
+      await chooseLevel(tester, HostAiAccess.readOnly);
+      expect(find.text('Not saved yet'), findsNothing,
+          reason: 'back at the saved level there is nothing unsaved');
+    });
+
+    testWidgets('phone width: the whole section fits', (tester) async {
+      final original = Host(
+        id: hosts.newId(),
+        label: 'Web',
+        hostname: 'web.example.com',
+        port: 22,
+        username: 'dev',
+        authMethod: SshAuthMethod.password,
+        aiAccess: HostAiAccess.askToChange,
+        aiAllowedCommands: const ['systemctl status nginx'],
+      );
+      await withRealIo(tester, () => hosts.add(original));
+      await pumpForm(tester, noKeyringStore(), host: original, aiBridge: true);
+      tester.view.physicalSize = const Size(360, 3000);
+      await tester.pumpAndSettle();
+      await openAdvanced(tester);
+      expect(tester.takeException(), isNull);
+      await chooseLevel(tester, HostAiAccess.fullControl,
+          confirm: 'Give full control');
+      expect(tester.takeException(), isNull);
+      await chooseLevel(tester, HostAiAccess.off);
+      expect(tester.takeException(), isNull);
     });
   });
 
@@ -903,37 +1043,36 @@ void main() {
       );
     }
 
-    testWidgets('the change switch is off, and hides what depends on it',
-        (tester) async {
+    bool ticked(WidgetTester tester, String key) => tester
+        .widget<CheckboxListTile>(find.byKey(ValueKey(key)))
+        .value!;
+
+    testWidgets('read-only hides what depends on asking', (tester) async {
       await pumpEdit(tester, readOnlyHost());
-      expect(
-        tester
-            .widget<SwitchListTile>(find.byKey(const ValueKey('ai-changes')))
-            .value,
-        isFalse,
-      );
       expect(find.text('Allowed commands'), findsNothing);
-      expect(find.text('Full control terminal'), findsNothing);
+      expect(find.byKey(const ValueKey('ai-terminal')), findsNothing);
+      expect(find.byKey(const ValueKey('ai-advanced')), findsNothing);
     });
 
-    testWidgets('turning changes on asks first and lists the stored commands',
+    testWidgets('raising to ask asks first and lists the stored commands',
         (tester) async {
       final host = readOnlyHost(commands: ['uptime', 'df -h']);
       await pumpEdit(tester, host);
-      await tester.tap(find.byKey(const ValueKey('ai-changes')));
-      await tester.pumpAndSettle();
+      await chooseLevel(tester, HostAiAccess.askToChange);
       expect(find.text('Let the assistant request changes?'), findsOneWidget);
       expect(find.textContaining('still needs your approval'), findsOneWidget);
       expect(find.text('• uptime'), findsOneWidget);
       expect(find.text('• df -h'), findsOneWidget);
       await tester.tap(find.text('Allow requests'));
       await tester.pumpAndSettle();
+      await openAdvanced(tester);
       expect(find.text('Allowed commands'), findsOneWidget);
       await tapAndRun(tester, 'Save changes', checks: () async {
         final saved = (await hosts.all()).single;
         expect(saved.aiAccess, HostAiAccess.askToChange);
         expect(saved.aiAllowedCommands, ['uptime', 'df -h']);
         expect(saved.aiTerminal, isFalse);
+        expect(saved.aiDesktop, isFalse);
       });
     });
 
@@ -948,8 +1087,7 @@ void main() {
           (h) => h.copyWith(aiAllowedCommands: ['uptime', 'reboot']),
         ),
       );
-      await tester.tap(find.byKey(const ValueKey('ai-changes')));
-      await tester.pumpAndSettle();
+      await chooseLevel(tester, HostAiAccess.askToChange);
       expect(find.text('• reboot'), findsOneWidget);
       await tester.tap(find.text('Allow requests'));
       await tester.pumpAndSettle();
@@ -961,16 +1099,11 @@ void main() {
 
     testWidgets('cancelling the confirmation changes nothing', (tester) async {
       await pumpEdit(tester, readOnlyHost(commands: ['uptime']));
-      await tester.tap(find.byKey(const ValueKey('ai-changes')));
-      await tester.pumpAndSettle();
+      await chooseLevel(tester, HostAiAccess.askToChange);
       await tester.tap(find.text('Cancel'));
       await tester.pumpAndSettle();
-      expect(
-        tester
-            .widget<SwitchListTile>(find.byKey(const ValueKey('ai-changes')))
-            .value,
-        isFalse,
-      );
+      expect(find.byKey(const ValueKey('ai-terminal')), findsNothing);
+      expect(find.text('Not saved yet'), findsNothing);
       await tapAndRun(tester, 'Save changes', checks: () async {
         final saved = (await hosts.all()).single;
         expect(saved.aiAccess, HostAiAccess.readOnly);
@@ -980,12 +1113,11 @@ void main() {
 
     for (final accept in [false, true]) {
       testWidgets('a terminal stored on while read-only is confirmed again '
-          'when changes are turned on (${accept ? 'accepted' : 'cancelled'})',
+          'when asking is turned on (${accept ? 'accepted' : 'cancelled'})',
           (tester) async {
         final host = readOnlyHost().copyWith(aiTerminal: true);
         await pumpEdit(tester, host);
-        await tester.tap(find.byKey(const ValueKey('ai-changes')));
-        await tester.pumpAndSettle();
+        await chooseLevel(tester, HostAiAccess.askToChange);
         await tester.tap(find.text('Allow requests'));
         await tester.pumpAndSettle();
         // The terminal's own confirmation, with its full warning.
@@ -993,12 +1125,7 @@ void main() {
         expect(find.textContaining('no further questions'), findsOneWidget);
         await tester.tap(find.text(accept ? 'Allow terminal' : 'Cancel'));
         await tester.pumpAndSettle();
-        expect(
-          tester
-              .widget<SwitchListTile>(find.byKey(const ValueKey('ai-terminal')))
-              .value,
-          accept,
-        );
+        expect(ticked(tester, 'ai-terminal'), accept);
         await tapAndRun(tester, 'Save changes', checks: () async {
           final saved = (await hosts.all()).single;
           expect(saved.aiAccess, HostAiAccess.askToChange);
@@ -1007,17 +1134,43 @@ void main() {
       });
     }
 
-    Future<void> turnChangesOn(WidgetTester tester) async {
-      await tester.tap(find.byKey(const ValueKey('ai-changes')));
-      await tester.pumpAndSettle();
-      await tester.tap(find.text('Allow requests'));
-      await tester.pumpAndSettle();
+    for (final accept in [false, true]) {
+      testWidgets('a desktop stored on while read-only is confirmed again '
+          'when asking is turned on (${accept ? 'accepted' : 'cancelled'})',
+          (tester) async {
+        final host = readOnlyHost().copyWith(aiDesktop: true);
+        await pumpEdit(tester, host);
+        await chooseLevel(tester, HostAiAccess.askToChange);
+        await tester.tap(find.text('Allow requests'));
+        await tester.pumpAndSettle();
+        expect(find.text('Allow the desktop to be requested?'),
+            findsOneWidget);
+        await tester.tap(find.text(accept ? 'Allow desktop' : 'Cancel'));
+        await tester.pumpAndSettle();
+        expect(ticked(tester, 'ai-desktop'), accept);
+        await tapAndRun(tester, 'Save changes', checks: () async {
+          final saved = (await hosts.all()).single;
+          expect(saved.aiAccess, HostAiAccess.askToChange);
+          expect(saved.aiDesktop, accept);
+        });
+      });
+    }
+
+    Future<void> turnChangesOn(WidgetTester tester) => chooseLevel(
+          tester,
+          HostAiAccess.askToChange,
+          confirm: 'Allow requests',
+        );
+
+    Future<void> turnChangesOnAndOpen(WidgetTester tester) async {
+      await turnChangesOn(tester);
+      await openAdvanced(tester);
     }
 
     testWidgets('adds an allowed command, shown and saved exactly',
         (tester) async {
       await pumpEdit(tester, readOnlyHost());
-      await turnChangesOn(tester);
+      await turnChangesOnAndOpen(tester);
       expect(find.byKey(const ValueKey('ai-commands-warning')), findsOneWidget);
       await tester.enterText(
         find.byKey(const ValueKey('ai-command-field')),
@@ -1045,7 +1198,7 @@ void main() {
     for (final entry in refused.entries) {
       testWidgets('refuses ${entry.key} and says why', (tester) async {
         await pumpEdit(tester, readOnlyHost());
-        await turnChangesOn(tester);
+        await turnChangesOnAndOpen(tester);
         await tester.enterText(
           find.byKey(const ValueKey('ai-command-field')),
           entry.value.$1,
@@ -1061,7 +1214,7 @@ void main() {
 
     testWidgets('refuses a duplicate', (tester) async {
       await pumpEdit(tester, readOnlyHost(commands: ['uptime']));
-      await turnChangesOn(tester);
+      await turnChangesOnAndOpen(tester);
       await tester.enterText(
         find.byKey(const ValueKey('ai-command-field')),
         'uptime',
@@ -1075,7 +1228,7 @@ void main() {
         (tester) async {
       final long = 'echo ${List.generate(800, (i) => 'w$i').join(' ')}';
       await pumpEdit(tester, readOnlyHost(commands: [long]));
-      await turnChangesOn(tester);
+      await turnChangesOnAndOpen(tester);
       final text = tester.widget<Text>(find.descendant(
         of: find.byKey(ValueKey('ai-command-$long')),
         matching: find.byType(Text),
@@ -1100,9 +1253,10 @@ void main() {
         tester.platformDispatcher.textScaleFactorTestValue = 1.5;
         addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
         await tester.pumpAndSettle();
-        await tester.ensureVisible(find.byKey(const ValueKey('ai-changes')));
+        await tester.ensureVisible(
+            find.byKey(const ValueKey('ai-level-askToChange')));
         await tester.pumpAndSettle();
-        await tester.tap(find.byKey(const ValueKey('ai-changes')));
+        await tester.tap(find.byKey(const ValueKey('ai-level-askToChange')));
         await tester.pumpAndSettle();
         expect(tester.takeException(), isNull);
         expect(find.byKey(const ValueKey('ai-confirm-command')),
@@ -1121,7 +1275,7 @@ void main() {
 
     testWidgets('removes an allowed command', (tester) async {
       await pumpEdit(tester, readOnlyHost(commands: ['uptime', 'df -h']));
-      await turnChangesOn(tester);
+      await turnChangesOnAndOpen(tester);
       await tester.tap(
         find.descendant(
           of: find.byKey(const ValueKey('ai-command-uptime')),
@@ -1134,7 +1288,7 @@ void main() {
       });
     });
 
-    testWidgets('the terminal switch asks, with the warning, and writes only '
+    testWidgets('the terminal tick asks, with the warning, and writes only '
         'itself', (tester) async {
       await pumpEdit(tester, readOnlyHost(commands: ['uptime']));
       await turnChangesOn(tester);
@@ -1149,6 +1303,7 @@ void main() {
       await tapAndRun(tester, 'Save changes', checks: () async {
         final saved = (await hosts.all()).single;
         expect(saved.aiTerminal, isTrue);
+        expect(saved.aiDesktop, isFalse);
         expect(saved.aiAllowedCommands, ['uptime']);
       });
     });
@@ -1163,6 +1318,59 @@ void main() {
       await tester.pumpAndSettle();
       await tapAndRun(tester, 'Save changes', checks: () async {
         expect((await hosts.all()).single.aiTerminal, isFalse);
+      });
+    });
+
+    testWidgets('the desktop tick asks, with the warning, and writes only '
+        'itself', (tester) async {
+      await pumpEdit(tester, readOnlyHost(commands: ['uptime']));
+      await turnChangesOn(tester);
+      await tester.tap(find.byKey(const ValueKey('ai-desktop')));
+      await tester.pumpAndSettle();
+      expect(find.text('Allow the desktop to be requested?'), findsOneWidget);
+      expect(find.textContaining('see this server\'s screen'),
+          findsOneWidget);
+      await tester.tap(find.text('Allow desktop'));
+      await tester.pumpAndSettle();
+      expect(ticked(tester, 'ai-desktop'), isTrue);
+      await tapAndRun(tester, 'Save changes', checks: () async {
+        final saved = (await hosts.all()).single;
+        expect(saved.aiDesktop, isTrue);
+        expect(saved.aiTerminal, isFalse);
+        expect(saved.aiAllowedCommands, ['uptime']);
+      });
+    });
+
+    testWidgets('cancelling the desktop confirmation leaves it off',
+        (tester) async {
+      await pumpEdit(tester, readOnlyHost());
+      await turnChangesOn(tester);
+      await tester.tap(find.byKey(const ValueKey('ai-desktop')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Cancel'));
+      await tester.pumpAndSettle();
+      expect(ticked(tester, 'ai-desktop'), isFalse);
+      await tapAndRun(tester, 'Save changes', checks: () async {
+        expect((await hosts.all()).single.aiDesktop, isFalse);
+      });
+    });
+
+    testWidgets('unticking never asks', (tester) async {
+      final host = readOnlyHost().copyWith(
+        aiAccess: HostAiAccess.askToChange,
+        aiTerminal: true,
+        aiDesktop: true,
+      );
+      await pumpEdit(tester, host);
+      await tester.tap(find.byKey(const ValueKey('ai-terminal')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('ai-desktop')));
+      await tester.pumpAndSettle();
+      expect(find.byType(AlertDialog), findsNothing);
+      await tapAndRun(tester, 'Save changes', checks: () async {
+        final saved = (await hosts.all()).single;
+        expect(saved.aiTerminal, isFalse);
+        expect(saved.aiDesktop, isFalse);
       });
     });
 
@@ -1210,6 +1418,7 @@ void main() {
         tester,
         () => hosts.modify(host.id, (h) => h.copyWith(aiTerminal: true)),
       );
+      await openAdvanced(tester);
       await tester.enterText(
         find.byKey(const ValueKey('ai-command-field')),
         'df -h',
@@ -1221,6 +1430,42 @@ void main() {
         expect(saved.aiAllowedCommands, ['uptime', 'df -h']);
         expect(saved.aiTerminal, isTrue);
         expect(saved.aiAccess, HostAiAccess.askToChange);
+      });
+    });
+
+    testWidgets('stepping down keeps the allowed commands stored, and '
+        'stepping back up asks again', (tester) async {
+      final host = readOnlyHost(commands: ['uptime']).copyWith(
+        aiAccess: HostAiAccess.askToChange,
+        aiTerminal: true,
+      );
+      await pumpEdit(tester, host);
+      await chooseLevel(tester, HostAiAccess.off);
+      expect(find.byKey(const ValueKey('ai-command-field')), findsNothing);
+      await chooseLevel(tester, HostAiAccess.askToChange);
+      expect(find.text('• uptime'), findsOneWidget);
+      await tester.tap(find.text('Allow requests'));
+      await tester.pumpAndSettle();
+      expect(find.text('Allow a full control terminal?'), findsOneWidget);
+      await tester.tap(find.text('Allow terminal'));
+      await tester.pumpAndSettle();
+      await tapAndRun(tester, 'Save changes', checks: () async {
+        final saved = (await hosts.all()).single;
+        expect(saved.aiAccess, HostAiAccess.askToChange);
+        expect(saved.aiAllowedCommands, ['uptime']);
+        expect(saved.aiTerminal, isTrue);
+      });
+    });
+
+    testWidgets('choosing Read only on a host turned off elsewhere never '
+        'turns change access on', (tester) async {
+      final original = readOnlyHost().copyWith(aiAccess: HostAiAccess.off);
+      await pumpEdit(tester, original);
+      await chooseLevel(tester, HostAiAccess.readOnly);
+      await tapAndRun(tester, 'Save changes', checks: () async {
+        final saved = (await hosts.all()).single;
+        expect(saved.aiAccess, HostAiAccess.readOnly);
+        expect(saved.aiMayRequestChanges, isFalse);
       });
     });
 
@@ -1236,6 +1481,7 @@ void main() {
       );
       tester.view.physicalSize = const Size(320, 3000);
       await tester.pumpAndSettle();
+      await openAdvanced(tester);
       expect(tester.takeException(), isNull);
     });
   });
@@ -1485,3 +1731,34 @@ class _PickingStorage implements DeviceStorage {
   dynamic noSuchMethod(Invocation invocation) =>
       super.noSuchMethod(invocation);
 }
+
+/// Picks [level] in the AI access picker and, when it asks, answers its
+/// confirmation with the button named [confirm].
+Future<void> chooseLevel(
+  WidgetTester tester,
+  HostAiAccess level, {
+  String? confirm,
+}) async {
+  final tile = find.byKey(ValueKey('ai-level-${level.name}'));
+  await tester.ensureVisible(tile);
+  await tester.pumpAndSettle();
+  await tester.tap(tile);
+  await tester.pumpAndSettle();
+  if (confirm != null) {
+    await tester.tap(find.text(confirm));
+    await tester.pumpAndSettle();
+  }
+}
+
+/// Opens the "Advanced" fold that holds the allowed commands.
+Future<void> openAdvanced(WidgetTester tester) async {
+  final fold = find.byKey(const ValueKey('ai-advanced'));
+  await tester.ensureVisible(fold);
+  await tester.pumpAndSettle();
+  await tester.tap(find.descendant(of: fold, matching: find.text('Advanced')));
+  await tester.pumpAndSettle();
+}
+
+/// The plain-words line under the AI access picker.
+String aiSummary(WidgetTester tester) =>
+    tester.widget<Text>(find.byKey(const ValueKey('ai-summary'))).data!;

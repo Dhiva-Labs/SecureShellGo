@@ -213,12 +213,25 @@ const int bridgeMaxHandshakeLineBytes = 4096;
 /// directory, so whoever answers on it is the app. On tcp the line carries
 /// the [secret] too, and is only sent once the listener has proved it holds
 /// that secret (see [bridgeHelloLine]).
-String bridgeHandshakeLine({required String token, String? secret}) =>
-    jsonEncode({
-      'ssg_bridge': bridgeHandshakeVersion,
-      'token': token,
-      'secret': ?secret,
-    });
+///
+/// [session] names what the connection is for: absent for MCP (every
+/// launcher before 1.8.0 sends none), [bridgeControlSession] for a phone's
+/// control session. The app accepts an assistant's token only for MCP and a
+/// controller's only for control.
+String bridgeHandshakeLine({
+  required String token,
+  String? secret,
+  String? session,
+}) => jsonEncode({
+  'ssg_bridge': bridgeHandshakeVersion,
+  'token': token,
+  'secret': ?secret,
+  'session': ?session,
+});
+
+/// The handshake's `session` value for a phone acting as remote control
+/// (`secureshellgo-mcp control`).
+const String bridgeControlSession = 'control';
 
 /// The tcp kind's first line: a fresh nonce for the listener to prove it
 /// knows the locator file's secret, before any token is sent.
@@ -483,6 +496,7 @@ Future<BridgeLink> dialBridge(
   required String token,
   Duration timeout = const Duration(seconds: 5),
   Random? random,
+  String? session,
 }) async {
   final socket = await _connect(endpoint, timeout);
   final reader = _HandshakeReader(socket);
@@ -492,9 +506,12 @@ Future<BridgeLink> dialBridge(
         if (!await _exchangeProof(socket, reader, secret, timeout, random)) {
           throw const BridgeDialException(bridgeNotRunningMessage);
         }
-        _sendLine(socket, bridgeHandshakeLine(token: token, secret: secret));
+        _sendLine(
+          socket,
+          bridgeHandshakeLine(token: token, secret: secret, session: session),
+        );
       case BridgeUnixEndpoint():
-        _sendLine(socket, bridgeHandshakeLine(token: token));
+        _sendLine(socket, bridgeHandshakeLine(token: token, session: session));
     }
     final reply = await reader.nextJson(timeout);
     if (reply is Map && reply['ok'] == true) {

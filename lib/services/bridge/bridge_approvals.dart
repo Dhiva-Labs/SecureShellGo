@@ -91,6 +91,26 @@ final class TerminalSummary extends BridgeChangeSummary {
   const TerminalSummary();
 }
 
+/// Opening the server's desktop for the assistant: a viewer the user can
+/// watch, through which the assistant sees the screen and uses the mouse
+/// and keyboard as whoever is signed in there. Never covered by a
+/// time-limited approval, like a terminal.
+final class DesktopSummary extends BridgeChangeSummary {
+  const DesktopSummary();
+}
+
+/// Starting a long-running job (`start_job`): the command verbatim, the
+/// folder it starts in as the assistant gave it (null for the home
+/// directory), and its short name, if any. The job keeps running on the
+/// server after the call, the connection and the app have ended.
+final class JobStartSummary extends BridgeChangeSummary {
+  const JobStartSummary({required this.command, this.cwd, this.name});
+
+  final String command;
+  final String? cwd;
+  final String? name;
+}
+
 /// One question to the user: may [client] do [summary] on [hostName]?
 class BridgeApprovalRequest {
   const BridgeApprovalRequest({
@@ -140,7 +160,7 @@ enum BridgeApprovalOutcomeKind {
 }
 
 class BridgeApprovalOutcome {
-  const BridgeApprovalOutcome._(this.kind, [this.grantFor]);
+  const BridgeApprovalOutcome._(this.kind, [this.grantFor, this.via]);
 
   static const BridgeApprovalOutcome busy = BridgeApprovalOutcome._(
     BridgeApprovalOutcomeKind.busy,
@@ -167,6 +187,15 @@ class BridgeApprovalOutcome {
 
   /// Set only for [BridgeApprovalOutcomeKind.allowedForAWhile].
   final Duration? grantFor;
+
+  /// Where the answer came from when it was not this computer's own card,
+  /// e.g. `controller:<phone name>`; null for a tap here, a timeout or a
+  /// withdrawal. For the activity log only: not part of [==].
+  final String? via;
+
+  /// This outcome, answered through [source].
+  BridgeApprovalOutcome _via(String? source) =>
+      source == null ? this : BridgeApprovalOutcome._(kind, grantFor, source);
 
   bool get allowed =>
       kind == BridgeApprovalOutcomeKind.allowedOnce ||
@@ -295,15 +324,41 @@ class BridgeApprovals {
     return entry.done.future;
   }
 
-  /// The user's answer, from the card. Ignored unless [id] is waiting.
-  void answer(String id, BridgeApprovalAnswer a) {
+  /// The user's answer, from the card here or, with [via] set (e.g.
+  /// `controller:<phone name>`), from a paired phone: the same path either
+  /// way. Ignored unless [id] is waiting.
+  ///
+  /// Returns how the request ended, or null when [id] was not waiting
+  /// (answered already, withdrawn, timed out, or never asked). A request
+  /// whose time ran out just before the answer ends as timed out.
+  BridgeApprovalOutcome? answer(
+    String id,
+    BridgeApprovalAnswer a, {
+    String? via,
+  }) {
     final entry = _pending[id];
-    if (entry == null) return;
+    if (entry == null) return null;
     // The timer may be due but not yet run; the clock is the judge.
     if (!_clock().isBefore(entry.request.expiresAt)) {
       _finish(id, BridgeApprovalOutcome.timedOut);
-      return;
+      return BridgeApprovalOutcome.timedOut;
     }
+    _answeringVia = via;
+    _lastAnswered = null;
+    try {
+      _answer(id, entry, a);
+    } finally {
+      _answeringVia = null;
+    }
+    return _lastAnswered;
+  }
+
+  /// Set only while [answer] runs: where that answer came from, stamped on
+  /// the outcome by [_finish], and the outcome it ended with.
+  String? _answeringVia;
+  BridgeApprovalOutcome? _lastAnswered;
+
+  void _answer(String id, _Pending entry, BridgeApprovalAnswer a) {
     switch (a) {
       case BridgeApprovalAnswer.deny:
         _finish(id, BridgeApprovalOutcome.denied);
@@ -311,8 +366,11 @@ class BridgeApprovals {
         _finish(id, BridgeApprovalOutcome.allowedOnce);
       case BridgeApprovalAnswer.allowForAWhile:
         final minutes = timedApprovalMinutes();
-        // A terminal is never covered by a time-limited approval.
-        if (minutes <= 0 || entry.request.summary is TerminalSummary) {
+        // A terminal or a desktop is never covered by a time-limited
+        // approval.
+        if (minutes <= 0 ||
+            entry.request.summary is TerminalSummary ||
+            entry.request.summary is DesktopSummary) {
           _finish(id, BridgeApprovalOutcome.allowedOnce);
         } else {
           _finish(
@@ -361,9 +419,19 @@ class BridgeApprovals {
     final entry = _pending.remove(id);
     if (entry == null) return;
     entry.timer?.cancel();
-    entry.done.complete(outcome);
+    final ended = outcome._via(_answeringVia);
+    _lastAnswered = ended;
+    entry.done.complete(ended);
+    if (!_ended.isClosed) _ended.add((request: entry.request, outcome: ended));
     _publish();
   }
+
+  final StreamController<BridgeApprovalEnd> _ended =
+      StreamController<BridgeApprovalEnd>.broadcast();
+
+  /// Each request as it ends — answered, timed out or withdrawn — with how.
+  /// For a remote controller, which must tell its card why it went away.
+  Stream<BridgeApprovalEnd> get ended => _ended.stream;
 
   void _publish() {
     if (!_changes.isClosed) _changes.add(current);
@@ -374,8 +442,15 @@ class BridgeApprovals {
     withdrawAll();
     _disposed = true;
     await _changes.close();
+    await _ended.close();
   }
 }
+
+/// One request that ended, and how ([BridgeApprovals.ended]).
+typedef BridgeApprovalEnd = ({
+  BridgeApprovalRequest request,
+  BridgeApprovalOutcome outcome,
+});
 
 class _Pending {
   _Pending(this.request);

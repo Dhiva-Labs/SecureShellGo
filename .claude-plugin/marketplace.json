@@ -6,7 +6,7 @@
     {
       "name": "secureshellgo",
       "source": "./integrations/plugin",
-      "description": "Your servers through the SecureShell Go AI Bridge: reading, and changes only where you allow them, with your approval in the app."
+      "description": "Your servers through the SecureShell Go AI Bridge: reading, and changes, jobs, terminals and desktops only where you allow them, with your approval in the app."
     }
   ]
 }

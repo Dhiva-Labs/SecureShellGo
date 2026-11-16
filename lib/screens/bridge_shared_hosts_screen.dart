@@ -8,9 +8,11 @@ import '../models/host_ai_access.dart';
 import '../models/host_ai_edit.dart';
 import '../services/host_store.dart';
 import '../widgets/host_ai_controls.dart';
+import '../widgets/host_ai_level_chip.dart';
 
-/// Which saved hosts an AI assistant may read: a checkbox per host, started
-/// from what each host already has and applied only on Save.
+/// What AI assistants may do on each saved host: a row per host with its level
+/// as a chip. The tick shares a host read only or turns it off (applied on
+/// Save); tapping a row opens a sheet with the full level picker.
 ///
 /// A body, not a screen, so the one-click flow can show it in its own page
 /// and Settings can open it on its own ([BridgeSharedHostsScreen]).
@@ -116,28 +118,35 @@ class _SharedHostsChecklistState extends State<SharedHostsChecklist> {
     widget.onSaved();
   }
 
-  /// The group, and what an assistant may do on the host now.
-  Widget? _subtitle(BuildContext context, Host host) {
-    final l10n = context.l10n;
-    final level = switch (host.aiAccess) {
-      HostAiAccess.off => null,
-      HostAiAccess.readOnly => l10n.bridgeHostLevelRead,
-      HostAiAccess.askToChange =>
-        host.aiTerminal
-            ? l10n.bridgeHostLevelTerminal
-            : l10n.bridgeHostLevelChanges,
-      HostAiAccess.fullControl => l10n.bridgeHostLevelFullControl,
-    };
-    final lines = [
-      if ((host.group ?? '').isNotEmpty) host.group!,
-      ?level,
-    ];
-    if (lines.isEmpty) return null;
-    return Text(lines.join(' · '));
+  /// The group the host is in, if any, and the level as a chip. The chip sits
+  /// under the name rather than beside it: a long name keeps the full width.
+  Widget _subtitle(Host host) {
+    final group = host.group;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        if (group != null && group.isNotEmpty) Text(group),
+        const SizedBox(height: 4),
+        HostAiLevelChip(
+          key: ValueKey('ai-chip-${host.id}'),
+          level: _levelOf(host),
+        ),
+      ],
+    );
   }
 
-  /// The per-host sheet: request changes, allowed commands, terminal. Writes
-  /// only what was touched there, against the host as stored now.
+  /// What the row shows: the stored level, moved to Off or Read only by a tick
+  /// not saved yet (a host that already has more keeps it).
+  HostAiAccess _levelOf(Host host) {
+    if (!_ticked.contains(host.id)) return HostAiAccess.off;
+    return host.aiAccess == HostAiAccess.off
+        ? HostAiAccess.readOnly
+        : host.aiAccess;
+  }
+
+  /// The per-host sheet: the same level picker as the host edit screen. Writes
+  /// only what was touched there, against the host as stored now, when its
+  /// Save is pressed.
   Future<void> _openSheet(Host listed) async {
     final stored = await widget.hostStore.get(listed.id);
     if (stored == null || !mounted) return;
@@ -155,6 +164,14 @@ class _SharedHostsChecklistState extends State<SharedHostsChecklist> {
     setState(() {
       final i = _hosts!.indexWhere((h) => h.id == fresh.id);
       if (i >= 0) _hosts = [..._hosts!]..[i] = fresh;
+      // The sheet wrote this host, so its tick is what the store holds now.
+      if (fresh.aiAccess == HostAiAccess.off) {
+        _ticked.remove(fresh.id);
+        _initial.remove(fresh.id);
+      } else {
+        _ticked.add(fresh.id);
+        _initial.add(fresh.id);
+      }
     });
   }
 
@@ -205,29 +222,24 @@ class _SharedHostsChecklistState extends State<SharedHostsChecklist> {
                 child: Text(l10n.bridgeHostsIntro),
               ),
               for (final host in hosts)
-                CheckboxListTile(
-                  value: _ticked.contains(host.id),
-                  onChanged: _saving
-                      ? null
-                      : (on) => setState(() {
-                          if (on == true) {
-                            _ticked.add(host.id);
-                          } else {
-                            _ticked.remove(host.id);
-                          }
-                        }),
+                ListTile(
+                  key: ValueKey('shared-host-${host.id}'),
+                  enabled: !_saving,
+                  leading: Checkbox(
+                    value: _ticked.contains(host.id),
+                    onChanged: _saving
+                        ? null
+                        : (on) => setState(() {
+                            if (on == true) {
+                              _ticked.add(host.id);
+                            } else {
+                              _ticked.remove(host.id);
+                            }
+                          }),
+                  ),
                   title: Text(host.label),
-                  subtitle: _subtitle(context, host),
-                  secondary: _initial.contains(host.id) &&
-                          host.aiAccess != HostAiAccess.off
-                      ? IconButton(
-                          tooltip: l10n.hostAiSheetOpen,
-                          icon: const Icon(Icons.tune),
-                          onPressed: _saving
-                              ? null
-                              : () => unawaited(_openSheet(host)),
-                        )
-                      : null,
+                  subtitle: _subtitle(host),
+                  onTap: () => unawaited(_openSheet(host)),
                 ),
             ],
           ),
@@ -355,9 +367,19 @@ class _HostAiSheetState extends State<_HostAiSheet> {
           const SizedBox(height: 8),
           HostAiControls(
             edit: _edit,
-            showShare: false,
+            showTitle: false,
+            showUnsavedHint: false,
             onChanged: () => setState(() {}),
             loadStored: () => widget.hostStore.get(widget.host.id),
+          ),
+          Padding(
+            padding: const EdgeInsets.only(top: 8),
+            child: Text(
+              l10n.hostAiSheetHint,
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: theme.colorScheme.onSurfaceVariant,
+              ),
+            ),
           ),
           if (_failed)
             Padding(

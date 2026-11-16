@@ -136,7 +136,10 @@ class _BridgeApprovalCardState extends State<BridgeApprovalCard> {
     final scheme = theme.colorScheme;
     final request = widget.request;
     final summary = request.summary;
-    final isTerminal = summary is TerminalSummary;
+    final isDesktop = summary is DesktopSummary;
+    // A desktop hands over as much as a terminal does: drawn as loudly, and
+    // never allowed for a while.
+    final isTerminal = summary is TerminalSummary || isDesktop;
     final canAllow = _armed && !_answered && !_expired;
     final assistant = visibleLine(request.client.name, maxChars: _maxNameChars);
     final host = visibleLine(request.hostName, maxChars: _maxNameChars);
@@ -152,6 +155,8 @@ class _BridgeApprovalCardState extends State<BridgeApprovalCard> {
             : l10n.approvalTitleFileNew,
       ServiceActionSummary() => l10n.approvalTitleService,
       TerminalSummary() => l10n.approvalTitleTerminal,
+      DesktopSummary() => l10n.approvalTitleDesktop,
+      JobStartSummary() => l10n.approvalTitleJob,
     };
 
     final warning = _partialWarning(context, summary);
@@ -248,7 +253,9 @@ class _BridgeApprovalCardState extends State<BridgeApprovalCard> {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Icon(
-                          isTerminal
+                          isDesktop
+                              ? Icons.desktop_windows_outlined
+                              : isTerminal
                               ? Icons.terminal
                               : Icons.admin_panel_settings_outlined,
                           color: isTerminal ? scheme.error : scheme.primary,
@@ -408,6 +415,53 @@ class _BridgeApprovalCardState extends State<BridgeApprovalCard> {
             sentence,
             key: const ValueKey('approval-service'),
             style: theme.textTheme.titleMedium,
+          ),
+        ];
+      case JobStartSummary(:final command, :final cwd, :final name):
+        // The command exactly as on a run_command card, then where it
+        // starts and that it outlives the call.
+        return [
+          Text(l10n.approvalCommandLabel, style: theme.textTheme.labelLarge),
+          const SizedBox(height: 6),
+          _VerbatimBox(
+            text: command,
+            boxKey: const ValueKey('approval-command'),
+          ),
+          if (cwd != null) ...[
+            const SizedBox(height: 8),
+            Text(l10n.approvalJobCwdLabel, style: theme.textTheme.labelLarge),
+            const SizedBox(height: 4),
+            _VerbatimBox(
+              text: cwd,
+              boxKey: const ValueKey('approval-job-cwd'),
+              maxHeight: 96,
+              breakLines: false,
+            ),
+          ],
+          if (name != null) ...[
+            const SizedBox(height: 8),
+            Text(
+              l10n.approvalJobName(visibleLine(name, maxChars: _maxNameChars)),
+              key: const ValueKey('approval-job-name'),
+              style: theme.textTheme.bodyLarge,
+            ),
+          ],
+          const SizedBox(height: 8),
+          Text(
+            l10n.approvalJobNote,
+            key: const ValueKey('approval-job-note'),
+            style: theme.textTheme.bodyMedium?.copyWith(
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+        ];
+      case DesktopSummary():
+        return [
+          _FullControlWarning(
+            title: l10n.approvalDesktopWarningTitle,
+            text: l10n.approvalDesktopWarning,
+            titleKey: const ValueKey('approval-desktop-warning'),
+            textKey: const ValueKey('approval-desktop-text'),
           ),
         ];
       case TerminalSummary():
@@ -677,6 +731,63 @@ class _VerbatimBoxState extends State<_VerbatimBox> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: children,
+    );
+  }
+}
+
+/// The red box that says, before Allow, how much one yes hands over (the
+/// desktop's; the terminal draws its own the same way).
+class _FullControlWarning extends StatelessWidget {
+  const _FullControlWarning({
+    required this.title,
+    required this.text,
+    required this.titleKey,
+    required this.textKey,
+  });
+
+  final String title;
+  final String text;
+  final Key titleKey;
+  final Key textKey;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: scheme.errorContainer,
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(Icons.warning_amber_rounded, color: scheme.onErrorContainer),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  title,
+                  key: titleKey,
+                  style: theme.textTheme.titleMedium?.copyWith(
+                    color: scheme.onErrorContainer,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Text(
+            text,
+            key: textKey,
+            style: theme.textTheme.bodyMedium?.copyWith(
+              color: scheme.onErrorContainer,
+            ),
+          ),
+        ],
+      ),
     );
   }
 }

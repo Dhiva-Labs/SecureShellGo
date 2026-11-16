@@ -8,6 +8,7 @@ import '../l10n/l10n.dart';
 import '../models/app_settings.dart';
 import '../services/app_lock.dart';
 import '../services/app_lock_controller.dart';
+import '../services/assistant/assistant_service.dart';
 import '../services/backup_service.dart';
 import '../services/bridge/bridge_audit.dart';
 import '../services/bridge/bridge_cli_connector.dart';
@@ -54,6 +55,7 @@ class SettingsScreen extends StatefulWidget {
     this.bridgeClients,
     this.bridgeAudit,
     this.claudeConnector,
+    this.assistant,
   });
 
   final SettingsStore settingsStore;
@@ -74,6 +76,10 @@ class SettingsScreen extends StatefulWidget {
   final BridgeClientStore? bridgeClients;
   final BridgeAuditLog? bridgeAudit;
   final ClaudeCliConnector? claudeConnector;
+
+  /// The built-in assistant, set up under the AI settings. Null leaves its
+  /// group out.
+  final AssistantService? assistant;
 
   /// Backs the "Tunnels" row. Both this and [hostStore] are needed to open
   /// that screen at all — a tunnel is a profile plus the host that carries
@@ -544,6 +550,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   audit: widget.bridgeAudit!,
                   hostStore: widget.hostStore,
                   connector: widget.claudeConnector,
+                  assistant: widget.assistant,
                 ),
                 const Divider(height: 32),
               ],

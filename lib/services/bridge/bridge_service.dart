@@ -8,6 +8,7 @@ import 'bridge_approvals.dart';
 import 'bridge_channel.dart';
 import 'bridge_client_store.dart';
 import 'bridge_connections.dart';
+import 'bridge_control.dart';
 import 'bridge_grants.dart';
 import 'bridge_policy.dart';
 import 'bridge_terminals.dart';
@@ -101,7 +102,10 @@ class BridgeService {
     this.hostChanges,
     this.terminals,
     bool? localChannel,
-  }) : localChannel = localChannel ?? channelSupported;
+    List<BridgeControlSource> controlSources = const [],
+  }) : localChannel = localChannel ?? channelSupported,
+       // ignore: prefer_initializing_formals
+       _controlSources = controlSources;
 
   /// Whether this platform has the local channel and the launcher: only
   /// the desktop builds that ship `secureshellgo-mcp`. The AI tools
@@ -150,9 +154,37 @@ class BridgeService {
   /// locks, their client is revoked, their host changes, and at dispose.
   final BridgeTerminals? terminals;
 
+  final List<BridgeControlSource> _controlSources;
+
+  /// The paired phones' control sessions (`AppSettings.bridgePhoneControl`),
+  /// over the same local channel as the assistants. Its sources are the
+  /// assistant terminals plus whatever `controlSources` brought (desktops,
+  /// jobs).
+  late final BridgeControlServer control = BridgeControlServer(
+    approvals: tools.approvals,
+    grants: tools.grants,
+    audit: tools.audit,
+    isAppLocked: tools.isAppLocked,
+    settings: () => settingsStore.current,
+    sources: [
+      if (terminals != null) BridgeTerminalsControlSource(terminals!),
+      ..._controlSources,
+    ],
+  );
+
+  /// The phones connected as remote control right now.
+  List<BridgeClient> get connectedControllers => control.connected;
+
+  Stream<List<BridgeClient>> get connectedControllersChanges =>
+      control.connectedChanges;
+
   StreamSubscription<bool>? _lockWatch;
   StreamSubscription<List<Host>>? _hostsWatch;
   int? _timedMinutes;
+
+  /// The built-in assistant's switch as last seen; read once the settings
+  /// have loaded.
+  bool _builtinOn = false;
 
   /// The hosts as last seen, by id, to tell a changed server from an
   /// unrelated edit. Null until the first list arrives.
@@ -188,12 +220,18 @@ class BridgeService {
   Future<void> start() async {
     await settingsStore.ensureLoaded();
     _timedMinutes = settingsStore.current.bridgeTimedApprovalMinutes;
+    _builtinOn = tools.builtinAssistantEnabled();
+    control.settingsChanged(settingsStore.current);
     _settingsWatch = settingsStore.changes.listen((s) {
       _onTimedApprovalSetting(s.bridgeTimedApprovalMinutes);
+      _onBuiltinSwitch(tools.builtinAssistantEnabled());
+      control.settingsChanged(s);
       _enqueue(() => _apply(s.bridgeEnabled));
     });
     _clientsWatch = clients.changes.listen(_onClientsChanged);
     _lockWatch = appLockChanges?.listen((locked) {
+      // Phones see the lock too: an empty snapshot, every action refused.
+      control.lockChanged(locked);
       if (!locked) return;
       approvals.withdrawAll();
       grants.revokeAll();
@@ -240,7 +278,7 @@ class BridgeService {
   Future<void> _startListener() async {
     final BridgeListener listener;
     try {
-      listener = await createListener(_verifyAssistant);
+      listener = await createListener(_verifyClient);
       _accepting = listener.connections.listen(_onConnection);
       await listener.start();
     } on BridgeAlreadyRunning {
@@ -258,13 +296,19 @@ class BridgeService {
     _setStatus(BridgeStatus.running);
   }
 
-  /// The token check the MCP channel uses: a paired assistant, never a
-  /// controller. A controller's token reads exactly like an unknown one
-  /// here, so it cannot be used to call a tool.
-  Future<BridgeClient?> _verifyAssistant(String token) async {
+  /// The listener's token check: a paired assistant, or a paired phone
+  /// controller while Phone control is on. With it off a controller's
+  /// token reads exactly like an unknown one. The listener then accepts an
+  /// assistant only for MCP and a controller only for a control session.
+  Future<BridgeClient?> _verifyClient(String token) async {
     final client = await clients.verify(token);
-    if (client == null || !bridgeClientMayCallTools(client)) return null;
-    return client;
+    if (client == null) return null;
+    if (bridgeClientMayCallTools(client)) return client;
+    if (bridgeClientMayControl(client) &&
+        settingsStore.current.bridgePhoneControl) {
+      return client;
+    }
+    return null;
   }
 
   /// The client ids whose belongings survive a change to the paired list or
@@ -272,6 +316,11 @@ class BridgeService {
   static const Set<String> _notChannel = {BridgeClient.builtinId};
 
   void _onConnection(BridgeConnection raw) {
+    if (_accepting != null && bridgeClientMayControl(raw.client)) {
+      // A phone: its own server, never MCP. It re-checks Phone control.
+      unawaited(control.serve(raw).catchError((Object _) {}));
+      return;
+    }
     if (_accepting == null || !bridgeClientMayCallTools(raw.client)) {
       unawaited(raw.close());
       return;
@@ -296,6 +345,8 @@ class BridgeService {
     // Whether or not the client is connected right now.
     approvals.withdrawClientsExcept(ids);
     grants.revokeClientsExcept(ids);
+    // A phone whose pairing was removed loses its session now.
+    control.closeClientsExcept(ids);
     unawaited(terminals?.closeClientsExcept(ids));
     for (final module in tools.modules) {
       unawaited(module.clientsChanged(ids).catchError((Object _) {}));
@@ -341,6 +392,9 @@ class BridgeService {
     for (final connection in open) {
       await connection.close();
     }
+    await control.closeAll(
+      message: 'The AI Bridge was switched off on the computer.',
+    );
     _publishClients();
     try {
       await listener?.stop();
@@ -392,6 +446,43 @@ class BridgeService {
 
   static bool _sameServer(Host a, Host b) => bridgeSameServer(a, b);
 
+  /// Switching the built-in assistant off ends what it holds, as the
+  /// channel switch does for paired clients: its calls in flight (a card it
+  /// is waiting on included), its time-limited approvals (a later "on" must
+  /// not bring them back), its terminals and its desktop. Its jobs are
+  /// server processes and keep running, as on bridge off.
+  void _onBuiltinSwitch(bool on) {
+    final wasOn = _builtinOn;
+    _builtinOn = on;
+    if (!wasOn || on) return;
+    const id = BridgeClient.builtinId;
+    tools.abandonClient(
+      id,
+      reason: 'The built-in assistant was switched off; the call was stopped.',
+    );
+    approvals.withdrawClient(id);
+    grants.revokeClient(id);
+    final terminals = this.terminals;
+    if (terminals != null) {
+      unawaited(
+        terminals.closeClientsExcept({
+          for (final t in terminals.current)
+            if (t.clientId != id) t.clientId,
+        }),
+      );
+    }
+    for (final module in tools.modules) {
+      unawaited(
+        module.ended(BridgeModuleEnd.builtinOff).catchError((Object _) {}),
+      );
+    }
+    // The cached connections are shared with the channel: closed only when
+    // nobody is left to use them, as bridge off does the other way round.
+    if (!localChannel || !settingsStore.current.bridgeEnabled) {
+      unawaited(connections.closeAll());
+    }
+  }
+
   /// Switching "allow for a while" off ends the approvals it gave; a new
   /// length leaves running ones as they were granted.
   void _onTimedApprovalSetting(int minutes) {
@@ -423,6 +514,7 @@ class BridgeService {
         await module.ended(BridgeModuleEnd.disposed);
       } catch (_) {}
     }
+    await control.dispose();
     await approvals.dispose();
     await grants.dispose();
     await _statusChanges.close();

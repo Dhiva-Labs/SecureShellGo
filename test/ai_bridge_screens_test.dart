@@ -37,15 +37,21 @@ BridgeConnections _connections() => BridgeConnections(
 /// A [BridgeService] whose status and connections the test sets, without a
 /// listener behind it.
 class _FakeBridge extends BridgeService {
-  _FakeBridge(Directory dir, BridgeClientStore clients, BridgeAuditLog audit)
-    : this._(dir, clients, audit, _connections());
+  _FakeBridge(
+    Directory dir,
+    BridgeClientStore clients,
+    BridgeAuditLog audit, {
+    bool? localChannel,
+  }) : this._(dir, clients, audit, _connections(), localChannel);
 
   _FakeBridge._(
     Directory dir,
     BridgeClientStore clients,
     BridgeAuditLog audit,
     BridgeConnections connections,
+    bool? localChannel,
   ) : super(
+        localChannel: localChannel,
         settingsStore: SettingsStore(file: File('${dir.path}/unused.json')),
         clients: clients,
         connections: connections,
@@ -255,8 +261,62 @@ void main() {
       expect(find.text('Paired assistants'), findsOneWidget);
       expect(find.text('No assistant is paired yet.'), findsOneWidget);
       expect(find.text('Connect an assistant'), findsOneWidget);
-      expect(find.text('Activity'), findsOneWidget);
+      expect(find.widgetWithText(ListTile, 'Activity'), findsOneWidget);
       expect(find.text('Shared hosts — 0 of 0'), findsOneWidget);
+    });
+
+    testWidgets('is grouped under headers, each with one line saying what '
+        'it holds', (tester) async {
+      await pumpSection(tester, hostStore: hostStore);
+      double top(String text) => tester.getTopLeft(find.text(text).first).dy;
+      final headers = [
+        'Assistants on this computer',
+        'What assistants can read',
+        'Approvals',
+        'Shared hosts',
+        'Activity',
+      ];
+      for (final h in headers) {
+        expect(find.text(h), findsWidgets, reason: h);
+      }
+      // In this order, top to bottom.
+      for (var i = 1; i < headers.length; i++) {
+        expect(top(headers[i]), greaterThan(top(headers[i - 1])),
+            reason: '${headers[i]} below ${headers[i - 1]}');
+      }
+      for (final line in [
+        'Assistants that run here, such as Claude Code, reach your servers '
+            'only through this app.',
+        'Applies to every assistant.',
+        'How long one yes can last.',
+        'Choose what assistants may do on each server.',
+        'What assistants did, and what you answered.',
+      ]) {
+        expect(find.text(line), findsOneWidget, reason: line);
+      }
+      // The controls sit in their groups: the switch above the approvals.
+      expect(top('Allow for a while'), greaterThan(top('Approvals')));
+      expect(top('Connect an assistant'),
+          lessThan(top('What assistants can read')));
+    });
+
+    testWidgets('the built-in assistant group stays out without an assistant, '
+        'and phone control shows with the local channel', (tester) async {
+      await pumpSection(tester, hostStore: hostStore);
+      expect(find.text('Built-in assistant'), findsNothing);
+      expect(find.text('Phone control'), findsOneWidget);
+    });
+
+    testWidgets('without the local channel there is no pairing group',
+        (tester) async {
+      bridge = _FakeBridge(dir, clients, audit, localChannel: false);
+      await pumpSection(tester, hostStore: hostStore);
+      expect(find.text('Assistants on this computer'), findsNothing);
+      expect(find.text('Phone control'), findsNothing);
+      expect(find.text('Connect an assistant'), findsNothing);
+      expect(find.text('Paired assistants'), findsNothing);
+      expect(find.text('Approvals'), findsOneWidget);
+      expect(find.text('Shared hosts'), findsOneWidget);
     });
 
     testWidgets('shows the live status in words', (tester) async {
@@ -431,7 +491,7 @@ void main() {
       expect(find.text('Connected'), findsOneWidget);
       expect(find.textContaining('not connected yet'), findsNWidgets(2));
       expect(
-        find.textContaining(RegExp(r'^Paired (?!assistants)')),
+        find.textContaining(RegExp(r'^Paired (?!assistants|phones)')),
         findsNWidgets(2),
       );
     });
@@ -468,7 +528,7 @@ void main() {
 
     testWidgets('Activity opens the log', (tester) async {
       await pumpSection(tester);
-      await tester.tap(find.text('Activity'));
+      await tester.tap(find.widgetWithText(ListTile, 'Activity'));
       await settle(tester);
       expect(find.byType(BridgeAuditScreen), findsOneWidget);
     });

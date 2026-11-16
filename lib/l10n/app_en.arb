@@ -7945,7 +7945,7 @@
       }
     }
   },
-  "settingsBridgeSharedHostsHelp": "Choose which saved hosts an assistant can read. Each host can also be switched in its own edit screen.",
+  "settingsBridgeSharedHostsHelp": "Choose what assistants may do on each saved server.",
   "@settingsBridgeSharedHostsHelp": {
     "description": "Settings > AI Bridge: help line of the shared hosts row."
   },
@@ -8059,7 +8059,7 @@
   "@bridgeHostsTitle": {
     "description": "Shared hosts: title of the screen where saved hosts are ticked for AI access."
   },
-  "bridgeHostsIntro": "Tick the hosts a paired AI assistant may read. It cannot change anything on a host unless you also allow that for the host, with the settings button on a shared host.",
+  "bridgeHostsIntro": "Tap a server to choose what assistants may do there. The tick shares it read only, or turns it off.",
   "@bridgeHostsIntro": {
     "description": "Shared hosts: sentence above the list of hosts."
   },
@@ -8709,5 +8709,832 @@
         "type": "String"
       }
     }
+  },
+  "approvalTitleDesktop": "Open a desktop for the assistant?",
+  "@approvalTitleDesktop": {
+    "description": "Approval card: heading when an AI assistant asks to open the server's desktop to see and control it."
+  },
+  "approvalDesktopWarningTitle": "It can see the screen and use the mouse and keyboard",
+  "@approvalDesktopWarningTitle": {
+    "description": "Approval card: heading of the warning on a desktop request."
+  },
+  "approvalDesktopWarning": "An approved desktop shows the AI assistant this server's screen and lets it move the mouse, click and type as the user signed in there, with no further questions. It can open any program and read anything on the screen, including passwords and messages shown there. You can watch it, take over, or stop it at any time.",
+  "@approvalDesktopWarning": {
+    "description": "Approval card: the warning on a desktop request, saying what one yes allows."
+  },
+  "assistantDesktopBannerDriving": "{assistant} is using this desktop. You can watch it.",
+  "@assistantDesktopBannerDriving": {
+    "description": "Desktop viewer banner: the assistant is using this desktop. {assistant} is its name.",
+    "placeholders": {
+      "assistant": {
+        "type": "String"
+      }
+    }
+  },
+  "assistantDesktopBannerTakenOver": "You took over. {assistant} can no longer see or use this desktop.",
+  "@assistantDesktopBannerTakenOver": {
+    "description": "Desktop viewer banner: the user took over. {assistant} is the assistant's name.",
+    "placeholders": {
+      "assistant": {
+        "type": "String"
+      }
+    }
+  },
+  "assistantDesktopBannerEnded": "The desktop of {assistant} ended: {reason}",
+  "@assistantDesktopBannerEnded": {
+    "description": "Desktop viewer banner: the assistant's desktop ended. {assistant} is its name, {reason} a short English reason.",
+    "placeholders": {
+      "assistant": {
+        "type": "String"
+      },
+      "reason": {
+        "type": "String"
+      }
+    }
+  },
+  "hostAiSectionTitle": "AI access",
+  "@hostAiSectionTitle": {
+    "description": "Host edit: title of the AI access section."
+  },
+  "hostAiUnsaved": "Not saved yet",
+  "@hostAiUnsaved": {
+    "description": "Host edit: small hint that the AI access choice only takes effect once the host is saved."
+  },
+  "hostAiLevelOff": "Off",
+  "@hostAiLevelOff": {
+    "description": "AI access level name."
+  },
+  "hostAiLevelOffHelp": "Assistants cannot see this server.",
+  "@hostAiLevelOffHelp": {
+    "description": "AI access level Off: one-line description."
+  },
+  "hostAiLevelRead": "Read only",
+  "@hostAiLevelRead": {
+    "description": "AI access level name."
+  },
+  "hostAiLevelReadHelp": "Assistants can look: stats, services, logs, files. Nothing can be changed.",
+  "@hostAiLevelReadHelp": {
+    "description": "AI access level Read only: one-line description."
+  },
+  "hostAiLevelAsk": "Ask before each change",
+  "@hostAiLevelAsk": {
+    "description": "AI access level name."
+  },
+  "hostAiLevelAskHelp": "Assistants can ask to run commands, write files or manage services. Each one needs your yes on a card.",
+  "@hostAiLevelAskHelp": {
+    "description": "AI access level Ask before each change: one-line description."
+  },
+  "hostAiLevelFull": "Full control",
+  "@hostAiLevelFull": {
+    "description": "AI access level name."
+  },
+  "hostAiLevelFullHelp": "Assistants can change this server, open terminals and its desktop without asking. Only for servers you would hand over completely.",
+  "@hostAiLevelFullHelp": {
+    "description": "AI access level Full control: one-line description."
+  },
+  "hostAiMayTerminal": "May ask for a terminal",
+  "@hostAiMayTerminal": {
+    "description": "Host edit: tick under Ask before each change."
+  },
+  "hostAiMayTerminalHelp": "Each terminal still needs your yes on a card.",
+  "@hostAiMayTerminalHelp": {
+    "description": "Host edit: help under the terminal tick."
+  },
+  "hostAiMayDesktop": "May ask for the desktop",
+  "@hostAiMayDesktop": {
+    "description": "Host edit: tick under Ask before each change."
+  },
+  "hostAiMayDesktopHelp": "Each desktop session still needs your yes on a card.",
+  "@hostAiMayDesktopHelp": {
+    "description": "Host edit: help under the desktop tick."
+  },
+  "hostAiDesktopConfirmTitle": "Allow the desktop to be requested?",
+  "@hostAiDesktopConfirmTitle": {
+    "description": "Confirmation when the desktop tick is switched on."
+  },
+  "hostAiDesktopConfirmBody1": "You will still be asked on a card each time the assistant wants the desktop.",
+  "@hostAiDesktopConfirmBody1": {
+    "description": "Desktop confirmation, first paragraph."
+  },
+  "hostAiDesktopConfirmBody2": "An approved desktop lets the assistant see this server's screen and use its mouse and keyboard as the user signed in there. It may see passwords or private data on the screen.",
+  "@hostAiDesktopConfirmBody2": {
+    "description": "Desktop confirmation, second paragraph."
+  },
+  "hostAiDesktopConfirmYes": "Allow desktop",
+  "@hostAiDesktopConfirmYes": {
+    "description": "Desktop confirmation: confirm button."
+  },
+  "hostAiAdvanced": "Advanced",
+  "@hostAiAdvanced": {
+    "description": "Host edit: fold that holds the allowed commands."
+  },
+  "hostAiAdvancedCount": "Allowed commands: {count}",
+  "@hostAiAdvancedCount": {
+    "description": "Host edit: line under Advanced. {count} is how many commands run without asking.",
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "hostAiFullWarning": "Full control is on for this server. Assistants can run any command as the saved sign-in user and open terminals and the desktop, without asking you. To take it back, choose another level and save.",
+  "@hostAiFullWarning": {
+    "description": "Host edit: warning box shown while Full control is chosen."
+  },
+  "hostAiFullConfirmTitle": "Give full control of this server?",
+  "@hostAiFullConfirmTitle": {
+    "description": "Confirmation when Full control is chosen."
+  },
+  "hostAiFullConfirmBody1": "No approval cards will appear for this server. The assistant will not ask for your yes.",
+  "@hostAiFullConfirmBody1": {
+    "description": "Full control confirmation, first paragraph."
+  },
+  "hostAiFullConfirmBody2": "It can run any command as the saved sign-in user, and open terminals and the desktop of this server.",
+  "@hostAiFullConfirmBody2": {
+    "description": "Full control confirmation, second paragraph."
+  },
+  "hostAiFullConfirmBody3": "To take it back, choose another level here and save the host.",
+  "@hostAiFullConfirmBody3": {
+    "description": "Full control confirmation, third paragraph."
+  },
+  "hostAiFullConfirmYes": "Give full control",
+  "@hostAiFullConfirmYes": {
+    "description": "Full control confirmation: confirm button."
+  },
+  "hostAiSummaryOff": "Assistants cannot see this server.",
+  "@hostAiSummaryOff": {
+    "description": "Host edit: summary line for Off."
+  },
+  "hostAiSummaryRead": "Assistants can read this server. They cannot change anything.",
+  "@hostAiSummaryRead": {
+    "description": "Host edit: summary line for Read only."
+  },
+  "hostAiSummaryAsk": "Assistants can read this server. Changes need your yes each time.",
+  "@hostAiSummaryAsk": {
+    "description": "Host edit: first part of the summary for Ask before each change."
+  },
+  "hostAiSummaryTermDesk": "A terminal and the desktop can be requested.",
+  "@hostAiSummaryTermDesk": {
+    "description": "Host edit: summary part, both ticks on."
+  },
+  "hostAiSummaryTerm": "A terminal can be requested; the desktop cannot.",
+  "@hostAiSummaryTerm": {
+    "description": "Host edit: summary part, only the terminal tick on."
+  },
+  "hostAiSummaryDesk": "The desktop can be requested; a terminal cannot.",
+  "@hostAiSummaryDesk": {
+    "description": "Host edit: summary part, only the desktop tick on."
+  },
+  "hostAiSummaryNeither": "Neither a terminal nor the desktop can be requested.",
+  "@hostAiSummaryNeither": {
+    "description": "Host edit: summary part, both ticks off."
+  },
+  "hostAiSummaryCommands": "{count, plural, =1{1 allowed command runs without asking.} other{{count} allowed commands run without asking.}}",
+  "@hostAiSummaryCommands": {
+    "description": "Host edit: summary part when allowed commands are set. {count} is how many.",
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "hostAiSummaryFull": "Assistants can change this server, and open terminals and its desktop, without asking you. Every command runs as the saved sign-in user.",
+  "@hostAiSummaryFull": {
+    "description": "Host edit: summary line for Full control."
+  },
+  "hostAiChipOff": "Off",
+  "@hostAiChipOff": {
+    "description": "Shared hosts: level chip."
+  },
+  "hostAiChipRead": "Read only",
+  "@hostAiChipRead": {
+    "description": "Shared hosts: level chip."
+  },
+  "hostAiChipAsk": "Asks first",
+  "@hostAiChipAsk": {
+    "description": "Shared hosts: level chip for Ask before each change."
+  },
+  "hostAiChipFull": "Full control",
+  "@hostAiChipFull": {
+    "description": "Shared hosts: level chip for Full control."
+  },
+  "hostAiSheetHint": "Applies to this server as soon as you press Save.",
+  "@hostAiSheetHint": {
+    "description": "Shared hosts: small line in the per-host sheet."
+  },
+  "settingsAiGroupComputer": "Assistants on this computer",
+  "@settingsAiGroupComputer": {
+    "description": "Settings, AI: group title."
+  },
+  "settingsAiGroupComputerHelp": "Assistants that run here, such as Claude Code, reach your servers only through this app.",
+  "@settingsAiGroupComputerHelp": {
+    "description": "Settings, AI: one-line explanation of the group."
+  },
+  "settingsAiGroupBuiltIn": "Built-in assistant",
+  "@settingsAiGroupBuiltIn": {
+    "description": "Settings, AI: group title."
+  },
+  "settingsAiGroupBuiltInHelp": "A chat inside this app.",
+  "@settingsAiGroupBuiltInHelp": {
+    "description": "Settings, AI: one-line explanation of the group."
+  },
+  "settingsAiGroupPhone": "Phone control",
+  "@settingsAiGroupPhone": {
+    "description": "Settings, AI: group title."
+  },
+  "settingsAiGroupPhoneHelp": "Answer assistants from your phone.",
+  "@settingsAiGroupPhoneHelp": {
+    "description": "Settings, AI: one-line explanation of the group."
+  },
+  "settingsAiGroupRead": "What assistants can read",
+  "@settingsAiGroupRead": {
+    "description": "Settings, AI: group title."
+  },
+  "settingsAiGroupReadHelp": "Applies to every assistant.",
+  "@settingsAiGroupReadHelp": {
+    "description": "Settings, AI: one-line explanation of the group."
+  },
+  "settingsAiGroupApprovals": "Approvals",
+  "@settingsAiGroupApprovals": {
+    "description": "Settings, AI: group title."
+  },
+  "settingsAiGroupApprovalsHelp": "How long one yes can last.",
+  "@settingsAiGroupApprovalsHelp": {
+    "description": "Settings, AI: one-line explanation of the group."
+  },
+  "settingsAiGroupHosts": "Shared hosts",
+  "@settingsAiGroupHosts": {
+    "description": "Settings, AI: group title."
+  },
+  "settingsAiGroupHostsHelp": "Choose what assistants may do on each server.",
+  "@settingsAiGroupHostsHelp": {
+    "description": "Settings, AI: one-line explanation of the group."
+  },
+  "settingsAiGroupActivity": "Activity",
+  "@settingsAiGroupActivity": {
+    "description": "Settings, AI: group title."
+  },
+  "settingsAiGroupActivityHelp": "What assistants did, and what you answered.",
+  "@settingsAiGroupActivityHelp": {
+    "description": "Settings, AI: one-line explanation of the group."
+  },
+  "approvalTitleJob": "Start this job?",
+  "@approvalTitleJob": {
+    "description": "Approval card: heading when an AI assistant asks to start a long-running job (a command that keeps running on the server)."
+  },
+  "approvalJobCwdLabel": "In this folder:",
+  "@approvalJobCwdLabel": {
+    "description": "Approval card for a job: label above the folder the job starts in."
+  },
+  "approvalJobName": "Name: {name}",
+  "@approvalJobName": {
+    "description": "Approval card for a job: the short name the assistant gave the job.",
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "approvalJobNote": "It keeps running on the server after this, even when the connection or the app closes, until it ends or is stopped.",
+  "@approvalJobNote": {
+    "description": "Approval card for a job: says the job outlives the call, the connection and the app."
+  },
+  "assistantSettingsSwitch": "Use the built-in assistant",
+  "@assistantSettingsSwitch": {
+    "description": "Settings, built-in assistant: title of the switch."
+  },
+  "assistantSettingsSwitchHelp": "A chat inside this app that uses your own AI account.",
+  "@assistantSettingsSwitchHelp": {
+    "description": "Settings, built-in assistant: one line under the switch."
+  },
+  "assistantEnableTitle": "Turn on the built-in assistant?",
+  "@assistantEnableTitle": {
+    "description": "Settings, built-in assistant: title of the explanation shown every time the switch is turned on."
+  },
+  "assistantEnableBody": "What you type, what the assistant reads from your servers and what its tools return are sent to the AI service you choose below. It can only reach servers you gave AI access, at the level you chose for each. Changes need your yes on a card, unless a server is set to Full control. Your key is stored on this device, protected like saved passwords, and is not in backups.",
+  "@assistantEnableBody": {
+    "description": "Settings, built-in assistant: body of the explanation shown when the switch is turned on. Keep every fact: what is sent to the AI service, only servers with AI access, changes need a yes on a card unless Full control, key kept on this device and not in backups."
+  },
+  "assistantEnableConfirm": "Turn on",
+  "@assistantEnableConfirm": {
+    "description": "Settings, built-in assistant: confirm button of the explanation."
+  },
+  "assistantProviderLabel": "Provider",
+  "@assistantProviderLabel": {
+    "description": "Settings, built-in assistant: label of the provider choice."
+  },
+  "assistantProviderAnthropic": "Anthropic",
+  "@assistantProviderAnthropic": {
+    "description": "Settings, built-in assistant: a provider name (a product the user connects to)."
+  },
+  "assistantProviderOpenAi": "OpenAI-compatible",
+  "@assistantProviderOpenAi": {
+    "description": "Settings, built-in assistant: the provider choice for any service that speaks the OpenAI chat format."
+  },
+  "assistantAddressLabel": "Address",
+  "@assistantAddressLabel": {
+    "description": "Settings, built-in assistant: label of the service address field (required)."
+  },
+  "assistantAddressLabelOptional": "Address (optional)",
+  "@assistantAddressLabelOptional": {
+    "description": "Settings, built-in assistant: label of the address field when it is optional."
+  },
+  "assistantAddressHelpOpenAi": "The address of the AI service. It must start with https://, or be a server on this computer (localhost).",
+  "@assistantAddressHelpOpenAi": {
+    "description": "Settings, built-in assistant: help under the address field for an OpenAI-compatible service."
+  },
+  "assistantAddressHelpAnthropic": "Leave empty to use Anthropic's own address.",
+  "@assistantAddressHelpAnthropic": {
+    "description": "Settings, built-in assistant: help under the address field for Anthropic."
+  },
+  "assistantKeyDestination": "Your API key for this provider will be sent to {host}.",
+  "@assistantKeyDestination": {
+    "description": "Settings, built-in assistant: line under the address field naming the host the API key is sent to. {host} is a host name such as api.anthropic.com.",
+    "placeholders": {
+      "host": {
+        "type": "String"
+      }
+    }
+  },
+  "assistantModelLabel": "Model",
+  "@assistantModelLabel": {
+    "description": "Settings, built-in assistant: label of the model field."
+  },
+  "assistantModelHint": "The model name from your provider",
+  "@assistantModelHint": {
+    "description": "Settings, built-in assistant: hint in the empty model field. Not a real model name."
+  },
+  "assistantKeyLabel": "API key",
+  "@assistantKeyLabel": {
+    "description": "Settings, built-in assistant: label of the API key field."
+  },
+  "assistantKeySave": "Save key",
+  "@assistantKeySave": {
+    "description": "Settings, built-in assistant: button that saves the typed key."
+  },
+  "assistantKeyRemove": "Remove key",
+  "@assistantKeyRemove": {
+    "description": "Settings, built-in assistant: button that deletes the saved key."
+  },
+  "assistantKeySaved": "Key saved",
+  "@assistantKeySaved": {
+    "description": "Settings, built-in assistant: under the key field when a key is saved. The key itself is never shown."
+  },
+  "assistantKeyNone": "No key saved",
+  "@assistantKeyNone": {
+    "description": "Settings, built-in assistant: under the key field when no key is saved."
+  },
+  "assistantKeyNote": "The key is stored on this device, protected like saved passwords. It is not shown again and is not in backups.",
+  "@assistantKeyNote": {
+    "description": "Settings, built-in assistant: where the key is kept."
+  },
+  "assistantKeyFailed": "The key could not be saved or removed.",
+  "@assistantKeyFailed": {
+    "description": "Settings, built-in assistant: the key could not be saved or removed, and the storage gave no text."
+  },
+  "assistantStatusReady": "Ready",
+  "@assistantStatusReady": {
+    "description": "Settings, built-in assistant: status line when everything needed is set."
+  },
+  "assistantChatTitle": "Assistant",
+  "@assistantChatTitle": {
+    "description": "Built-in assistant: title of the chat screen and tooltip of the button that opens it."
+  },
+  "assistantNewChat": "New chat",
+  "@assistantNewChat": {
+    "description": "Built-in assistant chat: button that ends this chat and starts an empty one."
+  },
+  "assistantComposerHint": "Ask about your servers",
+  "@assistantComposerHint": {
+    "description": "Built-in assistant chat: hint in the empty message field."
+  },
+  "assistantSend": "Send",
+  "@assistantSend": {
+    "description": "Built-in assistant chat: send button."
+  },
+  "assistantStop": "Stop",
+  "@assistantStop": {
+    "description": "Built-in assistant chat: button that stops the assistant while it works."
+  },
+  "assistantEmptyTitle": "Ask about your servers",
+  "@assistantEmptyTitle": {
+    "description": "Built-in assistant chat: heading of the empty chat."
+  },
+  "assistantEmptyBody": "The assistant can look at logs, files, services and system status, and, with your yes on a card, change things. It only reaches servers you shared with AI.",
+  "@assistantEmptyBody": {
+    "description": "Built-in assistant chat: what it can do and that it only reaches shared servers."
+  },
+  "assistantNoSharedHosts": "No server has AI access yet, so the assistant has nothing to look at.",
+  "@assistantNoSharedHosts": {
+    "description": "Built-in assistant chat: banner when no server has AI access yet."
+  },
+  "assistantOpenSharedHosts": "Shared hosts",
+  "@assistantOpenSharedHosts": {
+    "description": "Built-in assistant chat: button to the list of servers and their AI access."
+  },
+  "assistantOffMessage": "The built-in assistant is switched off. Turn it on in Settings.",
+  "@assistantOffMessage": {
+    "description": "Built-in assistant chat: shown instead of the chat when the assistant is switched off."
+  },
+  "assistantOpenSettings": "Open settings",
+  "@assistantOpenSettings": {
+    "description": "Built-in assistant chat: button that opens Settings."
+  },
+  "assistantStartFailed": "The assistant could not start a chat.",
+  "@assistantStartFailed": {
+    "description": "Built-in assistant chat: a chat could not be started and there is no more specific text."
+  },
+  "assistantToolOnHost": "{tool} on {host}",
+  "@assistantToolOnHost": {
+    "description": "Built-in assistant chat: title of a tool call row, the tool and the server it ran on.",
+    "placeholders": {
+      "tool": {
+        "type": "String"
+      },
+      "host": {
+        "type": "String"
+      }
+    }
+  },
+  "assistantToolRunning": "Running",
+  "@assistantToolRunning": {
+    "description": "Built-in assistant chat: screen-reader label of a tool call in progress."
+  },
+  "assistantToolDone": "Done",
+  "@assistantToolDone": {
+    "description": "Built-in assistant chat: screen-reader label of a finished tool call."
+  },
+  "assistantToolFailed": "Failed",
+  "@assistantToolFailed": {
+    "description": "Built-in assistant chat: screen-reader label of a tool call that failed."
+  },
+  "assistantToolStopped": "Stopped",
+  "@assistantToolStopped": {
+    "description": "Built-in assistant chat: screen-reader label of a tool call that was stopped."
+  },
+  "assistantToolShowDetail": "Show details",
+  "@assistantToolShowDetail": {
+    "description": "Built-in assistant chat: screen-reader label of the arrow that opens a tool call's full result."
+  },
+  "assistantToolHideDetail": "Hide details",
+  "@assistantToolHideDetail": {
+    "description": "Built-in assistant chat: screen-reader label of the arrow that closes a tool call's full result."
+  },
+  "assistantWaitingForYes": "Waiting for your yes",
+  "@assistantWaitingForYes": {
+    "description": "Built-in assistant chat: marker on a tool call whose approval card is waiting for the user."
+  },
+  "hostListActionRemoteApprovals": "AI approvals on this computer",
+  "@hostListActionRemoteApprovals": {
+    "description": "Host menu: opens the remote control of that computer's AI Bridge."
+  },
+  "hostListActionRemoteApprovalsSubtitle": "Answer its AI Bridge cards from this device",
+  "@hostListActionRemoteApprovalsSubtitle": {
+    "description": "Host menu: one line under the remote control entry."
+  },
+  "pairPhoneTitle": "Pair a phone",
+  "@pairPhoneTitle": {
+    "description": "Pair a phone screen: app bar title."
+  },
+  "pairPhoneNameIntro": "Give the phone a name you will recognise in the list of paired phones and in the activity log.",
+  "@pairPhoneNameIntro": {
+    "description": "Pair a phone screen: explains the name field."
+  },
+  "pairPhoneNameLabel": "Phone name",
+  "@pairPhoneNameLabel": {
+    "description": "Pair a phone screen: label of the name field."
+  },
+  "pairPhoneNameHint": "e.g. My Pixel",
+  "@pairPhoneNameHint": {
+    "description": "Pair a phone screen: example in the name field."
+  },
+  "pairPhoneDefaultName": "Phone",
+  "@pairPhoneDefaultName": {
+    "description": "Pair a phone screen: the name used when none is typed."
+  },
+  "pairPhoneCreate": "Create pairing",
+  "@pairPhoneCreate": {
+    "description": "Pair a phone screen: button that creates the pairing and shows the token."
+  },
+  "pairPhoneTokenOnceBody": "Copy it now. SecureShell Go keeps only a fingerprint of it and cannot show it again. If you lose it, remove this phone and pair it again.",
+  "@pairPhoneTokenOnceBody": {
+    "description": "Pair a phone screen: warning text above the token."
+  },
+  "pairPhoneStepsTitle": "On the phone",
+  "@pairPhoneStepsTitle": {
+    "description": "Pair a phone screen: title of the three steps."
+  },
+  "pairPhoneStep1": "Save this computer as a host in SecureShell Go, and check that you can sign in to it with SSH.",
+  "@pairPhoneStep1": {
+    "description": "Pair a phone screen: step 1."
+  },
+  "pairPhoneStep2": "Open that host's menu, choose \"AI approvals on this computer\" and paste the token above.",
+  "@pairPhoneStep2": {
+    "description": "Pair a phone screen: step 2. The quoted name is the host menu entry."
+  },
+  "pairPhoneStep3": "Keep SecureShell Go running here, with the AI Bridge and Phone control switched on. The phone only works while its Remote approvals screen is open.",
+  "@pairPhoneStep3": {
+    "description": "Pair a phone screen: step 3."
+  },
+  "pairPhoneLeaveBody": "The token will not be shown again. If you have not copied it yet, you will have to pair this phone again.",
+  "@pairPhoneLeaveBody": {
+    "description": "Pair a phone screen: leaving with the token on screen."
+  },
+  "phoneControlSwitch": "Answer approval cards from your phone",
+  "@phoneControlSwitch": {
+    "description": "Settings, AI, Phone control: switch title."
+  },
+  "phoneControlSwitchHelp": "A phone you pair can answer the cards that wait for your yes.",
+  "@phoneControlSwitchHelp": {
+    "description": "Settings, AI, Phone control: line under the switch."
+  },
+  "phoneControlNeedsBridge": "The AI Bridge is off, so no phone can connect. Switch it on above.",
+  "@phoneControlNeedsBridge": {
+    "description": "Settings, AI, Phone control: shown under the switch while the AI Bridge switch is off."
+  },
+  "phoneControlEnableTitle": "Let paired phones answer approval cards?",
+  "@phoneControlEnableTitle": {
+    "description": "Settings, AI, Phone control: title of the explanation shown every time the switch goes on."
+  },
+  "phoneControlEnableBody": "A phone you pair can:\n\n• see the approval cards that are waiting, recent activity, and what assistants have open on this computer\n• approve or deny those cards, and stop things an assistant has open\n\nIt cannot call tools, change a server's access level, pair anything or change settings.\n\nThe phone connects to this computer through SSH, so this computer must accept SSH logins from the phone. The AI Bridge switch must be on as well.",
+  "@phoneControlEnableBody": {
+    "description": "Settings, AI, Phone control: what a paired phone can and cannot do."
+  },
+  "phoneControlEnableConfirm": "Switch on",
+  "@phoneControlEnableConfirm": {
+    "description": "Settings, AI, Phone control: confirm button of the explanation."
+  },
+  "phoneControlPair": "Pair a phone",
+  "@phoneControlPair": {
+    "description": "Settings, AI, Phone control: button that opens the pairing screen."
+  },
+  "phoneControlPaired": "Paired phones",
+  "@phoneControlPaired": {
+    "description": "Settings, AI, Phone control: header of the list of paired phones."
+  },
+  "phoneControlPairedNone": "No phone is paired yet.",
+  "@phoneControlPairedNone": {
+    "description": "Settings, AI, Phone control: shown when no phone is paired."
+  },
+  "phoneControlConnectedNow": "Connected now",
+  "@phoneControlConnectedNow": {
+    "description": "Settings, AI, Phone control: marker on a phone that is connected right now."
+  },
+  "phoneControlRemove": "Remove",
+  "@phoneControlRemove": {
+    "description": "Settings, AI, Phone control: remove a paired phone (button, tooltip, confirm)."
+  },
+  "phoneControlRemoveTitle": "Remove {name}?",
+  "@phoneControlRemoveTitle": {
+    "description": "Settings, AI, Phone control: title of the confirmation for removing a phone.",
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "phoneControlRemoveBody": "It stops working at once, and if it is connected it is disconnected. To use it again you have to pair it again.",
+  "@phoneControlRemoveBody": {
+    "description": "Settings, AI, Phone control: body of the confirmation for removing a phone."
+  },
+  "remoteScreenTitle": "AI approvals",
+  "@remoteScreenTitle": {
+    "description": "Phone: title of the Remote approvals screen."
+  },
+  "remoteConnecting": "Connecting to {host}…",
+  "@remoteConnecting": {
+    "description": "Remote approvals: shown while connecting to the computer.",
+    "placeholders": {
+      "host": {
+        "type": "String"
+      }
+    }
+  },
+  "remoteStatusConnected": "Connected to {host} as {phone}.",
+  "@remoteStatusConnected": {
+    "description": "Remote approvals: connection line. {phone} is this phone's name as paired on the computer.",
+    "placeholders": {
+      "host": {
+        "type": "String"
+      },
+      "phone": {
+        "type": "String"
+      }
+    }
+  },
+  "remoteHelp": "This only works while this screen is open. Leave it and nothing is listening.",
+  "@remoteHelp": {
+    "description": "Remote approvals: help line under the connection line."
+  },
+  "remoteLocked": "SecureShell Go is locked on that computer. Unlock it there to see and answer cards.",
+  "@remoteLocked": {
+    "description": "Remote approvals: banner while the app on the computer is locked."
+  },
+  "remoteLockedShort": "SecureShell Go is locked on that computer.",
+  "@remoteLockedShort": {
+    "description": "Remote approvals: under a card, when the answer was refused because the computer is locked."
+  },
+  "remoteSectionWaiting": "Waiting for you",
+  "@remoteSectionWaiting": {
+    "description": "Remote approvals: section of the cards waiting for the user."
+  },
+  "remoteNothingWaiting": "Nothing is waiting for you.",
+  "@remoteNothingWaiting": {
+    "description": "Remote approvals: shown when no card is waiting."
+  },
+  "remoteSectionOpen": "Open now",
+  "@remoteSectionOpen": {
+    "description": "Remote approvals: section of the terminals, desktops and jobs assistants have open."
+  },
+  "remoteSectionGrants": "Time-limited approvals",
+  "@remoteSectionGrants": {
+    "description": "Remote approvals: section of the time-limited approvals in force."
+  },
+  "remoteSectionActivity": "Recent activity",
+  "@remoteSectionActivity": {
+    "description": "Remote approvals: section of recent activity."
+  },
+  "remoteNoActivity": "No activity yet.",
+  "@remoteNoActivity": {
+    "description": "Remote approvals: shown when there is no activity."
+  },
+  "remoteStop": "Stop",
+  "@remoteStop": {
+    "description": "Remote approvals: button that stops a terminal, desktop or job."
+  },
+  "remoteItemTerminal": "Terminal",
+  "@remoteItemTerminal": {
+    "description": "Remote approvals: name of an assistant's terminal in the open list."
+  },
+  "remoteItemDesktop": "Desktop",
+  "@remoteItemDesktop": {
+    "description": "Remote approvals: name of an assistant's desktop in the open list."
+  },
+  "remoteItemJob": "Job",
+  "@remoteItemJob": {
+    "description": "Remote approvals: name of an assistant's long-running job in the open list."
+  },
+  "remoteItemSubtitle": "{assistant} on {host} · {state}",
+  "@remoteItemSubtitle": {
+    "description": "Remote approvals: second line of an open item. {state} is a short state word from the computer.",
+    "placeholders": {
+      "assistant": {
+        "type": "String"
+      },
+      "host": {
+        "type": "String"
+      },
+      "state": {
+        "type": "String"
+      }
+    }
+  },
+  "remoteActivityOnHost": "{tool} on {host}",
+  "@remoteActivityOnHost": {
+    "description": "Remote approvals: title of an activity row, the tool and the server.",
+    "placeholders": {
+      "tool": {
+        "type": "String"
+      },
+      "host": {
+        "type": "String"
+      }
+    }
+  },
+  "remoteActivityVia": "answered from {name}",
+  "@remoteActivityVia": {
+    "description": "Remote approvals: marker on an activity row whose card was answered from a phone.",
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "remoteReconnect": "Reconnect",
+  "@remoteReconnect": {
+    "description": "Remote approvals: button that connects again."
+  },
+  "remoteRemoveToken": "Remove token",
+  "@remoteRemoveToken": {
+    "description": "Remote approvals: menu entry and confirm button that forgets the saved token."
+  },
+  "remoteRemoveTokenTitle": "Remove the saved token?",
+  "@remoteRemoveTokenTitle": {
+    "description": "Remote approvals: title of the confirmation for removing the token."
+  },
+  "remoteRemoveTokenBody": "This phone forgets how to control that computer. To use it again, paste a token from a pairing made on the computer.",
+  "@remoteRemoveTokenBody": {
+    "description": "Remote approvals: body of the confirmation for removing the token."
+  },
+  "remoteRemoveTokenFailed": "The token could not be removed. Try again.",
+  "@remoteRemoveTokenFailed": {
+    "description": "Remote approvals: the token could not be removed."
+  },
+  "remoteAnswerGone": "That card was already answered or has timed out.",
+  "@remoteAnswerGone": {
+    "description": "Remote approvals: under a card, when it was already answered or timed out."
+  },
+  "remoteActionFailed": "That did not work: {message}",
+  "@remoteActionFailed": {
+    "description": "Remote approvals: an action was refused. {message} is the computer's reason.",
+    "placeholders": {
+      "message": {
+        "type": "String"
+      }
+    }
+  },
+  "remoteActionFailedNoDetail": "The computer did not accept that.",
+  "@remoteActionFailedNoDetail": {
+    "description": "Remote approvals: an action was refused without a reason."
+  },
+  "remoteApprovalOtherTitle": "A request this version cannot show",
+  "@remoteApprovalOtherTitle": {
+    "description": "Remote approvals: title of a card of a kind this version cannot draw."
+  },
+  "remoteApprovalOtherBody": "It asks to use {tool}. Open SecureShell Go on the computer to answer it; you can only deny it here.",
+  "@remoteApprovalOtherBody": {
+    "description": "Remote approvals: body of a card of a kind this version cannot draw.",
+    "placeholders": {
+      "tool": {
+        "type": "String"
+      }
+    }
+  },
+  "remoteErrorNotRunning": "SecureShell Go is not running on that computer, or its AI Bridge is off.",
+  "@remoteErrorNotRunning": {
+    "description": "Remote approvals: the launcher could not reach the app on the computer."
+  },
+  "remoteErrorRefused": "That computer did not accept this phone. The token may be wrong or its pairing removed, or Phone control is off there.",
+  "@remoteErrorRefused": {
+    "description": "Remote approvals: the computer refused this phone."
+  },
+  "remoteErrorLauncherNotFound": "The SecureShell Go launcher was not found on that computer. Install version 1.8.0 or newer there.",
+  "@remoteErrorLauncherNotFound": {
+    "description": "Remote approvals: no SecureShell Go launcher on the computer."
+  },
+  "remoteErrorTooManySessions": "Two phones are already connected to that computer.",
+  "@remoteErrorTooManySessions": {
+    "description": "Remote approvals: two phones are already connected."
+  },
+  "remoteErrorConnectionLost": "The connection to the computer ended.",
+  "@remoteErrorConnectionLost": {
+    "description": "Remote approvals: the connection ended."
+  },
+  "remoteErrorProtocol": "The computer and this phone speak different versions. Update SecureShell Go on both.",
+  "@remoteErrorProtocol": {
+    "description": "Remote approvals: versions differ."
+  },
+  "remoteErrorFailed": "Could not talk to SecureShell Go on that computer.",
+  "@remoteErrorFailed": {
+    "description": "Remote approvals: any other failure."
+  },
+  "remoteErrorNeedsPerson": "Signing in to this host needs you. Connect to it once from the host list, then try again.",
+  "@remoteErrorNeedsPerson": {
+    "description": "Remote approvals: signing in to the host needs a person (login question, unchecked host key)."
+  },
+  "remoteErrorConnect": "Could not connect to this host.",
+  "@remoteErrorConnect": {
+    "description": "Remote approvals: the SSH connection to the host failed."
+  },
+  "remoteSetupIntro": "This lets you answer the AI Bridge approval cards of {host} from here: see what assistants ask for, allow or deny it, and stop what they have open. It works through SSH, so signing in to this host must already work.",
+  "@remoteSetupIntro": {
+    "description": "Remote approvals first use: what this does.",
+    "placeholders": {
+      "host": {
+        "type": "String"
+      }
+    }
+  },
+  "remoteSetupSteps": "On the computer, open Settings, AI, Phone control, switch it on and choose \"Pair a phone\". Paste the token it shows below.",
+  "@remoteSetupSteps": {
+    "description": "Remote approvals first use: what to do on the computer. The quoted names are the settings entries."
+  },
+  "remoteSetupTokenLabel": "Token from the computer",
+  "@remoteSetupTokenLabel": {
+    "description": "Remote approvals first use: label of the token field."
+  },
+  "remoteSetupPaste": "Paste",
+  "@remoteSetupPaste": {
+    "description": "Remote approvals first use: tooltip of the paste button."
+  },
+  "remoteSetupStoredNote": "The token is kept in this device's secure storage and is never shown again. You can remove it later from this screen's menu.",
+  "@remoteSetupStoredNote": {
+    "description": "Remote approvals first use: where the token is kept."
+  },
+  "remoteSetupSave": "Save and connect",
+  "@remoteSetupSave": {
+    "description": "Remote approvals first use: button that saves the token and connects."
+  },
+  "remoteSetupTokenEmpty": "Paste the token first.",
+  "@remoteSetupTokenEmpty": {
+    "description": "Remote approvals first use: the token field is empty."
+  },
+  "remoteSetupTokenInvalid": "That does not look like a pairing token.",
+  "@remoteSetupTokenInvalid": {
+    "description": "Remote approvals first use: the token cannot be a pairing token."
+  },
+  "remoteSetupSaveFailed": "The token could not be saved. Try again.",
+  "@remoteSetupSaveFailed": {
+    "description": "Remote approvals first use: the token could not be saved."
   }
 }

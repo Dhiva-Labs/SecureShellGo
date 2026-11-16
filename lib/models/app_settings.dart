@@ -160,6 +160,20 @@ enum KeyBarMode {
 /// Deliberately free of secrets — passwords and keys stay in
 /// `CredentialStore`, so this is plain JSON on disk, same reasoning as
 /// `Host` in `models/host.dart`.
+/// Which kind of AI service the built-in assistant talks to.
+enum AssistantProviderKind {
+  /// Anthropic's Messages API.
+  anthropic,
+
+  /// Any service that speaks the OpenAI chat completions format (a base URL
+  /// is required), including a model server on this computer.
+  openAiCompatible;
+
+  /// Absent or unknown reads as [anthropic], the default.
+  static AssistantProviderKind fromJson(Object? value) =>
+      value == openAiCompatible.name ? openAiCompatible : anthropic;
+}
+
 class AppSettings {
   const AppSettings({
     this.terminalFontSize = defaultFontSize,
@@ -186,6 +200,11 @@ class AppSettings {
     this.bridgeReadSensitivePaths = false,
     this.bridgeExtraBlockedPaths = const <String>[],
     this.bridgeTimedApprovalMinutes = 0,
+    this.bridgePhoneControl = false,
+    this.assistantEnabled = false,
+    this.assistantProvider = AssistantProviderKind.anthropic,
+    this.assistantBaseUrl = '',
+    this.assistantModel = '',
   });
 
   static const double defaultFontSize = 13;
@@ -286,6 +305,26 @@ class AppSettings {
   /// [copyWith] and [fromJson] validate it; anything else is built by hand.
   final int bridgeTimedApprovalMinutes;
 
+  /// Whether a paired phone may act as remote control of this computer's
+  /// AI Bridge (see and answer approval cards, stop grants and terminals).
+  /// Off unless the user turns it on; off refuses every phone at the door.
+  final bool bridgePhoneControl;
+
+  /// Whether the built-in assistant (the chat inside the app) may be used.
+  /// Off unless the user turns it on. Its API key is not here: it lives in
+  /// secure storage and is never in settings.json or a backup.
+  final bool assistantEnabled;
+
+  /// Which kind of service the built-in assistant talks to.
+  final AssistantProviderKind assistantProvider;
+
+  /// The service's base URL; empty uses the provider's own address (only
+  /// Anthropic has one).
+  final String assistantBaseUrl;
+
+  /// The model name to ask for.
+  final String assistantModel;
+
   static const List<int> bridgeTimedApprovalChoices = [0, 5, 15, 60];
 
   static int _validTimedApproval(int minutes) =>
@@ -300,6 +339,11 @@ class AppSettings {
         bridgeReadSensitivePaths: other.bridgeReadSensitivePaths,
         bridgeExtraBlockedPaths: other.bridgeExtraBlockedPaths,
         bridgeTimedApprovalMinutes: other.bridgeTimedApprovalMinutes,
+        bridgePhoneControl: other.bridgePhoneControl,
+        assistantEnabled: other.assistantEnabled,
+        assistantProvider: other.assistantProvider,
+        assistantBaseUrl: other.assistantBaseUrl,
+        assistantModel: other.assistantModel,
       );
 
   /// These settings with the five bridge fields back at their defaults.
@@ -314,6 +358,11 @@ class AppSettings {
         bridgeReadSensitivePaths: false,
         bridgeExtraBlockedPaths: const <String>[],
         bridgeTimedApprovalMinutes: 0,
+        bridgePhoneControl: false,
+        assistantEnabled: false,
+        assistantProvider: AssistantProviderKind.anthropic,
+        assistantBaseUrl: '',
+        assistantModel: '',
       );
 
   /// Keeps a font size inside the range the settings slider and pinch-zoom
@@ -357,6 +406,11 @@ class AppSettings {
     bool? bridgeReadSensitivePaths,
     List<String>? bridgeExtraBlockedPaths,
     int? bridgeTimedApprovalMinutes,
+    bool? bridgePhoneControl,
+    bool? assistantEnabled,
+    AssistantProviderKind? assistantProvider,
+    String? assistantBaseUrl,
+    String? assistantModel,
     String? localeOverride,
     bool clearLocaleOverride = false,
   }) {
@@ -392,6 +446,11 @@ class AppSettings {
       bridgeTimedApprovalMinutes: _validTimedApproval(
         bridgeTimedApprovalMinutes ?? this.bridgeTimedApprovalMinutes,
       ),
+      bridgePhoneControl: bridgePhoneControl ?? this.bridgePhoneControl,
+      assistantEnabled: assistantEnabled ?? this.assistantEnabled,
+      assistantProvider: assistantProvider ?? this.assistantProvider,
+      assistantBaseUrl: assistantBaseUrl ?? this.assistantBaseUrl,
+      assistantModel: assistantModel ?? this.assistantModel,
     );
   }
 
@@ -435,6 +494,12 @@ class AppSettings {
           'bridgeExtraBlockedPaths': bridgeExtraBlockedPaths,
         if (bridgeTimedApprovalMinutes != 0)
           'bridgeTimedApprovalMinutes': bridgeTimedApprovalMinutes,
+        if (bridgePhoneControl) 'bridgePhoneControl': true,
+        if (assistantEnabled) 'assistantEnabled': true,
+        if (assistantProvider != AssistantProviderKind.anthropic)
+          'assistantProvider': assistantProvider.name,
+        if (assistantBaseUrl.isNotEmpty) 'assistantBaseUrl': assistantBaseUrl,
+        if (assistantModel.isNotEmpty) 'assistantModel': assistantModel,
       };
 
   factory AppSettings.fromJson(Map<String, dynamic> json) {
@@ -514,6 +579,22 @@ class AppSettings {
           _ => 0,
         },
       ),
+      // Absent before 1.8: no phone may control. Only a real `true` counts.
+      bridgePhoneControl: json['bridgePhoneControl'] == true,
+      // Absent before 1.8: the built-in assistant is off. Only a real
+      // `true` switches it on.
+      assistantEnabled: json['assistantEnabled'] == true,
+      assistantProvider: AssistantProviderKind.fromJson(
+        json['assistantProvider'],
+      ),
+      assistantBaseUrl: switch (json['assistantBaseUrl']) {
+        final String url => url.trim(),
+        _ => '',
+      },
+      assistantModel: switch (json['assistantModel']) {
+        final String model => model.trim(),
+        _ => '',
+      },
     );
   }
 }

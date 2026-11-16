@@ -3,6 +3,61 @@
 Releases before 1.4.5 are described on the
 [Releases](https://github.com/Dhiva-Labs/SecureShellGo/releases) page.
 
+## 1.8.0 - 2026-11-17
+
+One access level per server, up to full control; long-running jobs; a desktop an assistant can see and use; a built-in assistant that works on the phone too; and approval cards answered from your phone.
+
+### Added
+- One choice of what assistants may do on each server: Off, Read only, Ask before each change, or Full control. Each choice has a line saying what it allows, and a short summary under the choice says what your pick means in plain words.
+- Under "Ask before each change" you can tick "May ask for a terminal" and "May ask for the desktop". Each one still needs your yes on a card every time.
+- Full control lets assistants change the server, open terminals and its desktop without asking. Choosing it shows a warning that says so and how to take it back, and you must press "Give full control" to confirm. The Cancel button is the one that has the focus.
+- The shared hosts list shows each server's level as a chip (Off, Read only, Asks first, Full control). Tap a server to set its level in a small sheet, with the same confirmations as the host screen.
+- "Not saved yet" appears beside AI access in the host screen while your choice differs from what is saved. Nothing takes effect until you save the host.
+- Assistants can start long-running jobs on a server (a dev server, a build, a watcher) with `start_job`. A job keeps running on the server after the call, the connection and the app have closed. Starting one asks for your yes on a card that shows the command, the folder and the job's name, unless the host is set to full control or you allowed changes for a while. Allowed commands never start a job.
+- Assistants can follow their own jobs with `list_jobs`, `job_status` and `job_output` (the newest 64 KB of the log, with secrets hidden like other output), stop one with `stop_job` (TERM to the whole job, KILL 3 seconds later if anything is left) and delete an ended one with `remove_job`. An assistant only ever sees and controls the jobs it started, at most 20 per server for each assistant, ended ones included.
+- The jobs the app remembers are listed under "AI approvals" (the screen a paired phone opens for your computer), and you can stop one there, from the phone or from another copy of the app, the same way you stop an assistant's terminal. That Stop works even on a host set to read-only, and it is not recorded in the activity log. The list shows every job the app remembers, because whether one still runs is only known by asking its server. There is no job list in the desktop app's own AI Bridge settings yet; a job can also be stopped on the server itself.
+- A job's command, log, process id and exit status are kept on the server in `~/.cache/secureshellgo/jobs/<id>/`, readable only by your account. The app remembers which assistant started which job in `bridge_jobs.json` in its bridge folder; it is never part of a backup.
+- AI Bridge: an assistant can ask to see and use a server's desktop (`open_desktop`). It opens the desktop of whoever is signed in there, in a viewer you watch live, with Take over and Stop. Off on every server until you tick Desktop for it.
+- On a server set to "Ask before each change", every desktop needs your yes on a card that says it can see the screen and use the mouse and keyboard as the signed-in user. "Allow for a while" never covers a desktop. On a server set to full control it opens without a card.
+- Once open, the assistant takes screenshots (PNG, scaled to at most 1280 pixels on the longest side). With the built-in assistant, the picture is only sent to the Anthropic provider; the OpenAI-compatible provider gets a short text note in its place. The assistant also clicks, moves the mouse, scrolls, types and presses keys from a fixed list, such as Enter, Tab, Escape, Ctrl+C and Alt+F4.
+- One assistant desktop at a time. It closes when you take over, press Stop or close the viewer, after 10 minutes without use, when the server's access drops below Desktop or points at another machine, when the assistant is disconnected, when the bridge is switched off, or when the app locks.
+- A built-in assistant engine: a chat inside the app can use your own API key (Anthropic, or any service that speaks the OpenAI chat format, including a model server on this computer) to look at your servers with the same tools, access levels, approval cards and activity log as an assistant you pair. It is off until you switch it on.
+- The assistant stops when you press Stop (the request and the tool it is running are cancelled), after 40 tool calls for one message, or if the service reports an error. The error is shown in plain words and the chat stays usable.
+- Phone control: your phone can answer the approval cards of the AI Bridge on your computer, away from the desk. Save the computer as a host on the phone, pair the phone on the computer (Settings, AI, Phone control, "Pair a phone"), and switch Phone control on there. Off by default on both sides.
+- The phone shows each waiting card exactly as the computer does, hidden and look-alike characters made visible the same way, with the host's name as the assistant knows it (never its address or user name). You can Deny, Allow once, or Allow for the length set on the computer when "Allow for a while" is on there. The computer runs the same checks after your answer as after a tap on its own card.
+- The phone also lists the live time-limited approvals, the assistants' terminals, desktops and jobs, and recent activity, and can stop any of them. A job is listed from what the app remembers and shown as started at a time, not as running, since only its server knows that.
+- The activity log records when a card was answered from a phone, and from which one.
+- `secureshellgo-mcp control`: the launcher mode the phone runs on your computer over SSH. The phone sends its pairing token on the first line of input, never on the command line.
+
+### Security
+- What the assistant types on a desktop is never written to the activity log, only how many characters it was: it may be a password.
+- The desktop's connection never carries your SSH agent or X11 forwarding.
+- Your API key is kept in the system's protected storage. It is never in settings, never in a backup and never in a log or the activity log; the built-in assistant's switch and service settings are not carried in backups either.
+- The assistant only talks to https addresses, or to a server on this computer (localhost). Anything else is refused with a message, so the key and your conversation are never sent unencrypted.
+- What the assistant reads on your servers, and what its tools return, is sent to the service you chose. What a tool returns is cut to 16 KiB before it is sent.
+- A phone's pairing can only answer cards and stop things: it can never call a tool, pair anything, change a setting or a host's access. An assistant's pairing can never act as a phone. With Phone control off, a phone is refused exactly like an unknown pairing.
+- Removing a phone's pairing, switching Phone control off or switching the AI Bridge off ends a connected phone's session at once. While the app on the computer is locked, a connected phone sees nothing and can do nothing.
+- At most two phones can be connected at once. Phone pairings and the phone's saved token are never part of a backup.
+- An AI Bridge activity log file that an earlier build left readable by other accounts is now restricted to your user account the first time the app writes to it. Its folder was already restricted, so the file could not be reached.
+- Limits to know:
+  - Full control means what it says: on a server set to it, an assistant runs commands, writes files, opens terminals and uses the desktop with no approval card. A locked app and a switched-off bridge still refuse everything, and each such call is marked "full control" in the activity log.
+  - No real remote desktop was driven by an assistant before release: the desktop tools were tested against simulated screens only. The built-in assistant was tested against a simulated AI service, not a real one. Phone control was tested inside one process, not over a real SSH connection from a real phone. Nothing here has been run on Windows.
+  - Desktop screenshots reach the built-in assistant only with the Anthropic provider; an OpenAI-compatible service gets a text note in place of the picture. A local model server (http://localhost) cannot be used on Android.
+  - Phone control finds the launcher only in its usual places (the PATH, the snap, /opt/secureshellgo, the Flatpak) and needs a POSIX shell on the computer, so a Windows computer is not supported yet.
+  - A job on a server without setsid can only be stopped through its runner; what the command started in the background is not reached. A job that died without leaving an exit status (killed, or the server restarted) shows as unknown.
+  - Before going back to 1.7.0, remove paired phones: 1.7.0 does not know the phone role and would treat a phone's token as an assistant's.
+  - The translations of the new text were written by machine and have not been read by native speakers.
+
+### Changed
+- The allowed commands list moved under "Advanced" in the "Ask before each change" choice. Its rules, limits and warnings are the same.
+- Settings, AI Bridge is grouped under headers with a line each: assistants on this computer, what assistants can read, approvals, shared hosts and activity. Every control does what it did.
+- Going up to "Ask before each change" asks again, and lists the commands that will run without asking and any terminal or desktop tick that comes back into force. Going down never asks.
+- When you take a host down below "Ask before each change", its jobs keep running: they are your server's processes. The assistant can still read their state and output while the host allows reading, but can no longer stop or remove them. Removing a paired assistant, deleting a host or pointing it at another server makes the app forget those jobs; they keep running on the server until they end or you stop them there.
+- The chat is kept in memory only. Nothing you or the assistant say is written to disk, and it is gone when the app closes.
+
+### Fixed
+- A command the AI Bridge stopped is now always reported with the stop's own exit status. Before, it was sometimes reported with a different number.
+
 ## 1.7.0 - 2026-11-16
 
 The AI Bridge can now change a server, with your permission: every change needs your yes on a card in the app, except what you set up beforehand.
