@@ -24,6 +24,7 @@ import 'package:secure_shell_go/services/settings_store.dart';
 
 import 'support/settle.dart';
 import 'support/temp_dir.dart';
+import 'support/tracked_stores.dart';
 
 const _claudePath = '/home/user/.local/bin/claude';
 const _claudeVersion = '2.1.322 (Claude Code)';
@@ -86,6 +87,20 @@ class _FakeConnector extends ClaudeCliConnector {
 
   /// While set, `detect` waits for it.
   Completer<void>? holdDetect;
+
+  /// How many calls are waiting on [holdDetect] or [hold] right now: the
+  /// test holds them on purpose, so a screen waiting on one is at rest.
+  int waiting = 0;
+
+  Future<void> _wait(Future<void> gate) async {
+    waiting++;
+    try {
+      await gate;
+    } finally {
+      waiting--;
+    }
+  }
+
   final List<ClaudePluginSource?> expectedSources = [];
   final List<({String path, String token, String launcher})> connectCalls = [];
 
@@ -117,7 +132,7 @@ class _FakeConnector extends ClaudeCliConnector {
   Future<ClaudeCliAvailability> detect() async {
     detectCalls++;
     final gate = holdDetect;
-    if (gate != null) await gate.future;
+    if (gate != null) await _wait(gate.future);
     return availability;
   }
 
@@ -138,7 +153,7 @@ class _FakeConnector extends ClaudeCliConnector {
     final thrown = throwWith;
     if (thrown != null) throw StateError('$thrown $token');
     final gate = hold;
-    if (gate != null && holdAt == null) await gate.future;
+    if (gate != null && holdAt == null) await _wait(gate.future);
     final at = failAt;
     final run = [
       for (final s in ClaudeConnectStep.values)
@@ -147,7 +162,7 @@ class _FakeConnector extends ClaudeCliConnector {
     ];
     for (final s in run) {
       onStep?.call(s);
-      if (gate != null && s == holdAt) await gate.future;
+      if (gate != null && s == holdAt) await _wait(gate.future);
     }
     ClaudeConnectStepResult ran(ClaudeConnectStep step, int code, String out) =>
         ClaudeConnectStepResult(
@@ -194,17 +209,19 @@ void main() {
   late _FakeBridge bridge;
   late HostStore hostStore;
   late _FakeConnector connector;
+  late IoTracker io;
   String? clipboard;
 
   setUp(() async {
     dir = await Directory.systemTemp.createTemp('bridge_one_click_test');
-    clients = BridgeClientStore(file: File('${dir.path}/clients.json'));
+    io = IoTracker();
+    clients = TrackedClientStore(io, file: File('${dir.path}/clients.json'));
     audit = BridgeAuditLog(
       scrub: (s) => s,
       directory: Directory('${dir.path}/bridge'),
     );
     bridge = _FakeBridge(dir, clients, audit);
-    hostStore = HostStore(file: File('${dir.path}/hosts.json'));
+    hostStore = TrackedHostStore(io, file: File('${dir.path}/hosts.json'));
     connector = _FakeConnector(
       const ClaudeCliAvailable(
         executablePath: _claudePath,
@@ -238,10 +255,23 @@ void main() {
     );
   }
 
+  /// Waits until the screen's own work is done — no host or pairing store
+  /// call still running, and no progress indicator except while the fake
+  /// `claude` is deliberately held — then past any route animation, and
+  /// once more for work that animation started. A fixed number of event
+  /// loop turns was too few on slow CI runners.
+  bool busy() =>
+      io.busy ||
+      (connector.waiting == 0 &&
+          find
+              .byWidgetPredicate((w) => w is ProgressIndicator)
+              .evaluate()
+              .isNotEmpty);
+
   Future<void> settle(WidgetTester tester) async {
-    await settleIo(tester, rounds: 10);
+    await settleWhile(tester, busy);
     await tester.pump(const Duration(milliseconds: 500));
-    await settleIo(tester, rounds: 5);
+    await settleWhile(tester, busy);
     await tester.pump(const Duration(milliseconds: 500));
   }
 
@@ -1085,7 +1115,7 @@ void main() {
       // Made on the real event loop, as setUp makes the others: its writer
       // would otherwise wait on the test's fake clock.
       await tester.runAsync(() async {
-        hostStore = _FailingHostStore(File('${dir.path}/hosts2.json'), 'c');
+        hostStore = _FailingHostStore(io, File('${dir.path}/hosts2.json'), 'c');
       });
       await addHosts(tester, [_host('a'), _host('b'), _host('c')]);
       await pumpSection(tester);
@@ -1262,8 +1292,8 @@ class _NoConfirmStore extends BridgeClientStore {
 }
 
 /// Saves like the real store but fails to write host [failId].
-class _FailingHostStore extends HostStore {
-  _FailingHostStore(File file, this.failId) : super(file: file);
+class _FailingHostStore extends TrackedHostStore {
+  _FailingHostStore(super.io, File file, this.failId) : super(file: file);
 
   final String failId;
 
