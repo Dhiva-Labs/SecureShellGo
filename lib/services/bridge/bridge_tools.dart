@@ -82,7 +82,12 @@ class BridgeCommands {
   /// when a trapped signal arrives) is repeated while the command's process
   /// is still there. A command that died of a signal has been reaped by
   /// then, so its status is kept; a zombie `kill -0` still sees is reaped
-  /// by the next `wait`, so the loop cannot spin. A stopped command's
+  /// by the next `wait`, so the loop cannot spin. Some shells have already
+  /// collected the command by the time the cut-short `wait` returns, so
+  /// `kill -0` finds nothing; one more `wait` then gives the status the
+  /// shell kept. When the shell kept none (127), the first status stands
+  /// for a command that ended by itself, and a stop that had begun counts
+  /// as the stop's TERM. A stopped command's
   /// status is the stop's (143 for the TERM, 137 for the KILL).
   ///
   /// The app holds the channel's stdin open for the whole run and closes it
@@ -117,6 +122,7 @@ exec 3<&-
 wait $p
 r=$?
 while [ "$r" -gt 128 ] && kill -0 $p 2>/dev/null; do wait $p; r=$?; done
+if [ "$r" -gt 128 ]; then wait $p 2>/dev/null; q=$?; if [ "$q" -ne 127 ]; then r=$q; elif [ -n "$s" ]; then r=143; fi; fi
 if [ -z "$s" ]; then kill -s KILL $w 2>/dev/null; fi
 exit $r''';
     return 'sh -c ${posixSingleQuote(wrapper)} ssg-bridge '
