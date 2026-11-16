@@ -504,4 +504,22 @@ void main() {
     },
     skip: Platform.isWindows,
   );
+
+  test(
+    'a log an earlier build left readable is made owner-only on the first '
+    'write, without waiting for a rotation',
+    () async {
+      await recordOne(makeLog());
+      await Process.run('chmod', ['664', logFile.path]);
+      expect(logFile.statSync().mode & 0x1ff, 0x1b4); // 0664
+
+      // A new run of the app: a fresh log object over the same file.
+      final log = makeLog();
+      await recordOne(log);
+      expect(logFile.statSync().mode & 0x1ff, 0x180); // 0600
+      expect(File('${logFile.path}.1').existsSync(), isFalse);
+      expect(await log.recent(), hasLength(2));
+    },
+    skip: Platform.isWindows,
+  );
 }

@@ -29,6 +29,7 @@ One file per piece of work, named for it:
 | `mosh.md` | Mosh |
 | `localization.md` | Translations |
 | `bridge-stop-status.md` | AI Bridge: a stopped command's exit status |
+| `bridge-audit-mode.md` | AI Bridge: an existing activity log is made owner-only |
 
 Write for the people using the app, in the sections `CHANGELOG.md` uses:
 `### Added`, `### Changed`, `### Fixed`, `### Security`. One line per change,
