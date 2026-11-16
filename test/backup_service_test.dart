@@ -220,6 +220,44 @@ void main() {
       expect(db.startupCommand, 'tmux attach');
       expect(await target.hostStore.groupNames(), ['Prod']);
     });
+
+    test('a backup keeps copyOnSelect and every other non-bridge setting',
+        () async {
+      const mine = AppSettings(
+        terminalFontSize: 17,
+        colorScheme: TerminalColorScheme.nord,
+        keepScreenAwake: true,
+        showHiddenFilesByDefault: true,
+        cursorBlink: true,
+        copyOnSelect: true,
+        scrollbackLines: 50000,
+        editorFontSize: 19,
+        diagnosticsLog: true,
+        localeOverride: 'pt-BR',
+        bridgeEnabled: true,
+      );
+      await source.settingsStore.save(mine);
+      final file = await source.service.export(
+        passphrase: 'a very good passphrase',
+        includeCredentials: false,
+        useIsolate: false,
+      );
+      final target = await emptyTarget();
+      final payload = await target.service.readBackup(
+        file: file,
+        passphrase: 'a very good passphrase',
+        useIsolate: false,
+      );
+      await target.service.apply(payload: payload, mode: ImportMode.replace);
+      await target.settingsStore.ensureLoaded();
+      expect(
+        target.settingsStore.current.toJson(),
+        mine.withBridgeDefaults().toJson(),
+      );
+      expect(target.settingsStore.current.copyOnSelect, isTrue);
+      expect(target.settingsStore.current.localeOverride, 'pt-BR');
+      expect(target.settingsStore.current.bridgeEnabled, isFalse);
+    });
   });
 
   group('credential opt-in', () {

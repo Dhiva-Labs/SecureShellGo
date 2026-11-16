@@ -2,7 +2,7 @@
 
 Answers for Play Console → App content → Data safety, question by question,
 with the reasoning and the code behind each one. They match
-`docs/privacy-policy.md` (effective 14 November 2026), so the form and the
+`docs/privacy-policy.md` (effective 16 November 2026), so the form and the
 policy say the same thing. Definitions are Google's, from the Play Console
 Help article "Provide information for Google Play's Data safety section":
 

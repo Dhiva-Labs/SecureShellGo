@@ -1,6 +1,6 @@
 # Privacy Policy — SecureShell Go
 
-**Effective date:** 14 November 2026
+**Effective date:** 16 November 2026
 **Applies to:** SecureShell Go 1.5 and later, published by Dhiva Labs, on
 Android (Google Play, `com.dhivalabs.secure_shell_go`), Windows (Microsoft
 Store and the `.zip` builds on GitHub) and Linux (Snap Store, the Launchpad
