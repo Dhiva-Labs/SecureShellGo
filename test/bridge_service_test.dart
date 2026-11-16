@@ -4,6 +4,8 @@ import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:secure_shell_go/models/host.dart';
+import 'package:secure_shell_go/models/host_ai_access.dart';
+import 'package:secure_shell_go/services/bridge/bridge_approvals.dart';
 import 'package:secure_shell_go/services/bridge/bridge_audit.dart';
 import 'package:secure_shell_go/services/bridge/bridge_channel.dart';
 import 'package:secure_shell_go/services/bridge/bridge_client_store.dart';
@@ -13,6 +15,7 @@ import 'package:secure_shell_go/services/bridge/bridge_policy.dart';
 import 'package:secure_shell_go/services/bridge/bridge_redactor.dart';
 import 'package:secure_shell_go/services/bridge/bridge_service.dart';
 import 'package:secure_shell_go/services/bridge/bridge_tools.dart';
+import 'package:secure_shell_go/services/host_store.dart';
 import 'package:secure_shell_go/services/settings_store.dart';
 
 import 'fake_exec_session.dart';
@@ -93,7 +96,7 @@ void main() {
 
   String bridgeDir() => '${temp.path}/bridge';
 
-  BridgeService build() {
+  BridgeService build({Stream<bool>? appLockChanges, HostStore? hostStore}) {
     final audit = BridgeAuditLog(
       scrub: (s) => s,
       directory: Directory(bridgeDir()),
@@ -103,7 +106,7 @@ void main() {
       clients: clients,
       connections: connections,
       tools: BridgeTools(
-        loadHosts: () async => [bridgeHost('web1', 'web')],
+        loadHosts: hostStore?.all ?? () async => [bridgeHost('web1', 'web')],
         settings: () => settings.current,
         isAppLocked: () => locked,
         connections: connections,
@@ -115,6 +118,8 @@ void main() {
         verify: verify,
         transport: platformBridgeTransport,
       ),
+      appLockChanges: appLockChanges,
+      hostChanges: hostStore?.changes,
     );
   }
 
@@ -313,6 +318,193 @@ void main() {
         .then((_) {}, onError: (Object _) {})
         .timeout(const Duration(seconds: 5));
     expect(connections.cachedCount, 0);
+  });
+
+  group('approvals and time-limited approvals', () {
+    Future<BridgeApprovalOutcome> ask(BridgeService svc, BridgeClient who) =>
+        svc.approvals.ask(
+          svc.approvals.request(
+            client: who,
+            hostId: 'web1',
+            hostName: 'web',
+            tool: 'run_command',
+            summary: CommandSummary(command: 'id', hostNames: ['web']),
+          ),
+        );
+
+    test('the service exposes the ones the tools use', () {
+      expect(identical(service.approvals, service.tools.approvals), true);
+      expect(identical(service.grants, service.tools.grants), true);
+    });
+
+    test('locking the app withdraws every card and ends every grant',
+        () async {
+      final lock = StreamController<bool>.broadcast();
+      await service.dispose();
+      service = build(appLockChanges: lock.stream);
+      await settings.save(settings.current.copyWith(bridgeEnabled: true));
+      await service.start();
+      final pending = ask(service, client);
+      service.grants.grant(client.id, 'web1', const Duration(minutes: 5));
+      lock.add(false);
+      await Future<void>.delayed(Duration.zero);
+      expect(service.approvals.current, hasLength(1));
+      lock.add(true);
+      expect(await pending, BridgeApprovalOutcome.withdrawn);
+      expect(service.grants.current, isEmpty);
+      await lock.close();
+    });
+
+    test('switching the bridge off withdraws every card and ends every grant',
+        () async {
+      await settings.save(settings.current.copyWith(bridgeEnabled: true));
+      await service.start();
+      final pending = ask(service, client);
+      service.grants.grant(client.id, 'web1', const Duration(minutes: 5));
+      await settings.update((s) => s.copyWith(bridgeEnabled: false));
+      expect(await pending, BridgeApprovalOutcome.withdrawn);
+      await until(() => service.grants.current.isEmpty);
+    });
+
+    test('revoking a client, connected or not, ends its cards and grants '
+        'only', () async {
+      final second = (await clients.create('Second assistant')).client;
+      await settings.save(settings.current.copyWith(bridgeEnabled: true));
+      await service.start();
+      final mine = ask(service, client);
+      final theirs = ask(service, second);
+      service.grants.grant(client.id, 'web1', const Duration(minutes: 5));
+      service.grants.grant(second.id, 'web1', const Duration(minutes: 5));
+      await clients.revoke(client.id);
+      expect(await mine, BridgeApprovalOutcome.withdrawn);
+      await until(() => service.approvals.current.length == 1);
+      expect(service.approvals.current.single.client.id, second.id);
+      expect(service.grants.current.single.clientId, second.id);
+      service.approvals.withdrawAll();
+      expect(await theirs, BridgeApprovalOutcome.withdrawn);
+    });
+
+    group('when a host changes', () {
+      late HostStore store;
+      late BridgeClient second;
+
+      Future<void> ask(String hostId, BridgeClient who) async {
+        unawaited(
+          service.approvals.ask(
+            service.approvals.request(
+              client: who,
+              hostId: hostId,
+              hostName: hostId,
+              tool: 'run_command',
+              summary: CommandSummary(command: 'id', hostNames: [hostId]),
+            ),
+          ),
+        );
+      }
+
+      Future<void> settle() =>
+          Future<void>.delayed(const Duration(milliseconds: 10));
+
+      Set<String> grantedHosts() => {
+        for (final g in service.grants.current) g.hostId,
+      };
+      Set<String> cardHosts() => {
+        for (final r in service.approvals.current) r.hostId,
+      };
+
+      setUp(() async {
+        second = (await clients.create('Second assistant')).client;
+        store = HostStore(file: File('${temp.path}/hosts.json'));
+        await store.add(
+          bridgeHost('web1', 'web', access: HostAiAccess.askToChange),
+        );
+        await store.add(
+          bridgeHost('app1', 'app', access: HostAiAccess.askToChange),
+        );
+        await service.dispose();
+        service = build(hostStore: store);
+        await service.start();
+        for (final id in ['web1', 'app1']) {
+          service.grants.grant(client.id, id, const Duration(minutes: 15));
+          service.grants.grant(second.id, id, const Duration(minutes: 15));
+        }
+        await ask('web1', client);
+        await ask('app1', client);
+      });
+
+      Future<void> edit(String id, Host Function(Host h) change) =>
+          store.modify(id, change);
+
+      test('stepped down to read-only: its grants and cards end at once, '
+          'with no call in between; stepping back up brings nothing back',
+          () async {
+        await edit('web1', (h) => h.copyWith(aiAccess: HostAiAccess.readOnly));
+        await settle();
+        expect(grantedHosts(), {'app1'});
+        expect(cardHosts(), {'app1'});
+        await edit(
+          'web1',
+          (h) => h.copyWith(aiAccess: HostAiAccess.askToChange),
+        );
+        await settle();
+        expect(service.grants.hasLive(client.id, 'web1'), false);
+        expect(service.grants.hasLive(second.id, 'web1'), false);
+        expect(service.grants.hasLive(client.id, 'app1'), true);
+      });
+
+      test('un-shared or deleted: gone', () async {
+        await edit('web1', (h) => h.copyWith(aiAccess: HostAiAccess.off));
+        await store.delete('app1');
+        await settle();
+        expect(service.grants.current, isEmpty);
+        expect(service.approvals.current, isEmpty);
+      });
+
+      for (final (what, change) in <(String, Host Function(Host))>[
+        ('hostname', (h) => h.copyWith(hostname: 'elsewhere.example.test')),
+        ('port', (h) => h.copyWith(port: 2222)),
+        ('user name', (h) => h.copyWith(username: 'root')),
+        ('transport', (h) => h.copyWith(transport: HostTransport.mosh)),
+      ]) {
+        test('pointed at another server ($what): gone', () async {
+          await edit('web1', change);
+          await settle();
+          expect(grantedHosts(), {'app1'});
+          expect(cardHosts(), {'app1'});
+        });
+      }
+
+      test('an unrelated edit (label, group, colour) keeps them', () async {
+        await edit(
+          'web1',
+          (h) => h.copyWith(
+            label: 'renamed',
+            group: 'prod',
+            colorLabel: HostColorLabel.values.last,
+          ),
+        );
+        await store.renameGroup('prod', 'production');
+        await settle();
+        expect(grantedHosts(), {'web1', 'app1'});
+        expect(cardHosts(), {'web1', 'app1'});
+      });
+    });
+
+    test('turning "allow for a while" off ends the grants it gave', () async {
+      await settings.save(
+        settings.current.copyWith(
+          bridgeEnabled: true,
+          bridgeTimedApprovalMinutes: 15,
+        ),
+      );
+      await service.start();
+      service.grants.grant(client.id, 'web1', const Duration(minutes: 15));
+      await settings.update((s) => s.copyWith(bridgeTimedApprovalMinutes: 60));
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+      expect(service.grants.current, hasLength(1));
+      await settings.update((s) => s.copyWith(bridgeTimedApprovalMinutes: 0));
+      await until(() => service.grants.current.isEmpty);
+    });
   });
 
   group('a call in flight when its answer has nowhere to go', () {

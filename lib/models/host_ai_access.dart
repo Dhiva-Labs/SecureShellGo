@@ -7,7 +7,12 @@ enum HostAiAccess {
   off,
 
   /// Read-only tools only: nothing an assistant can call changes the server.
-  readOnly;
+  readOnly,
+
+  /// Read-only tools, plus changes an assistant may ask for. Nothing runs
+  /// without a person's yes in the app, except what the user set up on this
+  /// host beforehand. Order of trust: off < readOnly < askToChange.
+  askToChange;
 
   /// Anything unknown or absent is [off]. Failing towards "no access" matters
   /// more here than for any other enum: a `hosts.json` written by a later

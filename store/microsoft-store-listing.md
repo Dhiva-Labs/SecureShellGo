@@ -30,7 +30,7 @@ An SSH and Mosh terminal with an SFTP file browser, for servers you run. Host ke
 ---
 
 ## Description
-*(Required. Limit 10,000 characters. This is 6,284.)*
+*(Required. Limit 10,000 characters. This is 6,394.)*
 
 ```
 SecureShell Go is an SSH terminal and SFTP file client for servers you run. It checks host keys the way OpenSSH does, signs in with your SSH agent or Pageant if you want it to, and keeps what it stores on this PC. There is no account, no advertising and no analytics. The app connects only to the servers you add, and to your own SSH agent or X server when you switch those on.
@@ -83,7 +83,7 @@ FILES
 • Built-in editor with syntax colouring for 20 languages, find and replace, tabs for several files, and a save that checks nobody changed the file first and keeps its permissions
 
 AI BRIDGE (OPTIONAL, OFF BY DEFAULT)
-Let an MCP-compatible AI assistant on this PC read from servers you choose, by name. It can read stats, services, log tails, folders and text files, and search by file name. It cannot run commands or change anything, and it never receives passwords or keys. Common secret locations are blocked, every call is logged on this PC, and what the assistant reads goes to that assistant's own provider, not to us.
+Let an MCP-compatible AI assistant on this PC read from servers you choose, by name. It can read stats, services, log tails, folders and text files, and search by file name. Where you allow it, it can also make changes, each needing your approval in the app unless you set up an exception beforehand. It never receives passwords or keys. Common secret locations are blocked, every call is logged on this PC, and what the assistant reads, and what its commands print, goes to that assistant's own provider, not to us.
 
 ACROSS YOUR SERVERS
 • Groups, colour tags and search, with a Ctrl+K command palette over hosts, snippets and actions
@@ -220,14 +220,21 @@ or fewer, no bullets):
 ## Verification notes
 
 AI Bridge
-- **Optional, off by default, read-only, no passwords or keys, blocked secret
+- **Optional, off by default, no passwords or keys, blocked secret
   paths, call log, provider note** — `lib/services/bridge/` (policy, path
-  guard, redactor, audit, tools), `docs/changes/ai-bridge.md`,
-  `docs/privacy-policy.md`. "Stats, services, log tails, folders and text
-  files, and search by file name" are the seven tools in `bridge_tools.dart`
+  guard, redactor, audit, tools), the 1.6.0 section of `CHANGELOG.md`,
+  `CHANGELOG.md` (1.7.0), `docs/privacy-policy.md`. "Stats, services, log tails, folders and text
+  files, and search by file name" are the seven read tools in `bridge_tools.dart`
   (`list_hosts`, `server_stats`, `list_services`, `tail_log`, `list_dir`,
   `read_file`, `search_files`); "logged on this PC" is
-  `bridge/audit.log`. Checked against the 1.6.0 branch; re-check if a tool
+  `bridge/audit.log`. Checked against the 1.6.0 branch. 1.7.0 adds `run_command`, `write_file`,
+  `service_action`, `run_on_hosts` and the terminal tools
+  (`bridge_change_tools.dart`, `bridge_terminals.dart`): "can also make
+  changes, each needing your approval in the app" is the approval card
+  (`bridge_approvals.dart`), off per host by default; "unless you set up an
+  exception beforehand" is a host's allowed-commands list and a time-limited
+  approval (`bridge_policy.dart`, `bridge_grants.dart`); "what its commands
+  print" is the command output returned to the assistant. Re-check if a tool
   is added before submitting.
 
 Terminal

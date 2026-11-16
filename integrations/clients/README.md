@@ -46,10 +46,22 @@ carries a copy of it that must be kept in step with it.
    rpm, Arch package or Microsoft Store one, replace `secureshellgo-mcp` with the command
    below. (The app's own snippet already has both filled in.) Treat that
    file as a secret: anyone who can read it can read from your shared
-   servers while the app is running with the bridge on and unlocked.
+   servers, ask for changes where you allowed them, and use that host's
+   allowed commands and any approval for a while you gave this assistant,
+   while the app is running with the bridge on and unlocked.
    Revoking the assistant in the app stops the token at once.
 4. For each server you want the assistant to see, tick it in "Shared hosts"
-   (Settings → AI Bridge), or edit it and switch on "AI access (read-only)".
+   (Settings → AI Bridge), or edit it and switch on "Share with AI assistants".
+5. Only if you want the assistant to be able to ask for changes: edit the
+   server (or use the settings button of its row in "Shared hosts") and
+   switch on "Let the assistant request changes". Nothing changes on a server
+   without your answer on a card in the app, except commands you put under
+   "Allowed commands" for that host and, if you turn on Settings → AI Bridge →
+   "Allow for a while", the approvals for a number of minutes you give on a
+   card. "Full control terminal" is a separate switch beneath it. All of these
+   are off until you switch them on. The card does not alert you, so keep the
+   app in view when you expect one; an unanswered card is denied after two
+   minutes.
 
 ## The launcher command
 
@@ -91,4 +103,15 @@ to be running for anything to work.
   sign in fails with "connect to it once in SecureShell Go". Prompts from
   outside the app can still appear: an SSH agent that asks you to confirm or
   touch a key, or your desktop keyring's own unlock dialog.
-- The bridge can only read. Version 1.6.0 has no tool that changes anything.
+- Version 1.7.0 can change a server (`run_command`, `write_file`,
+  `service_action`, `run_on_hosts`) and open a terminal (`open_terminal`,
+  `send_input`, `read_screen`, `close_terminal`), only on hosts where you
+  switched that on and with your approval on a card in the app, unless you
+  allowed the exact command beforehand or gave an approval for a while. An
+  approved terminal can run any command as the account the app signs in as,
+  with no further question; the blocked-path list does not apply inside it or
+  to commands. What a command or terminal prints is sent to your AI provider.
+  The `INSTRUCTIONS.md` rules ask the assistant to say what it will ask for
+  first, to ask for one change at a time, to stop if you deny, and never to
+  ask you to switch these on; that is advice to a model, and the card is what
+  protects you.

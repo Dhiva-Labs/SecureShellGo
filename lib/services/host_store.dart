@@ -42,6 +42,50 @@ class HostStore {
   Future<void>? _loading;
   bool _loaded = false;
 
+  /// The list last announced on [changes] (or loaded), to tell whether a
+  /// failed save left memory different from what listeners last saw.
+  List<Host> _announced = const [];
+  final StreamController<List<Host>> _changes =
+      StreamController<List<Host>>.broadcast();
+
+  /// The hosts after every change this store makes: after each successful
+  /// [add], [update], [modify], [delete], [replaceAll], [renameGroup] and
+  /// [deleteGroup], and after a failed one whenever the in-memory list ended
+  /// up different from the last announcement (a rollback that put a host
+  /// back, or a delete whose write failed). A call that changes nothing (a
+  /// [modify] of a host that is gone, a rename that matches no host) is not
+  /// announced. Not emitted for the first load; read [all] for that.
+  ///
+  /// The AI Bridge listens, so that a host un-shared or stepped down loses
+  /// its time-limited approvals at once rather than at the next call.
+  Stream<List<Host>> get changes => _changes.stream;
+
+  void _announce({required bool succeeded}) {
+    final now = List<Host>.unmodifiable(_hosts.values);
+    if (!succeeded && _sameHosts(now, _announced)) return;
+    _announced = now;
+    if (!_changes.isClosed) _changes.add(now);
+  }
+
+  static bool _sameHosts(List<Host> a, List<Host> b) {
+    if (a.length != b.length) return false;
+    for (var i = 0; i < a.length; i++) {
+      if (!identical(a[i], b[i])) return false;
+    }
+    return true;
+  }
+
+  /// Runs one write, then announces the result on [changes].
+  Future<void> _writeAndAnnounce(Future<void> Function() write) async {
+    try {
+      await write();
+    } catch (_) {
+      _announce(succeeded: false);
+      rethrow;
+    }
+    _announce(succeeded: true);
+  }
+
   /// Loads the store from disk once; concurrent callers share one future.
   Future<void> ensureLoaded() {
     if (_loaded) return Future<void>.value();
@@ -91,6 +135,7 @@ class HostStore {
       _saved
         ..clear()
         ..addAll(_hosts);
+      _announced = List<Host>.unmodifiable(_hosts.values);
       _loaded = true;
     }
   }
@@ -141,7 +186,7 @@ class HostStore {
   Future<void> add(Host host) async {
     await ensureLoaded();
     _hosts[host.id] = host;
-    await _persistOrPutBack(host);
+    await _writeAndAnnounce(() => _persistOrPutBack(host));
   }
 
   /// Replaces an existing saved host, keeping its position in the list.
@@ -154,7 +199,7 @@ class HostStore {
   Future<void> update(Host host) async {
     await ensureLoaded();
     _hosts[host.id] = host;
-    await _persistOrPutBack(host);
+    await _writeAndAnnounce(() => _persistOrPutBack(host));
   }
 
   /// Changes the saved host [id] by applying [change] to what the store
@@ -168,7 +213,7 @@ class HostStore {
     if (current == null) return;
     final next = change(current);
     _hosts[id] = next;
-    await _persistOrPutBack(next);
+    await _writeAndAnnounce(() => _persistOrPutBack(next));
   }
 
   /// Writes the file; if that fails, puts back what the file holds for
@@ -198,7 +243,7 @@ class HostStore {
   Future<void> delete(String id) async {
     await ensureLoaded();
     _hosts.remove(id);
-    await _persist();
+    await _writeAndAnnounce(_persist);
   }
 
   /// Swaps the entire contents of the store for [hosts], in one write.
@@ -218,7 +263,7 @@ class HostStore {
     _hosts
       ..clear()
       ..addEntries([for (final host in hosts) MapEntry(host.id, host)]);
-    await _persist();
+    await _writeAndAnnounce(_persist);
   }
 
   /// Every distinct, non-empty group name currently assigned to a host,
@@ -254,7 +299,7 @@ class HostStore {
         changed = true;
       }
     }
-    if (changed) await _persist();
+    if (changed) await _writeAndAnnounce(_persist);
   }
 
   /// Moves every host out of group [name] and into Ungrouped, in one write.
@@ -269,6 +314,6 @@ class HostStore {
         changed = true;
       }
     }
-    if (changed) await _persist();
+    if (changed) await _writeAndAnnounce(_persist);
   }
 }

@@ -25,8 +25,11 @@ it somewhere yourself.
 
 On Linux and Windows there is an optional AI Bridge, off until you switch it
 on. If you do, an AI assistant on your own computer can read from the servers
-you choose. The app gives what it reads to that assistant, which sends it to
-its own provider. Dhiva Labs receives nothing. See "The AI Bridge" below.
+you choose. If you also allow it, host by host, it can ask to run commands,
+write files and open a terminal on your own servers, each time with your
+approval in the app, or under settings you chose. The app gives what it reads
+and what those commands and the terminal print to that assistant, which sends
+it to its own provider. Dhiva Labs receives nothing. See "The AI Bridge" below.
 
 ## Who is responsible
 
@@ -75,7 +78,7 @@ Those files are:
 
 | File | What is in it |
 | --- | --- |
-| `hosts.json` | Your saved servers: the name you gave each one, its address, port and user name, the sign-in method, group, colour, jump host, startup command, terminal connection (SSH or Mosh), whether to keep the shell in tmux or screen, the agent forwarding, X11 forwarding and legacy-algorithm switches, an SSH certificate if you added one (certificates are public), whether AI access is on (Windows and Linux), and when you last connected. No passwords or private keys. |
+| `hosts.json` | Your saved servers: the name you gave each one, its address, port and user name, the sign-in method, group, colour, jump host, startup command, terminal connection (SSH or Mosh), whether to keep the shell in tmux or screen, the agent forwarding, X11 forwarding and legacy-algorithm switches, an SSH certificate if you added one (certificates are public), whether and how far AI access is on for it, any allowed commands you typed and whether a terminal is allowed (Windows and Linux), and when you last connected. No passwords or private keys. |
 | `known_hosts.json` | The host keys you have trusted: server address, port, key type, fingerprint, and when you trusted it. Fingerprints are public information. The file is sealed with an HMAC whose key is kept in protected storage, so tampering is detected. |
 | `settings.json` | Your preferences: appearance, terminal and editor options, keyboard, app lock, diagnostics log on or off, and the AI Bridge settings (Windows and Linux). |
 | `snippets.json`, `tunnels.json`, `bookmarks.json` | Your command snippets, saved port forwards, and folder bookmarks. |
@@ -144,9 +147,9 @@ When you import a backup that has host keys in it, you see each new server
 and its fingerprint, and they are trusted only if you tick "Trust these
 keys". Keys this device already trusts are never replaced by a backup.
 
-A backup never contains AI Bridge settings, AI access or paired assistants,
-and importing one never switches the AI Bridge on or gives a server AI
-access.
+A backup never contains AI Bridge settings, AI access, allowed commands, the
+terminal switch or paired assistants, and importing one never switches the
+AI Bridge on or gives a server AI access.
 
 ### Session logs
 
@@ -270,13 +273,14 @@ that you run on your own computer read from your servers, through
 SecureShell Go. It is **off by default**. It does nothing until you switch on
 **Settings → AI Bridge** (the app explains what it does and asks you to
 confirm every time you switch it on), pair an assistant with **Connect an
-assistant** (which shows you a token, once), and switch on "AI access
-(read-only)" for each server you want it to see.
+assistant** (which shows you a token, once), and switch on "Share with AI
+assistants" for each server you want it to see. Changing anything on a server
+needs more, per server: see "Changes, and the terminal" below.
 
-**What an assistant can do.** List the servers you shared, by name; read
-server stats; list services; read the end of a log; list folders; read text
-files; and search for files by name. It cannot run commands, write files or
-change anything. It is never given passwords, private keys or passphrases.
+**What an assistant can do.** On the servers you shared, list them, by name;
+read server stats; list services; read the end of a log; list folders; read
+text files; and search for files by name. That is all, unless you also allow
+changes for a server (see "Changes, and the terminal" below). It is never given passwords, private keys or passphrases.
 By default it is not given a server's address, port or user name either
 ("Show address and username" is off), and those are also removed from the
 error messages it gets. Common secret locations (`~/.ssh`, `.env` files, key
@@ -286,7 +290,33 @@ and you can block more under "Extra blocked paths". Private keys and secrets
 the app knows are removed from what it reads, and one call returns at most
 64 KiB. While the app is locked, the bridge refuses everything. Switching the
 bridge off, or revoking an assistant, stops its calls in progress, and
-nothing they found is passed on.
+nothing they found is passed on; a change under way is stopped too, except a
+file write that has already begun replacing the file, which is let finish.
+
+**Changes, and the terminal (version 1.7.0).** If you allow it for a server
+("Let the assistant request changes", off by default, per server), the
+assistant can ask to run one shell command, write one text file, start, stop,
+restart or reload a service, or run one command on several servers, as the
+sign-in user the app has saved for that server. Each ask shows you a card in
+the app with the exact command, or for a file its path, its size and a
+preview of the new content or of the changes (the card warns you when the
+preview is not the whole change), and you answer Deny, Allow once or, only if
+you turned on "Allow for a while" in Settings → AI Bridge, Allow for a number
+of minutes. No answer within two minutes is a no; the card does not alert
+you, so if the app is in the background you will not see it. Two things you
+set up beforehand run without a card: a command you put under "Allowed
+commands" for that server, when the assistant asks to run exactly that text
+on that server alone, and a time-limited approval you gave on a card, which
+lets that assistant make any change on that server, without asking, until it
+runs out. If you also switch on "Full control terminal" for a
+server, the assistant can ask to open a terminal there, with a card every time
+and never a time-limited approval. An approved terminal gives it a live shell
+as the saved sign-in user on that server: it can type any command, including
+ones you never see on a card, read any file that user can read and reach
+anything that server can reach, with no further questions. The blocked-path
+list does not apply inside a terminal or to a command. You can watch it, take
+over by typing, or stop it at any time. All of this is off until you switch it
+on, and the app never gives the assistant your SSH agent or X11 forwarding.
 
 **Signing in.** The bridge signs in to a server with what you saved for it,
 without asking you anything: SecureShell Go never shows a prompt for a bridge
@@ -341,26 +371,43 @@ make them readable only by your user account: the file of paired assistants,
 the connection file and socket, and a newly created activity log.
 
 **What leaves your device, and to whom.** The app gives the result of each
-call only to the AI client you paired, on the same computer, through the
+call, which now includes the output of a command and, for a terminal, the text
+on its screen (with private keys and the secrets the app knows removed), only
+to the AI client you paired, on the same computer, through the
 launcher program that client starts. Nothing listens on your network. That
 client then sends what it received to its own provider, under that
 provider's terms and privacy policy, as part of your conversation. **Dhiva
 Labs receives nothing**: there is no Dhiva Labs server involved, and the app
 itself connects only to the servers you configured and to the launcher on
 your computer. But your AI provider does receive what the assistant reads,
-so share only servers and files you are happy to send there.
+including what its commands and terminal print, so share only servers and
+files you are happy to send there. Error messages go to the assistant too.
+The preview on a file card, including the lines of the existing file that a
+diff shows, is read from your server to show it to you; it is not sent to
+the assistant. What you approve is sent from the app to your server over SSH,
+like anything else you send there.
 
 **Limits you should know.**
 
 - The blocked-path list is a default set, not a guarantee that no secret on
   a server can be read; for a hard guarantee, use a server account with
   limited read rights.
-- Text on a server, such as a log line or a file, can contain instructions
-  aimed at the assistant.
+- Text on a server, such as a log line, a file, a command's output or a
+  terminal screen, can contain instructions aimed at the assistant. Read the
+  card before you allow anything.
+- A command on the allowed list and a time-limited approval run without
+  asking you, as you set them up. An approved terminal can do anything the
+  sign-in user can, and what its screen shows is sent to your AI provider; only
+  private keys and secrets the app knows are removed from it, so a key can still
+  be read in pieces or encoded.
+- The approval card does not alert you or bring the app forward. With the
+  app in the background a card goes unseen and is denied after two minutes.
 - The token is stored in the assistant's configuration on your computer.
-  Anyone who has it can read from the servers you shared while the app is
-  running with the bridge on and unlocked. Revoking the assistant stops the
-  token at once.
+  Anyone who has it can, while the app is running with the bridge on and
+  unlocked, read from the servers you shared, ask for changes where you
+  allowed them, and use those servers' allowed commands and any time-limited
+  approval you gave that assistant. Revoking the assistant stops the token at
+  once.
 - On Windows the launcher reaches the app over a port on `127.0.0.1`. The app
   must first prove it holds a secret written for this launch in your
   profile; only then does the launcher send the token, unencrypted, over
@@ -377,9 +424,14 @@ so share only servers and files you are happy to send there.
 - **The activity log** is `audit.log` (and one older file, `audit.log.1`) in
   the `bridge` folder of the data folder. Each entry has the time, the
   assistant's name, the server name it asked for, the tool, the arguments
-  (with private keys and known secrets removed, cut to 500 characters), the
-  outcome (OK, refused or error) with the refusal code or error message, and
-  how long it took. It never holds what was read. The file is created so that only your user
+  (with private keys and known secrets removed, cut to 500 characters; for a
+  command, the command; for a file write, the path and size, never the
+  contents; for a terminal, the text the assistant typed), the outcome (OK,
+  refused or error) with the refusal code or error message (which can quote a
+  short error the server gave), how long it took
+  and, for a change, how it was allowed (an allowed command, a time-limited
+  approval, once, for a while, or denied, timed out or withdrawn). It never
+  holds what was read, what a command or a terminal printed, or file contents. The file is created so that only your user
   account can read it. It keeps about 512 KB plus
   the older file, and the oldest entries are dropped. Open it under Settings
   → AI Bridge → Activity; Clear deletes both files. It is never sent
@@ -390,10 +442,23 @@ so share only servers and files you are happy to send there.
   `secureshellgo-bridge.sock` in your private runtime folder when the data
   folder's path is too long). Both are removed when the bridge stops.
 - **Your bridge choices** are in `settings.json`, and whether each server has
-  AI access is in `hosts.json`.
-- **Backups** never contain AI access, bridge settings or paired assistants.
-  A server imported from a backup always has AI access off, and importing a
-  backup keeps this device's own bridge settings.
+  AI access, its allowed commands and its terminal switch are in `hosts.json`.
+  Turning a server back to read-only or un-sharing it keeps its allowed
+  commands and terminal switch stored but unused, so they are there if you
+  switch changes on again. To remove them, take the commands off the host's
+  "Allowed commands" list and switch "Full control terminal" off while
+  changes are on, or delete the host.
+- **Time-limited approvals** are kept in memory only, never written to a file.
+  They end when their time does, on "Stop now", when you switch "Allow for a
+  while" off, when the bridge is switched off, the assistant is revoked, the
+  app locks or restarts, or the server is deleted, un-shared, stepped down or
+  changed to point elsewhere. Cards waiting for an answer are also in memory
+  only.
+- **Backups** never contain AI access, allowed commands, terminal switches,
+  bridge settings or paired assistants. A server imported from a backup always
+  has AI access off, no allowed commands and the terminal switch off, and
+  importing a backup keeps this device's own bridge settings, "Allow for a
+  while" included.
 - Turning the bridge off stops it listening at once. Deleting the data folder
   removes all of the above.
 
@@ -467,8 +532,9 @@ children, and it collects no data from anyone, including children.
 - **Diagnostics log:** clear it in Settings, or turn it off to delete it.
 - **AI Bridge:** switch it off in Settings → AI Bridge, revoke any paired
   assistant under Paired assistants, and clear the log under Activity.
-  Switch off "AI access (read-only)" on a server to take that server away
-  from every assistant.
+  Switch off "Share with AI assistants" on a server to take that server away
+  from every assistant, or switch off "Let the assistant request changes" to
+  make it read-only again.
 - **Uninstall.** On Android, uninstalling removes everything the app stored,
   including the Keystore key. On a computer, uninstalling removes the
   program. Delete the data folder listed above to remove its data as well.

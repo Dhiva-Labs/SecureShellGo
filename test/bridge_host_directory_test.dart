@@ -32,6 +32,20 @@ void main() {
     ]);
   });
 
+  test('askToChange hosts are listed and resolved like read-only ones', () {
+    final hosts = [
+      _host('aaaa1111', 'web', access: HostAiAccess.askToChange),
+      _host('bbbb2222', 'db', access: HostAiAccess.off),
+      _host('cccc3333', 'cache'),
+    ];
+    expect(directory.list(hosts, showAddress: false).map((e) => e.name), [
+      'web',
+      'cache',
+    ]);
+    expect(directory.resolve(hosts, 'web')!.id, 'aaaa1111');
+    expect(directory.resolve(hosts, 'db'), isNull);
+  });
+
   test('without showAddress only the name and group go out', () {
     final entry = directory.list([
       _host('aaaa1111', 'web', group: 'prod'),

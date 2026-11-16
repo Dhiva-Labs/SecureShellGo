@@ -12,7 +12,7 @@ host-key verification at the core. The interface is translated into English,
 Simplified Chinese, Japanese, Brazilian Portuguese, Spanish, Russian, German,
 Korean and French.
 
-Latest release: **1.5.1**. Install options for each platform are
+Latest release: **1.7.0**. Install options for each platform are
 [below](#install): release downloads (APK, Linux, Windows, macOS), the Ubuntu
 PPA (`ppa:dhiva-labs/apps`) and the Snap Store (`sudo snap install secureshellgo`).
 
@@ -55,7 +55,7 @@ PPA (`ppa:dhiva-labs/apps`) and the Snap Store (`sudo snap install secureshellgo
 
 ## Status and limits
 
-- Version 1.5.1. The Android app is in testing and is distributed as an APK on
+- Version 1.7.0. The Android app is in testing and is distributed as an APK on
   the Releases page; it is not on Google Play. The Windows and Linux builds are
   built and started in CI, but haven't had the testing the Android app has.
 - Windows builds are zip downloads from Releases. Microsoft Store packaging
@@ -347,10 +347,11 @@ install a keyring where you can.
 
 ## AI Bridge (Linux and Windows)
 
-An optional, read-only bridge that lets an MCP-compatible AI assistant on
-your computer look at your servers by name, without ever being given a
-password, key or passphrase. It is **off by default**, and it is not
-available on Android or macOS.
+An optional bridge that lets an MCP-compatible AI assistant on your computer
+look at your servers by name and, only on servers where you allow it and
+with your approval, change them, without ever being given a password, key or
+passphrase. It is **off by default**, and it is not available on Android or
+macOS.
 
 Set it up:
 
@@ -407,7 +408,7 @@ Set it up:
      an agent skill and the plugin are in [`integrations/`](integrations/).
 3. Choose which servers it may see: tick them in **Shared hosts**
    (Settings → AI Bridge, "Shared hosts — N of M", also shown at the end of
-   one-click), or edit a server and switch on **AI access (read-only)**.
+   one-click), or edit a server and switch on **Share with AI assistants**.
    Servers without it are invisible to the assistant. A quick connect that was
    not saved cannot be shared.
 
@@ -430,8 +431,8 @@ the `.AppImage` file and the command changes with it: pair the assistant
 again, or edit its launcher command.
 
 It can list those servers, read server stats, list services, read the end of
-a log, list folders, read text files and search for files by name. It cannot
-run commands, write files or change anything in 1.6.0. By default it does not
+a log, list folders, read text files and search for files by name. That is all
+it can do on a server you only shared. By default it does not
 see a server's address, port or user name (**Show address and username** is
 off). Common secret locations (`~/.ssh`, `.env` files, key files, shell
 histories, `/etc/shadow`, cloud and registry credential files) are blocked
@@ -441,6 +442,119 @@ every call goes in **Activity**, a log on your computer you can read and
 clear. While the app is locked it refuses everything. Switching the bridge
 off, or revoking an assistant under **Paired assistants**, stops its calls in
 progress on the server.
+
+### Changing a server, with your permission (1.7.0)
+
+1.7.0 adds tools that change a server: `run_command` (one shell command),
+`write_file` (one text file), `service_action` (start, stop, restart or reload
+a systemd unit) and `run_on_hosts` (one command on 2 to 10 servers), and a
+terminal (`open_terminal`, `send_input`, `read_screen`, `close_terminal`).
+**All of it is off.** A server you shared stays read-only until you switch on,
+for that server, in its edit screen or with the settings button on its row in
+**Shared hosts**:
+
+- **Let the assistant request changes.** Off by default. With it on, the
+  assistant can ask; nothing happens until you answer, except the two things
+  you can set up beforehand (allowed commands and "Allow for a while", below).
+  Switching it on asks you to confirm and lists any allowed commands that
+  will come into force.
+- **Allowed commands**, beneath it: commands that run on that server
+  **without asking you**, when the assistant asks `run_command` for exactly
+  that text on that one server (compared character for character after
+  trimming white space at the ends: nothing partial, no patterns, never for
+  `run_on_hosts`). Add only commands you always want run. Each is shown in
+  full. An entry is refused if it holds a line break, a control character, a
+  space that is not a plain space, a character that changes the reading
+  direction, an invisible or other format character, a private-use or
+  unassigned code point, or a combining mark that can hide or change the
+  character before it (any on a plain ASCII character, the general accent,
+  overlay and enclosing marks wherever they are, and a third mark in a row),
+  because the text you see might not be what runs. At most 50, each at most
+  4096 characters.
+- **Full control terminal**, beneath it, off by default. Switching it on asks
+  you to confirm. See below.
+
+Turning a server back to read-only, or un-sharing it, keeps the list and the
+terminal switch stored but inert. Switching changes on again brings them back
+into force, so the confirmation lists the commands again, and if the terminal
+switch was on you are asked to confirm the terminal again too (Cancel leaves
+it off).
+
+**How an approval looks.** A card appears over whatever you are doing in
+SecureShell Go, one at a time, with how many are waiting. It says which
+assistant asked, for which server, and what will happen: "Run this command?",
+"Create this file?", "Replace this file?", "Change a service?" or "Open a
+terminal for the assistant?". The command is shown in full, exactly as the
+shell will receive it, with line breaks, control characters, characters that
+change the reading direction, invisible and other format characters,
+look-alike spaces, private-use and unassigned code points and combining marks
+that could hide a character made visible (`\n`, `\x1b`, `[U+202E]`,
+`[U+0301]`) and explained in a legend under it. The same string is shown,
+matched against the allowed list and run. For a file it shows the path, the
+size, whether it replaces a file and a preview or a diff; when the preview is
+not the whole change, a warning at the top of the card says so. The buttons
+are **Deny**, **Allow once** and, only if you turned it on, **Allow for N
+minutes**. Deny has the focus, so Enter and Space deny; the Allow buttons stay
+disabled for a second after a card appears; Escape or Back denies; a click
+beside the card does nothing. Not answering for 2 minutes is a no. Locking
+the app takes waiting cards away (they count as withdrawn), and a locked app
+shows no card and refuses.
+
+**The card does not alert you.** It does not flash the window, make a sound
+or ask for attention. If SecureShell Go is minimised or behind other windows
+when an assistant asks, you will not see the card, and after 2 minutes the
+change is denied. Keep the app in view while you expect a change.
+
+**Allow for a while.** Settings → AI Bridge → **Allow for a while** is Off, 5,
+15 or 60 minutes (off by default). Only when it is on does the card offer the
+extra button. Pressing it lets that assistant make any change on that server
+with any of the four change tools, not just the one on the card, without
+asking you again until the time runs out (for `run_on_hosts`, only when it
+holds one for every server named). It is kept in memory only, and ends when
+the time does, when you press **Stop now** under **Approvals in force**, when
+you switch **Allow for a while** off, when the bridge is switched off, the
+assistant is revoked, the app locks, the app restarts, or the server is
+deleted, un-shared, stepped down or edited so that it points elsewhere (its
+address, port, user name, connection type, or which jump host it goes
+through). Choosing a different length leaves approvals already given as they
+are. It never covers a terminal.
+
+**The terminal.** With **Full control terminal** on for a server, the
+assistant can ask to open a terminal there. You get a card every time, and
+it says: "An approved terminal gives the AI assistant a live shell as the
+saved sign-in user on this host. It can type any command, including ones you
+never see on a card, read any file that user can read, and reach anything this
+host can reach, with no further questions. The blocked-path list does not
+apply inside a terminal. You can watch it, take over by typing, or stop it at
+any time." It is the one way an assistant can do what none of the other
+tools allow: interactive programs, any command without a card for each, and
+any file the sign-in user can read. It opens as a session tab with a banner
+(**Take over**, **Stop**); typing in it, or **Take over**, gives you the
+keyboard, after which the assistant can no longer type or read and the
+session stays open as yours. At most 2 assistant terminals are open at once,
+and one with no input or reads for 10 minutes is closed. Stop, closing its
+tab, switching the bridge off, a lock, revoking the assistant, or deleting
+the server, un-sharing it, stepping it down, switching its terminal off or
+pointing it elsewhere closes one the assistant still drives (one you took
+over stays open, except that Stop and closing its tab close it too);
+so does the connection dropping or its shell exiting. It uses a connection
+of its own that never carries your SSH agent or X11 windows, it is always the
+plain login shell (no tmux or screen session, so it cannot attach to one you
+left running, and never Mosh), and the server's startup command is not typed
+into it. Everything the assistant types is in **Activity** (secrets removed,
+cut to 500 characters); what the screen showed is not.
+
+Every change is recorded in **Activity** with how it was allowed (an allowed
+command, a timed approval, once, for a while, denied, timed out, withdrawn),
+and a change you approved that was then refused before it ran says "Approved,
+but not run". File contents and output are never recorded (an error message
+can quote a short error the server gave). Backups never carry any of these
+settings: an imported server has all of them off.
+
+No connection the bridge makes carries your SSH agent or X11 forwarding. A
+bridge call uses the session you already have open to that server only when
+neither that session nor the server forwards the agent or X11; otherwise it
+signs in on a connection of its own.
 
 The app never prompts for a bridge call: a server that needs a person to sign
 in (a locked vault, an unsaved passphrase, a login question, an unchecked
@@ -453,7 +567,8 @@ and reported, so what the app shows always matches what is stored; a revoke
 that cannot be saved says the pairing still works.
 
 Backups never carry AI access or bridge settings: an imported server always
-has AI access off, and importing keeps this computer's own bridge settings.
+has AI access off (and no allowed commands and no terminal), and importing
+keeps this computer's own bridge settings.
 
 Limits, plainly:
 
@@ -463,11 +578,36 @@ Limits, plainly:
   on a server can be read. For a hard guarantee, use a server account with
   limited read rights.
 - **Text on a server can contain instructions aimed at the assistant**, in a
-  log line or a file. Treat what an assistant does after reading
-  untrusted logs with care.
+  log line, a file, a command's output or a terminal screen. Treat what an
+  assistant does after reading untrusted text with care: the card is what
+  stops a change you did not intend, so read it.
+- **Allowed commands and "Allow for a while" skip the card.** That is what
+  they are for. Use them only for commands and servers you are sure of.
+- **An approved terminal can do anything the sign-in user can**, with no
+  further question, and the blocked-path list does not apply inside it (or to
+  commands). What the assistant's screen shows is sent to your AI provider;
+  only private-key blocks and secrets the app knows are removed from it, so a
+  key can still be read in pieces or encoded.
+- **The approval card does not alert you.** If the app is in the background
+  you will not notice it, and it is denied after 2 minutes.
+- **A stopped command is stopped, with caveats.** Its process group gets TERM,
+  then KILL 3 seconds later (on a server without `setsid`, only its main
+  process), but a program that moved itself into a session of its own
+  survives. A change can time out while waiting for a free slot, after you
+  approved it.
+- **A replaced file keeps its permissions and nothing else** (owner, access
+  lists and other hard links are not kept), and a change to a file made in the
+  same second with the same size after you were asked is not noticed.
+- **Changes need `/bin/sh` on the server.** Nothing of 1.7.0 has run on
+  Windows yet. Commands are quoted so that fish as a login shell reads them as
+  written, but that has not been run against a real fish. The bridge is not
+  on macOS or Android.
+- **The translations of the new 1.7.0 text were machine-written** and have
+  not been read by native speakers; the English text is the reference.
 - **The token in the assistant's configuration is a key to your shared
-  servers** while the app runs with the bridge on. Revoke the assistant if it
-  leaks.
+  servers** while the app runs with the bridge on and unlocked: whoever has it
+  can read, ask for changes, and use the allowed commands and any approval
+  for a while you gave that assistant. Revoke the assistant if it leaks.
 
 How it is built: [ARCHITECTURE.md](ARCHITECTURE.md#ai-bridge).
 
@@ -477,8 +617,9 @@ SecureShell Go collects nothing: no analytics, no ads, no account, no update
 check, and no Dhiva Labs server for anything to be sent to. Credentials stay
 on the device in the platform's protected storage, and the only hosts the app
 connects to are the ones you configure. The optional AI Bridge (Linux and
-Windows) gives what an assistant reads to that assistant on your computer,
-which sends it to its own provider; Dhiva Labs receives nothing. If you press
+Windows) gives what an assistant reads, and what its commands and terminal
+print, to that assistant on your computer, which sends it to its own
+provider; Dhiva Labs receives nothing. If you press
 **Connect Claude Code**, the app runs the `claude` program you installed, at
 your request, and hands it the pairing token; nothing goes to Dhiva Labs. Full text: [Privacy policy](docs/privacy-policy.md).
 

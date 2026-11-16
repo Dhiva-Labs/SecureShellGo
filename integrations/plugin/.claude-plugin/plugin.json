@@ -1,13 +1,13 @@
 {
   "name": "secureshellgo",
   "displayName": "SecureShell Go",
-  "version": "1.6.0",
-  "description": "Read-only access to your servers through the SecureShell Go AI Bridge: list hosts, read stats, services, logs and files by host name. The app keeps the keys.",
+  "version": "1.7.0",
+  "description": "Your servers through the SecureShell Go AI Bridge: list hosts, read stats, services, logs and files by host name, and, only where you allow it and with your approval in the app (or under rules you set beforehand), run commands, write files, restart services and open a terminal. The app keeps the keys.",
   "author": { "name": "Dhiva Labs", "url": "https://github.com/Dhiva-Labs" },
   "homepage": "https://github.com/Dhiva-Labs/SecureShellGo",
   "repository": "https://github.com/Dhiva-Labs/SecureShellGo",
   "license": "MIT",
-  "keywords": ["ssh", "sftp", "servers", "mcp", "read-only"],
+  "keywords": ["ssh", "sftp", "servers", "mcp", "approval", "terminal"],
   "userConfig": {
     "bridge_token": {
       "type": "string",

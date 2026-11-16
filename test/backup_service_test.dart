@@ -635,6 +635,149 @@ void main() {
       expect((json['settings'] as Map)['keepScreenAwake'], isTrue);
     });
 
+    test('a round trip keeps every non-bridge setting, copyOnSelect included',
+        () async {
+      const mine = AppSettings(
+        terminalFontSize: 17,
+        colorScheme: TerminalColorScheme.nord,
+        keepScreenAwake: true,
+        showHiddenFilesByDefault: true,
+        cursorBlink: true,
+        copyOnSelect: true,
+        scrollbackLines: 50000,
+        editorFontSize: 19,
+        diagnosticsLog: true,
+        localeOverride: 'pt-BR',
+        bridgeEnabled: true,
+        bridgeTimedApprovalMinutes: 15,
+      );
+      await source.settingsStore.save(mine);
+      final file = await source.service.export(
+        passphrase: pass,
+        includeCredentials: false,
+        useIsolate: false,
+      );
+      final target = await emptyTarget();
+      final payload = await target.service.readBackup(
+        file: file,
+        passphrase: pass,
+        useIsolate: false,
+      );
+      await target.service.apply(payload: payload, mode: ImportMode.replace);
+      await target.settingsStore.ensureLoaded();
+      expect(
+        target.settingsStore.current.toJson(),
+        mine.withBridgeDefaults().toJson(),
+      );
+      expect(target.settingsStore.current.copyOnSelect, isTrue);
+    });
+
+    test('change access, allowed commands and terminal never travel', () async {
+      await source.hostStore.add(
+        buildHost('h2', label: 'Db').copyWith(
+          aiAccess: HostAiAccess.askToChange,
+          aiAllowedCommands: ['uptime'],
+          aiTerminal: true,
+        ),
+      );
+      await source.settingsStore.save(
+        const AppSettings(bridgeEnabled: true, bridgeTimedApprovalMinutes: 15),
+      );
+      final file = await source.service.export(
+        passphrase: pass,
+        includeCredentials: false,
+        useIsolate: false,
+      );
+      final plaintext = await BackupCrypto.decrypt(
+        file: file,
+        passphrase: pass,
+        useIsolate: false,
+      );
+      final text = utf8.decode(plaintext);
+      expect(text, isNot(contains('askToChange')));
+      expect(text, isNot(contains('aiAllowedCommands')));
+      expect(text, isNot(contains('aiTerminal')));
+      expect(text, isNot(contains('TimedApproval')));
+
+      for (final mode in ImportMode.values) {
+        final target = await emptyTarget();
+        await target.settingsStore.save(
+          const AppSettings(bridgeTimedApprovalMinutes: 5),
+        );
+        final payload = await target.service.readBackup(
+          file: file,
+          passphrase: pass,
+          useIsolate: false,
+        );
+        await target.service.apply(payload: payload, mode: mode);
+        final restored = (await target.hostStore.get('h2'))!;
+        expect(restored.aiAccess, HostAiAccess.off, reason: '$mode');
+        expect(restored.aiAllowedCommands, isEmpty, reason: '$mode');
+        expect(restored.aiTerminal, isFalse, reason: '$mode');
+        await target.settingsStore.ensureLoaded();
+        expect(
+          target.settingsStore.current.bridgeTimedApprovalMinutes,
+          5,
+          reason: '$mode keeps this device\'s value',
+        );
+      }
+    });
+
+    test('a hand-edited file or in-code payload cannot bring them in',
+        () async {
+      final payload = BackupPayload.decode(
+        Uint8List.fromList(
+          utf8.encode(
+            jsonEncode({
+              'app': BackupPayload.appId,
+              'payloadVersion': BackupPayload.payloadVersion,
+              'hosts': [
+                {
+                  'id': 'h1',
+                  'hostname': 'a.example.com',
+                  'username': 'dev',
+                  'aiAccess': 'askToChange',
+                  'aiAllowedCommands': ['rm -rf /tmp/x'],
+                  'aiTerminal': true,
+                },
+              ],
+              'settings': {'bridgeTimedApprovalMinutes': 60},
+            }),
+          ),
+        ),
+      );
+      final h = payload.hosts.single;
+      expect(h.aiAccess, HostAiAccess.off);
+      expect(h.aiAllowedCommands, isEmpty);
+      expect(h.aiTerminal, isFalse);
+      expect(payload.settings.bridgeTimedApprovalMinutes, 0);
+
+      final target = await emptyTarget();
+      await target.service.apply(
+        payload: BackupPayload(
+          hosts: [
+            buildHost('h1').copyWith(
+              aiAccess: HostAiAccess.askToChange,
+              aiAllowedCommands: ['uptime'],
+              aiTerminal: true,
+            ),
+          ],
+          snippets: const [],
+          tunnels: const [],
+          bookmarks: const [],
+          settings: const AppSettings(bridgeTimedApprovalMinutes: 60),
+          includesCredentials: false,
+        ),
+        mode: ImportMode.replace,
+      );
+      final stored = (await target.hostStore.get('h1'))!;
+      expect(stored.aiAccess, HostAiAccess.off);
+      expect(stored.aiAllowedCommands, isEmpty);
+      expect(stored.aiTerminal, isFalse);
+      await target.settingsStore.ensureLoaded();
+      expect(target.settingsStore.current.bridgeTimedApprovalMinutes, 0);
+    });
+
     test('a backup made with access on restores with access off', () async {
       await withBridgeOn(source);
       final file = await source.service.export(

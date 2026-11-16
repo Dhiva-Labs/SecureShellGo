@@ -8,9 +8,11 @@ import '../../models/host_ai_access.dart';
 import '../../services/bridge/bridge_audit.dart';
 import '../../services/bridge/bridge_cli_connector.dart';
 import '../../services/bridge/bridge_client_store.dart';
+import '../../services/bridge/bridge_grants.dart';
 import '../../services/bridge/bridge_paths.dart';
 import '../../services/bridge/bridge_service.dart';
 import '../../services/host_store.dart';
+import '../../services/visible_text.dart';
 import '../../theme.dart';
 import '../bridge_audit_screen.dart';
 import '../bridge_connect_screen.dart';
@@ -34,6 +36,7 @@ class AiBridgeSettingsSection extends StatefulWidget {
     required this.audit,
     this.hostStore,
     this.connector,
+    this.clock = DateTime.now,
   });
 
   final AppSettings settings;
@@ -50,6 +53,9 @@ class AiBridgeSettingsSection extends StatefulWidget {
   /// one-click button is never offered.
   final ClaudeCliConnector? connector;
 
+  /// The time "Approvals in force" counts down against.
+  final DateTime Function() clock;
+
   @override
   State<AiBridgeSettingsSection> createState() =>
       _AiBridgeSettingsSectionState();
@@ -62,6 +68,13 @@ class _AiBridgeSettingsSectionState extends State<AiBridgeSettingsSection> {
   ClaudeCliPresence? _claude;
   StreamSubscription<List<BridgeClient>>? _pairedWatch;
   StreamSubscription<String?>? _auditWatch;
+
+  /// One subscription's stream for the whole life of the section: a new
+  /// stream per build would resubscribe on every rebuild.
+  late final Stream<List<BridgeGrant>> _grantStream = widget.bridge.grants.changes;
+
+  /// Redraws "time left" on the approvals in force, at least every 30 s.
+  Timer? _grantTicker;
 
   @override
   void initState() {
@@ -80,6 +93,9 @@ class _AiBridgeSettingsSectionState extends State<AiBridgeSettingsSection> {
     });
     unawaited(_countHosts());
     _claude = widget.connector?.find();
+    _grantTicker = Timer.periodic(const Duration(seconds: 15), (_) {
+      if (mounted) setState(() {});
+    });
   }
 
   Future<void> _countHosts() async {
@@ -105,6 +121,7 @@ class _AiBridgeSettingsSectionState extends State<AiBridgeSettingsSection> {
   void dispose() {
     unawaited(_pairedWatch?.cancel());
     unawaited(_auditWatch?.cancel());
+    _grantTicker?.cancel();
     super.dispose();
   }
 
@@ -302,6 +319,125 @@ class _AiBridgeSettingsSectionState extends State<AiBridgeSettingsSection> {
     );
   }
 
+  /// "Allow for a while": which lengths the approval card may offer.
+  Widget _timedChoice(BuildContext context) {
+    final l10n = context.l10n;
+    final theme = Theme.of(context);
+    final current = widget.settings.bridgeTimedApprovalMinutes;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Icon(Icons.timer_outlined),
+              const SizedBox(width: 16),
+              Expanded(
+                child: Text(
+                  l10n.settingsBridgeTimed,
+                  style: theme.textTheme.titleMedium,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 4),
+          Padding(
+            padding: const EdgeInsetsDirectional.only(start: 40),
+            child: Text(
+              l10n.settingsBridgeTimedHelp,
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: theme.colorScheme.onSurfaceVariant,
+              ),
+            ),
+          ),
+          const SizedBox(height: 8),
+          Padding(
+            padding: const EdgeInsetsDirectional.only(start: 40),
+            child: Wrap(
+              spacing: 8,
+              runSpacing: 4,
+              children: [
+                for (final minutes in AppSettings.bridgeTimedApprovalChoices)
+                  ChoiceChip(
+                    key: ValueKey('bridge-timed-$minutes'),
+                    label: Text(
+                      minutes == 0
+                          ? l10n.settingsBridgeTimedOff
+                          : l10n.settingsBridgeTimedMinutes(minutes),
+                    ),
+                    selected: current == minutes,
+                    onSelected: (_) => unawaited(
+                      _save((s) => s.copyWith(bridgeTimedApprovalMinutes: minutes)),
+                    ),
+                  ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// "Approvals in force": the time-limited approvals now, each with a way
+  /// to end it. Absent when there are none.
+  Widget _grants(BuildContext context) {
+    final l10n = context.l10n;
+    final theme = Theme.of(context);
+    return StreamBuilder<List<BridgeGrant>>(
+      initialData: widget.bridge.grants.current,
+      stream: _grantStream,
+      builder: (context, snapshot) {
+        final now = widget.clock();
+        final grants = [
+          for (final g in snapshot.data ?? const <BridgeGrant>[])
+            if (g.remainingAt(now) > Duration.zero) g,
+        ];
+        if (grants.isEmpty) return const SizedBox.shrink();
+        return Column(
+          key: const ValueKey('bridge-grants'),
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            _subHeading(context, l10n.settingsBridgeGrants),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 4),
+              child: Text(
+                l10n.settingsBridgeGrantsHelp,
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: theme.colorScheme.onSurfaceVariant,
+                ),
+              ),
+            ),
+            for (final g in grants)
+              ListTile(
+                key: ValueKey('bridge-grant-${g.clientId}-${g.hostId}'),
+                leading: const Icon(Icons.timer_outlined),
+                title: Text(
+                  l10n.settingsBridgeGrantTitle(
+                    visibleLine(g.clientName ?? g.clientId, maxChars: 60),
+                    visibleLine(g.hostName ?? g.hostId, maxChars: 60),
+                  ),
+                ),
+                subtitle: Text(_timeLeft(l10n, g.remainingAt(now))),
+                trailing: TextButton(
+                  onPressed: () => widget.bridge.grants.revoke(
+                    g.clientId,
+                    g.hostId,
+                  ),
+                  child: Text(l10n.settingsBridgeGrantStop),
+                ),
+              ),
+          ],
+        );
+      },
+    );
+  }
+
+  static String _timeLeft(AppLocalizations l10n, Duration left) {
+    if (left < const Duration(minutes: 1)) return l10n.settingsBridgeGrantLessThanMinute;
+    return l10n.settingsBridgeGrantLeft((left.inSeconds / 60).ceil());
+  }
+
   Widget _subHeading(BuildContext context, String text) {
     final theme = Theme.of(context);
     return Padding(
@@ -412,6 +548,8 @@ class _AiBridgeSettingsSectionState extends State<AiBridgeSettingsSection> {
           value: settings.bridgeReadSensitivePaths,
           onChanged: (on) => unawaited(_setSensitive(on)),
         ),
+        _timedChoice(context),
+        _grants(context),
         _subHeading(context, l10n.settingsBridgeBlocked),
         Padding(
           padding: const EdgeInsets.fromLTRB(16, 0, 16, 4),

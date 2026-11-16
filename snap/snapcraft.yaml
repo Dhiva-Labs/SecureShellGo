@@ -21,7 +21,7 @@
 name: secureshellgo
 title: SecureShell Go
 base: core22
-version: '1.6.0'
+version: '1.7.0'
 summary: SSH terminal and SFTP client with strict host-key verification
 description: |
   SecureShell Go is a fast, security-first SSH terminal and SFTP client for
@@ -40,8 +40,10 @@ description: |
 
   On Linux you can switch on an optional AI Bridge (off by default) that lets
   an MCP-compatible AI assistant on your computer read from servers you
-  choose. It is read-only and never receives passwords or keys. What the
-  assistant reads goes to that assistant's own provider.
+  choose. It never receives passwords or keys. Where you allow it, it can
+  also make changes, each needing your approval in the app unless you set up
+  an exception beforehand. What the assistant reads, and what its commands
+  print, goes to that assistant's own provider.
 grade: stable
 confinement: strict
 icon: snap/gui/icon.png

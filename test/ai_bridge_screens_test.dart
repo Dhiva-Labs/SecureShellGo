@@ -25,8 +25,8 @@ import 'package:secure_shell_go/services/known_hosts_service.dart';
 import 'package:secure_shell_go/services/settings_store.dart';
 
 import 'support/settle.dart';
-import 'support/temp_dir.dart';
 import 'support/tracked_stores.dart';
+import 'support/temp_dir.dart';
 
 BridgeConnections _connections() => BridgeConnections(
   openTransport: (_) => null,
@@ -172,6 +172,7 @@ void main() {
     Size size = const Size(800, 3000),
     double textScale = 1,
     bool failSave = false,
+    DateTime Function()? clock,
   }) async {
     tester.view.physicalSize = size;
     tester.view.devicePixelRatio = 1;
@@ -201,6 +202,7 @@ void main() {
                 clients: clients,
                 audit: log ?? audit,
                 hostStore: hostStore,
+                clock: clock ?? DateTime.now,
               ),
             ),
           ),
@@ -248,7 +250,7 @@ void main() {
       expect(switchTile(tester, 'AI Bridge').value, isFalse);
       expect(switchTile(tester, 'Show address and username').value, isFalse);
       expect(switchTile(tester, 'Read sensitive paths').value, isFalse);
-      expect(find.text('Off'), findsOneWidget);
+      expect(find.text('Off'), findsNWidgets(2)); // status + timed choice
       expect(find.text('Extra blocked paths'), findsOneWidget);
       expect(find.text('Paired assistants'), findsOneWidget);
       expect(find.text('No assistant is paired yet.'), findsOneWidget);
@@ -630,6 +632,163 @@ void main() {
     });
   });
 
+  group('timed approvals and approvals in force', () {
+    ChoiceChip chip(WidgetTester tester, int minutes) => tester.widget(
+      find.byKey(ValueKey('bridge-timed-$minutes')),
+    );
+
+    testWidgets('Allow for a while is off, and says what it adds', (
+      tester,
+    ) async {
+      await pumpSection(tester, hostStore: hostStore);
+      expect(find.text('Allow for a while'), findsOneWidget);
+      expect(
+        find.text('Only adds a button to approval cards. Off: cards offer '
+            'Allow once only.'),
+        findsOneWidget,
+      );
+      expect(chip(tester, 0).selected, isTrue);
+      expect(chip(tester, 15).selected, isFalse);
+      expect(find.text('5 minutes'), findsOneWidget);
+      expect(find.text('60 minutes'), findsOneWidget);
+    });
+
+    for (final minutes in [5, 15, 60, 0]) {
+      testWidgets('choosing $minutes writes the setting', (tester) async {
+        final current = await pumpSection(
+          tester,
+          settings: AppSettings(
+            bridgeTimedApprovalMinutes: minutes == 0 ? 15 : 0,
+          ),
+        );
+        await tester.tap(find.byKey(ValueKey('bridge-timed-$minutes')));
+        await tester.pump();
+        expect(current.value.bridgeTimedApprovalMinutes, minutes);
+        expect(chip(tester, minutes).selected, isTrue);
+      });
+    }
+
+    testWidgets('a failed save says so and the choice stays', (tester) async {
+      final current = await pumpSection(tester, failSave: true);
+      await tester.tap(find.byKey(const ValueKey('bridge-timed-15')));
+      await tester.pump();
+      expect(current.value.bridgeTimedApprovalMinutes, 0);
+      expect(chip(tester, 0).selected, isTrue);
+      expect(find.byType(SnackBar), findsOneWidget);
+    });
+
+    testWidgets('no list while there are no approvals', (tester) async {
+      await pumpSection(tester);
+      expect(find.byKey(const ValueKey('bridge-grants')), findsNothing);
+      expect(find.text('Approvals in force'), findsNothing);
+    });
+
+    testWidgets('lists approvals, updates, and Stop now revokes', (
+      tester,
+    ) async {
+      var skew = Duration.zero;
+      await pumpSection(tester, clock: () => DateTime.now().add(skew));
+      bridge.grants.grant(
+        'c1',
+        'h1',
+        const Duration(minutes: 10),
+        clientName: 'Desk assistant',
+        hostName: 'web-1',
+      );
+      await tester.pump();
+      await tester.pump();
+      expect(find.text('Approvals in force'), findsOneWidget);
+      expect(find.text('Desk assistant on web-1'), findsOneWidget);
+      expect(find.text('10 minutes left'), findsOneWidget);
+
+      skew = const Duration(minutes: 4);
+      await tester.pump(const Duration(seconds: 30));
+      expect(find.text('6 minutes left'), findsOneWidget);
+
+      skew = const Duration(minutes: 9, seconds: 30);
+      await tester.pump(const Duration(seconds: 30));
+      expect(find.text('Less than a minute left'), findsOneWidget);
+
+      await tester.tap(find.text('Stop now'));
+      await tester.pump();
+      await tester.pump();
+      expect(bridge.grants.current, isEmpty);
+      expect(find.byKey(const ValueKey('bridge-grants')), findsNothing);
+    });
+
+    testWidgets('an approval that ends by itself leaves the list', (
+      tester,
+    ) async {
+      await pumpSection(tester);
+      bridge.grants.grant(
+        'c1',
+        'h1',
+        const Duration(minutes: 10),
+        clientName: 'A',
+        hostName: 'B',
+      );
+      await tester.pump();
+      await tester.pump();
+      expect(find.text('A on B'), findsOneWidget);
+      bridge.grants.revokeHost('h1');
+      await tester.pump();
+      await tester.pump();
+      expect(find.text('A on B'), findsNothing);
+    });
+
+    testWidgets('names with control characters are shown visibly', (
+      tester,
+    ) async {
+      await pumpSection(tester);
+      bridge.grants.grant(
+        'c1',
+        'h1',
+        const Duration(minutes: 10),
+        clientName: 'Evil\u202E',
+        hostName: 'web\n1',
+      );
+      await tester.pump();
+      await tester.pump();
+      expect(find.text(r'Evil[U+202E] on web\n1'), findsOneWidget);
+      bridge.grants.revokeAll();
+    });
+
+    testWidgets('fit a narrow window at large text, and a wide one', (
+      tester,
+    ) async {
+      for (final (size, scale) in [
+        (const Size(320, 568), 1.5),
+        (const Size(1920, 1080), 1.0),
+      ]) {
+        await pumpSection(tester, size: size, textScale: scale);
+        bridge.grants.grant(
+          'c1',
+          'h1',
+          const Duration(minutes: 10),
+          clientName: 'A very long assistant name ${'x' * 40}',
+          hostName: 'a-very-long-host-name-${'y' * 40}',
+        );
+        await tester.pump();
+        await tester.pump();
+        expect(tester.takeException(), isNull);
+        bridge.grants.revokeAll();
+        await tester.pump();
+      }
+    });
+
+    testWidgets('the consent text says what can now be allowed per host', (
+      tester,
+    ) async {
+      await pumpSection(tester);
+      await tester.tap(find.byType(Switch).first);
+      await settle(tester);
+      expect(find.textContaining('host by host'), findsOneWidget);
+      expect(find.textContaining('allowed list'), findsOneWidget);
+      expect(find.textContaining('live shell'), findsOneWidget);
+      expect(find.textContaining('off until you switch it on'), findsOneWidget);
+    });
+  });
+
   group('pairing', () {
     const missing = BridgeLauncherCommand(
       command: '/opt/app/secureshellgo-mcp',
@@ -975,6 +1134,58 @@ void main() {
       expect(find.text('blocked_path'), findsOneWidget);
       expect(find.text('it broke'), findsOneWidget);
       expect(find.textContaining('Desk assistant'), findsNWidgets(3));
+    });
+
+    testWidgets('shows how each change was allowed', (tester) async {
+      for (final approval in BridgeAuditApproval.values) {
+        await tester.runAsync(
+          () => audit.record(
+            client: 'Desk assistant',
+            host: 'web',
+            tool: 'run_command',
+            args: {'n': approval.index},
+            outcome: BridgeAuditOutcome.ok,
+            ms: 1,
+            approval: approval,
+          ),
+        );
+      }
+      await pumpAudit(tester, size: const Size(800, 3000));
+      for (final label in [
+        'Allowed: command on the allowed list',
+        'Allowed: timed approval in force',
+        'Approved once',
+        'Approved for a while',
+        'Denied',
+        'Timed out: not answered, so denied',
+        'Withdrawn while waiting for an answer',
+      ]) {
+        expect(find.text(label), findsOneWidget, reason: label);
+      }
+      expect(find.byKey(const ValueKey('audit-approval')), findsNWidgets(7));
+    });
+
+    testWidgets('an approved change that never ran is not read as having run',
+        (tester) async {
+      await tester.runAsync(
+        () => audit.record(
+          client: 'Desk assistant',
+          host: 'web',
+          tool: 'run_command',
+          args: const {},
+          outcome: BridgeAuditOutcome.refused,
+          detail: '${BridgeTools.refusedAfterApprovalPrefix}host_not_available',
+          ms: 1,
+          approval: BridgeAuditApproval.once,
+        ),
+      );
+      await pumpAudit(tester);
+      expect(find.text('Approved once'), findsOneWidget);
+      expect(
+        find.text('Approved, but not run: host_not_available'),
+        findsOneWidget,
+      );
+      expect(find.textContaining('refused_after_approval'), findsNothing);
     });
 
     testWidgets('shows new activity while it is open', (tester) async {

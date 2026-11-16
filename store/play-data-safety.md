@@ -24,16 +24,20 @@ there.
 
 ---
 
-## The AI Bridge (1.6.0): not available on Android
+## The AI Bridge (1.6.0, extended in 1.7.0): not available on Android
 
 Version 1.6.0 adds an optional AI Bridge on Linux and Windows, which lets an
-AI assistant on the same computer read from servers the user shares. It is
+AI assistant on the same computer read from servers the user shares; 1.7.0
+lets it also make changes with the user's approval, and none of that is on
+Android either. It is
 not available in the Android app. Its Dart code is compiled into every
 build, Android included, but it can never run there: `BridgeService.supported`
 is true only on Linux and Windows, so on Android `main.dart` constructs no
 bridge, nothing listens, no launcher ships, and the Settings section and the
-per-host "AI access" switch are not shown. Nothing was added to the Android
-manifest, so there is no new permission. Every answer below is unchanged. The
+per-host AI switches ("Share with AI assistants" and the 1.7.0 ones beneath
+it) are not shown. Nothing was added to the Android
+manifest, so there is no new permission. Every answer below is unchanged in
+1.7.0. The
 privacy policy covers the bridge in its own section.
 
 ---

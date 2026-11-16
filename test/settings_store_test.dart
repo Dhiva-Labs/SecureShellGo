@@ -422,6 +422,72 @@ void main() {
       );
     });
 
+    test('bridgeTimedApprovalMinutes accepts 0, 5, 15 and 60 only', () {
+      expect(const AppSettings().bridgeTimedApprovalMinutes, 0);
+      expect(
+        const AppSettings().toJson().containsKey('bridgeTimedApprovalMinutes'),
+        isFalse,
+      );
+      for (final ok in [0, 5, 15, 60]) {
+        final s = const AppSettings().copyWith(bridgeTimedApprovalMinutes: ok);
+        expect(s.bridgeTimedApprovalMinutes, ok);
+        expect(
+          AppSettings.fromJson(s.toJson()).bridgeTimedApprovalMinutes,
+          ok,
+        );
+      }
+      for (final bad in [-5, 1, 10, 61, 3600]) {
+        expect(
+          const AppSettings()
+              .copyWith(bridgeTimedApprovalMinutes: bad)
+              .bridgeTimedApprovalMinutes,
+          0,
+        );
+        expect(
+          AppSettings.fromJson({'bridgeTimedApprovalMinutes': bad})
+              .bridgeTimedApprovalMinutes,
+          0,
+        );
+      }
+      expect(
+        AppSettings.fromJson({'bridgeTimedApprovalMinutes': '15'})
+            .bridgeTimedApprovalMinutes,
+        0,
+      );
+      // A double never counts, not even a whole one: this app writes ints.
+      for (final bad in <Object?>[15.0, 15.7, 5.2, 60.0, 1e300, true, null]) {
+        expect(
+          AppSettings.fromJson({'bridgeTimedApprovalMinutes': bad})
+              .bridgeTimedApprovalMinutes,
+          0,
+          reason: '$bad',
+        );
+      }
+      expect(
+        AppSettings.fromJson(
+          jsonDecode('{"bridgeTimedApprovalMinutes": 15.7}')
+              as Map<String, dynamic>,
+        ).bridgeTimedApprovalMinutes,
+        0,
+      );
+      expect(
+        AppSettings.fromJson({'bridgeTimedApprovalMinutes': 1 << 62})
+            .bridgeTimedApprovalMinutes,
+        0,
+      );
+    });
+
+    test('bridgeTimedApprovalMinutes survives the helpers', () {
+      final on = const AppSettings().copyWith(bridgeTimedApprovalMinutes: 15);
+      expect(on.copyWith(keepScreenAwake: true).bridgeTimedApprovalMinutes, 15);
+      expect(on.withLocaleOverride('pt-BR').bridgeTimedApprovalMinutes, 15);
+      expect(on.withBridgeDefaults().bridgeTimedApprovalMinutes, 0);
+      final base = const AppSettings(keepScreenAwake: true);
+      final merged = base.withBridgeFrom(on);
+      expect(merged.bridgeTimedApprovalMinutes, 15);
+      expect(merged.keepScreenAwake, isTrue);
+    });
+
     test('SettingsStore persists them across a reload', () async {
       final store = SettingsStore(file: storeFile);
       await store.save(
@@ -496,12 +562,14 @@ void main() {
       bridgeShowAddress: true,
       bridgeReadSensitivePaths: true,
       bridgeExtraBlockedPaths: ['/x'],
+      bridgeTimedApprovalMinutes: 15,
     );
     const bridgeKeys = {
       'bridgeEnabled',
       'bridgeShowAddress',
       'bridgeReadSensitivePaths',
       'bridgeExtraBlockedPaths',
+      'bridgeTimedApprovalMinutes',
     };
 
     test('the sample really sets every field to a non-default value', () {

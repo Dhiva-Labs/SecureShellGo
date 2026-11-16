@@ -1,8 +1,14 @@
 # SecureShell Go plugin for Claude Code
 
-Gives Claude Code read-only access to your servers through the SecureShell Go
-AI Bridge, and a skill that tells it how to use the bridge safely. The plugin
-holds no keys: the app keeps them.
+Gives Claude Code access to your servers through the SecureShell Go AI
+Bridge, and a skill that tells it how to use the bridge safely. It can read
+from the servers you share. Since 1.7.0 it can also change a server
+(`run_command`, `write_file`, `service_action`, `run_on_hosts`) and open a
+terminal (`open_terminal`, `send_input`, `read_screen`, `close_terminal`), but
+only on a host where you allowed that, and only with your approval in the
+app or under rules you set up beforehand: see "What it can change, and where
+you allow it" below. The plugin holds
+no keys: the app keeps them.
 
 It contains:
 
@@ -84,7 +90,8 @@ Use the config snippets in `../clients/`.
 
 Then, whichever route: tick the hosts the assistant may read under **Shared
 hosts** (Settings → AI Bridge, "Shared hosts — N of M"), or edit a server and
-switch on "AI access (read-only)". Start a new Claude Code session afterwards.
+switch on "Share with AI assistants". Start a new Claude Code session
+afterwards.
 
 ### Before this release is published
 
@@ -93,6 +100,36 @@ branch. Before that, add the marketplace from a local checkout:
 `claude plugin marketplace add ./path/to/SecureShellGo`. (One click only
 adds the GitHub source, and says where the plugin comes from if the
 `dhiva-labs` marketplace already points elsewhere.)
+
+## What it can change, and where you allow it
+
+Everything below is off until you switch it on, and a server you only shared
+is still read-only.
+
+- **"Let the assistant request changes"**, per host, in the host's edit
+  screen or the settings button of its row in **Shared hosts**. With it on,
+  the plugin's `run_command`, `write_file`, `service_action` and
+  `run_on_hosts` can ask to change that host. Each ask shows you a card in
+  SecureShell Go with the exact command, or a file's path, size and preview;
+  you answer Deny (the default), Allow once, or, if you chose a time under
+  Settings → AI Bridge → **Allow for a while**, Allow for that many minutes,
+  which lets that assistant make any change on that host without asking
+  until the time runs out (never a terminal). No answer within two minutes is
+  a no. The card does not alert you: if SecureShell Go is in the background
+  you will not see it, and it is denied.
+- **"Allowed commands"**, beneath it: commands that run without a card, when
+  the assistant asks `run_command` for exactly that text on that host alone.
+  Add only commands you always want run.
+- **"Full control terminal"**, beneath it: lets the assistant ask to open a
+  terminal you can watch, take over or stop. A card every time; once open,
+  what it types runs without asking again. Read the warning when you switch
+  it on.
+
+The skill tells the assistant to say what it is about to ask for and why, to
+ask for one change at a time, to stop if you deny, and never to ask you to
+turn any of these on. A server's text is still data, not instructions, but
+that is advice to a model and not enforcement: the card is what protects you.
+Backups never carry any of these settings.
 
 ## Launcher command
 
@@ -120,6 +157,11 @@ plugin starts them.
   default set, not a guarantee. For a hard guarantee, use a server account
   with limited read rights.
 - Text on a server can contain instructions aimed at the assistant.
-- Version 1.6.0 can only read. Nothing it can call changes a server.
+- Version 1.7.0 can change a server only through the tools and settings
+  above, each change with your approval or under a setting you chose. Allowed
+  commands and "Allow for a while" run without a card, and an approved
+  terminal can run any command as the account the app signs in as, with no
+  further question and outside the blocked-path list. What a command or a
+  terminal prints is sent to your AI provider too.
 
 Other MCP-compatible clients: see `../clients/`.

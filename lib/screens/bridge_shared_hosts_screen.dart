@@ -5,7 +5,9 @@ import 'package:flutter/material.dart';
 import '../l10n/l10n.dart';
 import '../models/host.dart';
 import '../models/host_ai_access.dart';
+import '../models/host_ai_edit.dart';
 import '../services/host_store.dart';
+import '../widgets/host_ai_controls.dart';
 
 /// Which saved hosts an AI assistant may read: a checkbox per host, started
 /// from what each host already has and applied only on Save.
@@ -35,6 +37,11 @@ class SharedHostsChecklist extends StatefulWidget {
 class _SharedHostsChecklistState extends State<SharedHostsChecklist> {
   List<Host>? _hosts;
   final Set<String> _ticked = {};
+
+  /// The ticks as they were when the list was loaded: Save writes only the
+  /// hosts whose tick differs, so a checklist left open cannot re-share a
+  /// host that was un-shared elsewhere meanwhile.
+  final Set<String> _initial = {};
   bool _saving = false;
   bool _failed = false;
 
@@ -53,14 +60,19 @@ class _SharedHostsChecklistState extends State<SharedHostsChecklist> {
         ..clear()
         ..addAll([
           for (final h in hosts)
-            if (h.aiAccess == HostAiAccess.readOnly) h.id,
+            if (h.aiAccess != HostAiAccess.off) h.id,
         ]);
+      _initial
+        ..clear()
+        ..addAll(_ticked);
     });
   }
 
-  /// Writes exactly the ticked set: ticked hosts read-only, the rest off. A
-  /// host is read again just before it is written, so nothing else about it
-  /// (an edit made meanwhile included) is touched.
+  /// Writes the hosts whose tick the user changed: newly ticked read-only
+  /// (a host that has more by now keeps it), newly unticked off. A host is
+  /// read again just before it is written, so nothing else about it (an edit
+  /// made meanwhile included) is touched, and a host whose tick did not
+  /// change is not written at all.
   Future<void> _save() async {
     final hosts = _hosts;
     if (hosts == null) return;
@@ -70,11 +82,17 @@ class _SharedHostsChecklistState extends State<SharedHostsChecklist> {
     });
     try {
       for (final listed in hosts) {
+        final now = _ticked.contains(listed.id);
+        if (now == _initial.contains(listed.id)) continue;
         final current = await widget.hostStore.get(listed.id);
         if (current == null) continue;
-        final wanted = _ticked.contains(listed.id)
-            ? HostAiAccess.readOnly
-            : HostAiAccess.off;
+        // Un-sharing leaves the allowed commands and terminal setting stored,
+        // inert, so ticking the host again does not lose them.
+        final wanted = !now
+            ? HostAiAccess.off
+            : current.aiAccess == HostAiAccess.off
+                ? HostAiAccess.readOnly
+                : current.aiAccess;
         if (current.aiAccess != wanted) {
           await widget.hostStore.update(current.copyWith(aiAccess: wanted));
         }
@@ -96,6 +114,47 @@ class _SharedHostsChecklistState extends State<SharedHostsChecklist> {
     if (!mounted) return;
     setState(() => _saving = false);
     widget.onSaved();
+  }
+
+  /// The group, and what an assistant may do on the host now.
+  Widget? _subtitle(BuildContext context, Host host) {
+    final l10n = context.l10n;
+    final level = switch (host.aiAccess) {
+      HostAiAccess.off => null,
+      HostAiAccess.readOnly => l10n.bridgeHostLevelRead,
+      HostAiAccess.askToChange =>
+        host.aiTerminal
+            ? l10n.bridgeHostLevelTerminal
+            : l10n.bridgeHostLevelChanges,
+    };
+    final lines = [
+      if ((host.group ?? '').isNotEmpty) host.group!,
+      ?level,
+    ];
+    if (lines.isEmpty) return null;
+    return Text(lines.join(' · '));
+  }
+
+  /// The per-host sheet: request changes, allowed commands, terminal. Writes
+  /// only what was touched there, against the host as stored now.
+  Future<void> _openSheet(Host listed) async {
+    final stored = await widget.hostStore.get(listed.id);
+    if (stored == null || !mounted) return;
+    final saved = await showModalBottomSheet<bool>(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      builder: (context) =>
+          _HostAiSheet(host: stored, hostStore: widget.hostStore),
+    );
+    if (saved != true || !mounted) return;
+    final fresh = await widget.hostStore.get(listed.id);
+    if (fresh == null || !mounted) return;
+    // Only this host is refreshed: the ticks on the others stay as set.
+    setState(() {
+      final i = _hosts!.indexWhere((h) => h.id == fresh.id);
+      if (i >= 0) _hosts = [..._hosts!]..[i] = fresh;
+    });
   }
 
   @override
@@ -157,9 +216,17 @@ class _SharedHostsChecklistState extends State<SharedHostsChecklist> {
                           }
                         }),
                   title: Text(host.label),
-                  subtitle: (host.group ?? '').isEmpty
-                      ? null
-                      : Text(host.group!),
+                  subtitle: _subtitle(context, host),
+                  secondary: _initial.contains(host.id) &&
+                          host.aiAccess != HostAiAccess.off
+                      ? IconButton(
+                          tooltip: l10n.hostAiSheetOpen,
+                          icon: const Icon(Icons.tune),
+                          onPressed: _saving
+                              ? null
+                              : () => unawaited(_openSheet(host)),
+                        )
+                      : null,
                 ),
             ],
           ),
@@ -220,6 +287,104 @@ class BridgeSharedHostsScreen extends StatelessWidget {
             ),
           ),
         ),
+      ),
+    );
+  }
+}
+
+/// The controls of one shared host in a bottom sheet, with its own Save.
+class _HostAiSheet extends StatefulWidget {
+  const _HostAiSheet({required this.host, required this.hostStore});
+
+  final Host host;
+  final HostStore hostStore;
+
+  @override
+  State<_HostAiSheet> createState() => _HostAiSheetState();
+}
+
+class _HostAiSheetState extends State<_HostAiSheet> {
+  late final HostAiEdit _edit = HostAiEdit.of(widget.host);
+  bool _saving = false;
+  bool _failed = false;
+
+  Future<void> _save() async {
+    setState(() {
+      _saving = true;
+      _failed = false;
+    });
+    try {
+      final stored = await widget.hostStore.get(widget.host.id);
+      if (stored != null && _edit.touched) {
+        final next = _edit.applyTo(stored);
+        // Never raises a host the list shows as shared past what is stored:
+        // only what was touched here is written.
+        await widget.hostStore.update(next);
+      }
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _saving = false;
+        _failed = true;
+      });
+      return;
+    }
+    if (!mounted) return;
+    Navigator.of(context).pop(true);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final l10n = context.l10n;
+    final theme = Theme.of(context);
+    return SingleChildScrollView(
+      padding: EdgeInsets.fromLTRB(
+        16,
+        16,
+        16,
+        16 + MediaQuery.of(context).viewInsets.bottom,
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Text(
+            l10n.hostAiSheetTitle(widget.host.label),
+            style: theme.textTheme.titleMedium,
+          ),
+          const SizedBox(height: 8),
+          HostAiControls(
+            edit: _edit,
+            showShare: false,
+            onChanged: () => setState(() {}),
+            loadStored: () => widget.hostStore.get(widget.host.id),
+          ),
+          if (_failed)
+            Padding(
+              padding: const EdgeInsets.only(top: 8),
+              child: Text(
+                l10n.bridgeHostsSaveFailed,
+                style: TextStyle(color: theme.colorScheme.error),
+              ),
+            ),
+          const SizedBox(height: 12),
+          Wrap(
+            alignment: WrapAlignment.end,
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              TextButton(
+                onPressed: _saving
+                    ? null
+                    : () => Navigator.of(context).pop(false),
+                child: Text(MaterialLocalizations.of(context).cancelButtonLabel),
+              ),
+              FilledButton(
+                onPressed: _saving ? null : () => unawaited(_save()),
+                child: Text(l10n.bridgeHostsSave),
+              ),
+            ],
+          ),
+        ],
       ),
     );
   }

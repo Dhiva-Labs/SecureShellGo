@@ -12,6 +12,7 @@ import 'services/app_lock_controller.dart';
 import 'services/backup_service.dart';
 import 'services/bookmark_store.dart';
 import 'services/bridge/bridge_audit.dart';
+import 'services/bridge/bridge_change_tools.dart';
 import 'services/bridge/bridge_channel.dart';
 import 'services/bridge/bridge_cli_connector.dart';
 import 'services/bridge/bridge_client_store.dart';
@@ -19,6 +20,7 @@ import 'services/bridge/bridge_connections.dart';
 import 'services/bridge/bridge_locator.dart';
 import 'services/bridge/bridge_redactor.dart';
 import 'services/bridge/bridge_service.dart';
+import 'services/bridge/bridge_terminals.dart';
 import 'services/bridge/bridge_tools.dart';
 import 'services/composite_secure_storage.dart';
 import 'services/credential_store.dart';
@@ -40,6 +42,7 @@ import 'services/tunnel_runtime.dart';
 import 'services/tunnel_store.dart';
 import 'theme.dart';
 import 'widgets/app_lock_gate.dart';
+import 'widgets/bridge_approval_host.dart';
 import 'widgets/terminal_fonts.dart';
 import 'widgets/vault_passphrase_dialog.dart';
 
@@ -367,6 +370,11 @@ class _SecureShellGoAppState extends State<SecureShellGoApp> {
       : null;
   late final ClaudeCliConnector _claudeConnector = ClaudeCliConnector();
 
+  // The approval cards: an assistant's request to change something on a
+  // server, shown over whatever screen is in front, one at a time. Never
+  // while the app is locked. See `widgets/bridge_approval_host.dart`.
+  BridgeApprovalHost? _approvalHost;
+
   BridgeService _buildBridge() {
     final connections = BridgeConnections(
       openTransport: (hostId) {
@@ -391,6 +399,12 @@ class _SecureShellGoAppState extends State<SecureShellGoApp> {
         ),
       ).dial,
     );
+    // The assistant's full control terminals: real session tabs among the
+    // user's own, on a connection of their own dialled with nobody to ask.
+    final terminals = BridgeTerminals(
+      sessions: _sessions,
+      dial: connections.dialOwned,
+    );
     return BridgeService(
       settingsStore: _settingsStore,
       clients: _bridgeClients,
@@ -402,7 +416,21 @@ class _SecureShellGoAppState extends State<SecureShellGoApp> {
         connections: connections,
         redactor: BridgeRedactor(scrub: DiagnosticsLog.instance.scrubber.scrub),
         audit: _bridgeAudit,
+        changeTools: [
+          ...BridgeChangeTools(
+            redactor: BridgeRedactor(
+              scrub: DiagnosticsLog.instance.scrubber.scrub,
+            ),
+          ).build(),
+          terminals.openTool,
+        ],
+        terminalUseTools: terminals.useTools,
       ),
+      terminals: terminals,
+      // A lock withdraws pending approvals and ends time-limited ones.
+      appLockChanges: _appLock.changes.map((s) => s.isLocked).distinct(),
+      // A host un-shared, stepped down or re-pointed loses its approvals.
+      hostChanges: _hostStore.changes,
       createListener: (verify) async {
         final data = await AppDataPaths.resolveDirectory();
         return BridgeListener(
@@ -443,6 +471,16 @@ class _SecureShellGoAppState extends State<SecureShellGoApp> {
     _diagnosticsWatch = DiagnosticsLog.instance.follow(_settingsStore);
     // Starts listening only if the user switched the bridge on.
     unawaited(_bridge?.start());
+    final bridge = _bridge;
+    if (bridge != null) {
+      _approvalHost = BridgeApprovalHost(
+        navigatorKey: _navigatorKey,
+        approvals: bridge.approvals,
+        isLocked: () => _appLock.isLocked,
+        lockChanges: _appLock.changes.map((s) => s.isLocked).distinct(),
+        timedMinutes: () => _settingsStore.current.bridgeTimedApprovalMinutes,
+      )..start();
+    }
     _themeWatch = _settingsStore.changes.listen((settings) {
       if (settings.uiStyle == _uiStyle &&
           settings.themeBrightness == _themeBrightness &&
@@ -470,6 +508,7 @@ class _SecureShellGoAppState extends State<SecureShellGoApp> {
     _fleetPushRegistry.dispose();
     // Closes assistant connections and the SSH connections the bridge
     // dialled, and removes the endpoint file.
+    unawaited(_approvalHost?.dispose());
     final bridge = _bridge;
     if (bridge != null) {
       unawaited(bridge.dispose().whenComplete(_bridgeAudit.dispose));

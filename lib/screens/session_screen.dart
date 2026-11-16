@@ -6,6 +6,7 @@ import '../l10n/l10n.dart';
 import '../services/broadcast_input.dart';
 import '../services/display_hinge.dart';
 import '../services/fleet_push_run_registry.dart';
+import '../services/bridge/bridge_terminals.dart';
 import '../services/input_profile.dart';
 import '../services/keep_awake.dart';
 import '../services/layout_breakpoints.dart';
@@ -17,6 +18,7 @@ import '../services/terminal_workspace.dart';
 import '../services/transfer_hub.dart';
 import '../services/transfer_queue.dart';
 import '../services/tunnel_runtime.dart';
+import '../services/visible_text.dart';
 import '../theme.dart';
 import '../widgets/app_snack.dart';
 import '../widgets/hinge_split.dart';
@@ -73,6 +75,7 @@ class SessionsScreen extends StatefulWidget {
     this.autoOpenSnippetPicker = false,
     this.tunnels,
     this.fleetPushRegistry,
+    this.bridgeTerminals,
     KeepAwakeController? keepAwake,
   }) : keepAwake = keepAwake ?? const MethodChannelKeepAwake();
 
@@ -113,6 +116,10 @@ class SessionsScreen extends StatefulWidget {
   /// test, and any build without it wired in) just means that sheet never
   /// shows the banner.
   final FleetPushRunRegistry? fleetPushRegistry;
+
+  /// The AI Bridge's assistant terminals, for the Take over and Stop on a
+  /// session an assistant drives. Null where there is no bridge.
+  final BridgeTerminals? bridgeTerminals;
 
   /// Test seam; production leaves this to the default channel-backed one.
   final KeepAwakeController keepAwake;
@@ -649,6 +656,7 @@ class _SessionsScreenState extends State<SessionsScreen> {
       visible: visible,
       panes: panes,
       screenFocus: _screenFocus,
+      terminals: widget.bridgeTerminals,
       onClose: () => unawaited(_closeSession(entry)),
     );
   }
@@ -1236,6 +1244,7 @@ class _SessionPage extends StatefulWidget {
     required this.panes,
     required this.screenFocus,
     required this.onClose,
+    this.terminals,
   });
 
   final ManagedSession entry;
@@ -1256,6 +1265,9 @@ class _SessionPage extends StatefulWidget {
   /// Closes this session the way the app bar does — see
   /// `_SessionsScreenState._closeSession` — for the Close on its banner.
   final VoidCallback onClose;
+
+  /// For the banner of a session an AI assistant drives.
+  final BridgeTerminals? terminals;
 
   @override
   State<_SessionPage> createState() => _SessionPageState();
@@ -1475,6 +1487,7 @@ class _SessionPageState extends State<_SessionPage> {
         SessionBanners(
           session: entry,
           onCloseTab: widget.onClose,
+          terminals: widget.terminals,
         ),
         Expanded(
           child: switch (widget.panes) {
@@ -1667,6 +1680,25 @@ class _SessionTab extends StatelessWidget {
                           : theme.colorScheme.primary,
                     ),
                     const SizedBox(width: 8),
+                    // A session an AI assistant opened carries a marker, so
+                    // it is never mistaken for one the user started.
+                    if (entry.controller.assistantDrive != null) ...[
+                      Tooltip(
+                        message: context.l10n.assistantTabMarker(
+                          visibleLine(
+                            entry.controller.assistantDrive!.clientName,
+                            maxChars: 40,
+                          ),
+                        ),
+                        child: Icon(
+                          Icons.smart_toy_outlined,
+                          key: const ValueKey('assistant-tab-marker'),
+                          size: 15,
+                          color: theme.colorScheme.tertiary,
+                        ),
+                      ),
+                      const SizedBox(width: 6),
+                    ],
                     Flexible(
                       child: Text(
                         entry.host.displayName,

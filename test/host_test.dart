@@ -340,6 +340,187 @@ void main() {
     });
   });
 
+  group('Host.askToChange and its extras', () {
+    final changing = host.copyWith(aiAccess: HostAiAccess.askToChange);
+
+    test('askToChange is written as exactly "askToChange" and round-trips',
+        () {
+      // 1.6.0 reads any value it does not know as off, so this exact text is
+      // what keeps a downgrade from handing an assistant anything.
+      expect(changing.toJson()['aiAccess'], 'askToChange');
+      expect(Host.fromJson(changing.toJson()).aiAccess,
+          HostAiAccess.askToChange);
+      expect(HostAiAccess.fromJson('askToChange'), HostAiAccess.askToChange);
+      expect(HostAiAccess.fromJson('asktochange'), HostAiAccess.off);
+      expect(HostAiAccess.fromJson('readWrite'), HostAiAccess.off);
+    });
+
+    test('defaults: no allowed commands, no terminal, omitted from JSON', () {
+      expect(host.aiAllowedCommands, isEmpty);
+      expect(host.aiTerminal, isFalse);
+      expect(host.toJson().containsKey('aiAllowedCommands'), isFalse);
+      expect(host.toJson().containsKey('aiTerminal'), isFalse);
+    });
+
+    test('the helpers are true only for the right access', () {
+      for (final access in HostAiAccess.values) {
+        final h = host.copyWith(aiAccess: access, aiTerminal: true);
+        expect(h.aiMayRequestChanges, access == HostAiAccess.askToChange);
+        expect(h.aiMayOpenTerminal, access == HostAiAccess.askToChange);
+      }
+      expect(changing.aiMayOpenTerminal, isFalse,
+          reason: 'terminal is off by default');
+      expect(changing.copyWith(aiTerminal: true).aiMayOpenTerminal, isTrue);
+    });
+
+    test('both extras round-trip through JSON', () {
+      final h = changing.copyWith(
+        aiAllowedCommands: ['uptime', 'df -h'],
+        aiTerminal: true,
+      );
+      expect(h.toJson()['aiAllowedCommands'], ['uptime', 'df -h']);
+      expect(h.toJson()['aiTerminal'], true);
+      final back = Host.fromJson(h.toJson());
+      expect(back.aiAllowedCommands, ['uptime', 'df -h']);
+      expect(back.aiTerminal, isTrue);
+    });
+
+    test('they stay stored when access steps down, and are inert', () {
+      final full = changing.copyWith(
+        aiAllowedCommands: ['uptime'],
+        aiTerminal: true,
+      );
+      for (final access in [HostAiAccess.readOnly, HostAiAccess.off]) {
+        final down = full.copyWith(aiAccess: access);
+        expect(down.aiAllowedCommands, ['uptime']);
+        expect(down.aiTerminal, isTrue);
+        expect(down.aiMayRequestChanges, isFalse);
+        expect(down.aiMayOpenTerminal, isFalse);
+      }
+    });
+
+    test('every rebuilding helper carries both extras', () {
+      final full = changing.copyWith(
+        aiAllowedCommands: ['uptime'],
+        aiTerminal: true,
+      );
+      for (final h in [
+        full.withGroup('g'),
+        full.withJumpHost('j'),
+        full.withCertificate('cert'),
+        full.copyWith(label: 'Other'),
+      ]) {
+        expect(h.aiAccess, HostAiAccess.askToChange);
+        expect(h.aiAllowedCommands, ['uptime']);
+        expect(h.aiTerminal, isTrue);
+      }
+      final bare = full.withoutAiGrants();
+      expect(bare.aiAccess, HostAiAccess.off);
+      expect(bare.aiAllowedCommands, isEmpty);
+      expect(bare.aiTerminal, isFalse);
+      expect(bare.label, full.label);
+    });
+
+    test('sanitising: trim, drop empty/long/NUL/duplicates, cap at 50', () {
+      final long = 'a' * 4097;
+      final ok = 'b' * 4096;
+      final cleaned = Host.sanitizeAiAllowedCommands([
+        '  uptime  ',
+        '',
+        '   ',
+        long,
+        ok,
+        'has\u0000nul',
+        'uptime',
+        7,
+        null,
+        'df -h',
+      ]);
+      expect(cleaned, ['uptime', ok, 'df -h']);
+
+      final many = Host.sanitizeAiAllowedCommands([
+        for (var i = 0; i < 80; i++) 'cmd $i',
+      ]);
+      expect(many.length, 50);
+      expect(many.first, 'cmd 0');
+      expect(many.last, 'cmd 49');
+    });
+
+    test('sanitising drops entries that would hide what runs', () {
+      // Each is dropped whole, never cleaned: stripping would store a
+      // command the user did not type.
+      final hidden = [
+        'ls\nrm -rf ~', // a multi-line entry is several commands
+        'ls\rrm -rf ~',
+        'ls\trm',
+        'echo \u001b[2Jhi', // ESC: terminal control
+        'ls\u007f',
+        'ls\u0085rm', // NEL (C1)
+        'ls\u2028rm', // line separator
+        'ls\u2029rm',
+        'echo \u202Egnp.exe', // right-to-left override
+        'echo \u202Aa', 'echo \u202Ba', 'echo \u202Ca', 'echo \u202Da',
+        'echo \u2066a\u2069', 'echo \u2067a', 'echo \u2068a',
+        'echo \u200Ea', 'echo \u200Fa', 'echo \u061Ca',
+        'rm\u200B -rf', // zero-width space
+        'r\u200Cm', 'r\u200Dm', 'r\u2060m', 'r\uFEFFm',
+        'rm -rf\u00A0/', // no-break space: reads as a word break
+        'rm -rf\u2009/', 'rm -rf\u3000/', 'rm -rf\u202F/', 'r\u00ADm',
+        'echo \uD800', // lone high surrogate
+        'echo \uDC00x', // lone low surrogate
+      ];
+      expect(
+        Host.sanitizeAiAllowedCommands([...hidden, 'uptime']),
+        ['uptime'],
+      );
+      // Ordinary text, including non-ASCII and a proper surrogate pair, stays.
+      final fine = [
+        'echo héllo',
+        'echo 日本',
+        'echo \u{1F600}',
+        "awk '{print \$1}'",
+      ];
+      expect(Host.sanitizeAiAllowedCommands(fine), fine);
+      // Surrounding line breaks are only whitespace and are trimmed off.
+      expect(Host.sanitizeAiAllowedCommands(['\n uptime \n']), ['uptime']);
+    });
+
+    test('copyWith cleans a new list the same way fromJson does', () {
+      final raw = ['  uptime ', 'uptime', 'ls\nrm -rf ~', '', 'df -h'];
+      final h = host.copyWith(aiAllowedCommands: raw);
+      expect(h.aiAllowedCommands, ['uptime', 'df -h']);
+      expect(h.aiAllowedCommands, Host.fromJson({
+        ...host.toJson(),
+        'aiAllowedCommands': raw,
+      }).aiAllowedCommands);
+      // The stored list is a copy the caller cannot change afterwards.
+      final mutable = ['uptime'];
+      final kept = host.copyWith(aiAllowedCommands: mutable);
+      mutable.add('rm -rf ~');
+      expect(kept.aiAllowedCommands, ['uptime']);
+      expect(() => kept.aiAllowedCommands.add('x'), throwsUnsupportedError);
+    });
+
+    test('fromJson sanitises, and mistyped values read as nothing', () {
+      Host read(Map<String, Object?> extra) => Host.fromJson({
+            'id': 'x',
+            'hostname': 'example.com',
+            'username': 'dev',
+            ...extra,
+          });
+      expect(
+        read({
+          'aiAllowedCommands': [' ls ', 'ls', '']
+        }).aiAllowedCommands,
+        ['ls'],
+      );
+      expect(read({'aiAllowedCommands': 'ls'}).aiAllowedCommands, isEmpty);
+      expect(read({'aiTerminal': 'true'}).aiTerminal, isFalse);
+      expect(read({'aiTerminal': 1}).aiTerminal, isFalse);
+      expect(read({'aiTerminal': true}).aiTerminal, isTrue);
+    });
+  });
+
   group('helpers that rebuild a Host drop nothing', () {
     // Every field away from its default; expectations come from toJson() so
     // a field added later is covered once it is written there.
@@ -361,7 +542,9 @@ void main() {
       persistentSession: PersistentSession.values.last,
       certificate: 'cert',
       transport: HostTransport.values.last,
-      aiAccess: HostAiAccess.readOnly,
+      aiAccess: HostAiAccess.askToChange,
+      aiAllowedCommands: const ['uptime'],
+      aiTerminal: true,
     );
 
     test('the sample sets every field a bare host leaves out', () {
@@ -414,6 +597,15 @@ void main() {
         full.withCertificate(null).toJson(),
         Map<String, dynamic>.of(full.toJson())..remove('certificate'),
       );
+    });
+
+    test('withoutAiGrants clears only the AI Bridge fields', () {
+      final expected = Map<String, dynamic>.of(full.toJson())
+        ..removeWhere(
+          (k, _) => const {'aiAccess', 'aiAllowedCommands', 'aiTerminal'}
+              .contains(k),
+        );
+      expect(full.withoutAiGrants().toJson(), expected);
     });
 
     test('fromJson(toJson()) loses nothing', () {

@@ -277,6 +277,7 @@ class _HostListScreenState extends State<HostListScreen> {
             autoOpenSnippetPicker: autoOpenSnippetPicker,
             tunnels: widget.tunnels,
             fleetPushRegistry: widget.fleetPushRegistry,
+            bridgeTerminals: widget.bridge?.terminals,
           ),
         ),
       );

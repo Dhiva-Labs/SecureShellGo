@@ -6,7 +6,7 @@
     {
       "name": "secureshellgo",
       "source": "./integrations/plugin",
-      "description": "Read-only access to your servers through the SecureShell Go AI Bridge."
+      "description": "Your servers through the SecureShell Go AI Bridge: reading, and changes only where you allow them, with your approval in the app."
     }
   ]
 }

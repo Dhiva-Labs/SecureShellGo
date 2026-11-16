@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 
 import '../l10n/l10n.dart';
 import '../services/bridge/bridge_audit.dart';
+import '../services/bridge/bridge_tools.dart';
 import '../theme.dart';
 
 /// A date and time the way the device writes them, from the Material
@@ -223,6 +224,25 @@ class _EntryTile extends StatelessWidget {
       ),
     };
     final host = entry.host;
+    // How a change was allowed; nothing for a read.
+    final approval = switch (entry.approval) {
+      BridgeAuditApproval.none => null,
+      BridgeAuditApproval.allowedCommand =>
+        l10n.bridgeAuditApprovalAllowedCommand,
+      BridgeAuditApproval.grant => l10n.bridgeAuditApprovalGrant,
+      BridgeAuditApproval.once => l10n.bridgeAuditApprovalOnce,
+      BridgeAuditApproval.forAWhile => l10n.bridgeAuditApprovalForAWhile,
+      BridgeAuditApproval.denied => l10n.bridgeAuditApprovalDenied,
+      BridgeAuditApproval.timedOut => l10n.bridgeAuditApprovalTimedOut,
+      BridgeAuditApproval.withdrawn => l10n.bridgeAuditApprovalWithdrawn,
+    };
+    // An approved change that never ran must not read as one that did.
+    final notRun = entry.detail.startsWith(
+      BridgeTools.refusedAfterApprovalPrefix,
+    )
+        ? entry.detail
+            .substring(BridgeTools.refusedAfterApprovalPrefix.length)
+        : null;
     return ListTile(
       leading: Icon(icon, color: color),
       title: Text(
@@ -237,7 +257,23 @@ class _EntryTile extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text('${entry.client} · ${bridgeDateTime(context, entry.ts)}'),
-          if (entry.detail.isNotEmpty) Text(entry.detail),
+          if (approval != null)
+            Text(
+              approval,
+              key: const ValueKey('audit-approval'),
+              style: theme.textTheme.bodySmall,
+            ),
+          if (notRun != null)
+            Text(
+              l10n.bridgeAuditApprovedNotRun(notRun),
+              key: const ValueKey('audit-not-run'),
+              style: TextStyle(
+                color: scheme.error,
+                fontWeight: FontWeight.w600,
+              ),
+            )
+          else if (entry.detail.isNotEmpty)
+            Text(entry.detail),
         ],
       ),
       trailing: Text(

@@ -100,7 +100,6 @@ class _FakeConnector extends ClaudeCliConnector {
       waiting--;
     }
   }
-
   final List<ClaudePluginSource?> expectedSources = [];
   final List<({String path, String token, String launcher})> connectCalls = [];
 
@@ -1115,7 +1114,11 @@ void main() {
       // Made on the real event loop, as setUp makes the others: its writer
       // would otherwise wait on the test's fake clock.
       await tester.runAsync(() async {
-        hostStore = _FailingHostStore(io, File('${dir.path}/hosts2.json'), 'c');
+        hostStore = _FailingHostStore(
+          io,
+          File('${dir.path}/hosts2.json'),
+          'c',
+        );
       });
       await addHosts(tester, [_host('a'), _host('b'), _host('c')]);
       await pumpSection(tester);
@@ -1169,7 +1172,7 @@ void main() {
           )
           .value!;
       expect([ticked('a'), ticked('b'), ticked('c')], [true, false, true]);
-      expect(find.text('Prod'), findsOneWidget);
+      expect(find.text('Prod · Read only'), findsOneWidget);
 
       await tester.tap(find.text('Host b'));
       await tester.tap(find.text('Host c'));

@@ -7,7 +7,7 @@ and the per-feature notes in `docs/changes/*.md`. The verification notes say
 where each one comes from. This is the Android listing, so features that
 exist only on Windows, Linux and macOS (agent sign-in, X11 forwarding,
 importing `~/.ssh/config`, uploading whole folders) are left out, and so is
-the 1.6.0 AI Bridge, which is available on Linux and Windows only. They are
+the AI Bridge (1.6.0, extended in 1.7.0), which is available on Linux and Windows only. They are
 in `store/microsoft-store-listing.md`.
 
 ---

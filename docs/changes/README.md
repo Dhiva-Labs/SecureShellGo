@@ -1,6 +1,6 @@
 # Changes waiting for a release
 
-1.6.0's notes have been folded into `CHANGELOG.md`. Start new files here for
+1.7.0's notes have been folded into `CHANGELOG.md`. Start new files here for
 the next release.
 
 Several parts of 1.5 are built side by side, on separate branches. If each

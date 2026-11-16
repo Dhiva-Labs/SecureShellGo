@@ -38,6 +38,7 @@ class _FakeConnection implements BridgeConnection {
 
 class _FakeTools implements BridgeToolHost {
   final calls = <(BridgeClient, String, Map<String, Object?>)>[];
+  final tokens = <BridgeCallToken?>[];
   Completer<void>? gate;
 
   @override
@@ -66,9 +67,11 @@ class _FakeTools implements BridgeToolHost {
   Future<BridgeToolResult> call(
     BridgeClient client,
     String name,
-    Map<String, Object?> args,
-  ) async {
+    Map<String, Object?> args, {
+    BridgeCallToken? cancel,
+  }) async {
     calls.add((client, name, args));
+    tokens.add(cancel);
     await gate?.future;
     if (name == 'explode') throw StateError('secret detail');
     if (args['fail'] == true) return const BridgeToolResult.error('refused');
@@ -84,8 +87,9 @@ class _ThrowingList implements BridgeToolHost {
   Future<BridgeToolResult> call(
     BridgeClient c,
     String n,
-    Map<String, Object?> a,
-  ) => throw UnimplementedError();
+    Map<String, Object?> a, {
+    BridgeCallToken? cancel,
+  }) => throw UnimplementedError();
 }
 
 void main() {
@@ -183,7 +187,7 @@ void main() {
     });
   });
 
-  test('tools/list lists every tool, read-only ones annotated', () async {
+  test('tools/list lists every tool, each annotated by kind', () async {
     final reply = await rpc(request(2, 'tools/list'));
     final list = (reply!['result'] as Map)['tools'] as List;
     expect(list, hasLength(3));
@@ -193,7 +197,10 @@ void main() {
       'inputSchema': {'type': 'object', 'properties': <String, Object?>{}},
       'annotations': {'readOnlyHint': true},
     });
-    expect((list[1] as Map).containsKey('annotations'), isFalse);
+    expect((list[1] as Map)['annotations'], {
+      'readOnlyHint': false,
+      'destructiveHint': true,
+    });
   });
 
   test('tools/list ignores a cursor (one page)', () async {
@@ -480,6 +487,112 @@ void main() {
       await pumpUntil(() => conn.sent.length == 2);
       expect((jsonDecode(conn.sent.last) as List).first['result'], isNotNull);
       tools.gate!.complete();
+      await conn.incoming.close();
+      await done;
+    });
+  });
+
+  group('notifications/cancelled', () {
+    Map<String, Object?> cancelled(Object? requestId) => {
+      'jsonrpc': '2.0',
+      'method': 'notifications/cancelled',
+      'params': {'requestId': requestId, 'reason': 'User requested'},
+    };
+
+    test('cancels the call with that id: the tool host is told, and no '
+        'reply is sent', () async {
+      tools.gate = Completer<void>();
+      final done = server.serve(conn);
+      conn.incoming
+        ..add(jsonEncode(request('a-7', 'tools/call', {'name': 'list_hosts'})))
+        ..add(jsonEncode(request(8, 'tools/call', {'name': 'list_hosts'})));
+      await pumpUntil(() => tools.calls.length == 2);
+      expect(tools.tokens.every((t) => t != null && !t.isCancelled), isTrue);
+      conn.incoming.add(jsonEncode(cancelled('a-7')));
+      await pumpUntil(() => tools.tokens.first!.isCancelled);
+      expect(tools.tokens.last!.isCancelled, isFalse);
+      tools.gate!.complete();
+      await pumpUntil(() => conn.sent.isNotEmpty);
+      await conn.incoming.close();
+      await done;
+      expect(conn.sent, hasLength(1));
+      expect(jsonDecode(conn.sent.single)['id'], 8);
+    });
+
+    test('an unknown, malformed or finished id is ignored', () async {
+      tools.gate = Completer<void>();
+      final done = server.serve(conn);
+      conn.incoming.add(
+        jsonEncode(request(1, 'tools/call', {'name': 'list_hosts'})),
+      );
+      await pumpUntil(() => tools.calls.length == 1);
+      conn.incoming
+        ..add(jsonEncode(cancelled(99)))
+        ..add(jsonEncode(cancelled('1')))
+        ..add(jsonEncode(cancelled(null)))
+        ..add(jsonEncode(cancelled({'id': 1})))
+        ..add(
+          jsonEncode({'jsonrpc': '2.0', 'method': 'notifications/cancelled'}),
+        );
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+      expect(tools.tokens.single!.isCancelled, isFalse);
+      tools.gate!.complete();
+      await pumpUntil(() => conn.sent.length == 1);
+      expect(jsonDecode(conn.sent.single)['id'], 1);
+      // Finished: a cancel now is a no-op and sends nothing.
+      conn.incoming.add(jsonEncode(cancelled(1)));
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+      expect(conn.sent, hasLength(1));
+      expect(tools.tokens.single!.isCancelled, isFalse);
+      await conn.incoming.close();
+      await done;
+    });
+
+    test('a cancel from one connection cannot cancel another connection\'s '
+        'request, even with the same id', () async {
+      tools.gate = Completer<void>();
+      final other = _FakeConnection();
+      final doneA = server.serve(conn);
+      final doneB = server.serve(other);
+      conn.incoming.add(
+        jsonEncode(request(1, 'tools/call', {'name': 'list_hosts'})),
+      );
+      other.incoming.add(
+        jsonEncode(request(1, 'tools/call', {'name': 'list_hosts'})),
+      );
+      await pumpUntil(() => tools.calls.length == 2);
+      other.incoming.add(jsonEncode(cancelled(1)));
+      await pumpUntil(
+        () => tools.tokens.where((t) => t!.isCancelled).length == 1,
+      );
+      tools.gate!.complete();
+      await pumpUntil(() => conn.sent.length == 1);
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+      expect(other.sent, isEmpty);
+      expect(jsonDecode(conn.sent.single)['id'], 1);
+      await conn.incoming.close();
+      await other.incoming.close();
+      await Future.wait([doneA, doneB]);
+    });
+
+    test('a cancel of a request in a batch drops only that reply', () async {
+      tools.gate = Completer<void>();
+      final done = server.serve(conn);
+      conn.incoming.add(
+        jsonEncode([
+          request(1, 'tools/call', {'name': 'list_hosts'}),
+          request(2, 'tools/call', {'name': 'list_hosts'}),
+        ]),
+      );
+      await pumpUntil(() => tools.calls.length == 2);
+      conn.incoming.add(jsonEncode(cancelled(2)));
+      await pumpUntil(
+        () => tools.tokens.where((t) => t!.isCancelled).length == 1,
+      );
+      tools.gate!.complete();
+      await pumpUntil(() => conn.sent.isNotEmpty);
+      final replies = jsonDecode(conn.sent.single) as List;
+      expect(replies.map((r) => r['id']), [1]);
       await conn.incoming.close();
       await done;
     });
