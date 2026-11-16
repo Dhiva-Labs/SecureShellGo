@@ -183,6 +183,10 @@ class BridgeAuditLog {
 
   /// Where the log lives; null means `<appdata>/bridge`, found on first use.
   final Directory? directory;
+
+  /// Whether this run has already made an existing log owner-only.
+  bool _existingChecked = false;
+
   Directory? _resolved;
 
   static const int defaultRotateBytes = 512 * 1024;
@@ -301,7 +305,12 @@ class BridgeAuditLog {
       // spawned on every append.
       await file.create();
       await _ownerOnly(file.path);
+    } else if (!_existingChecked) {
+      // A log an earlier build left with the default mode is tightened the
+      // first time this run writes to it, not only when it is next rotated.
+      await _ownerOnly(file.path);
     }
+    _existingChecked = true;
 
     final handle = await file.open(mode: FileMode.append);
     try {
