@@ -34,14 +34,45 @@ void main() {
   group('the supervised wrapper, against a real sh', () {
     final skip = File('/bin/sh').existsSync() ? null : 'needs /bin/sh';
 
+    /// The wrapper as the app runs it: stdin held open for the whole run
+    /// (closing it is the stop signal), output collected.
+    Future<({String out, String err, int code})> held(String command) async {
+      final p = await Process.start('/bin/sh', [
+        '-c',
+        BridgeCommands.supervised(command),
+      ]);
+      final out = p.stdout.transform(systemEncoding.decoder).join();
+      final err = p.stderr.transform(systemEncoding.decoder).join();
+      final code = await p.exitCode.timeout(const Duration(seconds: 20));
+      await p.stdin.close();
+      return (out: await out, err: await err, code: code);
+    }
+
     test('passes output and exit status through', () async {
+      final r = await held('echo out; echo err >&2; exit 3');
+      expect(r.out, 'out\n');
+      expect(r.err, 'err\n');
+      expect(r.code, 3);
+    }, skip: skip);
+
+    test('the exit status is the command\'s own, after a moment, and when it '
+        'died of a signal', () async {
+      expect((await held('sleep 0.3; exit 3')).code, 3);
+      expect((await held('sleep 0.2; kill -9 \$\$')).code, 137);
+    }, skip: skip);
+
+    test('stdin at end-of-file from the start is a stop: the command is '
+        'ended and the status is the stop\'s', () async {
+      final dir = await temp.createTemp('eof');
+      final marker = '${dir.path}/finished';
       final out = await Process.run('/bin/sh', [
         '-c',
-        BridgeCommands.supervised("echo out; echo err >&2; exit 3"),
+        '${BridgeCommands.supervised("sleep 0.5; touch '$marker'; exit 3")}'
+            ' </dev/null',
       ]);
-      expect(out.stdout, 'out\n');
-      expect(out.stderr, 'err\n');
-      expect(out.exitCode, 3);
+      expect(out.exitCode, 143, reason: 'ended by the TERM, not exit 3');
+      await Future<void>.delayed(const Duration(milliseconds: 800));
+      expect(File(marker).existsSync(), false);
     }, skip: skip);
 
     test('closing stdin ends the command and its children', () async {

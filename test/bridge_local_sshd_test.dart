@@ -419,6 +419,20 @@ void main() {
       skip: skip,
     );
 
+    test(
+      'run_command: a command that takes a while runs to its end (stdin is '
+      'held open, so nothing reads as a stop)',
+      () async {
+        final r = await call('run_command', {
+          'command': 'sleep 2; echo done',
+          'timeout_seconds': 20,
+        });
+        expect(r.isError, false, reason: r.text);
+        expect(r.text, startsWith('exit_code: 0\nstdout:\ndone'));
+      },
+      skip: skip,
+    );
+
     test('run_command has no stdin: cat ends at once', () async {
       final r = await call('run_command', {
         'command': 'cat; echo done; exit 0',

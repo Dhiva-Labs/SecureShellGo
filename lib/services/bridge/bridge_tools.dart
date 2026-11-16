@@ -77,6 +77,19 @@ class BridgeCommands {
   /// alone, as before. A process that leaves the group (`setsid`) is not
   /// reached; that is a documented limit.
   ///
+  /// The exit status is the command's own whenever it ended by itself: a
+  /// `wait` cut short by the watcher's USR1 (it returns above 128 at once
+  /// when a trapped signal arrives) is repeated while the command's process
+  /// is still there. A command that died of a signal has been reaped by
+  /// then, so its status is kept; a zombie `kill -0` still sees is reaped
+  /// by the next `wait`, so the loop cannot spin. A stopped command's
+  /// status is the stop's (143 for the TERM, 137 for the KILL).
+  ///
+  /// The app holds the channel's stdin open for the whole run and closes it
+  /// only to stop the call: end-of-file on stdin *is* the stop signal, so a
+  /// wrapper started with stdin already at end-of-file ends its command at
+  /// once.
+  ///
   /// The outer command is one `sh -c` with single-quoted arguments, which
   /// every login shell parses the same way; the template reaches the inner
   /// shell as `$1`, quoted once.
@@ -103,6 +116,7 @@ w=$!
 exec 3<&-
 wait $p
 r=$?
+while [ "$r" -gt 128 ] && kill -0 $p 2>/dev/null; do wait $p; r=$?; done
 if [ -z "$s" ]; then kill -s KILL $w 2>/dev/null; fi
 exit $r''';
     return 'sh -c ${posixSingleQuote(wrapper)} ssg-bridge '
