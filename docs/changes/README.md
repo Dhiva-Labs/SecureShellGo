@@ -28,7 +28,6 @@ One file per piece of work, named for it:
 | `remote-ops.md` | Commands on many servers, archive and search actions |
 | `mosh.md` | Mosh |
 | `localization.md` | Translations |
-| `bridge-shell-quoting.md` | AI Bridge commands quoted safely for a fish login shell |
 
 Write for the people using the app, in the sections `CHANGELOG.md` uses:
 `### Added`, `### Changed`, `### Fixed`, `### Security`. One line per change,

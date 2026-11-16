@@ -3,7 +3,7 @@
 Releases before 1.4.5 are described on the
 [Releases](https://github.com/Dhiva-Labs/SecureShellGo/releases) page.
 
-## 1.6.0 - 2026-11-15
+## 1.6.0 - 2026-11-16
 
 The AI Bridge: let an AI assistant read from the servers you choose, read-only, without ever giving it a password or key.
 
@@ -23,6 +23,7 @@ The AI Bridge: let an AI assistant read from the servers you choose, read-only, 
 - A change to a paired assistant or to a server's AI access that cannot be written to disk is undone and reported, so what the app shows always matches what is stored. A revoke that cannot be saved says the pairing still works.
 - The manual route puts the token in your shell's history file when you paste its third command, and the screen says so under the commands; "Connect Claude Code" does not. Delete that history line afterwards, or revoke the assistant and pair again if the history is shared.
 - The activity log file is created so that only your user account can read it.
+- An AI Bridge read on a server whose login shell is fish cannot be made to run text the app did not intend through a file name, folder or pattern that contains a backslash. Commands are quoted so that no login shell (fish included) reads a backslash as anything but a backslash.
 
 ### Added
 - AI Bridge, on Linux and Windows: let an MCP-compatible AI assistant on your computer read from your servers, by name, without ever being given a password or key. It is off by default. Switch on "AI Bridge" in Settings (the app explains what it does each time you switch it on), pair an assistant under "Connect an assistant" to get a token and a ready-made config snippet, then switch on "AI access (read-only)" for each server you want it to see.
@@ -38,6 +39,11 @@ The AI Bridge: let an AI assistant read from the servers you choose, read-only, 
 
 ### Changed
 - The AI Bridge is not available on Android or macOS.
+
+### Fixed
+- A backup no longer resets "Copy on select" to off when you restore it.
+- Importing a backup no longer resets the app's language to the system default.
+- An assistant that disconnects before the app has answered it no longer leaves an error behind in the app.
 
 ## 1.5.1 - 2026-11-03
 
