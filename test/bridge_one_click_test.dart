@@ -23,8 +23,8 @@ import 'package:secure_shell_go/services/host_store.dart';
 import 'package:secure_shell_go/services/settings_store.dart';
 
 import 'support/settle.dart';
-import 'support/tracked_stores.dart';
 import 'support/temp_dir.dart';
+import 'support/tracked_stores.dart';
 
 const _claudePath = '/home/user/.local/bin/claude';
 const _claudeVersion = '2.1.322 (Claude Code)';

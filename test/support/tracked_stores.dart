@@ -58,6 +58,14 @@ class TrackedHostStore extends HostStore {
 
   @override
   Future<List<String>> groupNames() => io.track(super.groupNames);
+
+  @override
+  Future<void> renameGroup(String oldName, String newName) =>
+      io.track(() => super.renameGroup(oldName, newName));
+
+  @override
+  Future<void> deleteGroup(String name) =>
+      io.track(() => super.deleteGroup(name));
 }
 
 /// A real [BridgeClientStore] whose calls are counted by [io].
