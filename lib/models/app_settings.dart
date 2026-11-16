@@ -185,6 +185,7 @@ class AppSettings {
     this.bridgeShowAddress = false,
     this.bridgeReadSensitivePaths = false,
     this.bridgeExtraBlockedPaths = const <String>[],
+    this.bridgeTimedApprovalMinutes = 0,
   });
 
   static const double defaultFontSize = 13;
@@ -280,7 +281,17 @@ class AppSettings {
   /// The user's own blocked path patterns, on top of the built-in ones.
   final List<String> bridgeExtraBlockedPaths;
 
-  /// These settings with the four bridge fields taken from [other]. An
+  /// How long "Allow for a while" on an approval card lasts, in minutes. 0 is
+  /// off; the other choices are in [bridgeTimedApprovalChoices]. Only
+  /// [copyWith] and [fromJson] validate it; anything else is built by hand.
+  final int bridgeTimedApprovalMinutes;
+
+  static const List<int> bridgeTimedApprovalChoices = [0, 5, 15, 60];
+
+  static int _validTimedApproval(int minutes) =>
+      bridgeTimedApprovalChoices.contains(minutes) ? minutes : 0;
+
+  /// These settings with the five bridge fields taken from [other]. An
   /// import uses it so a backup's settings land without touching what this
   /// device allows an assistant to do.
   AppSettings withBridgeFrom(AppSettings other) => copyWith(
@@ -288,30 +299,21 @@ class AppSettings {
         bridgeShowAddress: other.bridgeShowAddress,
         bridgeReadSensitivePaths: other.bridgeReadSensitivePaths,
         bridgeExtraBlockedPaths: other.bridgeExtraBlockedPaths,
+        bridgeTimedApprovalMinutes: other.bridgeTimedApprovalMinutes,
       );
 
-  /// These settings with the four bridge fields back at their defaults.
+  /// These settings with the five bridge fields back at their defaults.
   /// Used on backup export and decode: what an assistant may reach is a
   /// decision about this device, not something a file should carry in or out.
-  AppSettings withBridgeDefaults() => AppSettings(
-        terminalFontSize: terminalFontSize,
-        colorScheme: colorScheme,
-        uiStyle: uiStyle,
-        themeBrightness: themeBrightness,
-        keepScreenAwake: keepScreenAwake,
-        showHiddenFilesByDefault: showHiddenFilesByDefault,
-        collapsedGroups: collapsedGroups,
-        appLockEnabled: appLockEnabled,
-        appLockTimeout: appLockTimeout,
-        scrollbackLines: scrollbackLines,
-        cursorStyle: cursorStyle,
-        cursorBlink: cursorBlink,
-        bell: bell,
-        terminalFont: terminalFont,
-        keyBarMode: keyBarMode,
-        editorFontSize: editorFontSize,
-        diagnosticsLog: diagnosticsLog,
-        localeOverride: localeOverride,
+  ///
+  /// Built on [copyWith], so a field added to the class later is carried
+  /// along by default instead of silently reset.
+  AppSettings withBridgeDefaults() => copyWith(
+        bridgeEnabled: false,
+        bridgeShowAddress: false,
+        bridgeReadSensitivePaths: false,
+        bridgeExtraBlockedPaths: const <String>[],
+        bridgeTimedApprovalMinutes: 0,
       );
 
   /// Keeps a font size inside the range the settings slider and pinch-zoom
@@ -354,6 +356,9 @@ class AppSettings {
     bool? bridgeShowAddress,
     bool? bridgeReadSensitivePaths,
     List<String>? bridgeExtraBlockedPaths,
+    int? bridgeTimedApprovalMinutes,
+    String? localeOverride,
+    bool clearLocaleOverride = false,
   }) {
     return AppSettings(
       terminalFontSize: clampFontSize(terminalFontSize ?? this.terminalFontSize),
@@ -376,43 +381,26 @@ class AppSettings {
       editorFontSize:
           clampEditorFontSize(editorFontSize ?? this.editorFontSize),
       diagnosticsLog: diagnosticsLog ?? this.diagnosticsLog,
-      localeOverride: localeOverride,
+      localeOverride:
+          clearLocaleOverride ? null : (localeOverride ?? this.localeOverride),
       bridgeEnabled: bridgeEnabled ?? this.bridgeEnabled,
       bridgeShowAddress: bridgeShowAddress ?? this.bridgeShowAddress,
       bridgeReadSensitivePaths:
           bridgeReadSensitivePaths ?? this.bridgeReadSensitivePaths,
       bridgeExtraBlockedPaths:
           bridgeExtraBlockedPaths ?? this.bridgeExtraBlockedPaths,
+      bridgeTimedApprovalMinutes: _validTimedApproval(
+        bridgeTimedApprovalMinutes ?? this.bridgeTimedApprovalMinutes,
+      ),
     );
   }
 
   /// Sets the language, or with null goes back to following the device.
   /// Not in [copyWith], whose `??` cannot set a field back to null.
-  AppSettings withLocaleOverride(String? tag) => AppSettings(
-        terminalFontSize: terminalFontSize,
-        colorScheme: colorScheme,
-        uiStyle: uiStyle,
-        themeBrightness: themeBrightness,
-        keepScreenAwake: keepScreenAwake,
-        showHiddenFilesByDefault: showHiddenFilesByDefault,
-        collapsedGroups: collapsedGroups,
-        appLockEnabled: appLockEnabled,
-        appLockTimeout: appLockTimeout,
-        scrollbackLines: scrollbackLines,
-        cursorStyle: cursorStyle,
-        cursorBlink: cursorBlink,
-        copyOnSelect: copyOnSelect,
-        bell: bell,
-        terminalFont: terminalFont,
-        keyBarMode: keyBarMode,
-        editorFontSize: editorFontSize,
-        diagnosticsLog: diagnosticsLog,
-        localeOverride: (tag == null || tag.trim().isEmpty) ? null : tag,
-        bridgeEnabled: bridgeEnabled,
-        bridgeShowAddress: bridgeShowAddress,
-        bridgeReadSensitivePaths: bridgeReadSensitivePaths,
-        bridgeExtraBlockedPaths: bridgeExtraBlockedPaths,
-      );
+  AppSettings withLocaleOverride(String? tag) {
+    final clean = (tag == null || tag.trim().isEmpty) ? null : tag;
+    return copyWith(localeOverride: clean, clearLocaleOverride: clean == null);
+  }
 
   static int _validScrollback(int lines) =>
       scrollbackChoices.contains(lines) ? lines : defaultScrollbackLines;
@@ -445,6 +433,8 @@ class AppSettings {
         if (bridgeReadSensitivePaths) 'bridgeReadSensitivePaths': true,
         if (bridgeExtraBlockedPaths.isNotEmpty)
           'bridgeExtraBlockedPaths': bridgeExtraBlockedPaths,
+        if (bridgeTimedApprovalMinutes != 0)
+          'bridgeTimedApprovalMinutes': bridgeTimedApprovalMinutes,
       };
 
   factory AppSettings.fromJson(Map<String, dynamic> json) {
@@ -515,6 +505,15 @@ class AppSettings {
           ],
         _ => const <String>[],
       },
+      // Absent before 1.7, and anything not a listed choice: off. Only a
+      // whole JSON integer counts; this app never writes a double here, and
+      // 15.7 must not round its way into a choice.
+      bridgeTimedApprovalMinutes: _validTimedApproval(
+        switch (json['bridgeTimedApprovalMinutes']) {
+          final int minutes => minutes,
+          _ => 0,
+        },
+      ),
     );
   }
 }

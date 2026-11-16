@@ -63,6 +63,7 @@ void main() {
       'outcome': 'ok',
       'detail': '',
       'ms': 12,
+      'approval': 'none',
     });
   });
 
@@ -395,6 +396,93 @@ void main() {
     );
     final back = BridgeAuditEntry.tryParse(jsonEncode(entry.toJson()))!;
     expect(back.toJson(), entry.toJson());
+  });
+
+  group('approval', () {
+    test('every value is written by its wire name and read back', () async {
+      final log = makeLog();
+      for (final approval in BridgeAuditApproval.values) {
+        await log.record(
+          client: 'Desk assistant',
+          host: 'web',
+          tool: 'run_command',
+          args: const {'command': 'id'},
+          outcome: BridgeAuditOutcome.ok,
+          ms: 1,
+          approval: approval,
+        );
+      }
+      final lines = await logFile.readAsLines();
+      expect(
+        [for (final l in lines) (jsonDecode(l) as Map)['approval']],
+        [
+          'none',
+          'allowed_command',
+          'grant',
+          'once',
+          'for_a_while',
+          'denied',
+          'timed_out',
+          'withdrawn',
+        ],
+      );
+      final recent = await log.recent();
+      expect(
+        recent.reversed.map((e) => e.approval).toList(),
+        BridgeAuditApproval.values,
+      );
+    });
+
+    test('a 1.6.0 line, without the field, reads as none and is kept',
+        () async {
+      await bridgeDir.create(recursive: true);
+      await logFile.writeAsString(
+        '{"ts":"2026-11-14T12:00:00.000Z","client":"Desk assistant",'
+        '"host":"web","tool":"read_file","args":"{\\"path\\":\\"/etc/hosts\\"}",'
+        '"outcome":"ok","detail":"","ms":12}\n',
+      );
+      final log = makeLog();
+      await recordOne(log);
+      final recent = await log.recent();
+      expect(recent, hasLength(2));
+      expect(recent.last.tool, 'read_file');
+      expect(recent.last.approval, BridgeAuditApproval.none);
+      expect(recent.last.args, '{"path":"/etc/hosts"}');
+    });
+
+    test('an unknown or mistyped value reads as none, not a dropped line', () {
+      for (final value in ['maybe', 5, null, true]) {
+        final line = jsonEncode({
+          'ts': '2026-11-14T12:00:00.000Z',
+          'client': 'c',
+          'tool': 't',
+          'args': '{}',
+          'outcome': 'refused',
+          'detail': '',
+          'ms': 1,
+          'approval': value,
+        });
+        expect(
+          BridgeAuditEntry.tryParse(line)?.approval,
+          BridgeAuditApproval.none,
+        );
+      }
+    });
+
+    test('defaults to none when not given', () {
+      expect(BridgeAuditApproval.fromJson(null), BridgeAuditApproval.none);
+      final entry = BridgeAuditEntry(
+        ts: DateTime.utc(2026),
+        client: 'c',
+        host: null,
+        tool: 't',
+        args: '{}',
+        outcome: BridgeAuditOutcome.ok,
+        detail: '',
+        ms: 0,
+      );
+      expect(entry.approval, BridgeAuditApproval.none);
+    });
   });
 
   test(

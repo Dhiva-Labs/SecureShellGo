@@ -76,8 +76,26 @@ abstract class BridgeFiles {
   Future<void> close();
 }
 
+/// What is at a path itself, symlinks not followed (`lstat`).
+enum BridgeEntryKind { missing, file, directory, symlink, other }
+
+/// The writes `write_file` needs, kept off [BridgeFiles] so the read tools
+/// (and every read fake) never hold a way to write. Only [SftpBridgeFiles]
+/// implements it; a change tool checks for it.
+abstract class BridgeFileWrites {
+  /// What is at [path] itself: a symlink is reported as one, not followed.
+  /// [BridgeEntryKind.missing] when nothing is there (or the server will
+  /// not say).
+  Future<BridgeEntryKind> entryKind(String path);
+
+  /// The editor's seams over the same SFTP channel, so a write uses the
+  /// editor's temp-then-rename and conflict guard (`editor_save.dart`).
+  RemoteFileSystem get remoteFileSystem;
+  RemoteFileMetadata get remoteMetadata;
+}
+
 /// [BridgeFiles] over a dartssh2 SFTP channel.
-class SftpBridgeFiles implements BridgeFiles {
+class SftpBridgeFiles implements BridgeFiles, BridgeFileWrites {
   SftpBridgeFiles(this._client) : _service = SftpService(_client);
 
   final SftpClient _client;
@@ -104,6 +122,26 @@ class SftpBridgeFiles implements BridgeFiles {
 
   @override
   Future<List<RemoteEntry>> list(String path) => _service.list(path);
+
+  @override
+  Future<BridgeEntryKind> entryKind(String path) async {
+    final SftpFileAttrs attrs;
+    try {
+      attrs = await _client.stat(path, followLink: false);
+    } catch (_) {
+      return BridgeEntryKind.missing;
+    }
+    if (attrs.isSymbolicLink) return BridgeEntryKind.symlink;
+    if (attrs.isDirectory) return BridgeEntryKind.directory;
+    if (attrs.isFile) return BridgeEntryKind.file;
+    return BridgeEntryKind.other;
+  }
+
+  @override
+  RemoteFileSystem get remoteFileSystem => _service;
+
+  @override
+  RemoteFileMetadata get remoteMetadata => _service;
 
   @override
   Future<Uint8List> read(
@@ -216,10 +254,34 @@ class BridgeConnections {
   /// Dialled connections currently held, for tests and the settings screen.
   int get cachedCount => _cached.length;
 
+  /// [host] as every bridge dial hands it to the dialer: with its agent and
+  /// X11 forwarding off. Those are the user's choice for the user's own
+  /// shell; nothing the bridge opens may carry the user's SSH agent (every
+  /// other server it can sign in to) or X11 windows. Jump hops need nothing
+  /// here: `SshService` never forwards on a hop, whatever the hop's own
+  /// settings say.
+  static Host withoutForwarding(Host host) =>
+      host.agentForwarding || host.x11Forwarding
+      ? host.copyWith(agentForwarding: false, x11Forwarding: false)
+      : host;
+
+  /// Whether a session's open transport may be borrowed for a bridge call.
+  /// Not when the host forwards the agent or X11: OpenSSH keeps a
+  /// connection's agent socket for the whole connection once its shell has
+  /// asked for forwarding, so an exec channel the bridge opened on it would
+  /// get `SSH_AUTH_SOCK` too (proven in `bridge_local_sshd_test.dart`). The
+  /// bridge dials its own connection, without forwarding, instead.
+  static bool mayBorrow(SessionTransport open, Host host) =>
+      !open.isClosed &&
+      !host.agentForwarding &&
+      !host.x11Forwarding &&
+      !open.host.agentForwarding &&
+      !open.host.x11Forwarding;
+
   /// A lease on [host]'s connection. Throws [BridgeConnectFailure].
   Future<BridgeLease> acquire(Host host) async {
     final open = openTransport(host.id);
-    if (open != null && !open.isClosed) {
+    if (open != null && mayBorrow(open, host)) {
       return BridgeLease._(open, _openFiles, () {});
     }
 
@@ -256,7 +318,31 @@ class BridgeConnections {
   }
 
   Future<_Cached> _dial(Host host) async {
-    final generation = _generation;
+    final transport = await _connect(host, _generation);
+    final entry = _Cached(host, transport);
+    final previous = _cached[host.id];
+    if (previous != null) _forget(previous);
+    _cached[host.id] = entry;
+    return entry;
+  }
+
+  /// A connection to [host] that belongs to the caller: never cached, never
+  /// shared with another call, never a session's transport. Dialled by the
+  /// same rules as [acquire]'s (saved sign-in read quietly, no prompt of any
+  /// kind, a new or changed host key refused), and hung up at once if the
+  /// bridge is switched off while it dials. The caller closes it; the
+  /// assistant's terminal hands it to `SessionManager.open`, which closes
+  /// it with the session. Throws [BridgeConnectFailure].
+  ///
+  /// The host's own agent and X11 forwarding are left off ([_connect] does
+  /// it for every dial): a terminal an assistant drives must never carry the
+  /// user's SSH agent or X11 windows.
+  Future<SessionTransport> dialOwned(Host host) =>
+      _connect(withoutForwarding(host), _generation);
+
+  /// Signs in to [host] with nobody to ask; [generation] is [_generation]
+  /// when the dial began.
+  Future<SessionTransport> _connect(Host host, int generation) async {
     final SshCredentials? saved;
     try {
       saved = await credentialLookup(host.id);
@@ -279,7 +365,12 @@ class BridgeConnections {
     }
     final SessionTransport transport;
     try {
-      transport = await dialer(host, saved ?? const SshCredentials());
+      // The one place a bridge dial reaches the dialer: forwarding off,
+      // whichever bridge code path asked.
+      transport = await dialer(
+        withoutForwarding(host),
+        saved ?? const SshCredentials(),
+      );
     } on SignInNeedsPerson catch (e) {
       throw BridgeConnectFailure('${e.reason} ${_connectOnce(host)}');
     } on CredentialsNeedPerson catch (e) {
@@ -295,11 +386,7 @@ class BridgeConnections {
       _hangUp(transport);
       throw const BridgeConnectFailure('The AI Bridge was switched off.');
     }
-    final entry = _Cached(host, transport);
-    final previous = _cached[host.id];
-    if (previous != null) _forget(previous);
-    _cached[host.id] = entry;
-    return entry;
+    return transport;
   }
 
   static String _connectOnce(Host host) =>

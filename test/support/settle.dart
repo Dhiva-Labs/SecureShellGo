@@ -71,3 +71,27 @@ Future<void> settleUntil(
     await settleIo(tester, rounds: 10);
   }
 }
+
+/// Turns both event loops until [busy] has been false on two turns in a
+/// row, or [timeout] of real time passes — for "the screen has finished its
+/// background work", where the work is tracked (see
+/// `tracked_stores.dart`) or shows a progress indicator. Two turns, because
+/// one finished step may start the next only after a rebuild. Each turn
+/// also moves the fake clock on a little: a store write runs `chmod` as a
+/// process, whose plumbing needs timers on the test's clock as well as the
+/// real event loop.
+Future<void> settleWhile(
+  WidgetTester tester,
+  bool Function() busy, {
+  Duration timeout = const Duration(seconds: 30),
+}) async {
+  final clock = Stopwatch()..start();
+  var quiet = 0;
+  while (quiet < 2 && clock.elapsed < timeout) {
+    await tester.runAsync(
+      () => Future<void>.delayed(const Duration(milliseconds: 20)),
+    );
+    await tester.pump(const Duration(milliseconds: 10));
+    quiet = busy() ? 0 : quiet + 1;
+  }
+}

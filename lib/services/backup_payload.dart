@@ -3,7 +3,6 @@ import 'dart:typed_data';
 
 import '../models/app_settings.dart';
 import '../models/host.dart';
-import '../models/host_ai_access.dart';
 import '../models/known_host.dart';
 import '../models/path_bookmark.dart';
 import '../models/snippet.dart';
@@ -133,7 +132,7 @@ class BackupPayload {
         // carries it: it is dropped here, and forced off again on decode.
         'hosts': [
           for (final host in hosts)
-            host.copyWith(aiAccess: HostAiAccess.off).toJson(),
+            host.withoutAiGrants().toJson(),
         ],
         'snippets': [for (final snippet in snippets) snippet.toJson()],
         'tunnels': [for (final tunnel in tunnels) tunnel.toJson()],
@@ -201,7 +200,7 @@ class BackupPayload {
       // one edited by hand) must not switch an assistant onto a server.
       hosts: [
         for (final host in _list(decoded['hosts'], 'hosts', Host.fromJson))
-          host.copyWith(aiAccess: HostAiAccess.off),
+          host.withoutAiGrants(),
       ],
       snippets: _list(decoded['snippets'], 'snippets', Snippet.fromJson),
       tunnels: _list(decoded['tunnels'], 'tunnels', TunnelProfile.fromJson),

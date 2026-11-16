@@ -486,5 +486,129 @@ void main() {
       expect((await store.get('a'))!.label, 'Home server');
     });
   });
-}
 
+  group('changes', () {
+    final noChmod = Platform.isWindows ? 'needs chmod to make a save fail' : null;
+
+    Future<List<List<String>>> record(
+      HostStore store,
+      Future<void> Function() body,
+    ) async {
+      await store.ensureLoaded();
+      final seen = <List<String>>[];
+      final sub = store.changes.listen(
+        (hosts) => seen.add([for (final h in hosts) '${h.id}:${h.label}']),
+      );
+      try {
+        await body();
+      } finally {
+        await Future<void>.delayed(Duration.zero);
+        await sub.cancel();
+      }
+      return seen;
+    }
+
+    test('announces the list after every kind of successful write', () async {
+      final store = HostStore(file: storeFile);
+      final seen = await record(store, () async {
+        await store.add(host(id: 'a', label: 'A', group: 'g'));
+        await store.add(host(id: 'b', label: 'B'));
+        await store.update(host(id: 'a', label: 'A2', group: 'g'));
+        await store.modify('b', (h) => h.copyWith(label: 'B2'));
+        await store.renameGroup('g', 'h');
+        await store.deleteGroup('h');
+        await store.delete('b');
+        await store.replaceAll([host(id: 'c', label: 'C')]);
+      });
+      expect(seen, [
+        ['a:A'],
+        ['a:A', 'b:B'],
+        ['a:A2', 'b:B'],
+        ['a:A2', 'b:B2'],
+        ['a:A2', 'b:B2'],
+        ['a:A2', 'b:B2'],
+        ['a:A2'],
+        ['c:C'],
+      ]);
+    });
+
+    test('the announced list is what the store serves, and cannot be '
+        'changed by a listener', () async {
+      final store = HostStore(file: storeFile);
+      List<Host>? last;
+      final sub = store.changes.listen((h) => last = h);
+      await store.add(host(id: 'a'));
+      await Future<void>.delayed(Duration.zero);
+      expect(last!.single.id, 'a');
+      expect(() => last!.add(host(id: 'x')), throwsUnsupportedError);
+      await sub.cancel();
+    });
+
+    test('a write that changes nothing is not announced', () async {
+      final store = HostStore(file: storeFile);
+      await store.add(host(id: 'a', group: 'g'));
+      final seen = await record(store, () async {
+        await store.modify('missing', (h) => h);
+        await store.renameGroup('nope', 'other');
+        await store.renameGroup('g', 'g');
+        await store.renameGroup('g', '   ');
+        await store.deleteGroup('nope');
+      });
+      expect(seen, isEmpty);
+    });
+
+    test('a failed update that is rolled back is not announced: listeners '
+        'never saw the change', () async {
+      final store = HostStore(file: storeFile);
+      await store.add(host(id: 'a', label: 'Before'));
+      await Process.run('chmod', ['555', tempDir.path]);
+      addTearDown(() => Process.run('chmod', ['755', tempDir.path]));
+      final seen = await record(store, () async {
+        await expectLater(
+          store.update(host(id: 'a', label: 'After')),
+          throwsA(isA<FileSystemException>()),
+        );
+      });
+      expect(seen, isEmpty);
+      expect((await store.get('a'))!.label, 'Before');
+    }, skip: noChmod);
+
+    test('a failed write that leaves memory changed is announced', () async {
+      final store = HostStore(file: storeFile);
+      await store.add(host(id: 'a', label: 'A'));
+      await store.add(host(id: 'b', label: 'B'));
+      await Process.run('chmod', ['555', tempDir.path]);
+      addTearDown(() => Process.run('chmod', ['755', tempDir.path]));
+      final seen = await record(store, () async {
+        await expectLater(
+          store.delete('a'),
+          throwsA(isA<FileSystemException>()),
+        );
+      });
+      expect(seen, [
+        ['b:B'],
+      ]);
+    }, skip: noChmod);
+
+    test('after overlapping failed writes, the last announcement is what '
+        'memory holds', () async {
+      final store = HostStore(file: storeFile);
+      await store.add(host(id: 'a', label: 'Before'));
+      await store.add(host(id: 'b', label: 'B'));
+      await Process.run('chmod', ['555', tempDir.path]);
+      addTearDown(() => Process.run('chmod', ['755', tempDir.path]));
+      final seen = await record(store, () async {
+        // The update puts 'a' back to Before when it fails; the delete of
+        // 'b' fails and leaves it gone. Either way listeners end on the
+        // truth.
+        final updating = store.update(host(id: 'a', label: 'After'));
+        final deleting = store.delete('b');
+        await expectLater(updating, throwsA(isA<FileSystemException>()));
+        await expectLater(deleting, throwsA(isA<FileSystemException>()));
+      });
+      final now = [for (final h in await store.all()) '${h.id}:${h.label}'];
+      expect(seen, isNotEmpty);
+      expect(seen.last, now);
+    }, skip: noChmod);
+  });
+}

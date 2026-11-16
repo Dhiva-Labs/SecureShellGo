@@ -23,7 +23,8 @@ lib/
 
   models/                       plain data, no I/O, no Flutter imports
     host.dart                   Host (persistable) + SshCredentials (in-memory only)
-    host_ai_access.dart         HostAiAccess: off / readOnly, unknown reads as off
+    host_ai_access.dart         HostAiAccess: off / readOnly / askToChange, unknown reads as off
+    host_ai_edit.dart           what the user touched in one AI form, so a save writes only that
     known_host.dart             KnownHostKey — one trusted host key
     remote_entry.dart           RemoteEntry — one row of a remote directory
     syntax_token.dart           TokenKind + HighlightSpan for the editor
@@ -56,8 +57,15 @@ lib/
     editor_search.dart          find/replace: plain and regex, counts, go-to-line
     editor_save.dart            the conflict guard + temp-then-rename save-back
     headless_dialer.dart        the no-prompt SSH dial shared by fleet and the bridge
-    bridge/                     the AI Bridge: read-only MCP for local assistants
-      bridge_policy.dart          the one place that allows or refuses a call
+    allowed_command_check.dart  why an allowed-commands entry is refused (names the reason)
+    assistant_drive.dart        who has the keyboard in an assistant's terminal session
+    visible_text.dart           makes hidden or look-alike characters visible (the card, the allowed list)
+    bridge/                     the AI Bridge: MCP for local assistants; reads, and changes with permission
+      bridge_policy.dart          the one place that allows, refuses or asks (decideBridgeCall)
+      bridge_approvals.dart       the cards waiting for a person: caps, timeout, withdrawal
+      bridge_grants.dart          timed approvals ("Allow for a while"), memory only
+      bridge_change_tools.dart    run_command, write_file, service_action, run_on_hosts
+      bridge_terminals.dart       open_terminal, send_input, read_screen, close_terminal
       bridge_paths.dart           the path guard: blocked secret locations
       bridge_redactor.dart        64 KiB cap, private-key blocks, scrub
       bridge_audit.dart           the on-device activity log (audit.log)
@@ -67,7 +75,7 @@ lib/
       bridge_locator.dart         endpoint.json + the launcher's half of the channel
       bridge_tool_types.dart      BridgeToolHost, BridgeToolSpec, BridgeToolKind
       mcp_server.dart             hand-written JSON-RPC / MCP over a connection
-      bridge_tools.dart           the seven read tools; each call goes through policy
+      bridge_tools.dart           the seven read tools and the dispatcher every call goes through
       bridge_connections.dart     SSH transports for tools: open session, or headless dial
       bridge_service.dart         the facade main.dart builds; start/stop, lock, status
       bridge_launcher_locator.dart  the launcher command to show, per install kind
@@ -88,13 +96,16 @@ lib/
     bridge_connect_screen.dart  "Connect an assistant": name, token once, launcher + snippet
     bridge_one_click_screen.dart  "Connect Claude Code": confirm, pair, run `claude`, undo on failure
     bridge_shared_hosts_screen.dart  "Shared hosts": the checklist of hosts an assistant may read
-    bridge_audit_screen.dart    "AI Bridge activity": the activity log, newest first
+    bridge_audit_screen.dart    "AI Bridge activity": the activity log, newest first, with how each change was allowed
 
   widgets/
     host_key_dialog.dart        the accept/reject host key UI
     terminal_key_bar.dart       Esc/Tab/Ctrl-x/arrows row for soft keyboards
     transfer_panel.dart         transfer summary bar + transfers bottom sheet
     code_editor_field.dart      highlighting controller + scroll-synced gutter
+    bridge_approval_card.dart   the approval card: what an assistant asks to change, and the answer
+    bridge_approval_host.dart   raises that card over whatever screen is in front, one at a time
+    host_ai_controls.dart       the per-host AI switches, allowed commands and terminal switch
 
 bin/
   secureshellgo_mcp.dart        the AI Bridge launcher: a stdio-to-channel pipe, no Flutter
@@ -819,8 +830,11 @@ use, so a broadcast write is indistinguishable from typing.
 
 On Linux and Windows the app can act as a local MCP server, so an AI
 assistant on the same computer can **read** from the servers the user shares,
-by name. 1.6.0 has no tool that changes a server. The bridge is off by
-default. On Android and macOS it is never started: `BridgeService.supported`
+by name. 1.6.0 could only read. 1.7.0 adds tools that **change** a server, each
+only where the user allowed it for that host and with a person's yes in the app
+(the sections "Levels", "Changing, with permission" and "The terminal" below).
+The bridge is off by default, and everything new in 1.7.0 is off until the user
+switches it on. On Android and macOS it is never started: `BridgeService.supported`
 is true only on Linux and Windows, `main.dart` builds no `BridgeService`
 elsewhere, and the Settings section, the connect screen and the activity
 screen are not shown. (The Dart code is still compiled into those apps,
@@ -852,13 +866,17 @@ AI client ──stdio──► launcher ──local channel──► app (lib/se
   `BridgeToolHost`.
 - `bridge_tools.dart` implements the seven tools (`list_hosts`,
   `server_stats`, `list_services`, `tail_log`, `list_dir`, `read_file`,
-  `search_files`), reusing `ServerProbeCommands`, `SystemdCommands`,
+  `search_files`; the change and terminal tools are in
+  `bridge_change_tools.dart` and `bridge_terminals.dart`, below), reusing
+  `ServerProbeCommands`, `SystemdCommands`,
   `LogTailCommands` and SFTP. Arguments are checked against each tool's
   schema (unknown keys refused, strings without NUL or line breaks, numbers
   in range) and everything that reaches a shell is quoted by
   `shell_quote.dart`. The assistant never supplies command text. At most 4
   calls run at once with 32 waiting (a 33rd is refused as busy), and each
-  call has 30 seconds, waiting included. `list_hosts` and `server_stats`
+  call has 30 seconds, waiting included. Changes have 2 run slots of their
+  own, apart from the 4 for reads, so a long command cannot starve reads (and
+  the reverse); their queue is 32 as well. `list_hosts` and `server_stats`
   answer in JSON, the others in text; `server_stats` leaves the server's own
   hostname out unless "Show address and username" is on, since it is often
   the address.
@@ -866,7 +884,14 @@ AI client ──stdio──► launcher ──local channel──► app (lib/se
   if the user has one (one more channel, no second sign-in), else a headless
   dial (`headless_dialer.dart`, the same no-prompt dial the fleet screens
   use) cached for 60 seconds after its last call, and never reused once the
-  host has been edited. Credentials are read with
+  host has been edited. No bridge connection carries the user's SSH agent or
+  X11 forwarding: every bridge dial strips both from the host
+  (`BridgeConnections.withoutForwarding`), and the bridge does not borrow a
+  session the user has open when that session or its saved host has agent or
+  X11 forwarding on (`mayBorrow`): it dials its own. The reason was shown on
+  a real sshd: once a session's shell has asked for forwarding, the server
+  keeps the agent socket for every later command on that connection, so an
+  exec channel the bridge opened on it could have used the user's agent. Credentials are read with
   `CredentialStore.loadQuiet`, for the host and every jump host, so a bridge
   call never shows a prompt in the app: a sealed vault, a keyring that cannot
   be read, an unsaved password or passphrase, a login question or a host key
@@ -915,38 +940,355 @@ assistant's side, including its arguments, is untrusted input. Everything the
 never interpreted by the app. The app holds the credentials; they are used
 inside `SshService` and never appear in a tool's input or output, a locator
 file, an audit entry or a message to the client. Hosts are visible only when
-the user has switched on "AI access (read-only)" for them, and they are known
+the user has switched on "Share with AI assistants" for them, and they are known
 by their label (`label#xxxx` when two share one); a hidden host never causes
 a visible one to be renamed. With "Show address and username" off, the
 address, port and user name of the host and of every jump host on its way,
 and IPv4 literals, are also taken out of any error text before it leaves.
 
+### Levels
+
+A host has one of three levels, stored as `aiAccess` in `hosts.json`, and an
+order of trust: **off < readOnly < askToChange**. In the app they read
+"Share with AI assistants" (read-only), and beneath it, "Let the assistant
+request changes". Anything the file holds that this build does not recognise
+reads as `off`: a `hosts.json` from a later version must not hand an
+assistant more than the user chose, and 1.6.0 reads `askToChange` as `off` the
+same way. Two more fields only mean something at `askToChange`:
+
+- `aiAllowedCommands` ("Allowed commands"): the commands that run without a
+  card. At most 50 entries of at most 4096 characters, each trimmed.
+- `aiTerminal` ("Full control terminal"): whether the assistant may ask to
+  open a terminal.
+
+Stepping a host down to read-only, or un-sharing it, **leaves both stored but
+inert** (`Host.aiMayRequestChanges`, `Host.aiMayOpenTerminal` are false), so
+the user does not lose a list they typed; it shows again when changes are
+switched back on, and the confirmation that switching on shows lists the
+commands that would come back into force. Backups strip all three on export
+and force them to their defaults on import, so a restored backup can hand an
+assistant nothing; the timed-approval setting is exported at its default (off) and an
+import keeps this device's value.
+
 ### One choke point
 
 `bridge_policy.dart` is the only place that decides. `decideBridgeCall` is a
-pure function over: is the bridge on, is the app locked, what kind of tool is
-it, and does the host exist and have access on. The order is fixed (off,
-locked, change, host). Every tool call goes through it, in the one
-dispatcher in `bridge_tools.dart`, before anything else, so a new tool cannot
-forget a check, and the whole table is tested without I/O.
+pure function over: is the bridge on, is the app locked, what kind of tool it
+is, and the host. It answers allow, refuse (with a stable code and the message
+the assistant is given) or **needs approval**. The order is fixed: off,
+locked, then the kind:
+
+- `read`: exactly 1.6.0's rule (allowed on a host with access on; unknown and
+  hidden hosts get one `host_not_available`). A test copies 1.6.0's function
+  and compares the two over every input.
+- `change`: no host, or access off: `host_not_available`; read-only:
+  `changes_not_allowed`; at `askToChange`, allowed when the plan's one command
+  is on the host's allowed list (`matchesAllowedCommand`) or the same assistant
+  holds a live timed approval for the host (`hasLiveGrant`), otherwise needs
+  approval.
+- `terminal` (opening one): as a change up to the read-only step, then the
+  host's terminal switch must be on (`terminal_not_allowed`), and the answer
+  is **always** needs approval. A grant or an allowed command never opens a
+  terminal.
+- `terminalUse` (typing into, reading or closing a terminal that was opened
+  with a yes): the caller must own a live terminal by that id
+  (`terminal_not_available` otherwise, the same for an unknown id and for
+  another assistant's, checked before the host so nothing about another
+  assistant's terminal shows), and the host must still be the same server and
+  still allow a terminal. The answer is allow: there is no card per call.
 
 Two choices are deliberate. A host that does not exist and a host with access
 off are refused with the **same** code and message, so a call cannot probe for
-hidden hosts. And the policy already refuses any tool of kind `change`, though
-none exists: a command the assistant types is, by definition, a change,
-because the app cannot tell a harmless one from a harmful one, so the day a
-way to send commands is added it arrives as a `change` tool, and the policy
-refuses it until that path has its own design. In 1.6.0 the refusal is a rule
-with no tool behind it.
+hidden hosts; and `changes_not_allowed` says no more than that the host is
+read-only, which `list_hosts` already shows by listing it. `list_hosts` does
+not say which level a host has.
+
+A typed command is **never judged by its text**: no pattern, no "looks safe",
+no blocklist. The app cannot tell a harmless command from a harmful one, so a
+command is an exact match against the allowed list, or it asks.
+
+"The same server" is one function, `bridgeSameServer`, which the dispatcher,
+the bridge service and the terminals share so they cannot drift: the same id,
+hostname, port, user name, transport and jump host (re-routing a host through
+another jump host can land on a different machine at the same address). A yes,
+a timed approval and an open terminal are each for one server in that sense.
+The jump host is compared by its id: editing the jump host's own entry (its
+address, say) is not seen as a change of the hosts that go through it.
+
+### Changing, with permission
+
+The order of checks for a change, in `BridgeTools._change`, is the contract,
+and is chosen so nothing leaks and nothing is asked that need not be:
+
+1. The host name is resolved as for a read.
+2. `decideBridgeCall` with no grant and no allowed command. Bridge off, locked,
+   an unknown or hidden host, a read-only host and a terminal not switched on
+   are all refused **here**, before the arguments are looked at and before any
+   card, so an invalid call to a hidden host reads exactly like a valid one and
+   the assistant cannot use the user's screen to probe for hosts. (A refusal
+   never depends on the two flags, which a test proves.)
+3. The tool's plan: the arguments are validated and the card's summary built
+   from them. A failure is refused with no card.
+4. The hosts and settings are **read again** and the policy asked again, now
+   with the live grant and the plan's allowed-command match. The re-read is
+   there because planning can take seconds (`write_file` looks at the server)
+   and the user may have edited the host, switched the bridge off or taken the
+   command off the list meanwhile. The dispatcher also judges the allowed list
+   itself, from the summary the card will show: a plan can claim a match only
+   for one command on one host, whatever its own flag says. A plan does not get
+   to vouch for itself.
+5. If the answer is "needs approval": the card, through `BridgeApprovals`,
+   outside the run slots and outside the 30 second deadline (waiting for a
+   person is not running). Busy, denied, timed out and withdrawn end the call.
+6. After a yes, the hosts are read **again** and the policy runs again. The
+   card may have waited two minutes; the host must still be the same server
+   (`bridgeSameServer`) and still allow this, the bridge must still be on and
+   the app unlocked. Only then is a timed approval created, and only when the
+   setting (read again) is still above zero, for no longer than it now says.
+7. The change runs in one of the 2 change run slots, under its own deadline.
+
+A yes that was then refused or stopped before the change ran is **approved but
+not run**: the assistant gets the underlying message, the host-and-lock cases
+as ordinary refusals, and the audit entry's `detail` starts
+`refused_after_approval: ` so the activity screen can say "Approved, but not
+run" and why. `run_on_hosts` follows the same order for every host at once: a
+hidden name anywhere fails the whole call with the one `host_not_available`;
+the call is allowed without a card only if a live timed approval exists for
+**every** host; and the allowed lists never apply to several hosts.
+
+### Approvals and timed approvals
+
+`bridge_approvals.dart` holds the questions waiting for the user, in memory
+only. A request carries the assistant, the host's bridge name, the tool, and a
+summary the **tool** built from its validated arguments (a command with its
+host names, a file write, a service action, a terminal); nothing the
+assistant wrote in prose reaches the card. At most 8 requests wait at once and
+at most 3 from one assistant, so one assistant cannot crowd another's cards
+out; a further ask is refused at once as busy (`approvals_busy`). One call has
+at most one pending request. Silence is a no: a request not answered in 120
+seconds ends as timed out, and an answer that arrives after expiry is a
+timeout, whatever the timer says. Every request ends exactly once (answered,
+timed out or withdrawn), and a late or second answer is ignored. A request is
+**withdrawn** when its call is abandoned (the client cancelled, the assistant
+was revoked, the bridge switched off) and by the app: every card on a lock, a
+host's cards when that host is un-shared, stepped down, deleted or changed to
+another server (`HostStore.changes` makes this immediate).
+
+A **timed approval** ("Allow for a while", a button on the card only when
+Settings → AI Bridge → "Allow for a while" is 5, 15 or 60 minutes) is a
+`BridgeGrant` keyed by assistant and host: that assistant may change that host
+without asking until it runs out. It covers every change tool on that host
+(not only the command on the card) and a `run_on_hosts` yes makes one per
+host. It lives in memory only and is gone on restart, when the bridge is
+switched off, when the assistant is revoked, when the host is un-shared,
+stepped down, deleted or changed to another server, when the app locks and
+when the setting is switched off (choosing another length leaves running ones
+as they were granted); "Stop now" in "Approvals in force" ends one. It
+**never covers a terminal**: on a terminal's card the button is not offered,
+and an "allow for a while" answer counts as once. If the setting was lowered
+while a card waited, the grant is for the shorter time.
+
+### The allowed list
+
+`matchesAllowedCommand` is exact string equality between the requested
+command, trimmed, and an entry; never a prefix, a pattern or a case fold. It is
+used for `run_command` on a single host only; nothing else ever matches, and
+the list does nothing while the host is below `askToChange`. The sanitiser
+(`Host.sanitizeAiAllowedCommands`, the one rule for reading `hosts.json`, for
+`copyWith` and, through `allowed_command_check.dart`, for the editor) drops an
+entry **whole**, never cleaning it up (cleaning would store a command other
+than the one typed) when it has: any control character (a tab, a line break, a
+NUL, DEL, a C1 control; a multi-line entry is several commands), any space
+that is not U+0020 (a no-break space looks like a word break and is not one to
+a shell), a soft hyphen, line or paragraph separators, bidirectional marks,
+embeddings, overrides and isolates, zero-width characters, a byte-order mark
+or a lone surrogate. These are the characters that make the stored text read
+differently from what runs, on the one path where nobody is asked. It also
+drops empty entries, entries over 4096 characters, duplicates, and entries
+past the 50th.
+
+The editor (`allowedCommandProblem`) refuses more than the sanitiser: also
+anything the card would mark (`visibleText(...).hasSurprises`), so every other
+format character, private-use, unassigned and noncharacter code points, and
+the combining marks the card shows as stand-ins (below). Those extra checks
+are made when an entry is typed, not when `hosts.json` is read: an entry put
+into the file by hand that holds only those is kept, and the editor then shows
+it with its stand-ins. Every entry is shown in full in the editor and in the
+confirmation, never cut, through `visibleLine`.
+
+### The card is the security boundary
+
+The approval card is what a person's yes rests on, so it is built to be read
+and hard to hit by mistake (each point has a test):
+
+- **Visible text.** `visible_text.dart` renders the command, the path, the
+  assistant's name and the host's name so that every character can be seen:
+  a line feed shows as `\n` and a real line break, other control characters
+  as `\t`, `\r`, `\x1b`, bidirectional marks, embeddings, overrides and
+  isolates as `[U+202E]` and the like, zero-width, other invisible and every
+  other format character and non-ordinary spaces as `[U+200B]`, `[U+00A0]`,
+  text that is not valid (a lone surrogate, a noncharacter, a private-use or
+  unassigned code point) as `[U+D800]`, and a combining mark that could hide
+  or change the character before it as `[U+0301]` (every enclosing mark, the
+  general combining blocks of accents, overlays and strokes wherever they
+  are, any mark on a plain ASCII character, and the third and later marks in
+  a row; the marks a script needs on its own letters are drawn as they are).
+  A short legend, one line per kind, appears when any was shown. This
+  is a picture of the string: what runs is the raw string, and nothing reads
+  the picture back. A `\r` that would hide the text before it, or a
+  right-to-left override that would reorder the line, cannot hide on the card.
+- **Default Deny.** Deny holds the focus, so Enter and Space deny; Escape and
+  the back gesture deny; a click beside the card does nothing.
+- **A one second lockout.** Both Allow buttons are disabled for one second
+  after the card appears and after the request it shows changes, so a key or
+  click already on its way cannot approve something not yet read. Once one
+  answer is given the card is inert.
+- **A card for a terminal says what it allows**, in the product's own words:
+  "An approved terminal gives the AI assistant a live shell as the saved
+  sign-in user on this host. It can type any command, including ones you never
+  see on a card, read any file that user can read, and reach anything this
+  host can reach, with no further questions. The blocked-path list does not
+  apply inside a terminal. You can watch it, take over by typing, or stop it
+  at any time."
+- **A file card does not pass a part for the whole.** It shows the canonical
+  path, the exact size, whether a file is replaced, and a preview that is
+  marked partial (`previewIsPartial`) when lines are left out or cut or text
+  was hidden as a secret, or absent. The partial-preview warning is drawn
+  first on the card, above who asked and where, so it is in view without
+  scrolling; the preview's own last lines say the same in words. The preview,
+  and the lines of the old file a diff shows, are read from the server for
+  the card only: they are never sent to the assistant, and the audit entry
+  holds only the path and the size.
+- **The lock.** One card at a time, over whatever screen is in front, with
+  "N more waiting". A locked app shows no card: the service withdraws every
+  request on a lock and the host removes the dialog rather than covering it (a
+  dialog under the lock screen would still take key presses). Nothing is
+  queued across a lock.
+
+The card does not ask the window manager for attention (no flash, no sound,
+no raise): if the app is in the background the user is **not alerted**, and a
+card nobody looks at ends as a denial after 120 seconds. The README says so,
+because it decides how the feature can be used.
+
+### Each change tool
+
+All four are `BridgeToolKind.change`, carry `readOnlyHint: false` and
+`destructiveHint: true` in `tools/list`, and share these safeguards:
+
+- **One string, shown, matched and run.** For `run_command` and
+  `run_on_hosts` the plan holds the trimmed command once. The card shows it,
+  the allowed list is matched against it and it is what runs: no step builds a
+  different command in between.
+- **The account's shell, exactly as given.** The command is wrapped
+  (`BridgeChangeCommands.accountShell`) as `exec "${SHELL:-/bin/sh}" -c
+  '<command>'`, the way `ssh host 'command'` and "run on many servers" run it,
+  inside the same supervised wrapper as every bridge command. It has no stdin
+  and no terminal. The wrapper's command line is quoted by `loginShellQuote`
+  so that no backslash is ever left inside single quotes: a login shell such
+  as fish, which reads `\\` and `\'` inside single quotes as escapes, cannot
+  change the command or reopen its quotes. This is checked on sh and bash; fish
+  itself has not been run (the release checklist has the check).
+- **Output.** `run_command` returns the exit code and each stream redacted and
+  cut to its newest 30 KB. `run_on_hosts` returns JSON so one host's output
+  can never pass for another's: `{"hosts": [{"host", "exit_code", "stdout",
+  "stderr"} or {"host", "error"}]}`, in order, redacted value by value and cut
+  until the whole is under 60 KB. It runs at most 3 hosts at a time, each
+  under its own 60 seconds, in one run slot.
+- **Stopping.** A command that passes its deadline, or whose call is
+  abandoned (client cancel, revoke, bridge off), has its process group sent
+  TERM and, 3 seconds later, KILL; the channel is closed at once. See
+  "Stopping a call".
+- **`service_action`** is the fixed template of the services screen
+  (`SystemdCommands`) for start, stop and restart, and its sibling for reload,
+  on a unit validated by the same rule as the read tools. Nothing can answer a
+  password prompt, so a unit needing privilege the account lacks fails with
+  the tool's own error.
+- **`write_file`** writes UTF-8 text (at most 256 KiB, no NUL) through the
+  editor's `saveRemoteText` (temp file, rename, conflict guard). The path
+  goes through the same guard as reads: resolved on the server first, then
+  checked, with a blocked path refused as `path_not_available` exactly as a
+  read of it is; a symlink is followed to the file it points at and that file
+  is judged and written. The parent directory must exist and is not created.
+  The temporary file's name is `.<name>.ssg-bridge-<ms>-<64 random bits>`:
+  the editor opens its temp file without O_EXCL, and what is opened at a name
+  that already holds a symlink is whatever the link points at, so the name
+  must not be guessable by someone who can write in that directory. For a
+  replacement the card shows a diff when the old file is small text (up to 64
+  KiB), and the write is **refused** when the server reports neither size nor
+  modification time, because the changed-after-the-card check below could not
+  hold.
+- **Changed after the card.** The replaced file's size and modification time
+  are recorded when the card is built, and the write stops with "changed on
+  the server after the user was asked" if they differ, or if the path no
+  longer resolves to the same regular file; a new file stops if anything
+  appeared there. Before the rename a stop leaves the file as it was and
+  removes the temporary file on the still-open channel; once the rename has
+  begun it runs to its end, and a write that landed is reported as done even
+  if the call was cut off in the same instant. The replaced file's mode is
+  put back.
+- **Timeouts.** A change's deadline is its own (`timeout_seconds`, default
+  60, at most 300, for a command; 60 for a service action and for each host
+  of `run_on_hosts`; the usual 30 seconds for a file write) and includes
+  waiting for a run slot and connecting. A change can therefore time out
+  while queued behind others, before it ran.
+
+### The terminal
+
+`bridge_terminals.dart`. `open_terminal(host)` (kind `terminal`) always
+needs a card; it opens an interactive shell the user can **see**: a normal
+session tab through `SessionManager`, marked as driven by an assistant, with
+a banner offering "Take over" and "Stop". It returns a `terminal_id` (128
+random bits, grouped so the secret scrubber does not take the id for a key).
+`send_input` (at most 4096 characters, written to the PTY exactly as given),
+`read_screen` (the screen and scrollback, the last 200 lines at most and 60
+KiB, with wrapped rows joined before redaction so a long token is whole for
+the scrubber) and `close_terminal` are kind `terminalUse`.
+
+Why it never borrows what the user has open: an assistant's terminal is a
+connection of its own, dialled by the same no-prompt dial as other bridge
+calls (never a prompt, never a new or changed host key), with agent and X11
+forwarding off whatever the host says, without the host's startup command,
+without attaching to a persistent tmux or screen session, and never over Mosh.
+Each of those is the user's choice for the user's own shell; none may follow
+an assistant into a session it types into. Input the assistant writes is not
+mirrored into the user's broadcast-input targets.
+
+Who has the keyboard: the assistant **drives** until the user takes over (the
+button, or typing into the session: the first keystroke takes it, so two
+typists never interleave), after which `send_input` and `read_screen` are
+refused and the session is the user's. The state only moves forward. The user
+can Stop, which closes the session.
+
+Lifecycle: at most 2 driven terminals at once, all assistants together (a
+taken-over one is the user's and no longer counts); one with no input or read
+for 10 minutes is closed. The bridge being switched off (first, before the
+slower teardown), the app locking, the assistant being revoked, the host being
+deleted, un-shared, stepped down, losing its terminal switch or changed to
+another server close the driven ones; each call checks again regardless. A
+lock, bridge-off or host change that happens while a terminal is still opening
+closes it as it lands. A taken-over terminal is the user's and none of this
+closes it. Input is audited call by call (scrubbed, cut at 500 characters),
+the screen never.
+
+### Cancellation
+
+`mcp_server.dart` handles `notifications/cancelled` with `params.requestId`
+by abandoning that in-flight `tools/call`: its pending card is withdrawn, its
+work on the server is stopped as for a revoke (a file write already past the
+point of its rename finishes), and **no reply is sent** (the MCP rule for a
+cancelled request). Ids are per connection, so one connection can
+never cancel another's request, and an unknown or finished id is ignored.
 
 ### Stopping a call
 
 Every remote command runs under a small `sh` wrapper
 (`BridgeCommands.supervised`): the command runs in its own process group
 (`setsid` where there is one), and a watcher waits on the channel's stdin.
-When a call passes its 30 seconds, or is abandoned because its assistant was
-revoked or the bridge was switched off, the app closes stdin, the group is
-sent TERM, and the call's SFTP channel is closed. Nothing new is started for
+When a call passes its deadline (30 seconds for a read, its own for a change),
+or is abandoned because its assistant was revoked, the bridge was switched
+off or the client cancelled it, the app closes stdin, the group is
+sent TERM and, three seconds later, KILL (a command that ignores TERM
+is still ended), and the call's SFTP channel is closed. Nothing new is started for
 a halted call. An abandoned call is answered with the reason and never with
 what it found, even one that finished in the gap; a revoked or switched-off
 connection is cut, so nothing more is sent on it at all.
@@ -1043,9 +1385,12 @@ small and checked at run time.
 - **Shared hosts.** After success a checklist (`SharedHostsChecklist`, also
   reachable on its own from Settings) lists the saved hosts. It starts from
   each host's current AI access, so nothing is ticked that was not already
-  shared, and on Save it writes exactly the ticked set (ticked read-only, the
-  rest off), re-reading each host just before writing it. The per-host
-  "AI access (read-only)" switch is unchanged. A quick connect is not a saved
+  shared, and on Save it writes only the hosts whose tick changed (a newly
+  ticked host becomes read-only, an unticked one off; a ticked host keeps the
+  level it has), re-reading each host just before writing it. Each ticked row
+  shows its level ("Read only", "Can request changes", "Can request changes
+  and a terminal") and a settings button for the per-host controls. The
+  per-host "Share with AI assistants" switch is unchanged. A quick connect is not a saved
   host, so it is not listed.
 
 ### The local channel, per platform
@@ -1131,8 +1476,21 @@ it.
 `<data>/bridge/audit.log`: time, assistant, host name as asked, tool,
 arguments (private keys and secrets removed, cut to 500 characters), outcome
 (`ok`, `refused` or `error`), detail (the refusal code or the error message,
-scrubbed) and milliseconds. It records refusals and errors too, and **never
-the output**: the log lasts longer than the output and is shown more freely.
+scrubbed), milliseconds and, since 1.7.0, `approval`: how a change was
+allowed or why not (`none`, `allowed_command`, `grant`, `once`, `for_a_while`,
+`denied`, `timed_out`, `withdrawn`). A line from 1.6.0, with no such field,
+reads as `none` and is kept. A call the user approved but that was then refused
+or stopped before it ran is recorded as refused or error with its `approval`
+as given (`once` or `for_a_while`) and a `detail` that starts
+`refused_after_approval: `: approved, but not run. `write_file` records the
+path, the byte count and `if_exists`, **never the content**; `run_command` and
+`run_on_hosts` record the command, cut to 500 characters; `send_input`
+records its arguments, the terminal id and the text typed, scrubbed and cut to
+500 characters together; `read_screen` records nothing of the screen. It
+records refusals and errors too, and **never the output**: the log lasts
+longer than the output and is shown more freely. (An error's message is the
+`detail`, and some quote a short error the server printed, such as a failed
+`systemctl`'s stderr, scrubbed and cut to 500 characters.)
 The file is created owner-only (`chmod 600` on POSIX, best effort) and so is the rotated copy. It rotates at 512 KiB to `audit.log.1`, keeping one older file. The
 "Activity" screen ("AI Bridge activity") reads both; "Clear" deletes both. A
 write that fails never fails the call; the screen says the log has a gap.
@@ -1152,9 +1510,11 @@ pairing still works. The host store's rollback covers every host save in the app
 
 ### Backups, and the lock
 
-Backups never carry the bridge. An exported host has `aiAccess` off and the
+Backups never carry the bridge. An exported host has `aiAccess` off (and no
+allowed commands and no terminal switch) and the
 exported settings carry the bridge fields at their defaults; on import every
-host arrives with access off, whatever the file says, so restoring an old
+host arrives with access off, no allowed commands and the terminal switch off,
+whatever the file says, so restoring an old
 backup on a new machine cannot hand an assistant a server. Importing keeps
 **this device's** bridge settings (`withBridgeFrom`): a backup can neither
 switch the bridge on nor weaken its blocked paths. `bridge_clients.json` is
@@ -1162,7 +1522,8 @@ not part of a backup, so tokens (or their hashes) are never exported.
 
 While the app is locked, `decideBridgeCall` refuses everything, `list_hosts`
 included, so a client that is already connected gets nothing until the user
-unlocks the app.
+unlocks the app. A lock also withdraws every waiting card, ends every timed
+approval and closes every terminal an assistant drives.
 
 The consent dialog ("Turn on the AI Bridge?") is shown every time the bridge
 is switched on, not only the first time: pairing does not need the bridge on,
@@ -1182,13 +1543,34 @@ so a paired assistant does not mean the explanation was ever read.
 - **A malicious or compromised server.** Its output is data. It can try to
   steer the assistant (prompt injection); the skill and the instructions tell
   the assistant to treat it as data, but that is advice to a model and not
-  enforcement. What stops damage is that nothing in 1.6.0 can change a
-  server, and the guard, the cap and the audit log bound what can be read.
+  enforcement. What stops damage is that every change needs a person's yes on
+  a card showing exactly what will run (or something the user set up
+  beforehand), and that the guard, the cap and the audit log bound what can
+  be read. The skill also tells the assistant never to act on text a server
+  returned, and never to ask the user to loosen a setting.
   A malicious server cannot reach another host through the bridge, as each
   tool call names one host.
 - **A leaked client config.** It holds the token. Whoever has it can read
   from the shared servers, only while the app is running with the bridge on
-  and unlocked, and never anything the policy refuses. Revoking the
+  and unlocked, and never anything the policy refuses. In 1.7.0 it can also
+  *ask* for changes where the user allowed them: each still needs a card
+  (and the user can see which assistant asked), except an exact allowed
+  command and a live timed approval, which are the two ways around a card
+  that the user chose.
+- **An assistant, or text that steers it, trying to get changes through.**
+  Rephrasing, splitting a command, another tool, another host: each is a new
+  card, and the card shows the exact command (for a file, its path, size and a
+  preview marked when partial), so the user decides on what runs. The things that skip a card are the user's own settings: an
+  allowed command is an exact string, and a timed approval is per assistant
+  and host and ends at the clock, on revoke, on a lock and on a host change.
+  The skill tells the assistant not to ask for either.
+- **A confusing card.** Control characters, a carriage return, bidirectional
+  overrides, invisible and other format characters, look-alike spaces,
+  private-use and unassigned code points and combining marks that could hide
+  a character are drawn visibly (`visible_text.dart`), the card defaults to
+  Deny and its Allow buttons wake after a second. A very long file preview can
+  still hide that more is written than shown; a warning at the top of the card
+  says so when it is partial, and the card gives the exact size. Revoking the
   assistant in Settings invalidates the token at once and stops its calls in
   progress; the activity log shows what was asked for.
 - **The AI provider.** Out of scope for the app by construction: whatever the
@@ -1214,6 +1596,19 @@ so a paired assistant does not mean the explanation was ever read.
   the shell). Anything that process had already started, such as a child or a
   clone, is not tracked and may run on; the connector only stops waiting for
   its pipes after two seconds.
+- **What an approved terminal allows that nothing else does.** A live shell
+  as the saved sign-in user, on a host the user chose, with any command typed
+  with no further card until the user takes over, stops it or it idles out.
+  The blocked-path list does **not** apply inside it: it guards the bridge's
+  own file tools, and a shell can `cat` anything the account can read.
+  `read_screen` removes only private-key blocks and the secrets the app knows,
+  so a key can still be read in pieces or encoded, and anything else on the
+  screen goes to the assistant and from there to its provider. The same is
+  true of `run_command`, a command with a card: the path guard judges paths
+  the read tools are given, never a command's text. That is why the terminal
+  is a separate per-host switch, with its own warning, a card every time (never
+  a timed approval or an allowed command), visible in the app and audited call
+  by call.
 - **Prompts outside the app.** The app never prompts for a bridge call, but
   it cannot stop other software from doing so: an SSH agent may ask the user
   to confirm a signature or touch a hardware key, and a desktop keyring may
@@ -1245,6 +1640,44 @@ so a paired assistant does not mean the explanation was ever read.
   steps. Something that can write on the server could swap a symlink in
   between. Exploiting that already needs write access on the server, which
   is more than the bridge would give it.
+- **A stop does not reach a process that left its group.** TERM then KILL goes
+  to the command's process group. A program that moved itself into a session of
+  its own (`setsid`) survives a stop, and so does a job a command started
+  that finished before the stop. The stop is of what the command still holds.
+  On a server with no `setsid` the command is not put in a group of its own,
+  and only its main process is signalled.
+- **The card does not alert the user.** No window attention, no sound. With
+  the app in the background a card goes unseen and ends as a denial after
+  120 seconds.
+- **A jump host's own edits are not a change of server.** `bridgeSameServer`
+  compares the jump host's id; editing the jump host's entry keeps the timed
+  approvals, waiting cards and terminals of the hosts behind it.
+- **Same-size, same-second file changes defeat the changed-file check.**
+  `write_file` compares the replaced file's size and modification time with
+  what the card was built from. A change that keeps both (the same number of
+  bytes within the same second, on a server whose times are whole seconds)
+  is not noticed.
+- **A replacement keeps the mode and nothing else.** It is a temp file and a
+  rename, so the file's owner, its access lists and extended attributes are
+  those of a new file, and other hard links to the old file keep the old
+  content. If the server will not restore the mode, the result says so.
+- **A change can time out while queued.** The deadline includes waiting for
+  one of the 2 change slots and connecting; a command can be stopped before it
+  ever ran, and one that was stopped may have done part of its work.
+- **Login shells that are not POSIX.** The command line is built so that no
+  backslash is inside single quotes, which is correct for fish, but only sh and
+  bash were run; fish itself was not (`store/release-checklist-1.7.md` has the
+  check).
+- **Nothing of 1.7.0 has run on Windows yet.** The loopback channel carrying
+  the new tools, the card, the terminal session and the stop on a server are
+  written from the code and tested on Linux; the release checklist lists what to
+  check on a real install. The commands and the stop wrapper run on the
+  *server*, so they need a POSIX `sh` there; a Windows server is not supported
+  for changes, and process stop on one is out of scope.
+- **macOS and Android do not have the bridge.** `BridgeService.supported` is
+  true only on Linux and Windows, so none of this exists there.
+- **The translations of the new 1.7.0 text** (the eight languages other than
+  English) were written by machine and have not been read by native speakers.
 - **Empty-looking folders.** A directory that holds only blocked entries
   lists as `[empty]`, and a search through it finds nothing. That is the
   price of leaving no trace.

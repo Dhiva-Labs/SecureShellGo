@@ -7581,7 +7581,7 @@
   "@settingsBridge": {
     "description": "Settings: section header, and the title of the main switch. \"AI Bridge\" is a product feature name; keep it recognisable."
   },
-  "settingsBridgeHelp": "Lets an AI assistant on this computer read from the servers you choose. Read-only.",
+  "settingsBridgeHelp": "Lets an AI assistant on this computer read from the servers you choose and, only where you allow it, ask to change things with your approval.",
   "@settingsBridgeHelp": {
     "description": "Settings > AI Bridge: subtitle of the main switch."
   },
@@ -7610,7 +7610,7 @@
   "@settingsBridgeEnableTitle": {
     "description": "Settings > AI Bridge: title of the confirmation shown each time the bridge is switched on."
   },
-  "settingsBridgeEnableBody": "An AI assistant you pair can read from the hosts you enable for it. It never gets your passwords or keys. What it reads is sent by that assistant to its provider. Nothing can be changed on a server in this version.",
+  "settingsBridgeEnableBody": "An AI assistant you pair can read from the hosts you enable for it. It never gets your passwords or keys. What it reads is sent by that assistant to its provider. Nothing can be changed on a server unless you allow it, host by host: you can let an assistant ask to change things, and every change then needs your approval on a card, except commands you put on that host's allowed list, which run without asking, and approvals you choose to give for a limited time. A terminal, if you allow one for a host, gives the assistant a live shell as that host's sign-in user. All of this is off until you switch it on.",
   "@settingsBridgeEnableBody": {
     "description": "Settings > AI Bridge: body of the confirmation shown when the bridge is switched on. Four plain promises/facts: reads from enabled hosts, never gets passwords or keys, the assistant sends what it reads to its provider, nothing can be changed on a server. Keep each one."
   },
@@ -7933,14 +7933,6 @@
   "@bridgeAuditError": {
     "description": "AI Bridge > Activity: outcome of a request that failed."
   },
-  "hostEditAiAccess": "AI access (read-only)",
-  "@hostEditAiAccess": {
-    "description": "Host form: switch title. Lets a paired AI assistant read from this host through the AI Bridge. Shown only on desktop."
-  },
-  "hostEditAiAccessHelp": "Lets an AI assistant you have paired read from this server through the AI Bridge. It cannot change anything.",
-  "@hostEditAiAccessHelp": {
-    "description": "Host form: subtitle of the AI access switch."
-  },
   "settingsBridgeSharedHosts": "Shared hosts — {shared} of {total}",
   "@settingsBridgeSharedHosts": {
     "description": "Settings > AI Bridge: row that opens the list of saved hosts an assistant may read; shows how many of the saved hosts are shared.",
@@ -8067,7 +8059,7 @@
   "@bridgeHostsTitle": {
     "description": "Shared hosts: title of the screen where saved hosts are ticked for AI access."
   },
-  "bridgeHostsIntro": "Tick the hosts a paired AI assistant may read. It can only read; it cannot change anything on a server.",
+  "bridgeHostsIntro": "Tick the hosts a paired AI assistant may read. It cannot change anything on a host unless you also allow that for the host, with the settings button on a shared host.",
   "@bridgeHostsIntro": {
     "description": "Shared hosts: sentence above the list of hosts."
   },
@@ -8156,5 +8148,558 @@
   "settingsBridgeRevokeFailed": "The pairing could not be removed, so it still works. Try again.",
   "@settingsBridgeRevokeFailed": {
     "description": "Settings > AI Bridge: shown when removing a paired assistant could not be saved; the pairing was kept and still works."
+  },
+  "approvalTitleCommand": "Run this command?",
+  "@approvalTitleCommand": {
+    "description": "Approval card: heading when an AI assistant asks to run a command."
+  },
+  "approvalTitleCommandMany": "Run this command on {count} servers?",
+  "@approvalTitleCommandMany": {
+    "description": "Approval card: heading when one command would run on several hosts. {count} is the number of hosts.",
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "approvalTitleFileNew": "Create this file?",
+  "@approvalTitleFileNew": {
+    "description": "Approval card: heading when an AI assistant asks to create a new file."
+  },
+  "approvalTitleFileReplace": "Replace this file?",
+  "@approvalTitleFileReplace": {
+    "description": "Approval card: heading when an AI assistant asks to replace an existing file."
+  },
+  "approvalTitleService": "Change a service?",
+  "@approvalTitleService": {
+    "description": "Approval card: heading when an AI assistant asks to start, stop, restart or reload a service."
+  },
+  "approvalTitleTerminal": "Open a terminal for the assistant?",
+  "@approvalTitleTerminal": {
+    "description": "Approval card: heading when an AI assistant asks to open a terminal it can type into."
+  },
+  "approvalAskedBy": "Asked by {assistant}",
+  "@approvalAskedBy": {
+    "description": "Approval card: who is asking. {assistant} is the name the user gave the assistant when pairing.",
+    "placeholders": {
+      "assistant": {
+        "type": "String"
+      }
+    }
+  },
+  "approvalOnHost": "On {host}",
+  "@approvalOnHost": {
+    "description": "Approval card: which host. {host} is the host's name.",
+    "placeholders": {
+      "host": {
+        "type": "String"
+      }
+    }
+  },
+  "approvalOnHosts": "On these servers:",
+  "@approvalOnHosts": {
+    "description": "Approval card: label above the list of hosts a command would run on, one per line."
+  },
+  "approvalCommandLabel": "The command, exactly as the shell will receive it:",
+  "@approvalCommandLabel": {
+    "description": "Approval card: label above the command text."
+  },
+  "approvalLegendTitle": "Some characters are marked because they are hidden or look like something else:",
+  "@approvalLegendTitle": {
+    "description": "Approval card: legend heading under text that contains hidden characters. The stand-ins shown in marked boxes are not translated."
+  },
+  "approvalLegendLineBreak": "\\n  a line break; the command continues on the next line",
+  "@approvalLegendLineBreak": {
+    "description": "Approval card legend: what the \\n marker means."
+  },
+  "approvalLegendControl": "\\t  \\r  \\x1b  a tab, a carriage return or another control character",
+  "@approvalLegendControl": {
+    "description": "Approval card legend: what the \\t, \\r and \\x1b markers mean."
+  },
+  "approvalLegendBidi": "[U+202E]  a character that changes the reading direction, so the text can look different from how it runs",
+  "@approvalLegendBidi": {
+    "description": "Approval card legend: what a [U+202E]-style marker for a text-direction character means."
+  },
+  "approvalLegendInvisible": "[U+200B]  an invisible character",
+  "@approvalLegendInvisible": {
+    "description": "Approval card legend: what a [U+200B]-style marker for an invisible character means."
+  },
+  "approvalLegendSpace": "[U+00A0]  a space that is not a normal space",
+  "@approvalLegendSpace": {
+    "description": "Approval card legend: what a [U+00A0]-style marker for an unusual space means."
+  },
+  "approvalLegendInvalid": "[U+D800]  not valid text",
+  "@approvalLegendInvalid": {
+    "description": "Approval card legend: what a [U+D800]-style marker for invalid text means."
+  },
+  "approvalLegendCombining": "[U+0301]  a mark drawn over or under the character before it, which can hide or change how that character looks",
+  "@approvalLegendCombining": {
+    "description": "Approval card legend: what a [U+0301]-style marker for a combining mark (an accent, stroke or circle drawn on the character before it) means."
+  },
+  "approvalFilePath": "The file:",
+  "@approvalFilePath": {
+    "description": "Approval card, file write: label above the path."
+  },
+  "approvalFileSize": "Size: {bytes, plural, =1{1 byte} other{{bytes} bytes}}",
+  "@approvalFileSize": {
+    "description": "Approval card, file write: size in bytes, for sizes under 1 KiB.",
+    "placeholders": {
+      "bytes": {
+        "type": "int"
+      }
+    }
+  },
+  "approvalFileSizeHuman": "Size: {bytes, plural, =1{1 byte} other{{bytes} bytes}} ({human})",
+  "@approvalFileSizeHuman": {
+    "description": "Approval card, file write: size in bytes and in KiB/MiB. {human} is like 12 KiB and is not translated.",
+    "placeholders": {
+      "bytes": {
+        "type": "int"
+      },
+      "human": {
+        "type": "String"
+      }
+    }
+  },
+  "approvalFileCreates": "This creates a new file.",
+  "@approvalFileCreates": {
+    "description": "Approval card, file write: the file does not exist yet."
+  },
+  "approvalFileReplaces": "This replaces a file that already exists.",
+  "@approvalFileReplaces": {
+    "description": "Approval card, file write: a file that already exists will be replaced."
+  },
+  "approvalPreviewContent": "What will be written:",
+  "@approvalPreviewContent": {
+    "description": "Approval card, file write: label above the preview of the whole new content."
+  },
+  "approvalPreviewDiff": "Changes to the existing file:",
+  "@approvalPreviewDiff": {
+    "description": "Approval card, file write: label above the list of changes to the replaced file."
+  },
+  "approvalPreviewEmpty": "(empty)",
+  "@approvalPreviewEmpty": {
+    "description": "Approval card, file write: shown when the preview is empty."
+  },
+  "approvalPartialContentTitle": "This is not the whole file",
+  "@approvalPartialContentTitle": {
+    "description": "Approval card, file write: warning title when the preview shows only the start of the file."
+  },
+  "approvalPartialContentBody": "Only the start of what will be written is shown. The rest of the file is written too, and you cannot see it here.",
+  "@approvalPartialContentBody": {
+    "description": "Approval card, file write: warning text when the preview shows only the start of the file."
+  },
+  "approvalPartialDiffTitle": "This is not every change",
+  "@approvalPartialDiffTitle": {
+    "description": "Approval card, file write: warning title when the preview shows only some of the changes."
+  },
+  "approvalPartialDiffBody": "Only some of the changes are shown. Others will be made too, and you cannot see them here.",
+  "@approvalPartialDiffBody": {
+    "description": "Approval card, file write: warning text when the preview shows only some of the changes."
+  },
+  "approvalNoPreviewTitle": "No preview available",
+  "@approvalNoPreviewTitle": {
+    "description": "Approval card, file write: warning title when no preview of the content is available."
+  },
+  "approvalNoPreviewBody": "The content that will be written cannot be shown. Only the path and the size are known.",
+  "@approvalNoPreviewBody": {
+    "description": "Approval card, file write: warning text when no preview of the content is available."
+  },
+  "approvalServiceStart": "Start the service {unit}.",
+  "@approvalServiceStart": {
+    "description": "Approval card: start a service. {unit} is the service unit name.",
+    "placeholders": {
+      "unit": {
+        "type": "String"
+      }
+    }
+  },
+  "approvalServiceStop": "Stop the service {unit}.",
+  "@approvalServiceStop": {
+    "description": "Approval card: stop a service. {unit} is the service unit name.",
+    "placeholders": {
+      "unit": {
+        "type": "String"
+      }
+    }
+  },
+  "approvalServiceRestart": "Restart the service {unit}.",
+  "@approvalServiceRestart": {
+    "description": "Approval card: restart a service. {unit} is the service unit name.",
+    "placeholders": {
+      "unit": {
+        "type": "String"
+      }
+    }
+  },
+  "approvalServiceReload": "Reload the service {unit}.",
+  "@approvalServiceReload": {
+    "description": "Approval card: reload a service. {unit} is the service unit name.",
+    "placeholders": {
+      "unit": {
+        "type": "String"
+      }
+    }
+  },
+  "approvalServiceOther": "Run \"{action}\" on the service {unit}.",
+  "@approvalServiceOther": {
+    "description": "Approval card: any other service action. {action} is the action word, {unit} the service unit name.",
+    "placeholders": {
+      "action": {
+        "type": "String"
+      },
+      "unit": {
+        "type": "String"
+      }
+    }
+  },
+  "approvalTerminalWarningTitle": "Full control: no further questions",
+  "@approvalTerminalWarningTitle": {
+    "description": "Approval card, terminal: warning heading."
+  },
+  "approvalTerminalWarning": "An approved terminal gives the AI assistant a live shell as the saved sign-in user on this host. It can type any command, including ones you never see on a card, read any file that user can read, and reach anything this host can reach, with no further questions. The blocked-path list does not apply inside a terminal. You can watch it, take over by typing, or stop it at any time.",
+  "@approvalTerminalWarning": {
+    "description": "Approval card, terminal: the warning text. Keep every statement; do not soften."
+  },
+  "approvalCountdown": "Denied automatically in {time} if you do not answer.",
+  "@approvalCountdown": {
+    "description": "Approval card: countdown. {time} is minutes and seconds like 1:45.",
+    "placeholders": {
+      "time": {
+        "type": "String"
+      }
+    }
+  },
+  "approvalExpired": "Time ran out. This was denied.",
+  "@approvalExpired": {
+    "description": "Approval card: shown when time ran out."
+  },
+  "approvalWaitingMore": "{count, plural, =1{1 more waiting} other{{count} more waiting}}",
+  "@approvalWaitingMore": {
+    "description": "Approval card: how many other requests wait behind this one.",
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "approvalDeny": "Deny",
+  "@approvalDeny": {
+    "description": "Approval card: deny button."
+  },
+  "approvalAllowOnce": "Allow once",
+  "@approvalAllowOnce": {
+    "description": "Approval card: allow once button."
+  },
+  "approvalAllowForMinutes": "Allow for {minutes} minutes",
+  "@approvalAllowForMinutes": {
+    "description": "Approval card: allow-for-a-while button.",
+    "placeholders": {
+      "minutes": {
+        "type": "int"
+      }
+    }
+  },
+  "approvalAllowForMinutesNote": "Allow for {minutes} minutes: any change this assistant asks for on {host} is allowed for {minutes} minutes, without asking you again.",
+  "@approvalAllowForMinutesNote": {
+    "description": "Approval card: what Allow for N minutes grants, for one host.",
+    "placeholders": {
+      "minutes": {
+        "type": "int"
+      },
+      "host": {
+        "type": "String"
+      }
+    }
+  },
+  "approvalAllowForMinutesNoteMany": "Allow for {minutes} minutes: any change this assistant asks for on each of the servers listed above is allowed for {minutes} minutes, without asking you again.",
+  "@approvalAllowForMinutesNoteMany": {
+    "description": "Approval card: what Allow for N minutes grants when the command runs on several hosts.",
+    "placeholders": {
+      "minutes": {
+        "type": "int"
+      }
+    }
+  },
+  "hostAiShare": "Share with AI assistants",
+  "@hostAiShare": {
+    "description": "Host edit and per-host sheet: switch title. Read access for AI assistants."
+  },
+  "hostAiShareHelp": "Lets an AI assistant you have paired read from this server through the AI Bridge. Reading only, unless you also allow changes below.",
+  "@hostAiShareHelp": {
+    "description": "Host edit: help under the share switch."
+  },
+  "hostAiChanges": "Let the assistant request changes",
+  "@hostAiChanges": {
+    "description": "Host edit and per-host sheet: switch title. Lets the assistant ask to change things."
+  },
+  "hostAiChangesHelp": "When it asks, you see exactly what it wants to do and answer on a card in this app.",
+  "@hostAiChangesHelp": {
+    "description": "Host edit: help under the changes switch."
+  },
+  "hostAiChangesConfirmTitle": "Let the assistant request changes?",
+  "@hostAiChangesConfirmTitle": {
+    "description": "Confirmation title when switching on request-changes for a host."
+  },
+  "hostAiChangesConfirmBody": "Every change still needs your approval on a card, except the commands on this host's allowed list. Those run without asking.",
+  "@hostAiChangesConfirmBody": {
+    "description": "Confirmation body: every change needs approval except the allowed commands."
+  },
+  "hostAiChangesConfirmList": "These commands will run without asking:",
+  "@hostAiChangesConfirmList": {
+    "description": "Confirmation: heading above the stored allowed commands that come into force."
+  },
+  "hostAiChangesConfirmYes": "Allow requests",
+  "@hostAiChangesConfirmYes": {
+    "description": "Confirmation button: allow change requests."
+  },
+  "hostAiTerminalConfirmTitle": "Allow a full control terminal?",
+  "@hostAiTerminalConfirmTitle": {
+    "description": "Confirmation title when switching on the full control terminal for a host."
+  },
+  "hostAiTerminalConfirmBody1": "You will still be asked on a card each time the assistant wants a terminal.",
+  "@hostAiTerminalConfirmBody1": {
+    "description": "Confirmation body, first paragraph: each terminal still needs approval."
+  },
+  "hostAiTerminalConfirmBody2": "An approved terminal gives the AI assistant a live shell as the saved sign-in user on this host. It can type any command, read any file that user can read, and reach anything this host can reach, with no further questions. The blocked-path list does not apply inside a terminal. You can watch it, take over by typing, or stop it at any time.",
+  "@hostAiTerminalConfirmBody2": {
+    "description": "Confirmation body, second paragraph: what an approved terminal means. Keep every statement; do not soften."
+  },
+  "hostAiTerminalConfirmYes": "Allow terminal",
+  "@hostAiTerminalConfirmYes": {
+    "description": "Confirmation button: allow the full control terminal."
+  },
+  "hostAiCommands": "Allowed commands",
+  "@hostAiCommands": {
+    "description": "Host edit: heading of the allowed commands list."
+  },
+  "hostAiCommandsWarning": "Each command runs exactly as written, without asking you, whenever an assistant asks for exactly that command on this host. Add only commands you are sure you want to run at any time.",
+  "@hostAiCommandsWarning": {
+    "description": "Host edit: warning above the allowed commands list."
+  },
+  "hostAiCommandsNone": "No commands. Every change is asked about.",
+  "@hostAiCommandsNone": {
+    "description": "Host edit: shown when the allowed commands list is empty."
+  },
+  "hostAiCommandRemove": "Remove",
+  "@hostAiCommandRemove": {
+    "description": "Host edit: tooltip of the remove button on an allowed command."
+  },
+  "hostAiCommandField": "Add a command",
+  "@hostAiCommandField": {
+    "description": "Host edit: label of the field for a new allowed command."
+  },
+  "hostAiCommandAdd": "Add",
+  "@hostAiCommandAdd": {
+    "description": "Host edit: tooltip of the add button for an allowed command."
+  },
+  "hostAiCommandEmpty": "Type a command first.",
+  "@hostAiCommandEmpty": {
+    "description": "Host edit: refusal when the new allowed command is empty."
+  },
+  "hostAiCommandLineBreak": "Not added: a command cannot contain a line break. A line break would make it several commands.",
+  "@hostAiCommandLineBreak": {
+    "description": "Host edit: refusal, the command holds a line break."
+  },
+  "hostAiCommandHidden": "Not added: it contains a hidden or control character, or a space that is not a normal space, so the text you see might not be what runs.",
+  "@hostAiCommandHidden": {
+    "description": "Host edit: refusal, the command holds a hidden or control character."
+  },
+  "hostAiCommandTooLong": "Not added: it is longer than {max} characters.",
+  "@hostAiCommandTooLong": {
+    "description": "Host edit: refusal, the command is too long. {max} is the limit in characters.",
+    "placeholders": {
+      "max": {
+        "type": "int"
+      }
+    }
+  },
+  "hostAiCommandDuplicate": "Already on the list.",
+  "@hostAiCommandDuplicate": {
+    "description": "Host edit: refusal, the command is already on the list."
+  },
+  "hostAiCommandListFull": "Not added: the list is full ({max} commands).",
+  "@hostAiCommandListFull": {
+    "description": "Host edit: refusal, the list is full. {max} is the most commands allowed.",
+    "placeholders": {
+      "max": {
+        "type": "int"
+      }
+    }
+  },
+  "hostAiTerminal": "Full control terminal",
+  "@hostAiTerminal": {
+    "description": "Host edit: switch title. Full control terminal for the assistant."
+  },
+  "hostAiTerminalHelp": "Lets the assistant ask to open a terminal it types into. You approve each time on a card. Switching it on asks you to confirm.",
+  "@hostAiTerminalHelp": {
+    "description": "Host edit: help under the terminal switch."
+  },
+  "hostAiSheetOpen": "AI assistant settings for this host",
+  "@hostAiSheetOpen": {
+    "description": "Shared hosts list: tooltip of the button that opens a host's AI settings."
+  },
+  "hostAiSheetTitle": "AI assistant: {host}",
+  "@hostAiSheetTitle": {
+    "description": "Shared hosts list: title of the per-host sheet. {host} is the host's label.",
+    "placeholders": {
+      "host": {
+        "type": "String"
+      }
+    }
+  },
+  "bridgeHostLevelRead": "Read only",
+  "@bridgeHostLevelRead": {
+    "description": "Shared hosts list: label of a host an assistant can only read."
+  },
+  "bridgeHostLevelChanges": "Can request changes",
+  "@bridgeHostLevelChanges": {
+    "description": "Shared hosts list: label of a host where the assistant may request changes."
+  },
+  "bridgeHostLevelTerminal": "Can request changes and a terminal",
+  "@bridgeHostLevelTerminal": {
+    "description": "Shared hosts list: label of a host where the assistant may request changes and a terminal."
+  },
+  "settingsBridgeTimed": "Allow for a while",
+  "@settingsBridgeTimed": {
+    "description": "Settings > AI Bridge: title of the Allow for a while choice."
+  },
+  "settingsBridgeTimedHelp": "Only adds a button to approval cards. Off: cards offer Allow once only.",
+  "@settingsBridgeTimedHelp": {
+    "description": "Settings > AI Bridge: help for the Allow for a while choice."
+  },
+  "settingsBridgeTimedOff": "Off",
+  "@settingsBridgeTimedOff": {
+    "description": "Settings > AI Bridge: the Off choice of Allow for a while."
+  },
+  "settingsBridgeTimedMinutes": "{minutes} minutes",
+  "@settingsBridgeTimedMinutes": {
+    "description": "Settings > AI Bridge: a choice of Allow for a while.",
+    "placeholders": {
+      "minutes": {
+        "type": "int"
+      }
+    }
+  },
+  "settingsBridgeGrants": "Approvals in force",
+  "@settingsBridgeGrants": {
+    "description": "Settings > AI Bridge: heading of the list of time-limited approvals now in force."
+  },
+  "settingsBridgeGrantsHelp": "These assistants may change these hosts without asking until the time runs out.",
+  "@settingsBridgeGrantsHelp": {
+    "description": "Settings > AI Bridge: help under the heading of approvals in force."
+  },
+  "settingsBridgeGrantTitle": "{assistant} on {host}",
+  "@settingsBridgeGrantTitle": {
+    "description": "Settings > AI Bridge: one approval in force. {assistant} is the assistant's name, {host} the host's name.",
+    "placeholders": {
+      "assistant": {
+        "type": "String"
+      },
+      "host": {
+        "type": "String"
+      }
+    }
+  },
+  "settingsBridgeGrantLeft": "{minutes, plural, =1{1 minute left} other{{minutes} minutes left}}",
+  "@settingsBridgeGrantLeft": {
+    "description": "Settings > AI Bridge: time left of an approval in force.",
+    "placeholders": {
+      "minutes": {
+        "type": "int"
+      }
+    }
+  },
+  "settingsBridgeGrantLessThanMinute": "Less than a minute left",
+  "@settingsBridgeGrantLessThanMinute": {
+    "description": "Settings > AI Bridge: less than a minute left on an approval in force."
+  },
+  "settingsBridgeGrantStop": "Stop now",
+  "@settingsBridgeGrantStop": {
+    "description": "Settings > AI Bridge: button that ends an approval in force."
+  },
+  "assistantBannerDriving": "{assistant} is using this terminal. You can watch it.",
+  "@assistantBannerDriving": {
+    "description": "Session banner: the assistant is typing in this terminal. {assistant} is its name.",
+    "placeholders": {
+      "assistant": {
+        "type": "String"
+      }
+    }
+  },
+  "assistantBannerTakenOver": "You took over. {assistant} can no longer type here.",
+  "@assistantBannerTakenOver": {
+    "description": "Session banner: the user took over. {assistant} is the assistant's name.",
+    "placeholders": {
+      "assistant": {
+        "type": "String"
+      }
+    }
+  },
+  "assistantBannerEnded": "The terminal of {assistant} ended: {reason}",
+  "@assistantBannerEnded": {
+    "description": "Session banner: the assistant's terminal ended. {assistant} is its name, {reason} a short English reason.",
+    "placeholders": {
+      "assistant": {
+        "type": "String"
+      },
+      "reason": {
+        "type": "String"
+      }
+    }
+  },
+  "assistantBannerTakeOver": "Take over",
+  "@assistantBannerTakeOver": {
+    "description": "Session banner: button, the user takes the keyboard."
+  },
+  "assistantBannerStop": "Stop",
+  "@assistantBannerStop": {
+    "description": "Session banner: button, the user stops the assistant's terminal."
+  },
+  "assistantTabMarker": "Terminal opened by {assistant}",
+  "@assistantTabMarker": {
+    "description": "Session tab: tooltip of the marker on a terminal an assistant opened. {assistant} is its name.",
+    "placeholders": {
+      "assistant": {
+        "type": "String"
+      }
+    }
+  },
+  "bridgeAuditApprovalAllowedCommand": "Allowed: command on the allowed list",
+  "@bridgeAuditApprovalAllowedCommand": {
+    "description": "Activity: how a change was allowed. The command was on the host's allowed list."
+  },
+  "bridgeAuditApprovalGrant": "Allowed: timed approval in force",
+  "@bridgeAuditApprovalGrant": {
+    "description": "Activity: how a change was allowed. A time-limited approval was in force."
+  },
+  "bridgeAuditApprovalOnce": "Approved once",
+  "@bridgeAuditApprovalOnce": {
+    "description": "Activity: how a change was allowed. The user approved this one call."
+  },
+  "bridgeAuditApprovalForAWhile": "Approved for a while",
+  "@bridgeAuditApprovalForAWhile": {
+    "description": "Activity: how a change was allowed. The user approved it and further changes for a while."
+  },
+  "bridgeAuditApprovalDenied": "Denied",
+  "@bridgeAuditApprovalDenied": {
+    "description": "Activity: the user denied the change."
+  },
+  "bridgeAuditApprovalTimedOut": "Timed out: not answered, so denied",
+  "@bridgeAuditApprovalTimedOut": {
+    "description": "Activity: nobody answered in time, so the change was denied."
+  },
+  "bridgeAuditApprovalWithdrawn": "Withdrawn while waiting for an answer",
+  "@bridgeAuditApprovalWithdrawn": {
+    "description": "Activity: the call was cancelled or stopped while the card was waiting."
+  },
+  "bridgeAuditApprovedNotRun": "Approved, but not run: {reason}",
+  "@bridgeAuditApprovedNotRun": {
+    "description": "Activity: a change the user approved but that did not run. {reason} is a short English reason.",
+    "placeholders": {
+      "reason": {
+        "type": "String"
+      }
+    }
   }
 }

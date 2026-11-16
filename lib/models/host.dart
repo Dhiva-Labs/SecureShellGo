@@ -144,6 +144,8 @@ class Host {
     this.certificate,
     this.transport = HostTransport.ssh,
     this.aiAccess = HostAiAccess.off,
+    this.aiAllowedCommands = const <String>[],
+    this.aiTerminal = false,
   });
 
   final String id;
@@ -229,6 +231,95 @@ class Host {
   /// default, and never carried by a backup: see `BackupPayload`.
   final HostAiAccess aiAccess;
 
+  /// Commands an assistant may run on this host without asking, matched by
+  /// exact text. Meaningful only while [aiAccess] is [HostAiAccess.askToChange]
+  /// (see [aiMayRequestChanges]); stepping the host down to read-only or off
+  /// leaves the list stored but inert, so switching back on does not lose it.
+  /// Never carried by a backup. Build it with [sanitizeAiAllowedCommands].
+  final List<String> aiAllowedCommands;
+
+  /// Whether an assistant may ask to open a full-control terminal on this
+  /// host. Same rules as [aiAllowedCommands]: inert unless [aiAccess] is
+  /// [HostAiAccess.askToChange], kept when stepping down, never in a backup.
+  final bool aiTerminal;
+
+  /// True only when [aiAccess] is [HostAiAccess.askToChange].
+  bool get aiMayRequestChanges => aiAccess == HostAiAccess.askToChange;
+
+  /// True only when changes may be requested and [aiTerminal] is on.
+  bool get aiMayOpenTerminal => aiMayRequestChanges && aiTerminal;
+
+  /// Longest allowed-command entry, and the most entries kept.
+  static const int maxAiAllowedCommandLength = 4096;
+  static const int maxAiAllowedCommands = 50;
+
+  /// The one cleaning rule for an allowed-commands list, used when reading
+  /// `hosts.json`, by [copyWith], and available to the editor: each entry
+  /// trimmed, empty ones, ones over [maxAiAllowedCommandLength] characters
+  /// and ones holding a character that hides what runs (see
+  /// [_hidesWhatRuns]) dropped, duplicates dropped (first kept), at most
+  /// [maxAiAllowedCommands] entries.
+  ///
+  /// An entry is dropped whole, never cleaned up: stripping characters would
+  /// store a command other than the one the user typed.
+  static List<String> sanitizeAiAllowedCommands(Iterable<Object?> raw) {
+    final seen = <String>{};
+    final out = <String>[];
+    for (final item in raw) {
+      if (item is! String) continue;
+      final command = item.trim();
+      if (command.isEmpty ||
+          command.length > maxAiAllowedCommandLength ||
+          _hidesWhatRuns(command)) {
+        continue;
+      }
+      if (!seen.add(command)) continue;
+      out.add(command);
+      if (out.length >= maxAiAllowedCommands) break;
+    }
+    return List<String>.unmodifiable(out);
+  }
+
+  /// True when [command] holds a character that makes the stored text read
+  /// differently from what runs, on a path where nobody is asked: any C0 or
+  /// C1 control (NUL, tab, and line breaks included: a multi-line entry is
+  /// several commands), DEL, every space other than U+0020 (a no-break space
+  /// looks like a word break and is not one to a shell), the soft hyphen,
+  /// the Unicode line and paragraph separators, bidirectional marks,
+  /// embeddings, overrides and isolates, zero-width characters and the
+  /// byte-order mark, and a lone surrogate. Checked after trimming, so only
+  /// what sits inside the command counts.
+  static bool _hidesWhatRuns(String command) {
+    final units = command.codeUnits;
+    for (var i = 0; i < units.length; i++) {
+      final c = units[i];
+      if (c < 0x20 || (c >= 0x7F && c <= 0x9F)) return true;
+      if (c == 0x00A0 || // no-break space: looks like a space, is not one
+          c == 0x00AD || // soft hyphen
+          c == 0x061C || // Arabic letter mark
+          c == 0x1680 ||
+          c == 0x180E ||
+          (c >= 0x2000 && c <= 0x200A) || // other Unicode spaces
+          (c >= 0x200B && c <= 0x200F) || // zero-width, LRM, RLM
+          c == 0x202F ||
+          c == 0x205F ||
+          c == 0x3000 ||
+          (c >= 0x2028 && c <= 0x202E) || // separators, embeddings, overrides
+          (c >= 0x2060 && c <= 0x2069) || // word joiner .. isolates
+          c == 0xFEFF) {
+        return true;
+      }
+      if (c >= 0xD800 && c <= 0xDBFF) {
+        final next = i + 1 < units.length ? units[i + 1] : 0;
+        if (next < 0xDC00 || next > 0xDFFF) return true;
+        i++;
+      } else if (c >= 0xDC00 && c <= 0xDFFF) {
+        return true;
+      }
+    }
+    return false;
+  }
+
   /// `user@host` or `user@host:port` when the port is non-standard.
   String get target =>
       port == 22 ? '$username@$hostname' : '$username@$hostname:$port';
@@ -255,6 +346,8 @@ class Host {
     String? certificate,
     HostTransport? transport,
     HostAiAccess? aiAccess,
+    List<String>? aiAllowedCommands,
+    bool? aiTerminal,
   }) {
     return Host(
       id: id ?? this.id,
@@ -275,8 +368,23 @@ class Host {
       certificate: certificate ?? this.certificate,
       transport: transport ?? this.transport,
       aiAccess: aiAccess ?? this.aiAccess,
+      // A new list is cleaned here, so every write path that goes through
+      // copyWith stores only what fromJson would read back.
+      aiAllowedCommands: aiAllowedCommands == null
+          ? this.aiAllowedCommands
+          : sanitizeAiAllowedCommands(aiAllowedCommands),
+      aiTerminal: aiTerminal ?? this.aiTerminal,
     );
   }
+
+  /// This host with everything the AI Bridge grants put back to its default:
+  /// access off, no allowed commands, no terminal. What a backup does to every
+  /// host it exports or imports.
+  Host withoutAiGrants() => copyWith(
+        aiAccess: HostAiAccess.off,
+        aiAllowedCommands: const <String>[],
+        aiTerminal: false,
+      );
 
   /// Re-points (or clears, with null) the jump host.
   ///
@@ -303,6 +411,8 @@ class Host {
         certificate: certificate,
         transport: transport,
         aiAccess: aiAccess,
+        aiAllowedCommands: aiAllowedCommands,
+        aiTerminal: aiTerminal,
       );
 
   /// Reassigns this host's group, [group] null meaning Ungrouped.
@@ -330,6 +440,8 @@ class Host {
         certificate: certificate,
         transport: transport,
         aiAccess: aiAccess,
+        aiAllowedCommands: aiAllowedCommands,
+        aiTerminal: aiTerminal,
       );
 
   /// Sets (or removes, with null) the certificate. Its own helper for the
@@ -353,6 +465,8 @@ class Host {
         certificate: certificate,
         transport: transport,
         aiAccess: aiAccess,
+        aiAllowedCommands: aiAllowedCommands,
+        aiTerminal: aiTerminal,
       );
 
   Map<String, dynamic> toJson() => {
@@ -378,6 +492,8 @@ class Host {
         if (certificate != null) 'certificate': certificate,
         if (transport != HostTransport.ssh) 'transport': transport.name,
         if (aiAccess != HostAiAccess.off) 'aiAccess': aiAccess.name,
+        if (aiAllowedCommands.isNotEmpty) 'aiAllowedCommands': aiAllowedCommands,
+        if (aiTerminal) 'aiTerminal': true,
       };
 
   factory Host.fromJson(Map<String, dynamic> json) {
@@ -427,6 +543,12 @@ class Host {
       transport: HostTransport.fromName(json['transport'] as String?),
       // Absent before 1.6, and anything unrecognised: no AI access.
       aiAccess: HostAiAccess.fromJson(json['aiAccess']),
+      // Absent before 1.7, and anything malformed: nothing allowed.
+      aiAllowedCommands: switch (json['aiAllowedCommands']) {
+        final List<dynamic> list => sanitizeAiAllowedCommands(list),
+        _ => const <String>[],
+      },
+      aiTerminal: json['aiTerminal'] == true,
     );
   }
 }

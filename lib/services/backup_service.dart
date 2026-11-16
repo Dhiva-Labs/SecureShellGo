@@ -1,7 +1,6 @@
 import 'dart:typed_data';
 
 import '../models/host.dart';
-import '../models/host_ai_access.dart';
 import '../models/known_host.dart';
 import '../models/path_bookmark.dart';
 import 'backup_crypto.dart';
@@ -241,7 +240,7 @@ class BackupService {
     final existingHosts = await hostStore.all();
     final existingHostIds = {for (final h in existingHosts) h.id};
     final importedHosts = [
-      for (final h in payload.hosts) h.copyWith(aiAccess: HostAiAccess.off),
+      for (final h in payload.hosts) h.withoutAiGrants(),
     ];
     final importedHostIds = {for (final h in importedHosts) h.id};
 

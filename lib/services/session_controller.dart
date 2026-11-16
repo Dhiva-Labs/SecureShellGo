@@ -10,6 +10,7 @@ import 'package:xterm/core.dart';
 
 import '../models/host.dart';
 import '../models/remote_entry.dart';
+import 'assistant_drive.dart';
 import 'device_storage.dart';
 import 'direct_remote_copy.dart';
 import 'download_announcer.dart';
@@ -365,6 +366,43 @@ class SessionController {
   ///
   /// Not everything `Terminal` emits is input — see [_absorbingRemoteOutput].
   void Function(String data)? onInputSent;
+
+  /// Set when an AI assistant drives this session through the AI Bridge
+  /// (`bridge/bridge_terminals.dart`); null for every session the user
+  /// opened. The session tab shows a banner from it. While the assistant
+  /// drives, the user's first keystroke takes the keyboard (see
+  /// [_sendToShell]); such a session's shell is always the plain login
+  /// shell: never a persistent tmux or screen session (which could be one
+  /// the user left running), never Mosh, and the host's startup command is
+  /// not typed into it.
+  AssistantDrive? get assistantDrive => _assistantDrive;
+  AssistantDrive? _assistantDrive;
+
+  /// Marks this session as driven by an AI assistant. Once, before its
+  /// shell is opened; a second call is ignored.
+  void attachAssistant(AssistantDrive drive) {
+    if (_assistantDrive != null || _shellReady != null) return;
+    _assistantDrive = drive;
+    drive.addListener(_notify);
+    _notify();
+  }
+
+  /// Writes what an AI assistant typed to the shell, byte for byte (UTF-8):
+  /// no [transformInput], and never announced on [onInputSent], so it is
+  /// never mirrored into another session. Only while [assistantDrive] is
+  /// driving and the shell is open; false when it was not written.
+  bool writeAssistantInput(String text) {
+    final drive = _assistantDrive;
+    final shell = _shell;
+    if (drive == null || !drive.isDriving) return false;
+    if (shell == null || _closed || _disposed) return false;
+    try {
+      shell.write(Uint8List.fromList(utf8.encode(text)));
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
 
   /// True while remote output is being fed into [terminal].
   ///
@@ -868,6 +906,7 @@ class SessionController {
     try {
       final epoch = _shellEpoch;
       if (host.transport == HostTransport.mosh &&
+          _assistantDrive == null &&
           await _openMoshShell(epoch)) {
         // Reset while it started: whatever opened since is in charge.
         if (epoch != _shellEpoch) return;
@@ -931,7 +970,7 @@ class SessionController {
       );
 
       _shellStarted = true;
-      if (opened.fresh) _sendStartupCommand();
+      if (opened.fresh && _assistantDrive == null) _sendStartupCommand();
     } catch (e) {
       _shellError = e.toString();
       _shellStarted = true;
@@ -953,7 +992,7 @@ class SessionController {
     final columns = terminal.viewWidth;
     final rows = terminal.viewHeight;
     final kind = host.persistentSession;
-    final command = _persistentShellFailed
+    final command = _persistentShellFailed || _assistantDrive != null
         ? null
         : persistentShellCommand(kind, persistentName);
     if (command == null) {
@@ -1168,6 +1207,10 @@ class SessionController {
   }
 
   void _sendToShell(String data) {
+    // The user typing into a session an AI assistant drives takes the
+    // keyboard before the keystroke goes, so the two never interleave. A
+    // terminal reply to an escape query is not the user typing.
+    if (!_absorbingRemoteOutput) _assistantDrive?.userTyped();
     final mosh = _mosh;
     final shell = _shell;
     // A Mosh terminal takes keystrokes whatever SSH is doing.

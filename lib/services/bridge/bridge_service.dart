@@ -2,10 +2,15 @@ import 'dart:async';
 import 'dart:io';
 
 import '../../models/app_settings.dart';
+import '../../models/host.dart';
 import '../settings_store.dart';
+import 'bridge_approvals.dart';
 import 'bridge_channel.dart';
 import 'bridge_client_store.dart';
 import 'bridge_connections.dart';
+import 'bridge_grants.dart';
+import 'bridge_policy.dart';
+import 'bridge_terminals.dart';
 import 'bridge_tools.dart';
 import 'mcp_server.dart';
 
@@ -76,6 +81,9 @@ class BridgeService {
     required this.tools,
     required this.connections,
     required this.createListener,
+    this.appLockChanges,
+    this.hostChanges,
+    this.terminals,
   });
 
   /// Only the desktop builds that ship the launcher run the bridge in 1.6.0.
@@ -93,6 +101,38 @@ class BridgeService {
     Future<BridgeClient?> Function(String token) verify,
   )
   createListener;
+
+  /// True each time the app locks, false when it unlocks. On a lock every
+  /// pending approval is withdrawn and every time-limited approval is gone:
+  /// a locked app refuses, it does not queue.
+  final Stream<bool>? appLockChanges;
+
+  /// The questions waiting for the user, for the approval card.
+  BridgeApprovals get approvals => tools.approvals;
+
+  /// Time-limited approvals, for the list in Settings.
+  BridgeGrants get grants => tools.grants;
+
+  /// Every saved host after each change (`HostStore.changes`). A host that
+  /// is gone, no longer lets the assistant request changes, or now points
+  /// at another server loses its time-limited approvals and its waiting
+  /// cards at once, without waiting for the next call.
+  final Stream<List<Host>>? hostChanges;
+
+  /// The assistants' terminals, for the session banner and the settings
+  /// list ([BridgeTerminals.current], [BridgeTerminals.changes],
+  /// [BridgeTerminals.takeOver], [BridgeTerminals.stop]). Those an
+  /// assistant drives are closed when the bridge is switched off, the app
+  /// locks, their client is revoked, their host changes, and at dispose.
+  final BridgeTerminals? terminals;
+
+  StreamSubscription<bool>? _lockWatch;
+  StreamSubscription<List<Host>>? _hostsWatch;
+  int? _timedMinutes;
+
+  /// The hosts as last seen, by id, to tell a changed server from an
+  /// unrelated edit. Null until the first list arrives.
+  Map<String, Host>? _lastHosts;
 
   BridgeListener? _listener;
   StreamSubscription<BridgeConnection>? _accepting;
@@ -123,10 +163,31 @@ class BridgeService {
   /// Follows the settings from here on, starting from what is saved.
   Future<void> start() async {
     await settingsStore.ensureLoaded();
-    _settingsWatch = settingsStore.changes.listen(
-      (s) => _enqueue(() => _apply(s.bridgeEnabled)),
-    );
+    _timedMinutes = settingsStore.current.bridgeTimedApprovalMinutes;
+    _settingsWatch = settingsStore.changes.listen((s) {
+      _onTimedApprovalSetting(s.bridgeTimedApprovalMinutes);
+      _enqueue(() => _apply(s.bridgeEnabled));
+    });
     _clientsWatch = clients.changes.listen(_onClientsChanged);
+    _lockWatch = appLockChanges?.listen((locked) {
+      if (!locked) return;
+      approvals.withdrawAll();
+      grants.revokeAll();
+      unawaited(terminals?.closeAll(AssistantTerminalEnd.appLocked));
+    });
+    final hostChanges = this.hostChanges;
+    if (hostChanges != null) {
+      _hostsWatch = hostChanges.listen(_onHostsChanged);
+      try {
+        final initial = await tools.loadHosts();
+        // A change that arrived meanwhile is newer than this read.
+        _lastHosts ??= {for (final h in initial) h.id: h};
+      } catch (_) {
+        // Without a starting point only an address change on the very first
+        // edit goes unseen; the dispatcher re-checks the server at every
+        // decision regardless.
+      }
+    }
     await _enqueue(() => _apply(settingsStore.current.bridgeEnabled));
   }
 
@@ -190,6 +251,10 @@ class BridgeService {
   /// with nothing sent back.
   void _onClientsChanged(List<BridgeClient> paired) {
     final ids = {for (final c in paired) c.id};
+    // Whether or not the client is connected right now.
+    approvals.withdrawClientsExcept(ids);
+    grants.revokeClientsExcept(ids);
+    unawaited(terminals?.closeClientsExcept(ids));
     for (final connection in _open.toList()) {
       final id = connection.client.id;
       if (!ids.contains(id)) {
@@ -213,6 +278,12 @@ class BridgeService {
       connection.cut();
     }
     tools.abandonAll();
+    approvals.withdrawAll();
+    grants.revokeAll();
+    // First, before the slower teardown below: the assistant's shells end
+    // now (their drives end synchronously in here), not after the listener
+    // and the connections.
+    final terminalsClosed = terminals?.closeAll(AssistantTerminalEnd.bridgeOff);
     for (final connection in open) {
       await connection.close();
     }
@@ -222,7 +293,49 @@ class BridgeService {
     } catch (_) {
       // Already stopped, or the endpoint is gone; nothing left to undo.
     }
+    await terminalsClosed;
     await connections.closeAll();
+  }
+
+  /// A host's approvals end when the host is gone, stops allowing changes,
+  /// or now points at another server (hostname, port, user name, transport
+  /// or jump host — see [bridgeSameServer]): a time-limited approval was
+  /// given for that server, and a card shown for it no longer describes what would happen. An unrelated
+  /// edit (label, group, colour) keeps them. Stepping a host back up never
+  /// brings a grant back.
+  void _onHostsChanged(List<Host> hosts) {
+    // Assistant terminals end on their own rule: the host gone, no longer
+    // allowing a terminal, or pointing at another server.
+    unawaited(terminals?.hostsChanged(hosts));
+    final now = {for (final h in hosts) h.id: h};
+    final before = _lastHosts ?? const <String, Host>{};
+    _lastHosts = now;
+    final ids = <String>{
+      ...before.keys,
+      for (final g in grants.current) g.hostId,
+      for (final r in approvals.current) r.hostId,
+    };
+    for (final id in ids) {
+      final host = now[id];
+      final previous = before[id];
+      final ended =
+          host == null ||
+          !host.aiMayRequestChanges ||
+          (previous != null && !_sameServer(previous, host));
+      if (!ended) continue;
+      grants.revokeHost(id);
+      approvals.withdrawHost(id);
+    }
+  }
+
+  static bool _sameServer(Host a, Host b) => bridgeSameServer(a, b);
+
+  /// Switching "allow for a while" off ends the approvals it gave; a new
+  /// length leaves running ones as they were granted.
+  void _onTimedApprovalSetting(int minutes) {
+    final before = _timedMinutes;
+    _timedMinutes = minutes;
+    if (minutes == 0 && before != 0) grants.revokeAll();
   }
 
   void _setStatus(BridgeStatus next) {
@@ -239,7 +352,12 @@ class BridgeService {
     _disposed = true;
     await _settingsWatch?.cancel();
     await _clientsWatch?.cancel();
+    await _lockWatch?.cancel();
+    await _hostsWatch?.cancel();
     await _enqueue(() => _apply(false));
+    await terminals?.dispose();
+    await approvals.dispose();
+    await grants.dispose();
     await _statusChanges.close();
     await _clientChanges.close();
   }

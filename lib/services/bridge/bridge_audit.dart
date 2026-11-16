@@ -21,6 +21,46 @@ enum BridgeAuditOutcome {
   }
 }
 
+/// How a call that changes a server was allowed, or why it was not. Every
+/// read is [none]; so is a change refused before anyone was asked, and so is
+/// every line written before 1.7.0 (it has no `approval` field).
+enum BridgeAuditApproval {
+  /// Nobody was asked: a read, or a call refused before a card.
+  none('none'),
+
+  /// The exact command was on the host's allowed list.
+  allowedCommand('allowed_command'),
+
+  /// A time-limited approval was live.
+  grant('grant'),
+
+  /// The user allowed this one call.
+  once('once'),
+
+  /// The user allowed it, and the same assistant may change the same host
+  /// without asking for a while.
+  forAWhile('for_a_while'),
+  denied('denied'),
+  timedOut('timed_out'),
+
+  /// The call was cancelled or stopped while the card was waiting.
+  withdrawn('withdrawn');
+
+  const BridgeAuditApproval(this.wire);
+
+  /// The value written to the log.
+  final String wire;
+
+  /// Absent or unrecognised reads as [none], so a line is never dropped for
+  /// this field alone.
+  static BridgeAuditApproval fromJson(Object? value) {
+    for (final approval in values) {
+      if (approval.wire == value) return approval;
+    }
+    return none;
+  }
+}
+
 /// One line of the activity log: who asked, for what, and how it ended.
 /// Never what came back: output can hold anything the server had, and the log
 /// is kept for longer and shown more freely than the output ever was.
@@ -34,6 +74,7 @@ class BridgeAuditEntry {
     required this.outcome,
     required this.detail,
     required this.ms,
+    this.approval = BridgeAuditApproval.none,
   });
 
   final DateTime ts;
@@ -53,6 +94,10 @@ class BridgeAuditEntry {
   final String detail;
   final int ms;
 
+  /// How a change was allowed, or why not; [BridgeAuditApproval.none] for
+  /// a read.
+  final BridgeAuditApproval approval;
+
   Map<String, Object?> toJson() => {
     'ts': ts.toUtc().toIso8601String(),
     'client': client,
@@ -62,6 +107,7 @@ class BridgeAuditEntry {
     'outcome': outcome.name,
     'detail': detail,
     'ms': ms,
+    'approval': approval.wire,
   };
 
   /// Null for anything that is not a whole, well-formed entry, which is how a
@@ -103,6 +149,7 @@ class BridgeAuditEntry {
       outcome: outcome,
       detail: detail,
       ms: ms,
+      approval: BridgeAuditApproval.fromJson(decoded['approval']),
     );
   }
 
@@ -192,6 +239,7 @@ class BridgeAuditLog {
     required BridgeAuditOutcome outcome,
     String detail = '',
     required int ms,
+    BridgeAuditApproval approval = BridgeAuditApproval.none,
   }) async {
     final BridgeAuditEntry entry;
     try {
@@ -209,6 +257,7 @@ class BridgeAuditLog {
         outcome: outcome,
         detail: _clip(scrub(detail), maxFieldChars),
         ms: ms < 0 ? 0 : ms,
+        approval: approval,
       );
     } catch (e) {
       // A scrubber that throws is a bug elsewhere; it still must not reach

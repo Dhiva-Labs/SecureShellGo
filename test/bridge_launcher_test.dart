@@ -33,8 +33,9 @@ class _Tools implements BridgeToolHost {
   Future<BridgeToolResult> call(
     BridgeClient client,
     String name,
-    Map<String, Object?> args,
-  ) async => BridgeToolResult('hello ${client.name}');
+    Map<String, Object?> args, {
+    BridgeCallToken? cancel,
+  }) async => BridgeToolResult('hello ${client.name}');
 }
 
 /// An [IOSink] whose bytes the test can read back, standing in for stdout

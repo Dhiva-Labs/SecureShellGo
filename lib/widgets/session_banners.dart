@@ -1,7 +1,12 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../l10n/l10n.dart';
+import '../services/assistant_drive.dart';
+import '../services/bridge/bridge_terminals.dart';
 import '../services/session_manager.dart';
+import '../services/visible_text.dart';
 
 /// What the strip above a session's terminal says about its connection:
 /// reconnecting, gone, or connected with a shell that has ended.
@@ -19,9 +24,15 @@ class SessionBanners extends StatelessWidget {
     super.key,
     required this.session,
     required this.onCloseTab,
+    this.terminals,
   });
 
   final ManagedSession session;
+
+  /// The AI Bridge's assistant terminals, which Take over and Stop on the
+  /// assistant banner go through. Null where there is no bridge: Take over
+  /// then goes straight to the session's marker and Stop closes the tab.
+  final BridgeTerminals? terminals;
 
   /// Closes this session's tab — the one useful thing left to do with a
   /// session that is gone for good.
@@ -29,6 +40,38 @@ class SessionBanners extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final drive = session.controller.assistantDrive;
+    final connection = _connectionBanner(context);
+    if (drive == null) return connection;
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        _AssistantBanner(
+          drive: drive,
+          onTakeOver: () {
+            final terminals = this.terminals;
+            if (terminals != null) {
+              terminals.takeOver(drive.terminalId);
+            } else {
+              drive.takeOver();
+            }
+          },
+          onStop: () {
+            final terminals = this.terminals;
+            if (terminals != null) {
+              unawaited(terminals.stop(drive.terminalId));
+            } else {
+              onCloseTab();
+            }
+          },
+        ),
+        connection,
+      ],
+    );
+  }
+
+  Widget _connectionBanner(BuildContext context) {
     final controller = session.controller;
     if (controller.isReconnecting) {
       return _ReconnectingBanner(
@@ -248,6 +291,102 @@ class _ShellEndedBanner extends StatelessWidget {
             const SizedBox(width: 8),
             TextButton(onPressed: onRestart, child: Text(context.l10n.sessionBannerRestart)),
             TextButton(onPressed: onClose, child: Text(context.l10n.sessionBannerClose)),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Above the terminal of a session an AI assistant opened. While it drives:
+/// who, with Take over and Stop. After the user took over: a quiet note.
+/// After it ended: why.
+///
+/// The assistant's name is drawn through [visibleLine], and cut: it is
+/// whatever was typed at pairing.
+class _AssistantBanner extends StatelessWidget {
+  const _AssistantBanner({
+    required this.drive,
+    required this.onTakeOver,
+    required this.onStop,
+  });
+
+  final AssistantDrive drive;
+  final VoidCallback onTakeOver;
+  final VoidCallback onStop;
+
+  @override
+  Widget build(BuildContext context) {
+    final l10n = context.l10n;
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    final name = visibleLine(drive.clientName, maxChars: 40);
+    final driving = drive.state == AssistantDriveState.driving;
+    final (text, icon) = switch (drive.state) {
+      AssistantDriveState.driving => (
+        l10n.assistantBannerDriving(name),
+        Icons.smart_toy_outlined,
+      ),
+      AssistantDriveState.takenOver => (
+        l10n.assistantBannerTakenOver(name),
+        Icons.person_outline,
+      ),
+      AssistantDriveState.ended => (
+        l10n.assistantBannerEnded(
+          name,
+          visibleLine(drive.endedReason ?? '', maxChars: 120),
+        ),
+        Icons.stop_circle_outlined,
+      ),
+    };
+    return Material(
+      key: ValueKey('assistant-banner-${drive.state.name}'),
+      color: driving
+          ? scheme.tertiaryContainer
+          : scheme.surfaceContainerHigh,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(12, 8, 8, 8),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Row(
+              children: [
+                Icon(
+                  icon,
+                  size: 18,
+                  color: driving ? scheme.onTertiaryContainer : null,
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    text,
+                    style: TextStyle(
+                      fontSize: 13,
+                      height: 1.3,
+                      color: driving ? scheme.onTertiaryContainer : null,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            if (driving)
+              Align(
+                alignment: AlignmentDirectional.centerEnd,
+                child: Wrap(
+                  children: [
+                    TextButton(
+                      key: const ValueKey('assistant-take-over'),
+                      onPressed: onTakeOver,
+                      child: Text(l10n.assistantBannerTakeOver),
+                    ),
+                    TextButton(
+                      key: const ValueKey('assistant-stop'),
+                      onPressed: onStop,
+                      child: Text(l10n.assistantBannerStop),
+                    ),
+                  ],
+                ),
+              ),
           ],
         ),
       ),

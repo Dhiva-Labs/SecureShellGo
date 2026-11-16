@@ -7,10 +7,13 @@ import 'package:secure_shell_go/models/app_settings.dart';
 import 'package:secure_shell_go/models/host.dart';
 import 'package:secure_shell_go/models/host_ai_access.dart';
 import 'package:secure_shell_go/models/remote_entry.dart';
+import 'package:secure_shell_go/services/bridge/bridge_approvals.dart';
 import 'package:secure_shell_go/services/bridge/bridge_audit.dart';
 import 'package:secure_shell_go/services/bridge/bridge_client_store.dart';
 import 'package:secure_shell_go/services/bridge/bridge_connections.dart';
+import 'package:secure_shell_go/services/bridge/bridge_grants.dart';
 import 'package:secure_shell_go/services/bridge/bridge_redactor.dart';
+import 'package:secure_shell_go/services/bridge/bridge_tool_types.dart';
 import 'package:secure_shell_go/services/bridge/bridge_tools.dart';
 import 'package:secure_shell_go/services/ssh_service.dart';
 
@@ -123,9 +126,15 @@ class BridgeToolsRig {
     Duration callTimeout = const Duration(seconds: 30),
     int maxRunning = 4,
     int maxWaiting = 32,
+    int maxChangeRunning = 2,
+    int? maxChangeWaiting,
     BridgeDialer? dialer,
     Duration idleTimeout = const Duration(seconds: 60),
-  }) {
+    BridgeApprovals? approvals,
+    BridgeGrants? grants,
+    List<BridgeChangeTool> changeTools = const [],
+    FakeBridgeFiles? files,
+  }) : fs = files ?? FakeBridgeFiles() {
     connections = BridgeConnections(
       openTransport: (id) => transports[id],
       credentialLookup: (_) async => const SshCredentials(password: 'pw'),
@@ -139,7 +148,11 @@ class BridgeToolsRig {
     audit = BridgeAuditLog(scrub: (s) => s, directory: auditDir);
     audit.entries.listen(entries.add);
     tools = BridgeTools(
-      loadHosts: () async => hosts,
+      loadHosts: () async {
+        final hook = onLoadHosts;
+        if (hook != null) await hook();
+        return hosts;
+      },
       settings: () => settings,
       isAppLocked: () => locked,
       connections: connections,
@@ -148,6 +161,11 @@ class BridgeToolsRig {
       callTimeout: callTimeout,
       maxRunning: maxRunning,
       maxWaiting: maxWaiting,
+      maxChangeRunning: maxChangeRunning,
+      maxChangeWaiting: maxChangeWaiting,
+      approvals: approvals,
+      grants: grants,
+      changeTools: changeTools,
     );
   }
 
@@ -159,7 +177,11 @@ class BridgeToolsRig {
   ];
   AppSettings settings = const AppSettings(bridgeEnabled: true);
   bool locked = false;
-  final FakeBridgeFiles fs = FakeBridgeFiles();
+
+  /// Awaited at the start of every host-list read; lets a test change the
+  /// world while the dispatcher is between two steps.
+  Future<void> Function()? onLoadHosts;
+  final FakeBridgeFiles fs;
   final Map<String, FakeExecTransport> transports = {};
   final List<BridgeAuditEntry> entries = [];
   late final BridgeConnections connections;
@@ -185,8 +207,15 @@ class BridgeToolsRig {
   Future<({String text, bool isError})> call(
     String name, [
     Map<String, Object?> args = const {},
+    BridgeClient? client,
+    BridgeCallToken? cancel,
   ]) async {
-    final r = await tools.call(testBridgeClient, name, args);
+    final r = await tools.call(
+      client ?? testBridgeClient,
+      name,
+      args,
+      cancel: cancel,
+    );
     // The audit log publishes each entry on its broadcast `entries` stream
     // once the write has been attempted, and a broadcast stream delivers on
     // a later microtask — after `call` has already returned. A zero timer
@@ -208,7 +237,48 @@ String? unsupervise(String command) {
   if (quoted.length < 2 || !quoted.startsWith("'") || !quoted.endsWith("'")) {
     return null;
   }
-  return quoted.substring(1, quoted.length - 1).replaceAll("'\\''", "'");
+  return _shellWord(quoted);
+}
+
+/// One shell word as sh reads it: single quotes literal, double quotes with
+/// `\\`, `\"`, `\$` and a backquote escaped, a backslash outside quotes
+/// taking the next character. Null for anything else (a second word, a
+/// quote left open).
+String? _shellWord(String text) {
+  final out = StringBuffer();
+  var i = 0;
+  while (i < text.length) {
+    final c = text[i];
+    if (c == "'") {
+      final end = text.indexOf("'", i + 1);
+      if (end < 0) return null;
+      out.write(text.substring(i + 1, end));
+      i = end + 1;
+    } else if (c == '"') {
+      i++;
+      while (true) {
+        if (i >= text.length) return null;
+        final d = text[i];
+        if (d == '"') {
+          i++;
+          break;
+        }
+        if (d == r'\' && i + 1 < text.length && r'\"$`'.contains(text[i + 1])) {
+          out.write(text[i + 1]);
+          i += 2;
+        } else {
+          out.write(d);
+          i++;
+        }
+      }
+    } else if (c == r'\' && i + 1 < text.length) {
+      out.write(text[i + 1]);
+      i += 2;
+    } else {
+      return null;
+    }
+  }
+  return out.toString();
 }
 
 /// A [FakeExecTransport] for the bridge tools: it insists every command

@@ -228,4 +228,76 @@ void main() {
     );
     expect(connections.cachedCount, 0);
   });
+
+  group('no bridge connection carries the user\'s agent or X11', () {
+    final forwarding = web.copyWith(agentForwarding: true, x11Forwarding: true);
+
+    test('a cached dial hands the dialer the host with forwarding off, and '
+        'still caches it under the host as saved', () async {
+      final asked = <Host>[];
+      dialOverride = (host, _) async {
+        asked.add(host);
+        final t = FakeExecTransport(host: host);
+        dialled.add(t);
+        return t;
+      };
+      final a = await connections.acquire(forwarding);
+      final b = await connections.acquire(forwarding);
+      expect(asked, hasLength(1), reason: 'reused, not re-dialled');
+      expect(asked.single.agentForwarding, false);
+      expect(asked.single.x11Forwarding, false);
+      expect(asked.single.hostname, forwarding.hostname);
+      expect(b.transport, same(a.transport));
+      await a.release();
+      await b.release();
+    });
+
+    test('dialOwned strips it too', () async {
+      final asked = <Host>[];
+      dialOverride = (host, _) async {
+        asked.add(host);
+        return FakeExecTransport(host: host);
+      };
+      final t = await connections.dialOwned(forwarding);
+      expect(asked.single.agentForwarding, false);
+      expect(asked.single.x11Forwarding, false);
+      t.close();
+    });
+
+    for (final (name, host) in [
+      ('agent', web.copyWith(agentForwarding: true)),
+      ('X11', web.copyWith(x11Forwarding: true)),
+    ]) {
+      test('a session whose host forwards $name is not borrowed: the bridge '
+          'dials its own, without it', () async {
+        final session = open['web1'] = FakeExecTransport(host: host);
+        final lease = await connections.acquire(host);
+        expect(lease.transport, isNot(same(session)));
+        expect(dialled.single.host.agentForwarding, false);
+        expect(dialled.single.host.x11Forwarding, false);
+        await lease.release();
+        expect(session.closed, false);
+      });
+    }
+
+    test('nor one dialled while forwarding was on, after it was switched off '
+        'in the saved host', () async {
+      final session = open['web1'] = FakeExecTransport(
+        host: web.copyWith(agentForwarding: true),
+      );
+      final lease = await connections.acquire(web);
+      expect(lease.transport, isNot(same(session)));
+      await lease.release();
+    });
+
+    test('a session without forwarding is still borrowed', () async {
+      final session = open['web1'] = FakeExecTransport(host: web);
+      expect(BridgeConnections.mayBorrow(session, web), true);
+      expect(
+        BridgeConnections.withoutForwarding(web),
+        same(web),
+        reason: 'nothing to strip, nothing copied',
+      );
+    });
+  });
 }

@@ -422,6 +422,72 @@ void main() {
       );
     });
 
+    test('bridgeTimedApprovalMinutes accepts 0, 5, 15 and 60 only', () {
+      expect(const AppSettings().bridgeTimedApprovalMinutes, 0);
+      expect(
+        const AppSettings().toJson().containsKey('bridgeTimedApprovalMinutes'),
+        isFalse,
+      );
+      for (final ok in [0, 5, 15, 60]) {
+        final s = const AppSettings().copyWith(bridgeTimedApprovalMinutes: ok);
+        expect(s.bridgeTimedApprovalMinutes, ok);
+        expect(
+          AppSettings.fromJson(s.toJson()).bridgeTimedApprovalMinutes,
+          ok,
+        );
+      }
+      for (final bad in [-5, 1, 10, 61, 3600]) {
+        expect(
+          const AppSettings()
+              .copyWith(bridgeTimedApprovalMinutes: bad)
+              .bridgeTimedApprovalMinutes,
+          0,
+        );
+        expect(
+          AppSettings.fromJson({'bridgeTimedApprovalMinutes': bad})
+              .bridgeTimedApprovalMinutes,
+          0,
+        );
+      }
+      expect(
+        AppSettings.fromJson({'bridgeTimedApprovalMinutes': '15'})
+            .bridgeTimedApprovalMinutes,
+        0,
+      );
+      // A double never counts, not even a whole one: this app writes ints.
+      for (final bad in <Object?>[15.0, 15.7, 5.2, 60.0, 1e300, true, null]) {
+        expect(
+          AppSettings.fromJson({'bridgeTimedApprovalMinutes': bad})
+              .bridgeTimedApprovalMinutes,
+          0,
+          reason: '$bad',
+        );
+      }
+      expect(
+        AppSettings.fromJson(
+          jsonDecode('{"bridgeTimedApprovalMinutes": 15.7}')
+              as Map<String, dynamic>,
+        ).bridgeTimedApprovalMinutes,
+        0,
+      );
+      expect(
+        AppSettings.fromJson({'bridgeTimedApprovalMinutes': 1 << 62})
+            .bridgeTimedApprovalMinutes,
+        0,
+      );
+    });
+
+    test('bridgeTimedApprovalMinutes survives the helpers', () {
+      final on = const AppSettings().copyWith(bridgeTimedApprovalMinutes: 15);
+      expect(on.copyWith(keepScreenAwake: true).bridgeTimedApprovalMinutes, 15);
+      expect(on.withLocaleOverride('pt-BR').bridgeTimedApprovalMinutes, 15);
+      expect(on.withBridgeDefaults().bridgeTimedApprovalMinutes, 0);
+      final base = const AppSettings(keepScreenAwake: true);
+      final merged = base.withBridgeFrom(on);
+      expect(merged.bridgeTimedApprovalMinutes, 15);
+      expect(merged.keepScreenAwake, isTrue);
+    });
+
     test('SettingsStore persists them across a reload', () async {
       final store = SettingsStore(file: storeFile);
       await store.save(
@@ -465,6 +531,95 @@ void main() {
       expect(seen, isEmpty, reason: 'nothing was stored, so nothing changed');
       await watch.cancel();
       store.dispose();
+    });
+  });
+
+  group('helpers that rebuild AppSettings drop nothing', () {
+    // Every field set away from its default. The expectations come from
+    // toJson(), so a field added later is covered as soon as it is written
+    // there; the sanity check below fails if it is missing from this value.
+    const full = AppSettings(
+      terminalFontSize: 17,
+      colorScheme: TerminalColorScheme.nord,
+      uiStyle: UiStyle.gcp,
+      themeBrightness: ThemeBrightness.light,
+      keepScreenAwake: true,
+      showHiddenFilesByDefault: true,
+      collapsedGroups: {'Prod'},
+      appLockEnabled: true,
+      appLockTimeout: AppLockTimeout.fifteenMinutes,
+      scrollbackLines: 50000,
+      cursorStyle: TerminalCursorStyle.bar,
+      cursorBlink: true,
+      copyOnSelect: true,
+      bell: TerminalBell.visual,
+      terminalFont: TerminalFont.jetBrainsMono,
+      keyBarMode: KeyBarMode.always,
+      editorFontSize: 19,
+      diagnosticsLog: true,
+      localeOverride: 'pt-BR',
+      bridgeEnabled: true,
+      bridgeShowAddress: true,
+      bridgeReadSensitivePaths: true,
+      bridgeExtraBlockedPaths: ['/x'],
+      bridgeTimedApprovalMinutes: 15,
+    );
+    const bridgeKeys = {
+      'bridgeEnabled',
+      'bridgeShowAddress',
+      'bridgeReadSensitivePaths',
+      'bridgeExtraBlockedPaths',
+      'bridgeTimedApprovalMinutes',
+    };
+
+    test('the sample really sets every field to a non-default value', () {
+      final defaults = const AppSettings().toJson();
+      final set = full.toJson();
+      for (final key in defaults.keys) {
+        if (key == 'version') continue;
+        expect(set[key], isNot(equals(defaults[key])), reason: key);
+      }
+      for (final key in bridgeKeys.followedBy(['localeOverride'])) {
+        expect(set.containsKey(key), isTrue, reason: key);
+      }
+    });
+
+    test('withBridgeDefaults resets exactly the bridge fields', () {
+      final expected = Map<String, dynamic>.of(full.toJson())
+        ..removeWhere((k, _) => bridgeKeys.contains(k));
+      expect(full.withBridgeDefaults().toJson(), expected);
+      expect(full.withBridgeDefaults().copyOnSelect, isTrue);
+    });
+
+    test('withBridgeFrom takes exactly the bridge fields from the other', () {
+      const other = AppSettings();
+      final expected = Map<String, dynamic>.of(full.toJson())
+        ..removeWhere((k, _) => bridgeKeys.contains(k));
+      expect(full.withBridgeFrom(other).toJson(), expected);
+      final reverse = other.withBridgeFrom(full).toJson();
+      expect(
+        {for (final k in bridgeKeys) k: reverse[k]},
+        {for (final k in bridgeKeys) k: full.toJson()[k]},
+      );
+      expect(
+        reverse.keys.toSet().difference(bridgeKeys),
+        other.toJson().keys.toSet(),
+        reason: 'nothing else comes across',
+      );
+    });
+
+    test('withLocaleOverride changes only the language', () {
+      final expected = Map<String, dynamic>.of(full.toJson())
+        ..['localeOverride'] = 'de';
+      expect(full.withLocaleOverride('de').toJson(), expected);
+      final cleared = Map<String, dynamic>.of(full.toJson())
+        ..remove('localeOverride');
+      expect(full.withLocaleOverride(null).toJson(), cleared);
+      expect(full.withLocaleOverride('  ').toJson(), cleared);
+    });
+
+    test('copyWith with no arguments is the identity', () {
+      expect(full.copyWith().toJson(), full.toJson());
     });
   });
 }

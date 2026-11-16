@@ -44,6 +44,9 @@ import 'package:secure_shell_go/models/remote_entry.dart';
 import 'package:secure_shell_go/models/tunnel_profile.dart';
 import 'package:secure_shell_go/screens/backup_screen.dart';
 import 'package:secure_shell_go/screens/bridge_audit_screen.dart';
+import 'package:secure_shell_go/services/bridge/bridge_approvals.dart';
+import 'package:secure_shell_go/services/bridge/bridge_client_store.dart';
+import 'package:secure_shell_go/widgets/bridge_approval_card.dart';
 import 'package:secure_shell_go/screens/bridge_connect_screen.dart';
 import 'package:secure_shell_go/screens/bridge_one_click_screen.dart';
 import 'package:secure_shell_go/screens/bridge_shared_hosts_screen.dart';
@@ -70,7 +73,6 @@ import 'package:secure_shell_go/services/backup_service.dart';
 import 'package:secure_shell_go/services/bookmark_store.dart';
 import 'package:secure_shell_go/services/bridge/bridge_audit.dart';
 import 'package:secure_shell_go/services/bridge/bridge_cli_connector.dart';
-import 'package:secure_shell_go/services/bridge/bridge_client_store.dart';
 import 'package:secure_shell_go/services/bridge/bridge_connections.dart';
 import 'package:secure_shell_go/services/bridge/bridge_launcher_locator.dart';
 import 'package:secure_shell_go/services/bridge/bridge_redactor.dart';
@@ -1304,6 +1306,48 @@ void main() {
           push: true,
           () => BridgeAuditScreen(audit: audit),
         );
+      });
+
+      // The approval card, the terminal one at its longest, and a command
+      // with hidden characters.
+      testWidgets('AI Bridge approval card', skip: _skip, (tester) async {
+        final now = DateTime.utc(2026, 11, 15, 12);
+        final client = BridgeClient(
+          id: 'c1',
+          name: 'Desk assistant',
+          tokenHash: 'h',
+          createdAt: now,
+        );
+        for (final entry in {
+          'command': CommandSummary(
+            command: 'echo a\u202Eb\n\tsudo systemctl restart nginx\u200B',
+            hostNames: const ['web-01', 'web-02'],
+          ),
+          'terminal': const TerminalSummary(),
+        }.entries) {
+          await render(
+            tester,
+            'ai_bridge_approval_${entry.key}',
+            device,
+            () => Scaffold(
+              body: BridgeApprovalCard(
+                request: BridgeApprovalRequest(
+                  id: 'a1',
+                  client: client,
+                  hostId: 'h1',
+                  hostName: 'web-01',
+                  tool: 'run_command',
+                  summary: entry.value,
+                  createdAt: now,
+                  expiresAt: now.add(const Duration(days: 1)),
+                ),
+                waiting: 2,
+                timedMinutes: entry.key == 'command' ? 15 : 0,
+                onAnswer: (_) {},
+              ),
+            ),
+          );
+        }
       });
 
       testWidgets('backup', skip: _skip, (tester) async {

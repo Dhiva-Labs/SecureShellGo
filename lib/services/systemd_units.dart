@@ -84,6 +84,12 @@ class SystemdCommands {
   /// goes through [posixSingleQuote].
   static String action(ServiceAction action, String unit) =>
       'systemctl ${action.command} ${posixSingleQuote(unit)}';
+
+  /// `systemctl reload <unit>`, quoted as [action] quotes. Not a
+  /// [ServiceAction], since the services screen does not offer it; the AI
+  /// Bridge's `service_action` does.
+  static String reload(String unit) =>
+      'systemctl reload ${posixSingleQuote(unit)}';
 }
 
 /// Parses `systemctl list-units --plain --no-legend` output.

@@ -8,6 +8,7 @@ import '../l10n/host_labels.dart';
 import '../l10n/l10n.dart';
 import '../models/host.dart';
 import '../models/host_ai_access.dart';
+import '../models/host_ai_edit.dart';
 import '../services/credential_store.dart';
 import '../services/device_storage.dart';
 import '../services/host_field_input.dart';
@@ -23,6 +24,7 @@ import '../theme.dart';
 import '../widgets/app_snack.dart';
 import '../widgets/error_banner.dart';
 import '../widgets/host_advanced_section.dart';
+import '../widgets/host_ai_controls.dart';
 import '../widgets/host_certificate_field.dart';
 import '../widgets/host_color_dot.dart';
 import '../widgets/host_key_dialog.dart';
@@ -139,7 +141,20 @@ class _HostEditScreenState extends State<HostEditScreen> {
   /// The "Advanced" fold: transport, persistent session, forwarding and
   /// legacy algorithms. All off for every new host.
   HostAdvancedOptions _advanced = const HostAdvancedOptions();
-  HostAiAccess _aiAccess = HostAiAccess.off;
+
+  /// The AI Bridge controls and which of them the user touched on this form.
+  /// A save writes only the touched ones, on top of the host as the store
+  /// holds it at that moment (see [_withStoredAiGrants]).
+  HostAiEdit _aiEdit = HostAiEdit.of(
+    const Host(
+      id: '',
+      label: '',
+      hostname: '',
+      port: 22,
+      username: '',
+      authMethod: SshAuthMethod.password,
+    ),
+  );
 
   /// See [Host.certificate]. Carried through an edit so saving the form never
   /// drops one; it is chosen in the sign-in area, under the key it goes with.
@@ -200,7 +215,7 @@ class _HostEditScreenState extends State<HostEditScreen> {
       _jumpHostId = host.jumpHostId;
       _advanced = HostAdvancedOptions.of(host);
       _certificate = host.certificate;
-      _aiAccess = host.aiAccess;
+      _aiEdit = HostAiEdit.of(host);
       _loadExistingCredentials(host.id);
     }
     unawaited(_loadGroupNames());
@@ -240,6 +255,7 @@ class _HostEditScreenState extends State<HostEditScreen> {
         _jumpHostId,
         _advanced,
         _certificate,
+        _aiEdit.signature,
       );
 
   bool get _isDirty => _snapshot() != _pristine;
@@ -331,7 +347,7 @@ class _HostEditScreenState extends State<HostEditScreen> {
   Host _buildHost() {
     final existing = widget.host;
     final startupCommand = _startupCommandController.text.trim();
-    return Host(
+    final built = Host(
       id: existing?.id ?? _savedHostId ?? widget.hostStore.newId(),
       label: _labelController.text.trim(),
       hostname: _hostController.text.trim(),
@@ -353,7 +369,26 @@ class _HostEditScreenState extends State<HostEditScreen> {
       transport: _advanced.transport,
       // Where the switch is not shown, this is still what the host had, so
       // an edit never changes what an assistant may reach by accident.
-      aiAccess: _aiAccess,
+      aiAccess: existing?.aiAccess ?? HostAiAccess.off,
+      aiAllowedCommands: existing?.aiAllowedCommands ?? const <String>[],
+      aiTerminal: existing?.aiTerminal ?? false,
+    );
+    return _aiEdit.applyTo(built);
+  }
+
+  /// [built] with what an assistant may do taken from [stored], the host as
+  /// the store holds it now, not as it was when this form opened: access
+  /// switched off or stepped down elsewhere meanwhile (the shared-hosts
+  /// list, an approval card) must not come back because an unrelated field
+  /// was saved here. Each of the four AI controls (share, request changes,
+  /// allowed commands, terminal) is written only if the user changed it on
+  /// this form; see [HostAiEdit.applyTo].
+  Host _withStoredAiGrants(Host built, Host stored) {
+    final applied = _aiEdit.applyTo(stored);
+    return built.copyWith(
+      aiAccess: applied.aiAccess,
+      aiAllowedCommands: applied.aiAllowedCommands,
+      aiTerminal: applied.aiTerminal,
     );
   }
 
@@ -516,12 +551,16 @@ class _HostEditScreenState extends State<HostEditScreen> {
   /// A credential that could not be kept is not one: the host is in the list
   /// either way, and [_credentialNotice] says the rest calmly.
   Future<Host?> _persistHost() async {
-    final host = _buildHost();
+    var host = _buildHost();
     try {
       if (widget.isEditing || _savedHostId != null) {
+        final stored = await widget.hostStore.get(host.id);
+        if (stored != null) host = _withStoredAiGrants(host, stored);
         await widget.hostStore.update(host);
+        _aiEdit = HostAiEdit.of(host);
       } else {
         await widget.hostStore.add(host);
+        _aiEdit = HostAiEdit.of(host);
       }
       _savedHostId = host.id;
       if (host.authMethod.storesNoSecret) {
@@ -1308,15 +1347,12 @@ class _HostEditScreenState extends State<HostEditScreen> {
           onChanged: (value) => setState(() => _advanced = value),
         ),
         if (widget.aiBridgeAvailable)
-          SwitchListTile(
-            contentPadding: EdgeInsets.zero,
-            secondary: const Icon(Icons.hub_outlined),
-            title: Text(l10n.hostEditAiAccess),
-            subtitle: Text(l10n.hostEditAiAccessHelp),
-            value: _aiAccess == HostAiAccess.readOnly,
-            onChanged: (on) => setState(
-              () => _aiAccess = on ? HostAiAccess.readOnly : HostAiAccess.off,
-            ),
+          HostAiControls(
+            edit: _aiEdit,
+            onChanged: () => setState(() {}),
+            loadStored: widget.host == null && _savedHostId == null
+                ? null
+                : () => widget.hostStore.get(widget.host?.id ?? _savedHostId!),
           ),
         const SizedBox(height: 12),
         InlineHint(icon: Icons.shield_outlined, text: l10n.hostEditStorageHint),

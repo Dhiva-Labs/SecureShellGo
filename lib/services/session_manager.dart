@@ -250,10 +250,16 @@ class SessionManager {
   ///
   /// The connection belongs to the manager from here: it is closed when the
   /// session is closed, and not before.
+  ///
+  /// [activate] false leaves the session in front where it is (the new one
+  /// still comes to the front when nothing is open): a session the AI
+  /// Bridge opens for an assistant must not move the user's keystrokes into
+  /// it.
   ManagedSession open(
     SessionTransport connection, {
     SessionView initialView = SessionView.terminal,
     List<PickedLocalFile> uploads = const [],
+    bool activate = true,
   }) {
     final id = 'session-${_idCounter++}';
     final controller = _newController(
@@ -283,7 +289,7 @@ class SessionManager {
     controller.onServerJobHandedOff = () => unawaited(_resumeServerJobs());
 
     _sessions.add(entry);
-    _activeId = id;
+    if (activate || byId(_activeId) == null) _activeId = id;
     _wasClosed[id] = controller.isClosed;
     _watchers[id] = controller.changes.listen((_) {
       _noticeTransitions(entry);
