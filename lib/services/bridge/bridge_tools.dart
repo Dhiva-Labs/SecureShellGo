@@ -26,8 +26,11 @@ import 'bridge_tool_types.dart';
 
 /// The commands the read tools run, separate from execution so the quoting
 /// can be asserted character for character. Every value that comes from an
-/// assistant reaches the shell only through [posixSingleQuote]; numbers are
-/// validated ints before they get here.
+/// assistant reaches a shell only through a quoting function: values inside
+/// a template (parsed by `/bin/sh`) through [posixSingleQuote], and the
+/// whole template on the login shell's command line through
+/// [BridgeCommands.loginShellQuote]; numbers are validated ints before they
+/// get here.
 class BridgeCommands {
   const BridgeCommands._();
 
@@ -64,9 +67,15 @@ class BridgeCommands {
   /// does not reliably stop a remote process that has no terminal. A TERM
   /// or HUP sent to the wrapper itself is passed on in the same way.
   ///
-  /// The outer command is one `sh -c` with single-quoted arguments, which
-  /// every login shell parses the same way; the template reaches the inner
-  /// shell as `$1`, quoted once.
+  /// Two layers, two parsers. The OUTER command line returned here is parsed
+  /// by the account's LOGIN shell (sh, bash, zsh, fish, ...), so the template
+  /// reaches it through [loginShellQuote]. The wrapper script is fixed text
+  /// with no backslash, and runs under `sh -c`. The template itself (built
+  /// by [journal], [tailFile], [findByName] and the other command classes)
+  /// reaches `/bin/sh -c "$1"` as plain data and is parsed by `/bin/sh`
+  /// alone, so the values quoted INSIDE a template use [posixSingleQuote],
+  /// which is exact for `/bin/sh`. Never let a login shell parse a
+  /// [posixSingleQuote]d value: under fish a backslash is special there.
   static String supervised(String command) {
     const wrapper = r'''exec 3<&0
 t=
@@ -91,7 +100,32 @@ s=$?
 kill $w 2>/dev/null
 exit $s''';
     return 'sh -c ${posixSingleQuote(wrapper)} ssg-bridge '
-        '${posixSingleQuote(command)}';
+        '${loginShellQuote(command)}';
+  }
+
+  /// [value] as one word for any login shell's command line, not only the
+  /// POSIX ones. [posixSingleQuote] is exact for sh, bash and zsh, but fish
+  /// reads `\\` and `\'` inside single quotes as escapes, so a value with a
+  /// backslash comes out changed, and one ending in a backslash escapes its
+  /// closing quote. Here no backslash is ever inside single quotes: a quote
+  /// is `'\''` (a backslash outside any quotes) and a backslash is `'"\\"'`
+  /// (double quotes, where `\\` is one backslash in sh, bash, zsh and fish
+  /// alike). For a value with no backslash the result is exactly
+  /// [posixSingleQuote]'s.
+  static String loginShellQuote(String value) {
+    final out = StringBuffer("'");
+    for (final unit in value.runes) {
+      final c = String.fromCharCode(unit);
+      if (c == "'") {
+        out.write(r"'\''");
+      } else if (c == r'\') {
+        out.write(r"""'"\\"'""");
+      } else {
+        out.write(c);
+      }
+    }
+    out.write("'");
+    return out.toString();
   }
 
   /// Seconds `search_files` gives `find` when the server has `timeout`.

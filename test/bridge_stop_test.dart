@@ -34,14 +34,25 @@ void main() {
   group('the supervised wrapper, against a real sh', () {
     final skip = File('/bin/sh').existsSync() ? null : 'needs /bin/sh';
 
-    test('passes output and exit status through', () async {
-      final out = await Process.run('/bin/sh', [
+    /// The wrapper as the app runs it: stdin held open for the whole run
+    /// (closing it is the stop signal), output collected.
+    Future<({String out, String err, int code})> held(String command) async {
+      final p = await Process.start('/bin/sh', [
         '-c',
-        BridgeCommands.supervised("echo out; echo err >&2; exit 3"),
+        BridgeCommands.supervised(command),
       ]);
-      expect(out.stdout, 'out\n');
-      expect(out.stderr, 'err\n');
-      expect(out.exitCode, 3);
+      final out = p.stdout.transform(systemEncoding.decoder).join();
+      final err = p.stderr.transform(systemEncoding.decoder).join();
+      final code = await p.exitCode.timeout(const Duration(seconds: 20));
+      await p.stdin.close();
+      return (out: await out, err: await err, code: code);
+    }
+
+    test('passes output and exit status through', () async {
+      final r = await held('echo out; echo err >&2; exit 3');
+      expect(r.out, 'out\n');
+      expect(r.err, 'err\n');
+      expect(r.code, 3);
     }, skip: skip);
 
     test('closing stdin ends the command and its children', () async {
