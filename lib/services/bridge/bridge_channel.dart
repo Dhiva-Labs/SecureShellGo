@@ -425,7 +425,10 @@ class _SocketConnection implements BridgeConnection {
             return chunk;
           }),
         )
-        .catchError((Object _) {});
+        // Not catchError: the socket's future has its own type at run time,
+        // and a handler that returns nothing is refused for it, which turned
+        // a peer that left early into an uncaught error.
+        .then<void>((_) {}, onError: (Object _) {});
   }
 
   final Socket _socket;

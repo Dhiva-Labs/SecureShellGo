@@ -774,6 +774,20 @@ jobs:
           VERSION="$(grep '^version:' pubspec.yaml | awk '{print $2}' | cut -d+ -f1)"
           echo "bundle=secureshellgo-$VERSION-$FP_ARCH.flatpak" >> "$GITHUB_OUTPUT"
 
+      # The build below updates the SDK that ships inside the container. On
+      # some hosted runner images that stops with "Invalid cross-device link"
+      # and the builder crashes: the installation lives in the image, and its
+      # directories cannot be renamed there. A copy made here lives wholly in
+      # the container's writable layer, where the update works.
+      - name: Move the Flatpak installation into the writable layer
+        run: |
+          if [ -d /var/lib/flatpak ]; then
+            cp -a /var/lib/flatpak /var/lib/flatpak.copy
+            rm -rf /var/lib/flatpak
+            mv /var/lib/flatpak.copy /var/lib/flatpak
+          fi
+          flatpak list --system --columns=application,branch || true
+
       - name: Build the Flatpak
         uses: flatpak/flatpak-github-actions/flatpak-builder@v6
         with:

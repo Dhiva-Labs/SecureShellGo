@@ -26,6 +26,7 @@ import 'package:secure_shell_go/services/settings_store.dart';
 
 import 'support/settle.dart';
 import 'support/temp_dir.dart';
+import 'support/tracked_stores.dart';
 
 BridgeConnections _connections() => BridgeConnections(
   openTransport: (_) => null,
@@ -77,8 +78,8 @@ class _FakeBridge extends BridgeService {
 }
 
 /// A log whose Clear always fails.
-class _FailingClear extends BridgeAuditLog {
-  _FailingClear(Directory dir)
+class _FailingClear extends TrackedAuditLog {
+  _FailingClear(super.io, Directory dir)
     : super(scrub: (s) => s, directory: Directory('${dir.path}/failing'));
 
   @override
@@ -92,22 +93,26 @@ void main() {
   late _FakeBridge bridge;
   late HostStore hostStore;
   late BridgeAuditLog brokenAudit;
+  late IoTracker io;
   String? clipboard;
 
   setUp(() async {
     dir = await Directory.systemTemp.createTemp('ai_bridge_screens_test');
-    clients = BridgeClientStore(file: File('${dir.path}/clients.json'));
-    audit = BridgeAuditLog(
+    io = IoTracker();
+    clients = TrackedClientStore(io, file: File('${dir.path}/clients.json'));
+    audit = TrackedAuditLog(
+      io,
       scrub: (s) => s,
       directory: Directory('${dir.path}/bridge'),
     );
     bridge = _FakeBridge(dir, clients, audit);
     // Built here, not in a test body: a store made inside `testWidgets`
     // queues its first write on the fake clock, which `runAsync` never turns.
-    hostStore = HostStore(file: File('${dir.path}/hosts.json'));
+    hostStore = TrackedHostStore(io, file: File('${dir.path}/hosts.json'));
     // A log whose directory cannot exist: its parent is a file.
     File('${dir.path}/blocker').writeAsStringSync('x');
-    brokenAudit = BridgeAuditLog(
+    brokenAudit = TrackedAuditLog(
+      io,
       scrub: (s) => s,
       directory: Directory('${dir.path}/blocker/bridge'),
     );
@@ -139,11 +144,22 @@ void main() {
   }
 
   /// Turns the real event loop, then rebuilds.
+  ///
+  /// Waits until no store or log call is still running and no progress
+  /// indicator is up, rather than for a fixed number of turns, which was
+  /// too few on slow CI runners.
+  bool busy() =>
+      io.busy ||
+      find
+          .byWidgetPredicate((w) => w is ProgressIndicator)
+          .evaluate()
+          .isNotEmpty;
+
   Future<void> settle(WidgetTester tester) async {
-    await settleIo(tester, rounds: 10);
+    await settleWhile(tester, busy);
     // Past a route or dialog animation, without waiting on a spinner.
     await tester.pump(const Duration(milliseconds: 500));
-    await settleIo(tester, rounds: 5);
+    await settleWhile(tester, busy);
     await tester.pump(const Duration(milliseconds: 500));
   }
 
@@ -993,7 +1009,7 @@ void main() {
     });
 
     testWidgets('says so when Clear fails', (tester) async {
-      final failing = _FailingClear(dir);
+      final failing = _FailingClear(io, dir);
       addTearDown(failing.dispose);
       await tester.runAsync(
         () => failing.record(
