@@ -8,17 +8,29 @@ sealed class BridgeDecision {
 }
 
 /// The call may run.
+///
+/// [byFullControl] is true only when a change, terminal or desktop is
+/// allowed without a card because its host is set to full control: the
+/// dispatcher records `approval: full_control` for it. Every other allow
+/// (a read, a listed command, a live grant, use of something the caller
+/// already owns) is a plain [BridgeAllow].
 final class BridgeAllow extends BridgeDecision {
-  const BridgeAllow();
+  const BridgeAllow() : byFullControl = false;
+
+  const BridgeAllow.fullControl() : byFullControl = true;
+
+  final bool byFullControl;
 
   @override
-  bool operator ==(Object other) => other is BridgeAllow;
+  bool operator ==(Object other) =>
+      other is BridgeAllow && other.byFullControl == byFullControl;
 
   @override
-  int get hashCode => (BridgeAllow).hashCode;
+  int get hashCode => Object.hash(BridgeAllow, byFullControl);
 
   @override
-  String toString() => 'BridgeAllow()';
+  String toString() =>
+      byFullControl ? 'BridgeAllow.fullControl()' : 'BridgeAllow()';
 }
 
 /// The call is refused. [code] is stable and machine-readable (it goes into
@@ -98,6 +110,32 @@ class BridgeRefusals {
         'Call open_terminal if you still need one.',
   );
 
+  /// A desktop asked of a host where changes may be requested but the user
+  /// has not switched on the assistant's desktop.
+  static const BridgeRefuse desktopNotAllowed = BridgeRefuse(
+    'desktop_not_allowed',
+    'The user has not allowed the AI assistant to open a desktop on this '
+        'host. Do not retry.',
+  );
+
+  /// A desktop id that names no desktop the caller may use: unknown, one
+  /// another assistant opened, or one that is no longer the caller's (taken
+  /// over, stopped, closed). One refusal for all, as for terminals.
+  static const BridgeRefuse desktopNotAvailable = BridgeRefuse(
+    'desktop_not_available',
+    'No desktop by that id is open for you. It may have been closed. '
+        'Call open_desktop if you still need one.',
+  );
+
+  /// A job id that names no job the caller started: unknown, another
+  /// assistant's, or one that is gone. One refusal for all, so an assistant
+  /// cannot learn whether another assistant's job exists.
+  static const BridgeRefuse jobNotAvailable = BridgeRefuse(
+    'job_not_available',
+    'No job by that id is available to you. It may have been removed. '
+        'Call list_jobs to see the jobs you started.',
+  );
+
   /// Given both for a name that matches no host and for a host the user has
   /// not opened to the bridge. One refusal for both is the point: if they
   /// differed, an assistant could probe names and learn which servers exist
@@ -126,10 +164,11 @@ bool bridgeSameServer(Host a, Host b) =>
 /// Whether [command] is on [host]'s allowed list: exact string equality
 /// between the command, trimmed, and one entry. Never a pattern, never a
 /// prefix, never case-folded. False unless the host is set to ask to change
-/// (the list is stored but inert otherwise). Only `run_command` on a single
-/// host may use this; nothing else ever matches.
+/// (the list is stored but inert otherwise; a full-control host needs no
+/// list, so it is inert there too and the audit says `full_control`). Only
+/// `run_command` on a single host may use this; nothing else ever matches.
 bool bridgeCommandIsAllowed(Host host, String command) {
-  if (!host.aiMayRequestChanges) return false;
+  if (host.aiAccess != HostAiAccess.askToChange) return false;
   final wanted = command.trim();
   if (wanted.isEmpty) return false;
   for (final entry in host.aiAllowedCommands) {
@@ -144,7 +183,13 @@ bool bridgeCommandIsAllowed(Host host, String command) {
 ///
 /// The order matters and is part of the contract: a switched-off bridge says
 /// so before anything else, a locked app says so before revealing anything
-/// about tools or hosts, and only then is the host looked at.
+/// about tools or hosts (full control included), and only then is the host
+/// looked at.
+///
+/// [bridgeEnabled] is the on/off switch of whoever is calling: for a client
+/// on the local channel (a paired assistant), `AppSettings.bridgeEnabled`;
+/// for the built-in assistant (`BridgeClient.builtin`), its own setting.
+/// One client's switch never opens the bridge for the other.
 ///
 /// For [BridgeToolKind.read], the rule is exactly 1.6.0's. [host] is null
 /// both when the tool takes no host and when the name did not resolve. When
@@ -156,27 +201,37 @@ bool bridgeCommandIsAllowed(Host host, String command) {
 /// For [BridgeToolKind.change]: no host, or a host with access off, gets the
 /// same `host_not_available` as a read (whatever [hostRequired] says: a
 /// change always names a host); a read-only host gets `changes_not_allowed`;
-/// a host set to ask to change is allowed when [matchesAllowedCommand] or
-/// [hasLiveGrant], and otherwise needs approval.
+/// a full-control host is allowed ([BridgeAllow.fullControl]); a host set to
+/// ask to change is allowed when [matchesAllowedCommand] or [hasLiveGrant],
+/// and otherwise needs approval.
 ///
-/// For [BridgeToolKind.terminal]: as for a change up to the read-only step,
-/// then the host's terminal switch must be on, and the answer is always
-/// [BridgeNeedsApproval]: [hasLiveGrant] and [matchesAllowedCommand] never
-/// open a terminal.
+/// For [BridgeToolKind.terminal] and [BridgeToolKind.desktop]: as for a
+/// change up to the read-only step; then a full-control host is allowed
+/// ([BridgeAllow.fullControl]); an ask-to-change host with its terminal (or
+/// desktop) switch on always needs approval; otherwise `terminal_not_allowed`
+/// (or `desktop_not_allowed`). [hasLiveGrant] and [matchesAllowedCommand]
+/// never open one.
 ///
 /// For [BridgeToolKind.terminalUse] (typing into, reading or closing a
-/// terminal already opened with a yes): [ownsLiveTerminal] says whether the
-/// terminal id the call names is one the CALLING client opened and that is
-/// still the assistant's to use (open, not taken over by the user, not
-/// stopped or closed); [host] is that terminal's host as it is now, or null
-/// when it is gone or now points at another server. Bridge off and locked
-/// come first, as always; then a terminal the caller does not own gets
+/// terminal already opened): [ownsLiveTerminal] says whether the terminal
+/// id the call names is one the CALLING client opened and that is still the
+/// assistant's to use (open, not taken over by the user, not stopped or
+/// closed); [host] is that terminal's host as it is now, or null when it is
+/// gone or now points at another server. Bridge off and locked come first,
+/// as always; then a terminal the caller does not own gets
 /// `terminal_not_available`, the same for an unknown id and for another
 /// client's (checked before the host, so nothing about another client's
 /// terminal can show); then the host is held to the same steps as opening a
-/// terminal, except that the answer is [BridgeAllow]: no card per call.
-/// [hasLiveGrant], [matchesAllowedCommand] and [hostRequired] play no part.
-/// For every other kind [ownsLiveTerminal] plays no part.
+/// terminal, except that the answer is a plain [BridgeAllow]: no card per
+/// call. [hasLiveGrant], [matchesAllowedCommand] and [hostRequired] play no
+/// part.
+///
+/// [BridgeToolKind.desktopUse] is the same rule with [ownsLiveDesktop],
+/// `desktop_not_available` and the desktop switch. [BridgeToolKind.jobUse]
+/// is the same rule with [ownsJob] (the job id names a job the CALLING
+/// client started on that host), `job_not_available`, and a host that must
+/// still let changes be requested. Each owns flag plays a part only for its
+/// own kind.
 ///
 /// A refusal never depends on [hasLiveGrant] or [matchesAllowedCommand], so
 /// a caller may ask once with both false to learn whether the call is
@@ -190,6 +245,8 @@ BridgeDecision decideBridgeCall({
   required bool hasLiveGrant,
   required bool matchesAllowedCommand,
   required bool ownsLiveTerminal,
+  bool ownsLiveDesktop = false,
+  bool ownsJob = false,
 }) {
   if (!bridgeEnabled) return BridgeRefusals.bridgeOff;
   if (appLocked) return BridgeRefusals.appLocked;
@@ -206,12 +263,18 @@ BridgeDecision decideBridgeCall({
       return const BridgeAllow();
     case BridgeToolKind.change:
     case BridgeToolKind.terminal:
+    case BridgeToolKind.desktop:
       if (host == null || host.aiAccess == HostAiAccess.off) {
         return BridgeRefusals.hostNotAvailable;
       }
       if (!host.aiMayRequestChanges) return BridgeRefusals.changesNotAllowed;
+      if (host.aiFullControl) return const BridgeAllow.fullControl();
       if (kind == BridgeToolKind.terminal) {
         if (!host.aiMayOpenTerminal) return BridgeRefusals.terminalNotAllowed;
+        return const BridgeNeedsApproval();
+      }
+      if (kind == BridgeToolKind.desktop) {
+        if (!host.aiMayOpenDesktop) return BridgeRefusals.desktopNotAllowed;
         return const BridgeNeedsApproval();
       }
       if (matchesAllowedCommand || hasLiveGrant) return const BridgeAllow();
@@ -223,6 +286,21 @@ BridgeDecision decideBridgeCall({
       }
       if (!host.aiMayRequestChanges) return BridgeRefusals.changesNotAllowed;
       if (!host.aiMayOpenTerminal) return BridgeRefusals.terminalNotAllowed;
+      return const BridgeAllow();
+    case BridgeToolKind.desktopUse:
+      if (!ownsLiveDesktop) return BridgeRefusals.desktopNotAvailable;
+      if (host == null || host.aiAccess == HostAiAccess.off) {
+        return BridgeRefusals.hostNotAvailable;
+      }
+      if (!host.aiMayRequestChanges) return BridgeRefusals.changesNotAllowed;
+      if (!host.aiMayOpenDesktop) return BridgeRefusals.desktopNotAllowed;
+      return const BridgeAllow();
+    case BridgeToolKind.jobUse:
+      if (!ownsJob) return BridgeRefusals.jobNotAvailable;
+      if (host == null || host.aiAccess == HostAiAccess.off) {
+        return BridgeRefusals.hostNotAvailable;
+      }
+      if (!host.aiMayRequestChanges) return BridgeRefusals.changesNotAllowed;
       return const BridgeAllow();
   }
 }

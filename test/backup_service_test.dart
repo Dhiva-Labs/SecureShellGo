@@ -723,6 +723,66 @@ void main() {
       }
     });
 
+    test('full control and the desktop switch never travel', () async {
+      await source.hostStore.add(
+        buildHost('h3', label: 'Full').copyWith(
+          aiAccess: HostAiAccess.fullControl,
+          aiTerminal: true,
+          aiDesktop: true,
+        ),
+      );
+      final file = await source.service.export(
+        passphrase: pass,
+        includeCredentials: false,
+        useIsolate: false,
+      );
+      final text = utf8.decode(
+        await BackupCrypto.decrypt(
+          file: file,
+          passphrase: pass,
+          useIsolate: false,
+        ),
+      );
+      expect(text, isNot(contains('fullControl')));
+      expect(text, isNot(contains('aiDesktop')));
+      for (final mode in ImportMode.values) {
+        final target = await emptyTarget();
+        final payload = await target.service.readBackup(
+          file: file,
+          passphrase: pass,
+          useIsolate: false,
+        );
+        await target.service.apply(payload: payload, mode: mode);
+        final restored = (await target.hostStore.get('h3'))!;
+        expect(restored.aiAccess, HostAiAccess.off, reason: '$mode');
+        expect(restored.aiDesktop, isFalse, reason: '$mode');
+        expect(restored.aiMayOpenDesktop, isFalse, reason: '$mode');
+      }
+
+      // A hand-edited payload cannot bring them in either.
+      final edited = BackupPayload.decode(
+        Uint8List.fromList(
+          utf8.encode(
+            jsonEncode({
+              'app': BackupPayload.appId,
+              'payloadVersion': BackupPayload.payloadVersion,
+              'hosts': [
+                {
+                  'id': 'h9',
+                  'hostname': 'a.example.com',
+                  'username': 'dev',
+                  'aiAccess': 'fullControl',
+                  'aiDesktop': true,
+                },
+              ],
+            }),
+          ),
+        ),
+      );
+      expect(edited.hosts.single.aiAccess, HostAiAccess.off);
+      expect(edited.hosts.single.aiDesktop, isFalse);
+    });
+
     test('a hand-edited file or in-code payload cannot bring them in',
         () async {
       final payload = BackupPayload.decode(

@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:typed_data';
 
 import 'bridge_client_store.dart';
 
@@ -16,7 +17,25 @@ import 'bridge_client_store.dart';
 ///   by the client that opened it, while it is still the assistant's (not
 ///   taken over, stopped or closed), and while its host still allows a
 ///   terminal.
-enum BridgeToolKind { read, change, terminal, terminalUse }
+/// - [desktop] opens a remote desktop the assistant sees and controls; the
+///   same rule as [terminal], with the host's desktop switch.
+/// - [desktopUse] screenshots, clicks, types into or closes a desktop
+///   [desktop] opened: the same owner-only rule as [terminalUse].
+/// - [jobUse] acts on a long-running job by id (stopping it, say): only
+///   the client that started it, while its host still lets changes be
+///   requested.
+///
+/// On a host set to full control, [change], [terminal] and [desktop] run
+/// without a card; nothing else differs. See `decideBridgeCall`.
+enum BridgeToolKind {
+  read,
+  change,
+  terminal,
+  terminalUse,
+  desktop,
+  desktopUse,
+  jobUse,
+}
 
 /// One tool as the MCP layer advertises it in `tools/list`.
 ///
@@ -39,19 +58,44 @@ class BridgeToolSpec {
   final BridgeToolKind kind;
 }
 
-/// What a tool call produced: the text the assistant sees, and whether it is
-/// a failure the assistant should read as one (MCP's `isError`).
+/// What a tool call produced: the text the assistant sees, optionally an
+/// image (a desktop screenshot), and whether it is a failure the assistant
+/// should read as one (MCP's `isError`).
 ///
 /// A refusal or a failed command is a result with [isError] set, not a
 /// JSON-RPC error: the protocol reserves its errors for malformed calls, and
 /// a result is what the assistant can read and act on.
 class BridgeToolResult {
-  const BridgeToolResult(this.text, {this.isError = false});
+  const BridgeToolResult(this.text, {this.isError = false})
+    : image = null,
+      imageMimeType = null;
 
-  const BridgeToolResult.error(this.text) : isError = true;
+  const BridgeToolResult.error(this.text)
+    : isError = true,
+      image = null,
+      imageMimeType = null;
+
+  /// A result carrying an image, with [text] beside it (what the image
+  /// shows, its size in pixels). [mimeType] is `image/png` or `image/jpeg`.
+  /// The MCP server sends the image first, then the text.
+  const BridgeToolResult.image(
+    Uint8List bytes, {
+    required String mimeType,
+    this.text = '',
+  }) : image = bytes,
+       imageMimeType = mimeType,
+       isError = false;
 
   final String text;
   final bool isError;
+
+  /// The encoded image, or null for a text-only result.
+  final Uint8List? image;
+
+  /// [image]'s media type; null exactly when [image] is.
+  final String? imageMimeType;
+
+  bool get hasImage => image != null;
 }
 
 /// Lets the protocol layer stop one call it started, without knowing how

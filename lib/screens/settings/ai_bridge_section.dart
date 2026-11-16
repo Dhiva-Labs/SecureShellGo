@@ -23,9 +23,10 @@ import 'settings_section.dart';
 /// The AI Bridge: the switch, what an assistant may see and read, who is
 /// paired, and the activity log.
 ///
-/// Built only where the bridge exists (`BridgeService.supported`); the caller
-/// holds the three services as null elsewhere and leaves this out, so
-/// nothing about it is on screen on a phone.
+/// Built only where the local channel exists
+/// (`BridgeService.channelSupported`); the caller holds the three services
+/// as null elsewhere and leaves this out, so nothing about it is on screen
+/// on a phone.
 class AiBridgeSettingsSection extends StatefulWidget {
   const AiBridgeSettingsSection({
     super.key,

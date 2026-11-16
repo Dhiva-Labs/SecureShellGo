@@ -11,6 +11,7 @@ import 'bridge_connections.dart';
 import 'bridge_grants.dart';
 import 'bridge_policy.dart';
 import 'bridge_terminals.dart';
+import 'bridge_tool_module.dart';
 import 'bridge_tools.dart';
 import 'mcp_server.dart';
 
@@ -66,14 +67,29 @@ final class BridgeError extends BridgeStatus {
 }
 
 /// The AI Bridge as the rest of the app sees it: built once in `main.dart`,
-/// started with the app, and driven entirely by `AppSettings.bridgeEnabled`.
+/// on every platform, and started with the app.
 ///
-/// It owns the listener, one [McpServer] per assistant connection, and
-/// nothing else of its own: the tools, the cached SSH connections and the
-/// paired clients are handed in, so each can be tested on its own. Every
-/// call is refused by policy while the app is locked (the tools read the
-/// lock state per call); switching the bridge off closes every assistant
-/// connection and every SSH connection the bridge dialled, at once.
+/// Two halves with two names:
+///
+/// - **AI tools** (everywhere, Android included): the tool host
+///   ([tools]), its approvals, grants and activity log, and the reactions
+///   that keep them honest (a lock withdraws every card and ends every
+///   grant and assistant terminal; a host stepped down, deleted or
+///   re-pointed loses its grants, cards and terminals; a revoked client
+///   loses everything it held). The built-in assistant
+///   (`BridgeClient.builtin`) calls [tools] directly; nothing here needs
+///   the local channel for that.
+/// - **The local channel** ([localChannel], Linux and Windows only, see
+///   [channelSupported]): the listener paired assistants connect to
+///   through the launcher, one [McpServer] per connection, driven by
+///   `AppSettings.bridgeEnabled`. Pairing, the launcher locator and the CLI
+///   connector belong to this half and are not built elsewhere.
+///
+/// Every call is refused by policy while the app is locked (the tools read
+/// the lock state per call). Switching the channel bridge off closes every
+/// channel connection and ends what channel clients hold; the built-in
+/// assistant's calls, cards, grants and terminals are its own switch's
+/// business (`BridgeTools.builtinAssistantEnabled`).
 class BridgeService {
   BridgeService({
     required this.settingsStore,
@@ -84,10 +100,18 @@ class BridgeService {
     this.appLockChanges,
     this.hostChanges,
     this.terminals,
-  });
+    bool? localChannel,
+  }) : localChannel = localChannel ?? channelSupported;
 
-  /// Only the desktop builds that ship the launcher run the bridge in 1.6.0.
-  static bool get supported => Platform.isLinux || Platform.isWindows;
+  /// Whether this platform has the local channel and the launcher: only
+  /// the desktop builds that ship `secureshellgo-mcp`. The AI tools
+  /// themselves are available on every platform.
+  static bool get channelSupported => Platform.isLinux || Platform.isWindows;
+
+  /// Whether this service runs the local channel. [channelSupported] unless
+  /// a test says otherwise; when false, [start] never opens a listener and
+  /// [status] stays [BridgeStatus.off], whatever the setting says.
+  final bool localChannel;
 
   final SettingsStore settingsStore;
   final BridgeClientStore clients;
@@ -174,6 +198,11 @@ class BridgeService {
       approvals.withdrawAll();
       grants.revokeAll();
       unawaited(terminals?.closeAll(AssistantTerminalEnd.appLocked));
+      for (final module in tools.modules) {
+        unawaited(
+          module.ended(BridgeModuleEnd.appLocked).catchError((Object _) {}),
+        );
+      }
     });
     final hostChanges = this.hostChanges;
     if (hostChanges != null) {
@@ -198,7 +227,7 @@ class BridgeService {
   }
 
   Future<void> _apply(bool enabled) async {
-    if (_disposed) enabled = false;
+    if (_disposed || !localChannel) enabled = false;
     if (enabled) {
       if (_listener != null) return;
       await _startListener();
@@ -211,7 +240,7 @@ class BridgeService {
   Future<void> _startListener() async {
     final BridgeListener listener;
     try {
-      listener = await createListener(clients.verify);
+      listener = await createListener(_verifyAssistant);
       _accepting = listener.connections.listen(_onConnection);
       await listener.start();
     } on BridgeAlreadyRunning {
@@ -229,8 +258,21 @@ class BridgeService {
     _setStatus(BridgeStatus.running);
   }
 
+  /// The token check the MCP channel uses: a paired assistant, never a
+  /// controller. A controller's token reads exactly like an unknown one
+  /// here, so it cannot be used to call a tool.
+  Future<BridgeClient?> _verifyAssistant(String token) async {
+    final client = await clients.verify(token);
+    if (client == null || !bridgeClientMayCallTools(client)) return null;
+    return client;
+  }
+
+  /// The client ids whose belongings survive a change to the paired list or
+  /// the channel switch: the built-in assistant's, which is never paired.
+  static const Set<String> _notChannel = {BridgeClient.builtinId};
+
   void _onConnection(BridgeConnection raw) {
-    if (_accepting == null) {
+    if (_accepting == null || !bridgeClientMayCallTools(raw.client)) {
       unawaited(raw.close());
       return;
     }
@@ -250,11 +292,14 @@ class BridgeService {
   /// it next reconnects, and its calls in flight are stopped on the server
   /// with nothing sent back.
   void _onClientsChanged(List<BridgeClient> paired) {
-    final ids = {for (final c in paired) c.id};
+    final ids = {for (final c in paired) c.id, ..._notChannel};
     // Whether or not the client is connected right now.
     approvals.withdrawClientsExcept(ids);
     grants.revokeClientsExcept(ids);
     unawaited(terminals?.closeClientsExcept(ids));
+    for (final module in tools.modules) {
+      unawaited(module.clientsChanged(ids).catchError((Object _) {}));
+    }
     for (final connection in _open.toList()) {
       final id = connection.client.id;
       if (!ids.contains(id)) {
@@ -277,13 +322,22 @@ class BridgeService {
     for (final connection in open) {
       connection.cut();
     }
-    tools.abandonAll();
-    approvals.withdrawAll();
-    grants.revokeAll();
+    // Only what channel clients hold: the built-in assistant has its own
+    // switch.
+    tools.abandonAll(except: _notChannel);
+    approvals.withdrawClientsExcept(_notChannel);
+    grants.revokeClientsExcept(_notChannel);
     // First, before the slower teardown below: the assistant's shells end
     // now (their drives end synchronously in here), not after the listener
     // and the connections.
-    final terminalsClosed = terminals?.closeAll(AssistantTerminalEnd.bridgeOff);
+    final terminalsClosed = terminals?.closeAll(
+      AssistantTerminalEnd.bridgeOff,
+      except: _notChannel,
+    );
+    final modulesEnded = [
+      for (final module in tools.modules)
+        module.ended(BridgeModuleEnd.bridgeOff).catchError((Object _) {}),
+    ];
     for (final connection in open) {
       await connection.close();
     }
@@ -294,7 +348,11 @@ class BridgeService {
       // Already stopped, or the endpoint is gone; nothing left to undo.
     }
     await terminalsClosed;
-    await connections.closeAll();
+    await Future.wait(modulesEnded);
+    // The cached connections are shared with the built-in assistant: kept
+    // while it is on (they close on their own when idle), so switching the
+    // channel off does not cut its calls.
+    if (!tools.builtinAssistantEnabled()) await connections.closeAll();
   }
 
   /// A host's approvals end when the host is gone, stops allowing changes,
@@ -305,8 +363,12 @@ class BridgeService {
   /// brings a grant back.
   void _onHostsChanged(List<Host> hosts) {
     // Assistant terminals end on their own rule: the host gone, no longer
-    // allowing a terminal, or pointing at another server.
+    // allowing a terminal, or pointing at another server. Modules (desktops,
+    // jobs) apply their own.
     unawaited(terminals?.hostsChanged(hosts));
+    for (final module in tools.modules) {
+      unawaited(module.hostsChanged(hosts).catchError((Object _) {}));
+    }
     final now = {for (final h in hosts) h.id: h};
     final before = _lastHosts ?? const <String, Host>{};
     _lastHosts = now;
@@ -356,6 +418,11 @@ class BridgeService {
     await _hostsWatch?.cancel();
     await _enqueue(() => _apply(false));
     await terminals?.dispose();
+    for (final module in tools.modules) {
+      try {
+        await module.ended(BridgeModuleEnd.disposed);
+      } catch (_) {}
+    }
     await approvals.dispose();
     await grants.dispose();
     await _statusChanges.close();

@@ -75,6 +75,30 @@ final BridgeChangeTool _fakeTerminal = BridgeChangeTool(
   run: (call, plan) async => const BridgeToolResult('terminal opened'),
 );
 
+final BridgeChangeTool _fakeMulti = BridgeChangeTool(
+  spec: const BridgeToolSpec(
+    name: 'fake_multi',
+    description: 'Runs a command on several hosts (test only).',
+    inputSchema: {'type': 'object'},
+    kind: BridgeToolKind.change,
+  ),
+  arguments: const {'hosts', 'command'},
+  plan: (args, context) async {
+    final command = args.string('command', maxBytes: 4096)!;
+    return _CommandPlan(
+      command,
+      context.hostNames.join(', '),
+      matchesAllowedCommand: false,
+    );
+  },
+  run: (call, plan) async {
+    final result = await call.exec((plan as _CommandPlan).command);
+    return BridgeToolResult('${result.exitCode}');
+  },
+  combine: (outcomes, plan) =>
+      BridgeToolResult(outcomes.map((o) => '${o.hostName}=${o.text}').join(' ')),
+);
+
 Host _h(
   String id,
   String label,
@@ -138,7 +162,7 @@ void main() {
       callTimeout: callTimeout,
       approvals: approvals,
       grants: grants,
-      changeTools: [_fakeChange, _fakeTerminal],
+      changeTools: [_fakeChange, _fakeTerminal, _fakeMulti],
     );
     built.hosts = [
       _h('web1', 'web', HostAiAccess.askToChange, allowed: ['uptime']),
@@ -975,6 +999,128 @@ void main() {
     );
   });
 
+  group('full control', () {
+    setUp(() {
+      rig.hosts = [
+        ...rig.hosts,
+        _h('full1', 'full', HostAiAccess.fullControl),
+        _h('full2', 'full2', HostAiAccess.fullControl),
+      ];
+      rig.serve('full1', (cmd) => FakeExecSession(stdout: 'ran:$cmd'));
+      rig.serve('full2', (cmd) => FakeExecSession(stdout: 'ran:$cmd'));
+    });
+
+    test('a change runs without a card, audited as full_control', () async {
+      final r = await rig.call('fake_change', {
+        'host': 'full',
+        'command': 'reboot',
+      });
+      expect(r.isError, false);
+      expect(r.text, 'exit 0: ran:reboot');
+      expect(anyCardShown(), false);
+      expect(lastEntry().approval, BridgeAuditApproval.fullControl);
+      expect(lastEntry().outcome, BridgeAuditOutcome.ok);
+      expect(grants.current, isEmpty, reason: 'nothing to grant');
+    });
+
+    test('a terminal opens without a card, audited as full_control', () async {
+      final r = await rig.call('fake_terminal', {'host': 'full'});
+      expect(r.text, 'terminal opened');
+      expect(anyCardShown(), false);
+      expect(lastEntry().approval, BridgeAuditApproval.fullControl);
+    });
+
+    test('an allowed-command list is not consulted, so the audit says why',
+        () async {
+      rig.hosts = [
+        for (final h in rig.hosts)
+          h.id == 'full1' ? h.copyWith(aiAllowedCommands: ['uptime']) : h,
+      ];
+      await rig.call('fake_change', {'host': 'full', 'command': 'uptime'});
+      expect(lastEntry().approval, BridgeAuditApproval.fullControl);
+    });
+
+    test('a locked app and the bridge off still refuse, with no card',
+        () async {
+      rig.locked = true;
+      var r = await rig.call('fake_change', {'host': 'full', 'command': 'id'});
+      expect(r.text, BridgeRefusals.appLocked.message);
+      rig.locked = false;
+      rig.settings = const AppSettings();
+      r = await rig.call('fake_terminal', {'host': 'full'});
+      expect(r.text, BridgeRefusals.bridgeOff.message);
+      expect(anyCardShown(), false);
+      expect(rig.commands, isEmpty);
+    });
+
+    test('a host raised to full control while its card waited runs', () async {
+      final r = rig.call('fake_change', {'host': 'web', 'command': 'whoami'});
+      final c = await card();
+      rig.hosts = [
+        for (final h in rig.hosts)
+          h.id == 'web1' ? h.copyWith(aiAccess: HostAiAccess.fullControl) : h,
+      ];
+      approvals.answer(c.id, BridgeApprovalAnswer.allowOnce);
+      expect((await r).text, 'exit 0: ran:whoami');
+      expect(lastEntry().approval, BridgeAuditApproval.once);
+    });
+
+    test('stepped down from full control while planning: a card again',
+        () async {
+      var reads = 0;
+      rig.onLoadHosts = () async {
+        // The first read resolves the host at full control; by the second
+        // (after the plan) the user has set it to ask before each change.
+        if (++reads == 2) {
+          rig.hosts = [
+            for (final h in rig.hosts)
+              h.id == 'full1'
+                  ? h.copyWith(aiAccess: HostAiAccess.askToChange)
+                  : h,
+          ];
+        }
+      };
+      final r = rig.call('fake_change', {'host': 'full', 'command': 'id'});
+      final c = await card();
+      approvals.answer(c.id, BridgeApprovalAnswer.deny);
+      expect((await r).isError, true);
+      expect(rig.commands, isEmpty);
+      expect(lastEntry().approval, BridgeAuditApproval.denied);
+    });
+
+    test('several hosts: no card only when every one is full control',
+        () async {
+      final r = await rig.call('fake_multi', {
+        'hosts': ['full', 'full2'],
+        'command': 'id',
+      });
+      expect(r.isError, false);
+      expect(anyCardShown(), false);
+      expect(lastEntry().approval, BridgeAuditApproval.fullControl);
+
+      final mixed = rig.call('fake_multi', {
+        'hosts': ['full', 'web'],
+        'command': 'id',
+      });
+      final c = await card();
+      approvals.answer(c.id, BridgeApprovalAnswer.allowOnce);
+      expect((await mixed).isError, false);
+      expect(lastEntry().approval, BridgeAuditApproval.once);
+    });
+
+    test('several hosts, full control plus a live grant: no card, audited '
+        'as the grant', () async {
+      grants.grant(testBridgeClient.id, 'web1', const Duration(minutes: 5));
+      final r = await rig.call('fake_multi', {
+        'hosts': ['full', 'web'],
+        'command': 'id',
+      });
+      expect(r.isError, false);
+      expect(anyCardShown(), false);
+      expect(lastEntry().approval, BridgeAuditApproval.grant);
+    });
+  });
+
   group('MCP cancellation through the real tools', () {
     String callLine(Object id, Map<String, Object?> args) => jsonEncode({
       'jsonrpc': '2.0',
@@ -1037,21 +1183,49 @@ void main() {
 
   test('a change tool is listed with its kind, after the read tools', () {
     final names = rig.tools.tools.map((t) => t.name).toList();
-    expect(names.sublist(names.length - 2), ['fake_change', 'fake_terminal']);
+    expect(names.sublist(names.length - 3), [
+      'fake_change',
+      'fake_terminal',
+      'fake_multi',
+    ]);
+    // Only change, terminal and desktop tools go through the change path.
+    for (final kind in [
+      BridgeToolKind.read,
+      BridgeToolKind.terminalUse,
+      BridgeToolKind.desktopUse,
+      BridgeToolKind.jobUse,
+    ]) {
+      expect(
+        () => BridgeChangeTool(
+          spec: BridgeToolSpec(
+            name: 'x',
+            description: '',
+            inputSchema: const {},
+            kind: kind,
+          ),
+          arguments: const {'host'},
+          plan: (a, c) async =>
+              const BridgeChangePlan(summary: TerminalSummary()),
+          run: (c, p) async => const BridgeToolResult(''),
+        ),
+        throwsArgumentError,
+        reason: kind.name,
+      );
+    }
     expect(
-      () => BridgeChangeTool(
+      BridgeChangeTool(
         spec: const BridgeToolSpec(
           name: 'x',
           description: '',
           inputSchema: {},
-          kind: BridgeToolKind.read,
+          kind: BridgeToolKind.desktop,
         ),
         arguments: const {'host'},
         plan: (a, c) async =>
             const BridgeChangePlan(summary: TerminalSummary()),
         run: (c, p) async => const BridgeToolResult(''),
-      ),
-      throwsArgumentError,
+      ).spec.kind,
+      BridgeToolKind.desktop,
     );
   });
 }

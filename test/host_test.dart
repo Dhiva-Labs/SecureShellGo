@@ -365,8 +365,10 @@ void main() {
     test('the helpers are true only for the right access', () {
       for (final access in HostAiAccess.values) {
         final h = host.copyWith(aiAccess: access, aiTerminal: true);
-        expect(h.aiMayRequestChanges, access == HostAiAccess.askToChange);
-        expect(h.aiMayOpenTerminal, access == HostAiAccess.askToChange);
+        final changes = access == HostAiAccess.askToChange ||
+            access == HostAiAccess.fullControl;
+        expect(h.aiMayRequestChanges, changes);
+        expect(h.aiMayOpenTerminal, changes);
       }
       expect(changing.aiMayOpenTerminal, isFalse,
           reason: 'terminal is off by default');
@@ -521,6 +523,118 @@ void main() {
     });
   });
 
+  group('Host.fullControl and aiDesktop', () {
+    final full = host.copyWith(aiAccess: HostAiAccess.fullControl);
+
+    test('fullControl is written as exactly "fullControl" and round-trips', () {
+      expect(full.toJson()['aiAccess'], 'fullControl');
+      expect(Host.fromJson(full.toJson()).aiAccess, HostAiAccess.fullControl);
+      expect(HostAiAccess.fromJson('fullControl'), HostAiAccess.fullControl);
+      expect(HostAiAccess.fromJson('FullControl'), HostAiAccess.off);
+      expect(HostAiAccess.fromJson('full_control'), HostAiAccess.off);
+    });
+
+    test('a level this build does not know still reads as off', () {
+      for (final unknown in ['root', 'superControl', '', 'fullcontrol']) {
+        expect(
+          Host.fromJson({
+            'id': 'x',
+            'hostname': 'example.com',
+            'username': 'dev',
+            'aiAccess': unknown,
+            'aiTerminal': true,
+            'aiDesktop': true,
+          }).aiMayOpenDesktop,
+          isFalse,
+          reason: unknown,
+        );
+      }
+    });
+
+    test('order of trust: off < readOnly < askToChange < fullControl', () {
+      expect(HostAiAccess.values, [
+        HostAiAccess.off,
+        HostAiAccess.readOnly,
+        HostAiAccess.askToChange,
+        HostAiAccess.fullControl,
+      ]);
+    });
+
+    test('full control implies terminal and desktop, whatever is stored', () {
+      expect(full.aiTerminal, isFalse);
+      expect(full.aiDesktop, isFalse);
+      expect(full.aiFullControl, isTrue);
+      expect(full.aiMayRequestChanges, isTrue);
+      expect(full.aiMayOpenTerminal, isTrue);
+      expect(full.aiMayOpenDesktop, isTrue);
+    });
+
+    test('the desktop switch counts only under ask to change', () {
+      for (final access in HostAiAccess.values) {
+        final h = host.copyWith(aiAccess: access, aiDesktop: true);
+        expect(
+          h.aiMayOpenDesktop,
+          access == HostAiAccess.askToChange ||
+              access == HostAiAccess.fullControl,
+          reason: access.name,
+        );
+        expect(h.aiFullControl, access == HostAiAccess.fullControl);
+      }
+      final asking = host.copyWith(aiAccess: HostAiAccess.askToChange);
+      expect(asking.aiMayOpenDesktop, isFalse, reason: 'off by default');
+      expect(asking.aiMayOpenTerminal, isFalse);
+    });
+
+    test('aiDesktop defaults off, is omitted from JSON, and round-trips', () {
+      expect(host.aiDesktop, isFalse);
+      expect(host.toJson().containsKey('aiDesktop'), isFalse);
+      final on = host.copyWith(aiDesktop: true);
+      expect(on.toJson()['aiDesktop'], true);
+      expect(Host.fromJson(on.toJson()).aiDesktop, isTrue);
+      Host read(Object? v) => Host.fromJson({
+            'id': 'x',
+            'hostname': 'example.com',
+            'username': 'dev',
+            'aiDesktop': v,
+          });
+      expect(read('true').aiDesktop, isFalse);
+      expect(read(1).aiDesktop, isFalse);
+      expect(read(null).aiDesktop, isFalse);
+    });
+
+    test('stepping down keeps the switches stored but inert', () {
+      final both = full.copyWith(aiTerminal: true, aiDesktop: true);
+      for (final access in [HostAiAccess.readOnly, HostAiAccess.off]) {
+        final down = both.copyWith(aiAccess: access);
+        expect(down.aiDesktop, isTrue);
+        expect(down.aiMayOpenDesktop, isFalse);
+        expect(down.aiMayOpenTerminal, isFalse);
+        expect(down.aiFullControl, isFalse);
+      }
+    });
+
+    test('withoutAiGrants turns full control and the desktop off', () {
+      final bare = full.copyWith(aiDesktop: true).withoutAiGrants();
+      expect(bare.aiAccess, HostAiAccess.off);
+      expect(bare.aiDesktop, isFalse);
+      expect(bare.toJson().containsKey('aiDesktop'), isFalse);
+      expect(bare.toJson().containsKey('aiAccess'), isFalse);
+    });
+
+    test('every rebuilding helper carries the desktop switch', () {
+      final on = full.copyWith(aiDesktop: true);
+      for (final h in [
+        on.withGroup('g'),
+        on.withJumpHost('j'),
+        on.withCertificate('cert'),
+        on.copyWith(label: 'Other'),
+      ]) {
+        expect(h.aiAccess, HostAiAccess.fullControl);
+        expect(h.aiDesktop, isTrue);
+      }
+    });
+  });
+
   group('helpers that rebuild a Host drop nothing', () {
     // Every field away from its default; expectations come from toJson() so
     // a field added later is covered once it is written there.
@@ -545,6 +659,7 @@ void main() {
       aiAccess: HostAiAccess.askToChange,
       aiAllowedCommands: const ['uptime'],
       aiTerminal: true,
+      aiDesktop: true,
     );
 
     test('the sample sets every field a bare host leaves out', () {
@@ -602,8 +717,12 @@ void main() {
     test('withoutAiGrants clears only the AI Bridge fields', () {
       final expected = Map<String, dynamic>.of(full.toJson())
         ..removeWhere(
-          (k, _) => const {'aiAccess', 'aiAllowedCommands', 'aiTerminal'}
-              .contains(k),
+          (k, _) => const {
+            'aiAccess',
+            'aiAllowedCommands',
+            'aiTerminal',
+            'aiDesktop',
+          }.contains(k),
         );
       expect(full.withoutAiGrants().toJson(), expected);
     });

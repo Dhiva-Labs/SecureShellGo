@@ -126,6 +126,7 @@ class _SharedHostsChecklistState extends State<SharedHostsChecklist> {
         host.aiTerminal
             ? l10n.bridgeHostLevelTerminal
             : l10n.bridgeHostLevelChanges,
+      HostAiAccess.fullControl => l10n.bridgeHostLevelFullControl,
     };
     final lines = [
       if ((host.group ?? '').isNotEmpty) host.group!,

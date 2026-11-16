@@ -13,6 +13,7 @@ import 'package:secure_shell_go/services/bridge/bridge_client_store.dart';
 import 'package:secure_shell_go/services/bridge/bridge_connections.dart';
 import 'package:secure_shell_go/services/bridge/bridge_grants.dart';
 import 'package:secure_shell_go/services/bridge/bridge_redactor.dart';
+import 'package:secure_shell_go/services/bridge/bridge_tool_module.dart';
 import 'package:secure_shell_go/services/bridge/bridge_tool_types.dart';
 import 'package:secure_shell_go/services/bridge/bridge_tools.dart';
 import 'package:secure_shell_go/services/ssh_service.dart';
@@ -133,6 +134,7 @@ class BridgeToolsRig {
     BridgeApprovals? approvals,
     BridgeGrants? grants,
     List<BridgeChangeTool> changeTools = const [],
+    List<BridgeToolModule> modules = const [],
     FakeBridgeFiles? files,
   }) : fs = files ?? FakeBridgeFiles() {
     connections = BridgeConnections(
@@ -166,10 +168,15 @@ class BridgeToolsRig {
       approvals: approvals,
       grants: grants,
       changeTools: changeTools,
+      modules: modules,
+      builtinAssistantEnabled: () => builtinOn,
     );
   }
 
   final Directory auditDir;
+
+  /// The built-in assistant's own switch, as the tool host reads it.
+  bool builtinOn = false;
   List<Host> hosts = [
     bridgeHost('web1', 'web'),
     bridgeHost('db01', 'db'),

@@ -327,4 +327,139 @@ void main() {
       expect(await reloaded.verify(a.token), isNotNull);
     });
   });
+
+  group('roles', () {
+    Future<Map<String, dynamic>> row(String id) async {
+      final json =
+          jsonDecode(await file.readAsString()) as Map<String, dynamic>;
+      return (json['clients'] as List).cast<Map<String, dynamic>>().firstWhere(
+        (r) => r['id'] == id,
+      );
+    }
+
+    test('an assistant is the default, and its role is not written', () async {
+      final a = await newStore().create('A');
+      expect(a.client.role, BridgeClientRole.assistant);
+      expect((await row(a.client.id)).containsKey('role'), isFalse);
+      expect(bridgeClientMayCallTools(a.client), isTrue);
+      expect(bridgeClientMayControl(a.client), isFalse);
+    });
+
+    test('a controller is paired with its role, which survives a reload',
+        () async {
+      final store = newStore();
+      final phone = await store.create(
+        'My phone',
+        role: BridgeClientRole.controller,
+      );
+      expect(phone.client.role, BridgeClientRole.controller);
+      expect((await row(phone.client.id))['role'], 'controller');
+      final reloaded = newStore();
+      final back = await reloaded.verify(phone.token);
+      expect(back, isNotNull);
+      expect(back!.role, BridgeClientRole.controller);
+      // A sign-in stamp keeps the role.
+      expect((await reloaded.load()).single.role, BridgeClientRole.controller);
+    });
+
+    test('a controller can never call tools; an assistant can never control',
+        () async {
+      final store = newStore();
+      final phone = await store.create('P', role: BridgeClientRole.controller);
+      final bot = await store.create('B');
+      expect(bridgeClientMayCallTools(phone.client), isFalse);
+      expect(bridgeClientMayControl(phone.client), isTrue);
+      expect(bridgeClientMayCallTools(bot.client), isTrue);
+      expect(bridgeClientMayControl(bot.client), isFalse);
+    });
+
+    test('a controller survives confirm with its role', () async {
+      final store = newStore();
+      final p = await store.create(
+        'P',
+        pending: true,
+        role: BridgeClientRole.controller,
+      );
+      await store.confirm(p.client.id);
+      expect((await store.verify(p.token))!.role, BridgeClientRole.controller);
+    });
+
+    test('an unnamed controller is called Phone', () async {
+      final p = await newStore().create(' ', role: BridgeClientRole.controller);
+      expect(p.client.name, 'Phone');
+    });
+
+    test('absent or unknown roles read as assistant, never controller',
+        () async {
+      final a = await newStore().create('A');
+      final json =
+          jsonDecode(await file.readAsString()) as Map<String, dynamic>;
+      final rows = (json['clients'] as List).cast<Map<String, dynamic>>();
+      for (final value in ['admin', 'Controller', 1, true, null]) {
+        rows.single['role'] = value;
+        await file.writeAsString(jsonEncode(json));
+        final client = (await newStore().load()).single;
+        expect(client.id, a.client.id);
+        expect(client.role, BridgeClientRole.assistant, reason: '$value');
+      }
+      expect(BridgeClientRole.fromJson('controller'), BridgeClientRole.controller);
+    });
+  });
+
+  group('the built-in client', () {
+    test('has a fixed id and name and is an assistant', () {
+      final b = BridgeClient.builtin;
+      expect(b.id, 'builtin');
+      expect(b.id, BridgeClient.builtinId);
+      expect(b.name, 'Built-in assistant');
+      expect(b.isBuiltin, isTrue);
+      expect(b.role, BridgeClientRole.assistant);
+      expect(bridgeClientMayCallTools(b), isTrue);
+      expect(bridgeClientMayControl(b), isFalse);
+    });
+
+    test('is never stored and never listed', () async {
+      final store = newStore();
+      await store.create('A');
+      expect(
+        (await store.load()).any((c) => c.id == BridgeClient.builtinId),
+        isFalse,
+      );
+      expect(await file.readAsString(), isNot(contains('"builtin"')));
+    });
+
+    test('no token signs in as it, an empty one included', () async {
+      final store = newStore();
+      await store.create('A');
+      for (final token in ['', 'builtin', BridgeClient.builtin.tokenHash]) {
+        expect(await store.verify(token), isNull, reason: token);
+      }
+    });
+
+    test('a stored row claiming its id is skipped on load', () async {
+      final store = newStore();
+      final a = await store.create('A');
+      final json =
+          jsonDecode(await file.readAsString()) as Map<String, dynamic>;
+      final rows = json['clients'] as List;
+      final forged = Map<String, dynamic>.of(rows.single as Map<String, dynamic>)
+        ..['id'] = BridgeClient.builtinId;
+      rows.add(forged);
+      await file.writeAsString(jsonEncode(json));
+      final reloaded = newStore();
+      final loaded = await reloaded.load();
+      expect(loaded.map((c) => c.id), [a.client.id]);
+      // The forged row shared A's hash; the token signs in as A only.
+      expect((await reloaded.verify(a.token))!.id, a.client.id);
+    });
+
+    test('paired ids can never be the built-in id', () async {
+      final store = newStore();
+      for (var i = 0; i < 20; i++) {
+        final c = await store.create('C$i');
+        expect(c.client.id, isNot(BridgeClient.builtinId));
+        expect(c.client.id, contains('-'));
+      }
+    });
+  });
 }

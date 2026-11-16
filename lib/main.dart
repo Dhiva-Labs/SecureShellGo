@@ -350,11 +350,16 @@ class _SecureShellGoAppState extends State<SecureShellGoApp> {
   // transfer panel offers a way back into it) share the one instance.
   final FleetPushRunRegistry _fleetPushRegistry = FleetPushRunRegistry();
 
-  // The AI Bridge: a local MCP server an assistant on this computer can ask
-  // read-only questions of the servers the user has shared with it. Off
-  // until switched on in Settings, and never built on a platform that does
-  // not ship the launcher — so `_bridge` is null there and nothing below
-  // touches the stores that only it uses.
+  // The AI Bridge, in two halves (see `BridgeService`). The AI tools — the
+  // tool host, approvals, grants, activity log, policy and the approval
+  // cards — are built on every platform, Android included: the built-in
+  // assistant calls `_bridge.tools` directly as `BridgeClient.builtin`, with
+  // its own on/off switch passed as `builtinAssistantEnabled` (off until it
+  // has a setting, so the tool host simply sits idle). The local channel —
+  // the MCP listener a paired assistant on this computer connects to, the
+  // launcher locator, pairing and the CLI connector — exists only where the
+  // launcher ships (`BridgeService.channelSupported`), and only that half is
+  // handed to the screens for now.
   //
   // Everything it needs is something that already lives here: the sessions
   // (a host with a session open is read over that session's transport), the
@@ -365,9 +370,12 @@ class _SecureShellGoAppState extends State<SecureShellGoApp> {
   late final BridgeAuditLog _bridgeAudit = BridgeAuditLog(
     scrub: DiagnosticsLog.instance.scrubber.scrub,
   );
-  late final BridgeService? _bridge = BridgeService.supported
-      ? _buildBridge()
-      : null;
+  late final BridgeService _bridge = _buildBridge();
+
+  /// The bridge as the screens see it today: only where the local channel
+  /// exists, so Android shows no pairing or launcher settings.
+  BridgeService? get _channelBridge =>
+      BridgeService.channelSupported ? _bridge : null;
   late final ClaudeCliConnector _claudeConnector = ClaudeCliConnector();
 
   // The approval cards: an assistant's request to change something on a
@@ -425,6 +433,12 @@ class _SecureShellGoAppState extends State<SecureShellGoApp> {
           terminals.openTool,
         ],
         terminalUseTools: terminals.useTools,
+        // Tool groups that live in their own files (`BridgeToolModule`) are
+        // registered here, one entry each.
+        modules: const [],
+        // The built-in assistant's own switch, used instead of the channel
+        // switch for its calls. Off until it has a setting.
+        builtinAssistantEnabled: () => false,
       ),
       terminals: terminals,
       // A lock withdraws pending approvals and ends time-limited ones.
@@ -469,18 +483,17 @@ class _SecureShellGoAppState extends State<SecureShellGoApp> {
     );
     _settingsWatch = _settingsStore.changes.listen(_appLock.applySettings);
     _diagnosticsWatch = DiagnosticsLog.instance.follow(_settingsStore);
-    // Starts listening only if the user switched the bridge on.
-    unawaited(_bridge?.start());
-    final bridge = _bridge;
-    if (bridge != null) {
-      _approvalHost = BridgeApprovalHost(
-        navigatorKey: _navigatorKey,
-        approvals: bridge.approvals,
-        isLocked: () => _appLock.isLocked,
-        lockChanges: _appLock.changes.map((s) => s.isLocked).distinct(),
-        timedMinutes: () => _settingsStore.current.bridgeTimedApprovalMinutes,
-      )..start();
-    }
+    // Starts listening only if the user switched the bridge on, and only
+    // where there is a local channel; the tools' lock and host watches run
+    // everywhere.
+    unawaited(_bridge.start());
+    _approvalHost = BridgeApprovalHost(
+      navigatorKey: _navigatorKey,
+      approvals: _bridge.approvals,
+      isLocked: () => _appLock.isLocked,
+      lockChanges: _appLock.changes.map((s) => s.isLocked).distinct(),
+      timedMinutes: () => _settingsStore.current.bridgeTimedApprovalMinutes,
+    )..start();
     _themeWatch = _settingsStore.changes.listen((settings) {
       if (settings.uiStyle == _uiStyle &&
           settings.themeBrightness == _themeBrightness &&
@@ -509,10 +522,7 @@ class _SecureShellGoAppState extends State<SecureShellGoApp> {
     // Closes assistant connections and the SSH connections the bridge
     // dialled, and removes the endpoint file.
     unawaited(_approvalHost?.dispose());
-    final bridge = _bridge;
-    if (bridge != null) {
-      unawaited(bridge.dispose().whenComplete(_bridgeAudit.dispose));
-    }
+    unawaited(_bridge.dispose().whenComplete(_bridgeAudit.dispose));
     unawaited(_settingsWatch?.cancel());
     unawaited(_diagnosticsWatch?.cancel());
     unawaited(_themeWatch?.cancel());
@@ -557,10 +567,10 @@ class _SecureShellGoAppState extends State<SecureShellGoApp> {
         snippetStore: _snippetStore,
         appLock: _appLock,
         backupService: _backupService,
-        bridge: _bridge,
-        bridgeClients: _bridge == null ? null : _bridgeClients,
-        bridgeAudit: _bridge == null ? null : _bridgeAudit,
-        claudeConnector: _bridge == null ? null : _claudeConnector,
+        bridge: _channelBridge,
+        bridgeClients: _channelBridge == null ? null : _bridgeClients,
+        bridgeAudit: _channelBridge == null ? null : _bridgeAudit,
+        claudeConnector: _channelBridge == null ? null : _claudeConnector,
         fleetPushRegistry: _fleetPushRegistry,
       ),
     );

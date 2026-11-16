@@ -7,6 +7,7 @@ import 'package:secure_shell_go/services/bridge/bridge_tool_types.dart';
 Host _host(
   HostAiAccess access, {
   bool terminal = false,
+  bool desktop = false,
   List<String> allowed = const [],
 }) => Host(
   id: 'id-1',
@@ -17,18 +18,50 @@ Host _host(
   authMethod: SshAuthMethod.password,
   aiAccess: access,
   aiTerminal: terminal,
+  aiDesktop: desktop,
   aiAllowedCommands: allowed,
 );
 
-enum _HostCase { none, off, readOnly, askToChange, askToChangeTerminal }
+enum _HostCase {
+  none,
+  off,
+  readOnly,
+  askToChange,
+  askToChangeTerminal,
+  askToChangeDesktop,
+  fullControl,
+}
+
+/// The host cases 1.7.0 knew (no desktop switch, no full control).
+const _hostCases170 = [
+  _HostCase.none,
+  _HostCase.off,
+  _HostCase.readOnly,
+  _HostCase.askToChange,
+  _HostCase.askToChangeTerminal,
+];
+
+/// The kinds 1.7.0 knew.
+const _kinds170 = [
+  BridgeToolKind.read,
+  BridgeToolKind.change,
+  BridgeToolKind.terminal,
+  BridgeToolKind.terminalUse,
+];
 
 Host? _hostFor(_HostCase c) => switch (c) {
   _HostCase.none => null,
-  // A hidden host keeps its stored terminal switch and list; they are inert.
-  _HostCase.off => _host(HostAiAccess.off, terminal: true, allowed: ['ls']),
+  // A hidden host keeps its stored switches and list; they are inert.
+  _HostCase.off => _host(
+    HostAiAccess.off,
+    terminal: true,
+    desktop: true,
+    allowed: ['ls'],
+  ),
   _HostCase.readOnly => _host(
     HostAiAccess.readOnly,
     terminal: true,
+    desktop: true,
     allowed: ['ls'],
   ),
   _HostCase.askToChange => _host(HostAiAccess.askToChange, allowed: ['ls']),
@@ -36,6 +69,12 @@ Host? _hostFor(_HostCase c) => switch (c) {
     HostAiAccess.askToChange,
     terminal: true,
   ),
+  _HostCase.askToChangeDesktop => _host(
+    HostAiAccess.askToChange,
+    desktop: true,
+  ),
+  // Full control implies both switches, whatever is stored.
+  _HostCase.fullControl => _host(HostAiAccess.fullControl, allowed: ['ls']),
 };
 
 /// 1.6.0's `decideBridgeCall`, copied verbatim (minus the change rule, which
@@ -57,6 +96,88 @@ BridgeDecision _decide160({
   return const BridgeAllow();
 }
 
+// 1.7.0's refusals, copied verbatim, so a change to their text in the
+// implementation fails here.
+const _off170 = BridgeRefuse(
+  'bridge_off',
+  'The AI Bridge is switched off in SecureShell Go.',
+);
+const _locked170 = BridgeRefuse(
+  'app_locked',
+  'SecureShell Go is locked. Ask the user to unlock it, then try again.',
+);
+const _changes170 = BridgeRefuse(
+  'changes_not_allowed',
+  'This host is read-only for the AI assistant: the user has not allowed '
+      'changes on it. Do not retry.',
+);
+const _terminal170 = BridgeRefuse(
+  'terminal_not_allowed',
+  'The user has not allowed the AI assistant to open a terminal on this '
+      'host. Do not retry.',
+);
+const _terminalGone170 = BridgeRefuse(
+  'terminal_not_available',
+  'No terminal by that id is open for you. It may have been closed. '
+      'Call open_terminal if you still need one.',
+);
+const _host170 = BridgeRefuse(
+  'host_not_available',
+  'No host by that name is available to the AI Bridge. '
+      'Call list_hosts to see the hosts you can use.',
+);
+
+/// 1.7.0's `decideBridgeCall`, copied verbatim (with its refusals inlined
+/// above, and 1.7.0's two host getters written out): for the levels and
+/// kinds 1.7.0 knew, every decision must still match it.
+BridgeDecision _decide170({
+  required bool bridgeEnabled,
+  required bool appLocked,
+  required Host? host,
+  required bool hostRequired,
+  required BridgeToolKind kind,
+  required bool hasLiveGrant,
+  required bool matchesAllowedCommand,
+  required bool ownsLiveTerminal,
+}) {
+  bool mayRequestChanges(Host h) => h.aiAccess == HostAiAccess.askToChange;
+  bool mayOpenTerminal(Host h) => mayRequestChanges(h) && h.aiTerminal;
+  if (!bridgeEnabled) return _off170;
+  if (appLocked) return _locked170;
+  switch (kind) {
+    case BridgeToolKind.read:
+      if (host == null) {
+        return hostRequired ? _host170 : const BridgeAllow();
+      }
+      if (host.aiAccess == HostAiAccess.off) {
+        return _host170;
+      }
+      return const BridgeAllow();
+    case BridgeToolKind.change:
+    case BridgeToolKind.terminal:
+      if (host == null || host.aiAccess == HostAiAccess.off) {
+        return _host170;
+      }
+      if (!mayRequestChanges(host)) return _changes170;
+      if (kind == BridgeToolKind.terminal) {
+        if (!mayOpenTerminal(host)) return _terminal170;
+        return const BridgeNeedsApproval();
+      }
+      if (matchesAllowedCommand || hasLiveGrant) return const BridgeAllow();
+      return const BridgeNeedsApproval();
+    case BridgeToolKind.terminalUse:
+      if (!ownsLiveTerminal) return _terminalGone170;
+      if (host == null || host.aiAccess == HostAiAccess.off) {
+        return _host170;
+      }
+      if (!mayRequestChanges(host)) return _changes170;
+      if (!mayOpenTerminal(host)) return _terminal170;
+      return const BridgeAllow();
+    default:
+      throw StateError('not a 1.7.0 kind');
+  }
+}
+
 void main() {
   group('decideBridgeCall, every combination', () {
     // The expected answer, written out as the brief reads, independently of
@@ -69,47 +190,71 @@ void main() {
       required BridgeToolKind kind,
       required bool grant,
       required bool listed,
-      required bool owns,
+      required bool ownsTerminal,
+      required bool ownsDesktop,
+      required bool ownsJob,
     }) {
       if (!enabled) return BridgeRefusals.bridgeOff;
       if (locked) return BridgeRefusals.appLocked;
-      if (kind == BridgeToolKind.terminalUse) {
-        // Ownership before the host: another client's terminal and an
-        // unknown id read alike whatever its host is.
-        if (!owns) return BridgeRefusals.terminalNotAvailable;
-        return switch (hostCase) {
-          _HostCase.none || _HostCase.off => BridgeRefusals.hostNotAvailable,
-          _HostCase.readOnly => BridgeRefusals.changesNotAllowed,
-          _HostCase.askToChange => BridgeRefusals.terminalNotAllowed,
-          // No card per call; the grant and the list play no part.
-          _HostCase.askToChangeTerminal => const BridgeAllow(),
-        };
-      }
-      if (kind == BridgeToolKind.read) {
-        return _decide160(
-          bridgeEnabled: enabled,
-          appLocked: locked,
-          host: _hostFor(hostCase),
-          hostRequired: hostRequired,
-          kind: kind,
-        );
-      }
-      switch (hostCase) {
-        case _HostCase.none:
-        case _HostCase.off:
-          return BridgeRefusals.hostNotAvailable;
-        case _HostCase.readOnly:
-          return BridgeRefusals.changesNotAllowed;
-        case _HostCase.askToChange:
-          if (kind == BridgeToolKind.terminal) {
-            return BridgeRefusals.terminalNotAllowed;
+      final hidden =
+          hostCase == _HostCase.none || hostCase == _HostCase.off;
+      switch (kind) {
+        case BridgeToolKind.read:
+          return _decide160(
+            bridgeEnabled: enabled,
+            appLocked: locked,
+            host: _hostFor(hostCase),
+            hostRequired: hostRequired,
+            kind: kind,
+          );
+        case BridgeToolKind.terminalUse:
+          // Ownership before the host: another client's terminal and an
+          // unknown id read alike whatever its host is.
+          if (!ownsTerminal) return BridgeRefusals.terminalNotAvailable;
+          if (hidden) return BridgeRefusals.hostNotAvailable;
+          return switch (hostCase) {
+            _HostCase.readOnly => BridgeRefusals.changesNotAllowed,
+            // No card per call; the grant and the list play no part.
+            _HostCase.askToChangeTerminal ||
+            _HostCase.fullControl => const BridgeAllow(),
+            _ => BridgeRefusals.terminalNotAllowed,
+          };
+        case BridgeToolKind.desktopUse:
+          if (!ownsDesktop) return BridgeRefusals.desktopNotAvailable;
+          if (hidden) return BridgeRefusals.hostNotAvailable;
+          return switch (hostCase) {
+            _HostCase.readOnly => BridgeRefusals.changesNotAllowed,
+            _HostCase.askToChangeDesktop ||
+            _HostCase.fullControl => const BridgeAllow(),
+            _ => BridgeRefusals.desktopNotAllowed,
+          };
+        case BridgeToolKind.jobUse:
+          if (!ownsJob) return BridgeRefusals.jobNotAvailable;
+          if (hidden) return BridgeRefusals.hostNotAvailable;
+          if (hostCase == _HostCase.readOnly) {
+            return BridgeRefusals.changesNotAllowed;
           }
-          return grant || listed
-              ? const BridgeAllow()
-              : const BridgeNeedsApproval();
-        case _HostCase.askToChangeTerminal:
+          return const BridgeAllow();
+        case BridgeToolKind.change:
+        case BridgeToolKind.terminal:
+        case BridgeToolKind.desktop:
+          if (hidden) return BridgeRefusals.hostNotAvailable;
+          if (hostCase == _HostCase.readOnly) {
+            return BridgeRefusals.changesNotAllowed;
+          }
+          // No card at all on a full-control host, and the reason is kept.
+          if (hostCase == _HostCase.fullControl) {
+            return const BridgeAllow.fullControl();
+          }
           if (kind == BridgeToolKind.terminal) {
-            return const BridgeNeedsApproval();
+            return hostCase == _HostCase.askToChangeTerminal
+                ? const BridgeNeedsApproval()
+                : BridgeRefusals.terminalNotAllowed;
+          }
+          if (kind == BridgeToolKind.desktop) {
+            return hostCase == _HostCase.askToChangeDesktop
+                ? const BridgeNeedsApproval()
+                : BridgeRefusals.desktopNotAllowed;
           }
           return grant || listed
               ? const BridgeAllow()
@@ -118,45 +263,106 @@ void main() {
     }
 
     var count = 0;
-    for (final enabled in [false, true]) {
-      for (final locked in [false, true]) {
-        for (final hostCase in _HostCase.values) {
-          for (final hostRequired in [false, true]) {
-            for (final kind in BridgeToolKind.values) {
-              for (final grant in [false, true]) {
-                for (final listed in [false, true]) {
-                  for (final owns in [false, true]) {
-                    count++;
-                    test(
-                      'enabled=$enabled locked=$locked host=${hostCase.name} '
-                      'required=$hostRequired kind=${kind.name} '
-                      'grant=$grant listed=$listed owns=$owns',
-                      () {
-                        final decision = decideBridgeCall(
-                          bridgeEnabled: enabled,
-                          appLocked: locked,
-                          host: _hostFor(hostCase),
-                          hostRequired: hostRequired,
-                          kind: kind,
-                          hasLiveGrant: grant,
-                          matchesAllowedCommand: listed,
-                          ownsLiveTerminal: owns,
-                        );
-                        expect(
-                          decision,
-                          expected(
-                            enabled: enabled,
-                            locked: locked,
-                            hostCase: hostCase,
+    for (final kind in BridgeToolKind.values) {
+      for (final hostCase in _HostCase.values) {
+        test('kind=${kind.name} host=${hostCase.name}, every flag', () {
+          for (final enabled in [false, true]) {
+            for (final locked in [false, true]) {
+              for (final hostRequired in [false, true]) {
+                for (final grant in [false, true]) {
+                  for (final listed in [false, true]) {
+                    for (final ownsTerminal in [false, true]) {
+                      for (final ownsDesktop in [false, true]) {
+                        for (final ownsJob in [false, true]) {
+                          final decision = decideBridgeCall(
+                            bridgeEnabled: enabled,
+                            appLocked: locked,
+                            host: _hostFor(hostCase),
                             hostRequired: hostRequired,
                             kind: kind,
-                            grant: grant,
-                            listed: listed,
-                            owns: owns,
-                          ),
-                        );
-                      },
-                    );
+                            hasLiveGrant: grant,
+                            matchesAllowedCommand: listed,
+                            ownsLiveTerminal: ownsTerminal,
+                            ownsLiveDesktop: ownsDesktop,
+                            ownsJob: ownsJob,
+                          );
+                          expect(
+                            decision,
+                            expected(
+                              enabled: enabled,
+                              locked: locked,
+                              hostCase: hostCase,
+                              hostRequired: hostRequired,
+                              kind: kind,
+                              grant: grant,
+                              listed: listed,
+                              ownsTerminal: ownsTerminal,
+                              ownsDesktop: ownsDesktop,
+                              ownsJob: ownsJob,
+                            ),
+                            reason:
+                                'enabled=$enabled locked=$locked '
+                                'required=$hostRequired grant=$grant '
+                                'listed=$listed owns=$ownsTerminal/'
+                                '$ownsDesktop/$ownsJob',
+                          );
+                          count++;
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        });
+      }
+    }
+    test('the table covers all ${7 * 7 * 2 * 2 * 2 * 2 * 2 * 8} cases', () {
+      expect(count, 7 * 7 * 2 * 2 * 2 * 2 * 2 * 8);
+    });
+  });
+
+  group('off, read-only and ask-to-change are byte-identical to 1.7.0', () {
+    test('for every 1.7.0 kind, level, flag and switch', () {
+      var compared = 0;
+      for (final enabled in [false, true]) {
+        for (final locked in [false, true]) {
+          for (final hostCase in _hostCases170) {
+            for (final hostRequired in [false, true]) {
+              for (final kind in _kinds170) {
+                for (final grant in [false, true]) {
+                  for (final listed in [false, true]) {
+                    for (final owns in [false, true]) {
+                      final host = _hostFor(hostCase);
+                      final now = decideBridgeCall(
+                        bridgeEnabled: enabled,
+                        appLocked: locked,
+                        host: host,
+                        hostRequired: hostRequired,
+                        kind: kind,
+                        hasLiveGrant: grant,
+                        matchesAllowedCommand: listed,
+                        ownsLiveTerminal: owns,
+                      );
+                      final then = _decide170(
+                        bridgeEnabled: enabled,
+                        appLocked: locked,
+                        host: host,
+                        hostRequired: hostRequired,
+                        kind: kind,
+                        hasLiveGrant: grant,
+                        matchesAllowedCommand: listed,
+                        ownsLiveTerminal: owns,
+                      );
+                      expect(now, then);
+                      if (now is BridgeRefuse) {
+                        final old = then as BridgeRefuse;
+                        expect(now.code.codeUnits, old.code.codeUnits);
+                        expect(now.message.codeUnits, old.message.codeUnits);
+                      }
+                      compared++;
+                    }
                   }
                 }
               }
@@ -164,9 +370,170 @@ void main() {
           }
         }
       }
-    }
-    test('the table covers all ${2 * 2 * 5 * 2 * 4 * 2 * 2 * 2} cases', () {
-      expect(count, 1280);
+      expect(compared, 2 * 2 * 5 * 2 * 4 * 2 * 2 * 2);
+    });
+
+    test('a host stored with the desktop switch on decides as in 1.7.0', () {
+      // The desktop switch is new; it must not change any 1.7.0 answer.
+      for (final access in [
+        HostAiAccess.off,
+        HostAiAccess.readOnly,
+        HostAiAccess.askToChange,
+      ]) {
+        for (final terminal in [false, true]) {
+          final host = _host(access, terminal: terminal, desktop: true);
+          for (final kind in _kinds170) {
+            for (final owns in [false, true]) {
+              expect(
+                decideBridgeCall(
+                  bridgeEnabled: true,
+                  appLocked: false,
+                  host: host,
+                  hostRequired: true,
+                  kind: kind,
+                  hasLiveGrant: false,
+                  matchesAllowedCommand: false,
+                  ownsLiveTerminal: owns,
+                ),
+                _decide170(
+                  bridgeEnabled: true,
+                  appLocked: false,
+                  host: host,
+                  hostRequired: true,
+                  kind: kind,
+                  hasLiveGrant: false,
+                  matchesAllowedCommand: false,
+                  ownsLiveTerminal: owns,
+                ),
+              );
+            }
+          }
+        }
+      }
+    });
+
+    test('the 1.7.0 refusal texts are unchanged', () {
+      for (final (now, then) in [
+        (BridgeRefusals.bridgeOff, _off170),
+        (BridgeRefusals.appLocked, _locked170),
+        (BridgeRefusals.changesNotAllowed, _changes170),
+        (BridgeRefusals.terminalNotAllowed, _terminal170),
+        (BridgeRefusals.terminalNotAvailable, _terminalGone170),
+        (BridgeRefusals.hostNotAvailable, _host170),
+      ]) {
+        expect(now.code.codeUnits, then.code.codeUnits);
+        expect(now.message.codeUnits, then.message.codeUnits);
+      }
+    });
+  });
+
+  group('decideBridgeCall, full control', () {
+    final full = _host(HostAiAccess.fullControl);
+
+    BridgeDecision decide(
+      Host? host,
+      BridgeToolKind kind, {
+      bool enabled = true,
+      bool locked = false,
+    }) => decideBridgeCall(
+      bridgeEnabled: enabled,
+      appLocked: locked,
+      host: host,
+      hostRequired: true,
+      kind: kind,
+      hasLiveGrant: false,
+      matchesAllowedCommand: false,
+      ownsLiveTerminal: false,
+    );
+
+    test('changes, terminals and desktops run without a card', () {
+      for (final kind in [
+        BridgeToolKind.change,
+        BridgeToolKind.terminal,
+        BridgeToolKind.desktop,
+      ]) {
+        final d = decide(full, kind);
+        expect(d, const BridgeAllow.fullControl());
+        expect((d as BridgeAllow).byFullControl, isTrue);
+      }
+    });
+
+    test('a read on a full-control host is a plain allow', () {
+      expect(decide(full, BridgeToolKind.read), const BridgeAllow());
+      expect(
+        decide(full, BridgeToolKind.read),
+        isNot(const BridgeAllow.fullControl()),
+      );
+    });
+
+    test('bridge off and a locked app still refuse first', () {
+      for (final kind in BridgeToolKind.values) {
+        expect(decide(full, kind, enabled: false), BridgeRefusals.bridgeOff);
+        expect(decide(full, kind, locked: true), BridgeRefusals.appLocked);
+      }
+    });
+
+    test('owning is still required to use a terminal, desktop or job', () {
+      expect(
+        decide(full, BridgeToolKind.terminalUse),
+        BridgeRefusals.terminalNotAvailable,
+      );
+      expect(
+        decide(full, BridgeToolKind.desktopUse),
+        BridgeRefusals.desktopNotAvailable,
+      );
+      expect(
+        decide(full, BridgeToolKind.jobUse),
+        BridgeRefusals.jobNotAvailable,
+      );
+    });
+
+    test('ask to change never allows a terminal or desktop without a card', () {
+      final both = _host(
+        HostAiAccess.askToChange,
+        terminal: true,
+        desktop: true,
+      );
+      for (final kind in [BridgeToolKind.terminal, BridgeToolKind.desktop]) {
+        for (final grant in [false, true]) {
+          for (final listed in [false, true]) {
+            expect(
+              decideBridgeCall(
+                bridgeEnabled: true,
+                appLocked: false,
+                host: both,
+                hostRequired: true,
+                kind: kind,
+                hasLiveGrant: grant,
+                matchesAllowedCommand: listed,
+                ownsLiveTerminal: true,
+                ownsLiveDesktop: true,
+                ownsJob: true,
+              ),
+              const BridgeNeedsApproval(),
+            );
+          }
+        }
+      }
+    });
+
+    test('the new refusals say what to do and name no host', () {
+      expect(BridgeRefusals.desktopNotAllowed.code, 'desktop_not_allowed');
+      expect(BridgeRefusals.desktopNotAllowed.message, contains('Do not retry'));
+      expect(BridgeRefusals.desktopNotAvailable.code, 'desktop_not_available');
+      expect(
+        BridgeRefusals.desktopNotAvailable.message,
+        contains('open_desktop'),
+      );
+      expect(BridgeRefusals.jobNotAvailable.code, 'job_not_available');
+      expect(BridgeRefusals.jobNotAvailable.message, contains('list_jobs'));
+      for (final r in [
+        BridgeRefusals.desktopNotAllowed,
+        BridgeRefusals.desktopNotAvailable,
+        BridgeRefusals.jobNotAvailable,
+      ]) {
+        expect(r.message, isNot(contains('web')));
+      }
     });
   });
 
@@ -215,7 +582,7 @@ void main() {
           }
         }
       }
-      expect(compared, 2 * 2 * 5 * 2 * 2 * 4);
+      expect(compared, 2 * 2 * _HostCase.values.length * 2 * 2 * 4);
     });
 
     test('the 1.6.0 refusal texts are unchanged', () {
@@ -255,6 +622,8 @@ void main() {
       hasLiveGrant: grant,
       matchesAllowedCommand: listed,
       ownsLiveTerminal: owns,
+      ownsLiveDesktop: owns,
+      ownsJob: owns,
     );
 
     test('an unknown host and a host with access off are refused '
@@ -404,8 +773,11 @@ void main() {
         BridgeRefusals.terminalNotAllowed.code,
         BridgeRefusals.hostNotAvailable.code,
         BridgeRefusals.terminalNotAvailable.code,
+        BridgeRefusals.desktopNotAllowed.code,
+        BridgeRefusals.desktopNotAvailable.code,
+        BridgeRefusals.jobNotAvailable.code,
       };
-      expect(codes, hasLength(6));
+      expect(codes, hasLength(9));
     });
   });
 
@@ -559,7 +931,13 @@ void main() {
     });
 
     test('the list is inert unless the host asks to change', () {
-      for (final access in [HostAiAccess.off, HostAiAccess.readOnly]) {
+      // Full control needs no list: a match there would audit as
+      // allowed_command rather than full_control.
+      for (final access in [
+        HostAiAccess.off,
+        HostAiAccess.readOnly,
+        HostAiAccess.fullControl,
+      ]) {
         expect(
           bridgeCommandIsAllowed(_host(access, allowed: ['df -h']), 'df -h'),
           isFalse,

@@ -11,8 +11,16 @@ enum HostAiAccess {
 
   /// Read-only tools, plus changes an assistant may ask for. Nothing runs
   /// without a person's yes in the app, except what the user set up on this
-  /// host beforehand. Order of trust: off < readOnly < askToChange.
-  askToChange;
+  /// host beforehand.
+  askToChange,
+
+  /// Changes, terminals and desktops run without a card on this host. The
+  /// user's explicit choice, made with a confirmation that says exactly
+  /// that. Order of trust: off < readOnly < askToChange < fullControl.
+  ///
+  /// A build older than 1.8.0 reads this stored value as [off] (see
+  /// [fromJson]), so a downgrade fails towards no access.
+  fullControl;
 
   /// Anything unknown or absent is [off]. Failing towards "no access" matters
   /// more here than for any other enum: a `hosts.json` written by a later

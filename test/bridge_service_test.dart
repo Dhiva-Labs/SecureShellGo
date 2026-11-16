@@ -96,7 +96,12 @@ void main() {
 
   String bridgeDir() => '${temp.path}/bridge';
 
-  BridgeService build({Stream<bool>? appLockChanges, HostStore? hostStore}) {
+  BridgeService build({
+    Stream<bool>? appLockChanges,
+    HostStore? hostStore,
+    bool? localChannel,
+    bool Function()? builtinOn,
+  }) {
     final audit = BridgeAuditLog(
       scrub: (s) => s,
       directory: Directory(bridgeDir()),
@@ -112,7 +117,9 @@ void main() {
         connections: connections,
         redactor: BridgeRedactor(scrub: (s) => s),
         audit: audit,
+        builtinAssistantEnabled: builtinOn,
       ),
+      localChannel: localChannel,
       createListener: (verify) async => BridgeListener(
         bridgeDir: bridgeDir(),
         verify: verify,
@@ -175,8 +182,11 @@ void main() {
     await deleteTempDir(temp);
   });
 
-  test('supported on Linux and Windows only', () {
-    expect(BridgeService.supported, Platform.isLinux || Platform.isWindows);
+  test('the local channel is on Linux and Windows only', () {
+    expect(
+      BridgeService.channelSupported,
+      Platform.isLinux || Platform.isWindows,
+    );
   });
 
   test('off by default: nothing listens', () async {
@@ -320,6 +330,77 @@ void main() {
     expect(connections.cachedCount, 0);
   });
 
+  group('the two halves', () {
+    test('without a local channel nothing listens, even switched on, and '
+        'the tools still answer the built-in assistant', () async {
+      await service.dispose();
+      var listeners = 0;
+      service = BridgeService(
+        settingsStore: settings,
+        clients: clients,
+        connections: connections,
+        tools: BridgeTools(
+          loadHosts: () async => [bridgeHost('web1', 'web')],
+          settings: () => settings.current,
+          isAppLocked: () => locked,
+          connections: connections,
+          redactor: BridgeRedactor(scrub: (s) => s),
+          audit: BridgeAuditLog(
+            scrub: (s) => s,
+            directory: Directory(bridgeDir()),
+          ),
+          builtinAssistantEnabled: () => true,
+        ),
+        localChannel: false,
+        createListener: (verify) async {
+          listeners++;
+          throw StateError('no listener without a channel');
+        },
+      );
+      await settings.save(settings.current.copyWith(bridgeEnabled: true));
+      await service.start();
+      await settings.update((s) => s.copyWith(bridgeEnabled: false));
+      await settings.update((s) => s.copyWith(bridgeEnabled: true));
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+      expect(listeners, 0);
+      expect(service.status, BridgeStatus.off);
+      expect(File('${bridgeDir()}/endpoint.json').existsSync(), false);
+      final r = await service.tools.call(
+        BridgeClient.builtin,
+        'list_hosts',
+        const {},
+      );
+      expect(r.isError, false);
+      expect(r.text, contains('"web"'));
+    });
+
+    test('a controller token is refused at the handshake, like an unknown '
+        'one', () async {
+      final phone = await clients.create(
+        'Phone',
+        role: BridgeClientRole.controller,
+      );
+      await settings.save(settings.current.copyWith(bridgeEnabled: true));
+      await service.start();
+      await until(() => service.status == BridgeStatus.running);
+      final endpoint = await BridgeLocator(bridgeDir()).read();
+      await expectLater(
+        dialBridge(endpoint!, token: phone.token),
+        throwsA(
+          isA<BridgeDialException>().having(
+            (e) => '$e',
+            'message',
+            contains('not paired'),
+          ),
+        ),
+      );
+      expect(service.connectedClients, isEmpty);
+      // The assistant's own token still works.
+      await connect();
+      await until(() => service.connectedClients.length == 1);
+    });
+  });
+
   group('approvals and time-limited approvals', () {
     Future<BridgeApprovalOutcome> ask(BridgeService svc, BridgeClient who) =>
         svc.approvals.ask(
@@ -364,6 +445,39 @@ void main() {
       await settings.update((s) => s.copyWith(bridgeEnabled: false));
       expect(await pending, BridgeApprovalOutcome.withdrawn);
       await until(() => service.grants.current.isEmpty);
+    });
+
+    test('the built-in assistant\'s cards and grants survive the channel '
+        'switch and changes to the paired list, but not a lock', () async {
+      final lock = StreamController<bool>.broadcast();
+      await service.dispose();
+      service = build(appLockChanges: lock.stream);
+      await settings.save(settings.current.copyWith(bridgeEnabled: true));
+      await service.start();
+      final builtin = ask(service, BridgeClient.builtin);
+      final paired = ask(service, client);
+      service.grants.grant(
+        BridgeClient.builtinId,
+        'web1',
+        const Duration(minutes: 5),
+      );
+      service.grants.grant(client.id, 'web1', const Duration(minutes: 5));
+
+      await settings.update((s) => s.copyWith(bridgeEnabled: false));
+      expect(await paired, BridgeApprovalOutcome.withdrawn);
+      await until(() => service.grants.current.length == 1);
+      expect(service.grants.current.single.clientId, BridgeClient.builtinId);
+      expect(service.approvals.current.single.client.id, BridgeClient.builtinId);
+
+      await clients.revoke(client.id);
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+      expect(service.approvals.current, hasLength(1));
+      expect(service.grants.current, hasLength(1));
+
+      lock.add(true);
+      expect(await builtin, BridgeApprovalOutcome.withdrawn);
+      expect(service.grants.current, isEmpty);
+      await lock.close();
     });
 
     test('revoking a client, connected or not, ends its cards and grants '

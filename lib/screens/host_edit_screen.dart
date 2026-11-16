@@ -372,6 +372,7 @@ class _HostEditScreenState extends State<HostEditScreen> {
       aiAccess: existing?.aiAccess ?? HostAiAccess.off,
       aiAllowedCommands: existing?.aiAllowedCommands ?? const <String>[],
       aiTerminal: existing?.aiTerminal ?? false,
+      aiDesktop: existing?.aiDesktop ?? false,
     );
     return _aiEdit.applyTo(built);
   }
@@ -389,6 +390,7 @@ class _HostEditScreenState extends State<HostEditScreen> {
       aiAccess: applied.aiAccess,
       aiAllowedCommands: applied.aiAllowedCommands,
       aiTerminal: applied.aiTerminal,
+      aiDesktop: applied.aiDesktop,
     );
   }
 

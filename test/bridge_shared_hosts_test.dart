@@ -98,6 +98,62 @@ void main() {
       expect(h.aiAllowedCommands, ['uptime']);
       expect(h.aiTerminal, isTrue);
     });
+
+    test('the share and change switches never raise a host to full control',
+        () {
+      final asking = host('a', 'A', access: HostAiAccess.askToChange);
+      final full = asking.copyWith(aiAccess: HostAiAccess.fullControl);
+      for (final e in [
+        HostAiEdit.of(asking)..setShared(true),
+        HostAiEdit.of(asking)..setChanges(true),
+        HostAiEdit.of(asking)
+          ..setShared(true)
+          ..setChanges(true),
+      ]) {
+        expect(e.applyTo(asking).aiAccess, HostAiAccess.askToChange);
+      }
+      // A full-control host keeps it through "share on" and "changes on",
+      // and "changes off" steps it down to read-only.
+      expect(
+        (HostAiEdit.of(full)..setChanges(true)).applyTo(full).aiAccess,
+        HostAiAccess.fullControl,
+      );
+      expect(
+        (HostAiEdit.of(full)..setShared(true)).applyTo(full).aiAccess,
+        HostAiAccess.fullControl,
+      );
+      expect(
+        (HostAiEdit.of(full)..setChanges(false)).applyTo(full).aiAccess,
+        HostAiAccess.readOnly,
+      );
+      expect(HostAiEdit.of(full).changes, isTrue);
+    });
+
+    test('setLevel sets the level outright and wins over the switches', () {
+      final e = HostAiEdit.of(stored)
+        ..setChanges(false)
+        ..setLevel(HostAiAccess.fullControl);
+      expect(e.touched, isTrue);
+      expect(e.applyTo(stored).aiAccess, HostAiAccess.fullControl);
+      final down = HostAiEdit.of(stored)..setLevel(HostAiAccess.off);
+      final h = down.applyTo(stored);
+      expect(h.aiAccess, HostAiAccess.off);
+      expect(h.aiAllowedCommands, ['uptime'], reason: 'kept, inert');
+      expect(h.aiTerminal, isTrue);
+    });
+
+    test('the desktop switch writes only itself', () {
+      final other = host('a', 'A', access: HostAiAccess.readOnly);
+      final e = HostAiEdit.of(stored)..setDesktop(true);
+      expect(e.touched, isTrue);
+      final h = e.applyTo(other);
+      expect(h.aiDesktop, isTrue);
+      expect(h.aiAccess, HostAiAccess.readOnly);
+      expect(h.aiTerminal, isFalse);
+      // Untouched, the stored value wins.
+      final kept = HostAiEdit.of(stored).applyTo(other.copyWith(aiDesktop: true));
+      expect(kept.aiDesktop, isTrue);
+    });
   });
 
   group('the shared-hosts checklist', () {
@@ -167,6 +223,21 @@ void main() {
       expect(find.text('Can request changes'), findsOneWidget);
       expect(find.text('Can request changes and a terminal'), findsOneWidget);
       expect(find.byIcon(Icons.tune), findsNWidgets(3));
+    });
+
+    testWidgets('a full-control host shows as full control, and unticking '
+        'it turns it off', (tester) async {
+      await seed(tester, [
+        host('a', 'Alpha', access: HostAiAccess.fullControl),
+      ]);
+      await pump(tester);
+      expect(find.text('Full control, no approval cards'), findsOneWidget);
+      await tester.tap(find.byType(Checkbox));
+      await tester.pump();
+      await tester.runAsync(() => tester.tap(find.text('Save')));
+      await settle(tester);
+      final hosts = await read(tester);
+      expect(hosts.single.aiAccess, HostAiAccess.off);
     });
 
     testWidgets('Save writes only the hosts whose tick changed',

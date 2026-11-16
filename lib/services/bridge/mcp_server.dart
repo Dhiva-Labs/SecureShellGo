@@ -3,6 +3,7 @@ import 'dart:convert';
 
 import '../../app_version.dart';
 import 'bridge_channel.dart';
+import 'bridge_client_store.dart';
 import 'bridge_tool_types.dart';
 
 /// The MCP protocol versions this server speaks, oldest first. The bridge
@@ -342,6 +343,11 @@ class McpServer {
     if (!tools.tools.any((t) => t.name == name)) {
       throw _RpcFailure(JsonRpcError.invalidParams, 'Unknown tool: $name');
     }
+    // A controller token never reaches here (the bridge service refuses it
+    // at the handshake); this is the second lock on the same door.
+    if (!bridgeClientMayCallTools(connection.client)) {
+      throw _RpcFailure(JsonRpcError.invalidRequest, 'Not an assistant');
+    }
     BridgeToolResult result;
     try {
       result = await tools.call(
@@ -358,18 +364,33 @@ class McpServer {
       // could carry whatever the failing code was holding.
       result = BridgeToolResult.error('$name failed unexpectedly.');
     }
-    return {
-      'content': [
-        {'type': 'text', 'text': result.text},
-      ],
-      'isError': result.isError,
-    };
+    return mcpToolResultContent(result);
   }
 
   static Map<String, Object?> _error(Object? id, int code, String message) => {
     'jsonrpc': '2.0',
     'id': id,
     'error': {'code': code, 'message': message},
+  };
+}
+
+/// [result] as an MCP `tools/call` result: the image first when there is
+/// one (`{"type": "image", "data": <base64>, "mimeType": ...}`), then the
+/// text. A result with an image and no text sends the image alone.
+Map<String, Object?> mcpToolResultContent(BridgeToolResult result) {
+  final image = result.image;
+  return {
+    'content': [
+      if (image != null)
+        {
+          'type': 'image',
+          'data': base64Encode(image),
+          'mimeType': result.imageMimeType,
+        },
+      if (image == null || result.text.isNotEmpty)
+        {'type': 'text', 'text': result.text},
+    ],
+    'isError': result.isError,
   };
 }
 

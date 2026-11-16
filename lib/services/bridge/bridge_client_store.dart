@@ -8,7 +8,38 @@ import 'package:crypto/crypto.dart';
 import '../app_data_paths.dart';
 import '../atomic_file.dart';
 
-/// One AI assistant the user has paired with the AI Bridge.
+/// What a paired client may do with its token.
+///
+/// Persisted as [name]; absent (every file before 1.8.0) or unknown reads
+/// as [assistant], which is what every pairing was until then. An unknown
+/// role never reads as [controller]: a controller can answer approval cards,
+/// so a role this build does not know must not grant that.
+enum BridgeClientRole {
+  /// An AI assistant: calls tools over MCP. Can never control.
+  assistant,
+
+  /// A phone acting as remote control of this computer's bridge: sees and
+  /// answers approval cards, stops grants, terminals, desktops and jobs.
+  /// Can never call a tool.
+  controller;
+
+  static BridgeClientRole fromJson(Object? value) =>
+      value == controller.name ? controller : assistant;
+}
+
+/// Whether [client] may call bridge tools: only an assistant (a paired one
+/// or [BridgeClient.builtin]). The MCP path and the tool host both check it,
+/// so a controller token can never run a tool, whichever way it arrives.
+bool bridgeClientMayCallTools(BridgeClient client) =>
+    client.role == BridgeClientRole.assistant;
+
+/// Whether [client] may use the controller protocol: only a paired
+/// controller, never an assistant and never the built-in client.
+bool bridgeClientMayControl(BridgeClient client) =>
+    client.role == BridgeClientRole.controller && !client.isBuiltin;
+
+/// One AI assistant (or phone controller) the user has paired with the AI
+/// Bridge, or the app's own built-in assistant ([builtin]).
 ///
 /// Holds only the SHA-256 of its token, never the token: the token is shown
 /// to the user once when it is created, and a copy of `bridge_clients.json`
@@ -21,9 +52,29 @@ class BridgeClient {
     required this.createdAt,
     this.lastSeenAt,
     this.pending = false,
+    this.role = BridgeClientRole.assistant,
   });
 
+  /// [builtin]'s id. Never produced for a paired client (their ids hold a
+  /// `-`), and a stored row with this id is skipped on load.
+  static const String builtinId = 'builtin';
+
+  /// The app's own assistant (the in-app chat), as the tool host, the
+  /// approval cards, grants and the activity log see it. Never stored in
+  /// `bridge_clients.json`, has no token (its hash is empty, which no
+  /// SHA-256 ever equals) so no token can sign in as it, and is not revoked
+  /// by any change to the paired list.
+  static final BridgeClient builtin = BridgeClient(
+    id: builtinId,
+    name: 'Built-in assistant',
+    tokenHash: '',
+    createdAt: DateTime.utc(2026),
+  );
+
   final String id;
+
+  /// True for [builtin] only.
+  bool get isBuiltin => id == builtinId;
 
   /// What the user called it, e.g. "Desktop assistant".
   final String name;
@@ -43,6 +94,9 @@ class BridgeClient {
   /// behind. Cleared by [BridgeClientStore.confirm].
   final bool pending;
 
+  /// See [BridgeClientRole]. Fixed when the client is paired.
+  final BridgeClientRole role;
+
   BridgeClient withLastSeen(DateTime at) => BridgeClient(
     id: id,
     name: name,
@@ -50,6 +104,7 @@ class BridgeClient {
     createdAt: createdAt,
     lastSeenAt: at,
     pending: pending,
+    role: role,
   );
 
   BridgeClient _confirmed() => BridgeClient(
@@ -58,6 +113,7 @@ class BridgeClient {
     tokenHash: tokenHash,
     createdAt: createdAt,
     lastSeenAt: lastSeenAt,
+    role: role,
   );
 
   Map<String, dynamic> toJson() => {
@@ -67,6 +123,9 @@ class BridgeClient {
     'createdAt': createdAt.toUtc().toIso8601String(),
     if (lastSeenAt != null) 'lastSeenAt': lastSeenAt!.toUtc().toIso8601String(),
     if (pending) 'pending': true,
+    // Omitted for an assistant, so a file with no controller in it reads
+    // the same to a build before 1.8.0.
+    if (role != BridgeClientRole.assistant) 'role': role.name,
   };
 
   /// Throws on a row without an id, name, hash or readable creation time;
@@ -84,6 +143,7 @@ class BridgeClient {
       },
       // Absent (every file before this field) is not pending.
       pending: json['pending'] == true,
+      role: BridgeClientRole.fromJson(json['role']),
     );
   }
 }
@@ -162,6 +222,8 @@ class BridgeClientStore {
               if (entry is Map<String, dynamic>) {
                 try {
                   final client = BridgeClient.fromJson(entry);
+                  // The built-in client is never a stored pairing.
+                  if (client.id == BridgeClient.builtinId) continue;
                   _clients[client.id] = client;
                   final seen = client.lastSeenAt;
                   if (seen != null) _lastPersistedSeen[client.id] = seen;
@@ -241,12 +303,16 @@ class BridgeClientStore {
   /// With [pending], the pairing cannot sign in until [confirm] is called,
   /// and is removed at the next start if it never is.
   ///
+  /// [role] is [BridgeClientRole.controller] for "Pair a phone"; anything
+  /// else pairs an assistant. A controller's token can never call a tool.
+  ///
   /// When the file cannot be written, nothing is kept (in memory either)
   /// and the error is rethrown: the running bridge, the screens and the file
   /// never disagree about who is paired.
   Future<({BridgeClient client, String token})> create(
     String name, {
     bool pending = false,
+    BridgeClientRole role = BridgeClientRole.assistant,
   }) async {
     await _ensureLoaded();
     final token = base64UrlEncode([
@@ -254,10 +320,13 @@ class BridgeClientStore {
     ]).replaceAll('=', '');
     final client = BridgeClient(
       id: _newId(),
-      name: name.trim().isEmpty ? 'AI assistant' : name.trim(),
+      name: name.trim().isEmpty
+          ? (role == BridgeClientRole.controller ? 'Phone' : 'AI assistant')
+          : name.trim(),
       tokenHash: hashToken(token),
       createdAt: _now(),
       pending: pending,
+      role: role,
     );
     _clients[client.id] = client;
     try {

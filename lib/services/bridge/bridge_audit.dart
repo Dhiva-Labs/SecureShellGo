@@ -34,6 +34,10 @@ enum BridgeAuditApproval {
   /// A time-limited approval was live.
   grant('grant'),
 
+  /// The host is set to full control: nobody was asked, by the user's
+  /// standing choice for that host.
+  fullControl('full_control'),
+
   /// The user allowed this one call.
   once('once'),
 

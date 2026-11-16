@@ -834,12 +834,22 @@ by name. 1.6.0 could only read. 1.7.0 adds tools that **change** a server, each
 only where the user allowed it for that host and with a person's yes in the app
 (the sections "Levels", "Changing, with permission" and "The terminal" below).
 The bridge is off by default, and everything new in 1.7.0 is off until the user
-switches it on. On Android and macOS it is never started: `BridgeService.supported`
-is true only on Linux and Windows, `main.dart` builds no `BridgeService`
-elsewhere, and the Settings section, the connect screen and the activity
-screen are not shown. (The Dart code is still compiled into those apps,
-since the check is made at run time; it is unreachable there, and no
-launcher ships with them.)
+switches it on. 1.8.0 adds full control per host, the tool kinds for desktops
+and long-running jobs, client roles, and a seam for tool groups in their own
+files (below).
+
+The bridge has two halves since 1.8.0. The **AI tools** (the tool host,
+policy, approvals and their cards, timed approvals, the activity log) are
+built on every platform, Android included, so the built-in assistant can use
+them. The **local channel** (the listener, pairing, the launcher locator, the
+CLI connector) exists only where the launcher ships:
+`BridgeService.channelSupported` is true only on Linux and Windows, and
+`BridgeService.localChannel` is false elsewhere, so no listener is ever
+started there whatever the setting says. `main.dart` builds the
+`BridgeService` everywhere but hands the screens only the channel half
+(`_channelBridge`), so the Settings section, the connect screen and the
+activity screen are still not shown on a phone. With nothing calling it, the
+tool host sits idle there.
 
 ```
 AI client ──stdio──► launcher ──local channel──► app (lib/services/bridge/) ──SSH──► server
@@ -858,7 +868,9 @@ AI client ──stdio──► launcher ──local channel──► app (lib/se
   second. After it, a line is capped at 1 MiB, and a peer that lets more
   than 4 MiB of answers pile up unread is dropped.
 - `mcp_server.dart` is JSON-RPC 2.0 over those lines: `initialize`, `ping`,
-  `tools/list`, `tools/call`. It is hand-written because the bridge uses a
+  `tools/list`, `tools/call`. A `BridgeToolResult` may carry an image (a
+  desktop screenshot); it is sent as MCP image content (base64 and
+  `mimeType`) before the text (`mcpToolResultContent`). It is hand-written because the bridge uses a
   sliver of the protocol and every pub dependency has to be vendored for the
   PPA build. A connection may have 16 requests in flight, and a batch may
   hold 16; past that a request is answered at once with "Too many requests
@@ -898,8 +910,28 @@ AI client ──stdio──► launcher ──local channel──► app (lib/se
   nobody has checked fails with "Ask the user to connect to it once in
   SecureShell Go". A changed host key fails as the alarm it is.
 - `bridge_service.dart` is the facade `main.dart` builds. It starts and stops
-  the listener as the setting changes, reports status to the Settings
-  section, and tears down client and SSH connections when the bridge stops.
+  the listener as the setting changes (only with `localChannel`), reports
+  status to the Settings section, and tears down client and SSH connections
+  when the bridge stops. On every platform it applies the reactions that keep
+  the tools honest: a lock withdraws every card and ends every grant,
+  assistant terminal and module resource; a host stepped down, deleted or
+  re-pointed loses its grants, cards and terminals; a revoked client loses
+  everything it held. Switching the channel bridge off ends what channel
+  clients hold and spares the built-in assistant's.
+- `bridge_tool_module.dart` is the seam for tool groups in their own files
+  (jobs, the desktop). A `BridgeToolModule` is registered with one entry in
+  `BridgeTools(modules: [...])` in `main.dart`. Its `changeTools` (kinds
+  `change`, `terminal`, `desktop`) are ordinary `BridgeChangeTool`s and run
+  through the same path as `run_command`, card included; its own `specs`
+  may only be `read`, `terminalUse`, `desktopUse` or `jobUse` (the tool host
+  refuses anything else at construction), served by `call`. A module call
+  gets a `BridgeModuleCall`: host resolution, `decide` (the policy with the
+  spec's kind, this client's switch and the lock filled in), `withServer`
+  (only for a host the last decision allowed), the abandon signal and
+  `auditHost`. The tool host writes the one audit entry and redacts the text;
+  an outcome from a module whose last decision was not an allow is replaced
+  by a `not_decided` refusal. The bridge service tells modules about host
+  and client changes, the channel going off, a lock and shutdown.
 - `bridge_launcher_locator.dart` says which launcher command the connect
   screen shows, checked in this order:
   - the snap: `secureshellgo.mcp` (its executable is under `$SNAP`; `SNAP`
@@ -948,27 +980,37 @@ and IPv4 literals, are also taken out of any error text before it leaves.
 
 ### Levels
 
-A host has one of three levels, stored as `aiAccess` in `hosts.json`, and an
-order of trust: **off < readOnly < askToChange**. In the app they read
-"Share with AI assistants" (read-only), and beneath it, "Let the assistant
-request changes". Anything the file holds that this build does not recognise
-reads as `off`: a `hosts.json` from a later version must not hand an
-assistant more than the user chose, and 1.6.0 reads `askToChange` as `off` the
-same way. Two more fields only mean something at `askToChange`:
+A host has one of four levels, stored as `aiAccess` in `hosts.json`, and an
+order of trust: **off < readOnly < askToChange < fullControl**. In the app they
+read "Share with AI assistants" (read-only), and beneath it, "Let the assistant
+request changes"; 1.8.0's UI replaces these with one level picker. Anything
+the file holds that this build does not recognise reads as `off`: a
+`hosts.json` from a later version must not hand an assistant more than the
+user chose, and 1.6.0 reads `askToChange` (1.7.0 reads `fullControl`) as `off`
+the same way. `fullControl` means changes, terminals and desktops run
+**without a card** on that host: the user's explicit choice, made through a
+confirmation that says so. Three more fields only mean something at
+`askToChange`:
 
 - `aiAllowedCommands` ("Allowed commands"): the commands that run without a
   card. At most 50 entries of at most 4096 characters, each trimmed.
-- `aiTerminal` ("Full control terminal"): whether the assistant may ask to
-  open a terminal.
+- `aiTerminal`: whether the assistant may ask to open a terminal (a card
+  every time).
+- `aiDesktop` (1.8.0): whether the assistant may ask to open a desktop (a
+  card every time).
 
-Stepping a host down to read-only, or un-sharing it, **leaves both stored but
-inert** (`Host.aiMayRequestChanges`, `Host.aiMayOpenTerminal` are false), so
-the user does not lose a list they typed; it shows again when changes are
-switched back on, and the confirmation that switching on shows lists the
-commands that would come back into force. Backups strip all three on export
-and force them to their defaults on import, so a restored backup can hand an
-assistant nothing; the timed-approval setting is exported at its default (off) and an
-import keeps this device's value.
+At `fullControl` both switches are implied on and the list is not consulted.
+The getters say it once: `aiMayRequestChanges` (askToChange or fullControl),
+`aiFullControl`, `aiMayOpenTerminal` and `aiMayOpenDesktop` (fullControl, or
+askToChange with the switch on).
+
+Stepping a host down, or un-sharing it, **leaves the list and switches stored
+but inert**, so the user does not lose a list they typed; it shows again when
+changes are switched back on, and the confirmation that switching on shows
+lists the commands that would come back into force. Backups strip all of them
+(`Host.withoutAiGrants`) on export and on import, so a restored backup can hand
+an assistant nothing; the timed-approval setting is exported at its default
+(off) and an import keeps this device's value.
 
 ### One choke point
 
@@ -976,7 +1018,15 @@ import keeps this device's value.
 pure function over: is the bridge on, is the app locked, what kind of tool it
 is, and the host. It answers allow, refuse (with a stable code and the message
 the assistant is given) or **needs approval**. The order is fixed: off,
-locked, then the kind:
+locked (full control included), then the kind. `bridgeEnabled` is the calling
+client's own switch: `AppSettings.bridgeEnabled` for a channel client, the
+built-in assistant's setting for `BridgeClient.builtin`
+(`BridgeTools.builtinAssistantEnabled`, off until it exists). At
+`fullControl`, `change`, `terminal` and `desktop` answer
+`BridgeAllow.fullControl()` and the audit entry records
+`approval: full_control`; nothing else differs from `askToChange`. A second
+test copies 1.7.0's function and compares it over every input for the levels
+and kinds 1.7.0 knew, refusal texts byte for byte.
 
 - `read`: exactly 1.6.0's rule (allowed on a host with access on; unknown and
   hidden hosts get one `host_not_available`). A test copies 1.6.0's function
@@ -996,6 +1046,12 @@ locked, then the kind:
   another assistant's, checked before the host so nothing about another
   assistant's terminal shows), and the host must still be the same server and
   still allow a terminal. The answer is allow: there is no card per call.
+- `desktop` (opening one): the rule of `terminal`, with the desktop switch
+  (`desktop_not_allowed`).
+- `desktopUse`, `jobUse`: the rule of `terminalUse` with `ownsLiveDesktop`
+  (`desktop_not_available`) or `ownsJob` (`job_not_available`, the job
+  started by the CALLING client); a job's host must still let changes be
+  requested.
 
 Two choices are deliberate. A host that does not exist and a host with access
 off are refused with the **same** code and message, so a call cannot probe for
@@ -1014,6 +1070,25 @@ another jump host can land on a different machine at the same address). A yes,
 a timed approval and an open terminal are each for one server in that sense.
 The jump host is compared by its id: editing the jump host's own entry (its
 address, say) is not seen as a change of the hosts that go through it.
+
+### Clients: assistants, controllers and the built-in assistant
+
+A paired client has a `role` in `bridge_clients.json` (omitted for the
+default, so older files read as before): `assistant` calls tools over MCP;
+`controller` is a phone remote control (`BridgeClientStore.create(name,
+role: BridgeClientRole.controller)`) that can answer cards and never call a
+tool. An unknown role reads as `assistant`. `bridgeClientMayCallTools` is
+checked three times: the bridge service's token check refuses a controller
+token at the handshake as if unknown, `McpServer` refuses a `tools/call` from
+one, and `BridgeTools.call` refuses it (`not_an_assistant`) before anything
+is looked up.
+
+`BridgeClient.builtin` (id `builtin`, name "Built-in assistant") is the
+in-app assistant as the tool host sees it. It is never stored (a stored row
+with that id is skipped), has no token (its hash is empty, which no SHA-256
+equals), and is not revoked by changes to the paired list. It calls
+`BridgeTools.call` directly; its cards, grants, terminals and audit entries
+carry its id and name like any client's.
 
 ### Changing, with permission
 
@@ -1674,8 +1749,9 @@ so a paired assistant does not mean the explanation was ever read.
   check on a real install. The commands and the stop wrapper run on the
   *server*, so they need a POSIX `sh` there; a Windows server is not supported
   for changes, and process stop on one is out of scope.
-- **macOS and Android do not have the bridge.** `BridgeService.supported` is
-  true only on Linux and Windows, so none of this exists there.
+- **macOS and Android have no local channel.** `BridgeService.channelSupported`
+  is true only on Linux and Windows, so no paired assistant can reach those
+  apps; the AI tools are built there for the built-in assistant only.
 - **The translations of the new 1.7.0 text** (the eight languages other than
   English) were written by machine and have not been read by native speakers.
 - **Empty-looking folders.** A directory that holds only blocked entries

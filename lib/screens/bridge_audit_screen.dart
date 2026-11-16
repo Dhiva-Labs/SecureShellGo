@@ -230,6 +230,7 @@ class _EntryTile extends StatelessWidget {
       BridgeAuditApproval.allowedCommand =>
         l10n.bridgeAuditApprovalAllowedCommand,
       BridgeAuditApproval.grant => l10n.bridgeAuditApprovalGrant,
+      BridgeAuditApproval.fullControl => l10n.bridgeAuditApprovalFullControl,
       BridgeAuditApproval.once => l10n.bridgeAuditApprovalOnce,
       BridgeAuditApproval.forAWhile => l10n.bridgeAuditApprovalForAWhile,
       BridgeAuditApproval.denied => l10n.bridgeAuditApprovalDenied,

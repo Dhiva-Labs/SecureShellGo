@@ -282,6 +282,22 @@ class BridgeTerminals {
   var _openEpoch = 0;
   var _epochEnd = AssistantTerminalEnd.closedByAssistant;
 
+  /// The recent end-alls, by epoch: why,
+  /// and the clients it spared (`closeAll`'s `except`: the built-in
+  /// assistant keeps its terminals when only the channel bridge goes off).
+  final Map<int, (AssistantTerminalEnd, Set<String>)> _epochs = {};
+
+  /// The latest end-all since [epoch] that did not spare [clientId], or
+  /// null when there was none.
+  AssistantTerminalEnd? _endedSince(int epoch, String clientId) {
+    for (var e = _openEpoch; e > epoch; e--) {
+      final end = _epochs[e];
+      if (end == null) return _epochEnd;
+      if (!end.$2.contains(clientId)) return end.$1;
+    }
+    return null;
+  }
+
   /// The saved hosts as of the last [hostsChanged], by id; null until one.
   Map<String, Host>? _latestHosts;
 
@@ -328,14 +344,23 @@ class BridgeTerminals {
   // ------------------------------------------------------------ lifecycle
 
   /// Closes every terminal an assistant drives (the bridge switched off,
-  /// the app locked or shutting down). Taken-over ones are the user's.
-  Future<void> closeAll(AssistantTerminalEnd why) async {
+  /// the app locked or shutting down), except those of the clients in
+  /// [except] (the built-in assistant, when only the channel bridge went
+  /// off). Taken-over ones are the user's.
+  Future<void> closeAll(
+    AssistantTerminalEnd why, {
+    Set<String> except = const {},
+  }) async {
     // A call already in the middle of opening one ends it when it lands.
+    // Only recent ones can matter (an open lasts seconds); a missing one
+    // reads as "ended everyone", the safe side.
+    _epochs.remove(_openEpoch - 64);
     _openEpoch++;
     _epochEnd = why;
+    _epochs[_openEpoch] = (why, Set.of(except));
     await _closeMany([
       for (final t in _terminals.values)
-        if (t.drive.isDriving) (t, why),
+        if (t.drive.isDriving && !except.contains(t.clientId)) (t, why),
     ]);
   }
 
@@ -573,8 +598,8 @@ class BridgeTerminals {
       description:
           'Asks the user to let you open an interactive terminal (a shell) on '
           'a host. The user sees an approval card every time and must allow '
-          'it; only hosts where the user switched on the full control '
-          'terminal can have one. The terminal opens as a session the user '
+          'it, unless the user set that host to full control; only hosts '
+          'where the user allowed a terminal can have one. The terminal opens as a session the user '
           'watches live in SecureShell Go and can take over or stop at any '
           'moment. Once it is open, what you type with send_input runs as '
           'you type it, without asking again, so say what you are going to '
@@ -782,12 +807,10 @@ class BridgeTerminals {
       // The bridge went off, the app locked, the assistant was revoked or
       // the host changed while this was opening: it opens for nobody.
       final latest = _latestHosts?[host.id];
-      if (epoch != _openEpoch ||
+      final ended = _endedSince(epoch, plan.client.id);
+      if (ended != null ||
           (_latestHosts != null && !_stillAllowed(latest, host))) {
-        await _close(
-          t,
-          epoch != _openEpoch ? _epochEnd : AssistantTerminalEnd.hostChanged,
-        );
+        await _close(t, ended ?? AssistantTerminalEnd.hostChanged);
         return BridgeToolResult.error(BridgeTerminalRefusals.closed.message);
       }
       if (!drive.isDriving) {

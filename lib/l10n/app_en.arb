@@ -8560,6 +8560,10 @@
   "@bridgeHostLevelTerminal": {
     "description": "Shared hosts list: label of a host where the assistant may request changes and a terminal."
   },
+  "bridgeHostLevelFullControl": "Full control, no approval cards",
+  "@bridgeHostLevelFullControl": {
+    "description": "Shared hosts list: label of a host where the assistant has full control: changes, terminals and desktops run without asking."
+  },
   "settingsBridgeTimed": "Allow for a while",
   "@settingsBridgeTimed": {
     "description": "Settings > AI Bridge: title of the Allow for a while choice."
@@ -8672,6 +8676,10 @@
   "bridgeAuditApprovalGrant": "Allowed: timed approval in force",
   "@bridgeAuditApprovalGrant": {
     "description": "Activity: how a change was allowed. A time-limited approval was in force."
+  },
+  "bridgeAuditApprovalFullControl": "Allowed: host set to full control",
+  "@bridgeAuditApprovalFullControl": {
+    "description": "Activity: how a change was allowed. The host is set to full control, so no approval card was shown."
   },
   "bridgeAuditApprovalOnce": "Approved once",
   "@bridgeAuditApprovalOnce": {

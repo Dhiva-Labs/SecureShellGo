@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:secure_shell_go/app_version.dart';
@@ -16,12 +17,14 @@ final _client = BridgeClient(
 );
 
 class _FakeConnection implements BridgeConnection {
+  _FakeConnection({BridgeClient? client}) : client = client ?? _client;
+
   final incoming = StreamController<String>();
   final sent = <String>[];
   bool closed = false;
 
   @override
-  BridgeClient get client => _client;
+  final BridgeClient client;
 
   @override
   Stream<String> get lines => incoming.stream;
@@ -75,6 +78,13 @@ class _FakeTools implements BridgeToolHost {
     await gate?.future;
     if (name == 'explode') throw StateError('secret detail');
     if (args['fail'] == true) return const BridgeToolResult.error('refused');
+    if (args['image'] == true) {
+      return BridgeToolResult.image(
+        Uint8List.fromList([0x89, 0x50, 0x4e, 0x47, 0, 255]),
+        mimeType: 'image/png',
+        text: args['text'] as String? ?? 'A 2x1 screenshot.',
+      );
+    }
     return BridgeToolResult('ran $name');
   }
 }
@@ -254,6 +264,55 @@ void main() {
       final reply = await rpc(request(3, 'tools/call', {'name': 'rm_rf'}));
       expect((reply!['error'] as Map)['code'], -32602);
       expect((reply['error'] as Map)['message'], contains('rm_rf'));
+      expect(tools.calls, isEmpty);
+    });
+
+    test('an image result is sent as image content, then the text', () async {
+      final reply = await rpc(
+        request(3, 'tools/call', {
+          'name': 'list_hosts',
+          'arguments': {'image': true},
+        }),
+      );
+      expect(reply!['result'], {
+        'content': [
+          {
+            'type': 'image',
+            'data': base64Encode([0x89, 0x50, 0x4e, 0x47, 0, 255]),
+            'mimeType': 'image/png',
+          },
+          {'type': 'text', 'text': 'A 2x1 screenshot.'},
+        ],
+        'isError': false,
+      });
+    });
+
+    test('an image with no text is sent alone', () async {
+      final reply = await rpc(
+        request(3, 'tools/call', {
+          'name': 'list_hosts',
+          'arguments': {'image': true, 'text': ''},
+        }),
+      );
+      final content = (reply!['result'] as Map)['content'] as List;
+      expect(content, hasLength(1));
+      expect((content.single as Map)['type'], 'image');
+    });
+
+    test('a controller is refused before the tool host is called', () async {
+      final phone = BridgeClient(
+        id: 'p1',
+        name: 'Phone',
+        tokenHash: 'unused',
+        createdAt: DateTime.utc(2026),
+        role: BridgeClientRole.controller,
+      );
+      final reply = await server.handleLine(
+        _FakeConnection(client: phone),
+        jsonEncode(request(3, 'tools/call', {'name': 'list_hosts'})),
+      );
+      final error = (jsonDecode(reply!) as Map)['error'] as Map;
+      expect(error['code'], -32600);
       expect(tools.calls, isEmpty);
     });
 
@@ -595,6 +654,45 @@ void main() {
       expect(replies.map((r) => r['id']), [1]);
       await conn.incoming.close();
       await done;
+    });
+  });
+
+  group('mcpToolResultContent', () {
+    test('text only, as before', () {
+      expect(mcpToolResultContent(const BridgeToolResult('hi')), {
+        'content': [
+          {'type': 'text', 'text': 'hi'},
+        ],
+        'isError': false,
+      });
+      expect(
+        mcpToolResultContent(const BridgeToolResult.error('no'))['isError'],
+        true,
+      );
+    });
+
+    test('an image is base64 with its media type, first', () {
+      final bytes = Uint8List.fromList(List.generate(300, (i) => i % 256));
+      final out = mcpToolResultContent(
+        BridgeToolResult.image(bytes, mimeType: 'image/jpeg', text: 'x'),
+      );
+      final content = out['content'] as List;
+      expect(content[0], {
+        'type': 'image',
+        'data': base64Encode(bytes),
+        'mimeType': 'image/jpeg',
+      });
+      expect(base64Decode((content[0] as Map)['data'] as String), bytes);
+      expect(content[1], {'type': 'text', 'text': 'x'});
+    });
+
+    test('a result says whether it has an image', () {
+      expect(const BridgeToolResult('t').hasImage, isFalse);
+      expect(const BridgeToolResult('t').imageMimeType, isNull);
+      final r = BridgeToolResult.image(Uint8List(1), mimeType: 'image/png');
+      expect(r.hasImage, isTrue);
+      expect(r.isError, isFalse);
+      expect(r.text, '');
     });
   });
 }

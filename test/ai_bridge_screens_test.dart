@@ -1154,6 +1154,7 @@ void main() {
       for (final label in [
         'Allowed: command on the allowed list',
         'Allowed: timed approval in force',
+        'Allowed: host set to full control',
         'Approved once',
         'Approved for a while',
         'Denied',
@@ -1162,7 +1163,7 @@ void main() {
       ]) {
         expect(find.text(label), findsOneWidget, reason: label);
       }
-      expect(find.byKey(const ValueKey('audit-approval')), findsNWidgets(7));
+      expect(find.byKey(const ValueKey('audit-approval')), findsNWidgets(8));
     });
 
     testWidgets('an approved change that never ran is not read as having run',

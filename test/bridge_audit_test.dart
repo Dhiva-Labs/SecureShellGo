@@ -419,6 +419,7 @@ void main() {
           'none',
           'allowed_command',
           'grant',
+          'full_control',
           'once',
           'for_a_while',
           'denied',

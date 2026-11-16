@@ -81,7 +81,8 @@ class TrackedClientStore extends BridgeClientStore {
   Future<({BridgeClient client, String token})> create(
     String name, {
     bool pending = false,
-  }) => io.track(() => super.create(name, pending: pending));
+    BridgeClientRole role = BridgeClientRole.assistant,
+  }) => io.track(() => super.create(name, pending: pending, role: role));
 
   @override
   Future<void> confirm(String id) => io.track(() => super.confirm(id));

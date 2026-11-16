@@ -24,6 +24,7 @@ import 'bridge_host_directory.dart';
 import 'bridge_paths.dart';
 import 'bridge_policy.dart';
 import 'bridge_redactor.dart';
+import 'bridge_tool_module.dart';
 import 'bridge_tool_types.dart';
 
 /// The commands the read tools run, separate from execution so the quoting
@@ -174,13 +175,35 @@ exit $r''';
 class _Outcome {
   const _Outcome.ok(this.text, {this.keepTail = false})
     : outcome = BridgeAuditOutcome.ok,
-      detail = '';
+      detail = '',
+      image = null,
+      imageMimeType = null;
+
+  const _Outcome.image(
+    Uint8List this.image,
+    String this.imageMimeType,
+    this.text,
+  ) : outcome = BridgeAuditOutcome.ok,
+      detail = '',
+      keepTail = false;
+
+  /// A tool's own result: ok (with its image, if any) or an error.
+  factory _Outcome.fromResult(BridgeToolResult result) {
+    final image = result.image;
+    if (result.isError) return _Outcome.error(result.text);
+    if (image != null) {
+      return _Outcome.image(image, result.imageMimeType!, result.text);
+    }
+    return _Outcome.ok(result.text);
+  }
 
   _Outcome.refused(BridgeRefuse refusal)
     : text = refusal.message,
       outcome = BridgeAuditOutcome.refused,
       detail = refusal.code,
-      keepTail = false;
+      keepTail = false,
+      image = null,
+      imageMimeType = null;
 
   /// [stopped] ended a call the user had approved before it ran: refused,
   /// with the reason after a fixed prefix the activity screen can rely on.
@@ -188,17 +211,26 @@ class _Outcome {
     : text = stopped.text,
       outcome = BridgeAuditOutcome.refused,
       detail = '${BridgeTools.refusedAfterApprovalPrefix}${stopped.detail}',
-      keepTail = false;
+      keepTail = false,
+      image = null,
+      imageMimeType = null;
 
   const _Outcome.error(this.text)
     : outcome = BridgeAuditOutcome.error,
       detail = text,
-      keepTail = false;
+      keepTail = false,
+      image = null,
+      imageMimeType = null;
 
   final String text;
   final BridgeAuditOutcome outcome;
   final String detail;
   final bool keepTail;
+
+  /// A screenshot, say; sent as it is (text is redacted, an image cannot
+  /// be).
+  final Uint8List? image;
+  final String? imageMimeType;
 }
 
 /// Thrown by argument validation and by the path guard; becomes a refusal.
@@ -262,6 +294,22 @@ class BridgeToolRefusals {
 
   static BridgeRefuse invalid(String why) =>
       BridgeRefuse('invalid_arguments', 'Invalid arguments: $why');
+
+  /// A client paired as a phone controller tried to call a tool. Its
+  /// pairing can answer approval cards; it can never run anything itself.
+  static const BridgeRefuse notAnAssistant = BridgeRefuse(
+    'not_an_assistant',
+    'This pairing is a remote control, not an assistant: it cannot call '
+        'tools.',
+  );
+
+  /// A module tool returned a result without a policy allow (a bug in the
+  /// module); nothing it produced is sent.
+  static const BridgeRefuse notDecided = BridgeRefuse(
+    'not_decided',
+    'The call was stopped because it was not checked against the user\'s '
+        'settings. This is a bug in SecureShell Go.',
+  );
 }
 
 /// One allowed call's context: the host the policy allowed, the settings it
@@ -719,8 +767,8 @@ class BridgeHostOutcome {
   final bool isError;
 }
 
-/// A tool of kind [BridgeToolKind.change] or [BridgeToolKind.terminal], as
-/// the dispatcher runs it. It takes `host`, or, when [combine] is set, a
+/// A tool of kind [BridgeToolKind.change], [BridgeToolKind.terminal] or
+/// [BridgeToolKind.desktop], as the dispatcher runs it. It takes `host`, or, when [combine] is set, a
 /// list `hosts` instead (a multi-host change: see `_changeOnHosts`).
 ///
 /// The dispatcher does, in order: resolve the host → policy (no card for a
@@ -738,8 +786,9 @@ class BridgeChangeTool {
     this.combine,
     this.hostsAtOnce = 3,
   }) {
-    if (spec.kind == BridgeToolKind.read ||
-        spec.kind == BridgeToolKind.terminalUse) {
+    if (spec.kind != BridgeToolKind.change &&
+        spec.kind != BridgeToolKind.terminal &&
+        spec.kind != BridgeToolKind.desktop) {
       throw ArgumentError.value(spec.kind, 'spec.kind', 'not a change tool');
     }
     if (combine == null) {
@@ -1113,7 +1162,11 @@ class BridgeTools implements BridgeToolHost {
     BridgeGrants? grants,
     List<BridgeChangeTool> changeTools = const [],
     List<BridgeTerminalUseTool> terminalUseTools = const [],
-  }) : _gate = _Gate(maxRunning: maxRunning, maxWaiting: maxWaiting),
+    List<BridgeToolModule> modules = const [],
+    bool Function()? builtinAssistantEnabled,
+  }) : builtinAssistantEnabled = builtinAssistantEnabled ?? _off,
+       modules = List.unmodifiable(modules),
+       _gate = _Gate(maxRunning: maxRunning, maxWaiting: maxWaiting),
        _changeGate = _Gate(
          maxRunning: maxChangeRunning,
          maxWaiting: maxChangeWaiting ?? maxWaiting,
@@ -1145,7 +1198,62 @@ class BridgeTools implements BridgeToolHost {
       }
       _terminalUseTools[name] = t;
     }
+    bool taken(String name) =>
+        _tools.containsKey(name) ||
+        _changeTools.containsKey(name) ||
+        _terminalUseTools.containsKey(name) ||
+        _moduleTools.containsKey(name);
+    for (final module in modules) {
+      for (final t in module.changeTools) {
+        final name = t.spec.name;
+        if (taken(name)) {
+          throw ArgumentError.value(name, 'modules', 'duplicate tool name');
+        }
+        _changeTools[name] = t;
+      }
+      for (final spec in module.specs) {
+        final name = spec.name;
+        if (taken(name)) {
+          throw ArgumentError.value(name, 'modules', 'duplicate tool name');
+        }
+        // A card is only ever asked through the change path, so a module
+        // may serve directly only what never needs one.
+        if (!_moduleKinds.contains(spec.kind)) {
+          throw ArgumentError.value(
+            spec.kind,
+            'modules',
+            '"$name": a ${spec.kind.name} tool must be a BridgeChangeTool',
+          );
+        }
+        _moduleTools[name] = (module, spec);
+      }
+    }
   }
+
+  static bool _off() => false;
+
+  /// The kinds a [BridgeToolModule] may serve through its own `call`.
+  static const Set<BridgeToolKind> _moduleKinds = {
+    BridgeToolKind.read,
+    BridgeToolKind.terminalUse,
+    BridgeToolKind.desktopUse,
+    BridgeToolKind.jobUse,
+  };
+
+  /// The tool groups registered from their own files; the bridge service
+  /// tells each of them about host, client and on/off changes.
+  final List<BridgeToolModule> modules;
+
+  /// The built-in assistant's own on/off switch. It stands in for
+  /// `AppSettings.bridgeEnabled` in every decision on a call from
+  /// [BridgeClient.builtin], and only there: the channel switch never lets
+  /// the built-in assistant in, and this never lets a paired one in. Off
+  /// unless given.
+  final bool Function() builtinAssistantEnabled;
+
+  /// The on/off switch that applies to [client]'s calls.
+  bool _enabledFor(BridgeClient client, AppSettings current) =>
+      client.isBuiltin ? builtinAssistantEnabled() : current.bridgeEnabled;
 
   final Future<List<Host>> Function() loadHosts;
 
@@ -1168,6 +1276,7 @@ class BridgeTools implements BridgeToolHost {
   late final Map<String, _Tool> _tools;
   final Map<String, BridgeChangeTool> _changeTools = {};
   final Map<String, BridgeTerminalUseTool> _terminalUseTools = {};
+  final Map<String, (BridgeToolModule, BridgeToolSpec)> _moduleTools = {};
 
   /// The questions waiting for the user. The bridge service clears them and
   /// exposes them to the UI.
@@ -1220,10 +1329,14 @@ class BridgeTools implements BridgeToolHost {
     }
   }
 
-  /// Stops every call — the bridge was switched off.
-  void abandonAll({String reason = switchedOffMessage}) {
+  /// Stops every call — the bridge was switched off — except those of the
+  /// clients in [except] (the built-in assistant, which has its own switch).
+  void abandonAll({
+    String reason = switchedOffMessage,
+    Set<String> except = const {},
+  }) {
     for (final t in _tickets.toList()) {
-      t.abandon(reason);
+      if (!except.contains(t.clientId)) t.abandon(reason);
     }
   }
 
@@ -1232,6 +1345,7 @@ class BridgeTools implements BridgeToolHost {
     for (final t in _tools.values) t.spec,
     for (final t in _changeTools.values) t.spec,
     for (final t in _terminalUseTools.values) t.spec,
+    for (final t in _moduleTools.values) t.$2,
   ];
 
   static final RegExp _unitName = RegExp(
@@ -1269,6 +1383,7 @@ class BridgeTools implements BridgeToolHost {
     }
     final change = _changeTools[name];
     final use = _terminalUseTools[name];
+    final module = _moduleTools[name];
     _Outcome outcome;
     try {
       // Whichever comes first: the answer, or the call being abandoned. An
@@ -1276,13 +1391,25 @@ class BridgeTools implements BridgeToolHost {
       // a slot it returns at once when it gets one. A change waits for a
       // person outside the gate, and takes a run slot only once allowed.
       outcome = await Future.any([
-        if (use != null)
+        // A controller's token can answer cards, never run a tool: refused
+        // before anything is looked up.
+        if (!bridgeClientMayCallTools(client))
+          Future.value(_Outcome.refused(BridgeToolRefusals.notAnAssistant))
+        else if (module != null)
+          _gate.run(
+            () => _moduleCall(module.$1, module.$2, client, args, ticket),
+            timeout: callTimeout,
+          )
+        else if (use != null)
           _gate.run(
             () => _terminalUse(use, client, args, ticket),
             timeout: callTimeout,
           )
         else if (change == null)
-          _gate.run(() => _dispatch(name, args, ticket), timeout: callTimeout)
+          _gate.run(
+            () => _dispatch(client, name, args, ticket),
+            timeout: callTimeout,
+          )
         else
           _change(change, client, args, ticket),
         ticket.abandoned.then(_Outcome.error),
@@ -1341,7 +1468,10 @@ class BridgeTools implements BridgeToolHost {
 
     // Never throws; a failed write is reported on the bridge screen instead.
     var recorded = args;
-    final auditArgs = change?.auditArgs ?? use?.auditArgs;
+    final auditArgs =
+        change?.auditArgs ??
+        use?.auditArgs ??
+        (module == null ? null : (a) => module.$1.auditArgs(name, a));
     if (auditArgs != null) {
       try {
         recorded = auditArgs(args);
@@ -1353,8 +1483,9 @@ class BridgeTools implements BridgeToolHost {
       client: client.name,
       // A terminal-use call names no host: the entry's host is the
       // terminal's own, only when it is the caller's (never what the
-      // caller put in an argument it is not allowed to send).
-      host: use != null
+      // caller put in an argument it is not allowed to send). The same for
+      // a module tool that names a desktop or a job instead of a host.
+      host: use != null || (module != null && !args.containsKey('host'))
           ? ticket.auditHost
           : (hostArg is String ? hostArg : ticket.auditHost),
       tool: name,
@@ -1364,14 +1495,62 @@ class BridgeTools implements BridgeToolHost {
       ms: watch.elapsedMilliseconds,
       approval: ticket.approval,
     );
+    final image = outcome.image;
+    if (image != null && outcome.outcome == BridgeAuditOutcome.ok) {
+      return BridgeToolResult.image(
+        image,
+        mimeType: outcome.imageMimeType!,
+        text: text,
+      );
+    }
     return BridgeToolResult(
       text,
       isError: outcome.outcome != BridgeAuditOutcome.ok,
     );
   }
 
+  /// A [BridgeToolModule] tool: the module resolves and decides through
+  /// [_ModuleCall]; its outcome counts only when its last decision allowed
+  /// the call (see [BridgeToolModule]).
+  Future<_Outcome> _moduleCall(
+    BridgeToolModule module,
+    BridgeToolSpec spec,
+    BridgeClient client,
+    Map<String, Object?> args,
+    _Ticket ticket,
+  ) async {
+    if (ticket.isAbandoned) return _Outcome.error(await ticket.abandoned);
+    final context = _ModuleCall(this, client, spec, args, ticket);
+    try {
+      final outcome = await _run(spec.name, () async {
+        final result = await module.call(context);
+        final refusal = result.refusal;
+        if (refusal != null) return _Outcome.refused(refusal);
+        // A backstop for a module that forgot the policy: nothing it made
+        // leaves unless its last decision was an allow.
+        if (context._last is! BridgeAllow) {
+          return _Outcome.refused(BridgeToolRefusals.notDecided);
+        }
+        final image = result.image;
+        if (image != null) {
+          return _Outcome.image(image, result.imageMimeType!, result.text);
+        }
+        return result.isError
+            ? _Outcome.error(result.text)
+            : _Outcome.ok(result.text);
+      });
+      final host = context._allowedHost;
+      return host == null
+          ? outcome
+          : await _scrubbed(outcome, host, settings());
+    } finally {
+      await context._close();
+    }
+  }
+
   /// Resolve → decide → validate → run. The only place a [_Call] is made.
   Future<_Outcome> _dispatch(
+    BridgeClient client,
     String name,
     Map<String, Object?> args,
     _Ticket ticket,
@@ -1393,7 +1572,7 @@ class BridgeTools implements BridgeToolHost {
       }
     }
     final decision = decideBridgeCall(
-      bridgeEnabled: current.bridgeEnabled,
+      bridgeEnabled: _enabledFor(client, current),
       appLocked: isAppLocked(),
       host: host,
       hostRequired: tool.takesHost,
@@ -1534,7 +1713,7 @@ class BridgeTools implements BridgeToolHost {
       bool grant = false,
       bool listed = false,
     }) => decideBridgeCall(
-      bridgeEnabled: s.bridgeEnabled,
+      bridgeEnabled: _enabledFor(client, s),
       appLocked: isAppLocked(),
       host: h,
       hostRequired: true,
@@ -1608,7 +1787,9 @@ class BridgeTools implements BridgeToolHost {
       case BridgeRefuse():
         return _Outcome.refused(decision);
       case BridgeAllow():
-        ticket.approval = listed
+        ticket.approval = decision.byFullControl
+            ? BridgeAuditApproval.fullControl
+            : listed
             ? BridgeAuditApproval.allowedCommand
             : BridgeAuditApproval.grant;
       case BridgeNeedsApproval():
@@ -1704,9 +1885,7 @@ class BridgeTools implements BridgeToolHost {
         ticket,
         (call) async {
           final result = await tool.run(call, thePlan);
-          return result.isError
-              ? _Outcome.error(result.text)
-              : _Outcome.ok(result.text);
+          return _Outcome.fromResult(result);
         },
         timeout: runTimeout,
       );
@@ -1753,7 +1932,7 @@ class BridgeTools implements BridgeToolHost {
     if (ticket.isAbandoned) return _Outcome.error(await ticket.abandoned);
     final current = settings();
     final decision = decideBridgeCall(
-      bridgeEnabled: current.bridgeEnabled,
+      bridgeEnabled: _enabledFor(client, current),
       appLocked: isAppLocked(),
       host: host,
       hostRequired: true,
@@ -1831,7 +2010,7 @@ class BridgeTools implements BridgeToolHost {
 
     BridgeDecision decide(Host? h, AppSettings s, {bool grant = false}) =>
         decideBridgeCall(
-          bridgeEnabled: s.bridgeEnabled,
+          bridgeEnabled: _enabledFor(client, s),
           appLocked: isAppLocked(),
           host: h,
           hostRequired: true,
@@ -1842,7 +2021,8 @@ class BridgeTools implements BridgeToolHost {
         );
 
     /// One decision for all: a hidden host outranks a read-only one, and
-    /// anything refused outranks a card.
+    /// anything refused outranks a card. Allowed by full control only when
+    /// every host is set to full control (for the audit entry).
     BridgeDecision decideAll(
       List<Host?> resolved,
       AppSettings s, {
@@ -1851,6 +2031,7 @@ class BridgeTools implements BridgeToolHost {
       if (resolved.isEmpty) return decide(null, s);
       BridgeRefuse? refusal;
       var allAllowed = true;
+      var allFull = true;
       for (final h in resolved) {
         final d = decide(h, s, grant: h != null && (grant?.call(h) ?? false));
         if (d is BridgeRefuse) {
@@ -1859,10 +2040,13 @@ class BridgeTools implements BridgeToolHost {
           }
         } else if (d is! BridgeAllow) {
           allAllowed = false;
+        } else if (!d.byFullControl) {
+          allFull = false;
         }
       }
       if (refusal != null) return refusal;
-      return allAllowed ? const BridgeAllow() : const BridgeNeedsApproval();
+      if (!allAllowed) return const BridgeNeedsApproval();
+      return allFull ? const BridgeAllow.fullControl() : const BridgeAllow();
     }
 
     List<Host?> resolve(List<Host> hosts) => [
@@ -1932,7 +2116,9 @@ class BridgeTools implements BridgeToolHost {
       case BridgeRefuse():
         return _Outcome.refused(decision);
       case BridgeAllow():
-        ticket.approval = BridgeAuditApproval.grant;
+        ticket.approval = decision.byFullControl
+            ? BridgeAuditApproval.fullControl
+            : BridgeAuditApproval.grant;
       case BridgeNeedsApproval():
         // 5. One card, naming every host.
         final request = approvals.request(
@@ -2600,5 +2786,120 @@ class BridgeTools implements BridgeToolHost {
       out.writeln('[stopped at $maxResults results]');
     }
     return _Outcome.ok(out.toString());
+  }
+}
+
+/// What a [BridgeToolModule] call is handed: [BridgeModuleCall], backed by
+/// the tool host's own resolver, policy inputs and [_Call].
+class _ModuleCall implements BridgeModuleCall {
+  _ModuleCall(this._tools, this.client, this.spec, this.rawArgs, this._ticket);
+
+  final BridgeTools _tools;
+  final _Ticket _ticket;
+
+  @override
+  final BridgeClient client;
+  @override
+  final BridgeToolSpec spec;
+  @override
+  final Map<String, Object?> rawArgs;
+
+  /// The last decision, and the host it allowed (null unless an allow).
+  BridgeDecision? _last;
+  Host? _allowedHost;
+  final Set<_Call> _calls = {};
+
+  @override
+  BridgeToolArgs args(Set<String> allowed) => BridgeToolArgs(rawArgs, allowed);
+
+  @override
+  Future<List<Host>> hosts() async {
+    final hosts = await _tools.loadHosts();
+    _tools._dropStaleGrants(hosts);
+    return hosts;
+  }
+
+  @override
+  Future<Host?> resolveHost(Object? name) async {
+    if (name is! String ||
+        name.isEmpty ||
+        name.length > BridgeTools.maxHostNameBytes) {
+      return null;
+    }
+    return _tools.directory.resolve(await hosts(), name);
+  }
+
+  @override
+  BridgeDecision decide({
+    required Host? host,
+    bool hostRequired = true,
+    bool ownsLiveTerminal = false,
+    bool ownsLiveDesktop = false,
+    bool ownsJob = false,
+  }) {
+    final decision = decideBridgeCall(
+      bridgeEnabled: _tools._enabledFor(client, _tools.settings()),
+      appLocked: _tools.isAppLocked(),
+      host: host,
+      hostRequired: hostRequired,
+      kind: spec.kind,
+      hasLiveGrant: false,
+      matchesAllowedCommand: false,
+      ownsLiveTerminal: ownsLiveTerminal,
+      ownsLiveDesktop: ownsLiveDesktop,
+      ownsJob: ownsJob,
+    );
+    _last = decision;
+    _allowedHost = decision is BridgeAllow ? host : null;
+    if (decision is BridgeAllow && decision.byFullControl) {
+      _ticket.approval = BridgeAuditApproval.fullControl;
+    }
+    return decision;
+  }
+
+  @override
+  Future<T> withServer<T>(
+    Host host,
+    Future<T> Function(BridgeCallContext call) body, {
+    Duration? timeout,
+  }) async {
+    final allowed = _allowedHost;
+    if (_last is! BridgeAllow ||
+        allowed == null ||
+        !bridgeSameServer(allowed, host)) {
+      throw StateError('withServer before an allow for this host');
+    }
+    if (_ticket.isAbandoned) throw TimeoutException('abandoned');
+    final call = _Call._(
+      host: host,
+      settings: _tools.settings(),
+      connections: _tools.connections,
+      deadline: DateTime.now().add(timeout ?? _tools.callTimeout),
+    );
+    _calls.add(call);
+    _ticket.hostCalls.add(call);
+    if (_ticket.isAbandoned) await call.halt();
+    try {
+      return await body(call);
+    } finally {
+      _ticket.hostCalls.remove(call);
+      _calls.remove(call);
+      await call.close();
+    }
+  }
+
+  @override
+  set auditHost(String? name) => _ticket.auditHost = name;
+
+  @override
+  bool get isAbandoned => _ticket.isAbandoned;
+
+  @override
+  Future<String> get abandoned => _ticket.abandoned;
+
+  Future<void> _close() async {
+    for (final call in _calls.toList()) {
+      await call.close();
+    }
   }
 }

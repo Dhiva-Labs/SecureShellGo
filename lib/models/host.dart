@@ -146,6 +146,7 @@ class Host {
     this.aiAccess = HostAiAccess.off,
     this.aiAllowedCommands = const <String>[],
     this.aiTerminal = false,
+    this.aiDesktop = false,
   });
 
   final String id;
@@ -238,16 +239,33 @@ class Host {
   /// Never carried by a backup. Build it with [sanitizeAiAllowedCommands].
   final List<String> aiAllowedCommands;
 
-  /// Whether an assistant may ask to open a full-control terminal on this
-  /// host. Same rules as [aiAllowedCommands]: inert unless [aiAccess] is
-  /// [HostAiAccess.askToChange], kept when stepping down, never in a backup.
+  /// Whether an assistant may ask to open a terminal on this host (a card
+  /// every time). Meaningful only while [aiAccess] is
+  /// [HostAiAccess.askToChange]; [HostAiAccess.fullControl] implies it on
+  /// whatever is stored here. Kept when stepping down, never in a backup.
   final bool aiTerminal;
 
-  /// True only when [aiAccess] is [HostAiAccess.askToChange].
-  bool get aiMayRequestChanges => aiAccess == HostAiAccess.askToChange;
+  /// Whether an assistant may ask to open a desktop on this host (a card
+  /// every time). Same rules as [aiTerminal].
+  final bool aiDesktop;
 
-  /// True only when changes may be requested and [aiTerminal] is on.
-  bool get aiMayOpenTerminal => aiMayRequestChanges && aiTerminal;
+  /// True when [aiAccess] is [HostAiAccess.askToChange] or
+  /// [HostAiAccess.fullControl]: change tools are not refused outright.
+  bool get aiMayRequestChanges =>
+      aiAccess == HostAiAccess.askToChange ||
+      aiAccess == HostAiAccess.fullControl;
+
+  /// True when [aiAccess] is [HostAiAccess.fullControl]: changes, terminals
+  /// and desktops run without a card.
+  bool get aiFullControl => aiAccess == HostAiAccess.fullControl;
+
+  /// Full control, or ask-to-change with [aiTerminal] on.
+  bool get aiMayOpenTerminal =>
+      aiFullControl || (aiAccess == HostAiAccess.askToChange && aiTerminal);
+
+  /// Full control, or ask-to-change with [aiDesktop] on.
+  bool get aiMayOpenDesktop =>
+      aiFullControl || (aiAccess == HostAiAccess.askToChange && aiDesktop);
 
   /// Longest allowed-command entry, and the most entries kept.
   static const int maxAiAllowedCommandLength = 4096;
@@ -348,6 +366,7 @@ class Host {
     HostAiAccess? aiAccess,
     List<String>? aiAllowedCommands,
     bool? aiTerminal,
+    bool? aiDesktop,
   }) {
     return Host(
       id: id ?? this.id,
@@ -374,16 +393,18 @@ class Host {
           ? this.aiAllowedCommands
           : sanitizeAiAllowedCommands(aiAllowedCommands),
       aiTerminal: aiTerminal ?? this.aiTerminal,
+      aiDesktop: aiDesktop ?? this.aiDesktop,
     );
   }
 
   /// This host with everything the AI Bridge grants put back to its default:
-  /// access off, no allowed commands, no terminal. What a backup does to every
-  /// host it exports or imports.
+  /// access off, no allowed commands, no terminal, no desktop. What a backup
+  /// does to every host it exports or imports.
   Host withoutAiGrants() => copyWith(
         aiAccess: HostAiAccess.off,
         aiAllowedCommands: const <String>[],
         aiTerminal: false,
+        aiDesktop: false,
       );
 
   /// Re-points (or clears, with null) the jump host.
@@ -413,6 +434,7 @@ class Host {
         aiAccess: aiAccess,
         aiAllowedCommands: aiAllowedCommands,
         aiTerminal: aiTerminal,
+        aiDesktop: aiDesktop,
       );
 
   /// Reassigns this host's group, [group] null meaning Ungrouped.
@@ -442,6 +464,7 @@ class Host {
         aiAccess: aiAccess,
         aiAllowedCommands: aiAllowedCommands,
         aiTerminal: aiTerminal,
+        aiDesktop: aiDesktop,
       );
 
   /// Sets (or removes, with null) the certificate. Its own helper for the
@@ -467,6 +490,7 @@ class Host {
         aiAccess: aiAccess,
         aiAllowedCommands: aiAllowedCommands,
         aiTerminal: aiTerminal,
+        aiDesktop: aiDesktop,
       );
 
   Map<String, dynamic> toJson() => {
@@ -494,6 +518,7 @@ class Host {
         if (aiAccess != HostAiAccess.off) 'aiAccess': aiAccess.name,
         if (aiAllowedCommands.isNotEmpty) 'aiAllowedCommands': aiAllowedCommands,
         if (aiTerminal) 'aiTerminal': true,
+        if (aiDesktop) 'aiDesktop': true,
       };
 
   factory Host.fromJson(Map<String, dynamic> json) {
@@ -549,6 +574,8 @@ class Host {
         _ => const <String>[],
       },
       aiTerminal: json['aiTerminal'] == true,
+      // Absent before 1.8: no desktop.
+      aiDesktop: json['aiDesktop'] == true,
     );
   }
 }

@@ -228,6 +228,7 @@ class _Rig {
       grants: grants,
       changeTools: [terminals.openTool],
       terminalUseTools: terminals.useTools,
+      builtinAssistantEnabled: () => true,
     );
     approvals.pending.listen(cards.add);
   }
@@ -1048,6 +1049,88 @@ void main() {
       expect(r.text, isNot(contains('terminal_id')));
       await rig.settle();
       expect(rig.sessions.length, 0);
+      expect(rig.terminals.liveCount, 0);
+    });
+
+    test('closeAll can spare the built-in assistant (the channel bridge '
+        'going off)', () async {
+      final mine = await rig.openId('term', client: BridgeClient.builtin);
+      await rig.openId('term2');
+      await rig.terminals.closeAll(
+        AssistantTerminalEnd.bridgeOff,
+        except: {BridgeClient.builtinId},
+      );
+      expect(rig.terminals.liveCount, 1);
+      expect(rig.terminals.current.single.terminalId, mine);
+      final r = await rig.call('read_screen', {
+        'terminal_id': mine,
+      }, client: BridgeClient.builtin);
+      expect(r.isError, false);
+      // A lock spares nobody.
+      await rig.terminals.closeAll(AssistantTerminalEnd.appLocked);
+      expect(rig.terminals.liveCount, 0);
+    });
+
+    test('an open still under way is spared or ended by who opened it',
+        () async {
+      rig.dialGate = Completer<void>();
+      final builtin = rig.call(
+        'open_terminal',
+        {'host': 'term'},
+        client: BridgeClient.builtin,
+      );
+      rig.approvals.answer(
+        (await rig.card()).id,
+        BridgeApprovalAnswer.allowOnce,
+      );
+      final paired = rig.call('open_terminal', {'host': 'term2'});
+      for (var i = 0; i < 200 && rig.approvals.current.isEmpty; i++) {
+        await Future<void>.delayed(const Duration(milliseconds: 5));
+      }
+      rig.approvals.answer(
+        rig.approvals.current.single.id,
+        BridgeApprovalAnswer.allowOnce,
+      );
+      await rig.settle();
+      await rig.terminals.closeAll(
+        AssistantTerminalEnd.bridgeOff,
+        except: {BridgeClient.builtinId},
+      );
+      rig.dialGate!.complete();
+      final kept = await builtin;
+      final ended = await paired;
+      expect(kept.isError, false, reason: kept.text);
+      expect(kept.text, contains('terminal_id'));
+      expect(ended.isError, true);
+      expect(ended.text, isNot(contains('terminal_id')));
+      await rig.settle();
+      expect(rig.terminals.liveCount, 1);
+    });
+
+    test('full control opens without a card; stepping down past what a '
+        'terminal needs ends it', () async {
+      rig.hosts = [
+        ...rig.hosts,
+        _h('ful1', 'full', HostAiAccess.fullControl),
+      ];
+      final r = await rig.call('open_terminal', {'host': 'full'});
+      expect(r.isError, false, reason: r.text);
+      expect(rig.cardsShown, 0);
+      expect(rig.entries.last.approval, BridgeAuditApproval.fullControl);
+      final id = _Rig.idOf(r.text);
+      // Ask to change with the terminal switch on still allows it.
+      await rig.terminals.hostsChanged([
+        _h('ful1', 'full', HostAiAccess.askToChange, terminal: true),
+      ]);
+      expect(rig.terminals.liveCount, 1);
+      expect(
+        (await rig.call('read_screen', {'terminal_id': id})).isError,
+        false,
+      );
+      // Without it, the terminal ends.
+      await rig.terminals.hostsChanged([
+        _h('ful1', 'full', HostAiAccess.askToChange),
+      ]);
       expect(rig.terminals.liveCount, 0);
     });
 
