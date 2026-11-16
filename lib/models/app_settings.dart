@@ -293,25 +293,14 @@ class AppSettings {
   /// These settings with the four bridge fields back at their defaults.
   /// Used on backup export and decode: what an assistant may reach is a
   /// decision about this device, not something a file should carry in or out.
-  AppSettings withBridgeDefaults() => AppSettings(
-        terminalFontSize: terminalFontSize,
-        colorScheme: colorScheme,
-        uiStyle: uiStyle,
-        themeBrightness: themeBrightness,
-        keepScreenAwake: keepScreenAwake,
-        showHiddenFilesByDefault: showHiddenFilesByDefault,
-        collapsedGroups: collapsedGroups,
-        appLockEnabled: appLockEnabled,
-        appLockTimeout: appLockTimeout,
-        scrollbackLines: scrollbackLines,
-        cursorStyle: cursorStyle,
-        cursorBlink: cursorBlink,
-        bell: bell,
-        terminalFont: terminalFont,
-        keyBarMode: keyBarMode,
-        editorFontSize: editorFontSize,
-        diagnosticsLog: diagnosticsLog,
-        localeOverride: localeOverride,
+  ///
+  /// Built on [copyWith] so a setting added later is carried across by
+  /// default; only the four bridge fields are named here.
+  AppSettings withBridgeDefaults() => copyWith(
+        bridgeEnabled: false,
+        bridgeShowAddress: false,
+        bridgeReadSensitivePaths: false,
+        bridgeExtraBlockedPaths: const <String>[],
       );
 
   /// Keeps a font size inside the range the settings slider and pinch-zoom
@@ -350,6 +339,8 @@ class AppSettings {
     KeyBarMode? keyBarMode,
     double? editorFontSize,
     bool? diagnosticsLog,
+    String? localeOverride,
+    bool clearLocaleOverride = false,
     bool? bridgeEnabled,
     bool? bridgeShowAddress,
     bool? bridgeReadSensitivePaths,
@@ -376,7 +367,9 @@ class AppSettings {
       editorFontSize:
           clampEditorFontSize(editorFontSize ?? this.editorFontSize),
       diagnosticsLog: diagnosticsLog ?? this.diagnosticsLog,
-      localeOverride: localeOverride,
+      localeOverride: clearLocaleOverride
+          ? null
+          : (localeOverride ?? this.localeOverride),
       bridgeEnabled: bridgeEnabled ?? this.bridgeEnabled,
       bridgeShowAddress: bridgeShowAddress ?? this.bridgeShowAddress,
       bridgeReadSensitivePaths:
@@ -386,33 +379,16 @@ class AppSettings {
     );
   }
 
-  /// Sets the language, or with null goes back to following the device.
-  /// Not in [copyWith], whose `??` cannot set a field back to null.
-  AppSettings withLocaleOverride(String? tag) => AppSettings(
-        terminalFontSize: terminalFontSize,
-        colorScheme: colorScheme,
-        uiStyle: uiStyle,
-        themeBrightness: themeBrightness,
-        keepScreenAwake: keepScreenAwake,
-        showHiddenFilesByDefault: showHiddenFilesByDefault,
-        collapsedGroups: collapsedGroups,
-        appLockEnabled: appLockEnabled,
-        appLockTimeout: appLockTimeout,
-        scrollbackLines: scrollbackLines,
-        cursorStyle: cursorStyle,
-        cursorBlink: cursorBlink,
-        copyOnSelect: copyOnSelect,
-        bell: bell,
-        terminalFont: terminalFont,
-        keyBarMode: keyBarMode,
-        editorFontSize: editorFontSize,
-        diagnosticsLog: diagnosticsLog,
-        localeOverride: (tag == null || tag.trim().isEmpty) ? null : tag,
-        bridgeEnabled: bridgeEnabled,
-        bridgeShowAddress: bridgeShowAddress,
-        bridgeReadSensitivePaths: bridgeReadSensitivePaths,
-        bridgeExtraBlockedPaths: bridgeExtraBlockedPaths,
-      );
+  /// Sets the language, or with null (or blank) goes back to following the
+  /// device. [copyWith] needs [clearLocaleOverride] for that: its `??` cannot
+  /// set a field back to null.
+  AppSettings withLocaleOverride(String? tag) {
+    final clean = (tag == null || tag.trim().isEmpty) ? null : tag;
+    return copyWith(
+      localeOverride: clean,
+      clearLocaleOverride: clean == null,
+    );
+  }
 
   static int _validScrollback(int lines) =>
       scrollbackChoices.contains(lines) ? lines : defaultScrollbackLines;

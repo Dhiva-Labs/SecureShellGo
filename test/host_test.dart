@@ -339,4 +339,85 @@ void main() {
       expect(on.withCertificate('cert').aiAccess, HostAiAccess.readOnly);
     });
   });
+
+  group('helpers that rebuild a Host drop nothing', () {
+    // Every field away from its default; expectations come from toJson() so
+    // a field added later is covered once it is written there.
+    final full = Host(
+      id: 'fixed-id',
+      label: 'Home server',
+      hostname: 'example.com',
+      port: 2222,
+      username: 'dev',
+      authMethod: SshAuthMethod.privateKey,
+      lastConnectedAt: DateTime.utc(2026, 1, 2, 3, 4, 5),
+      group: 'Work',
+      colorLabel: HostColorLabel.blue,
+      startupCommand: 'tmux',
+      jumpHostId: 'jump',
+      legacyAlgorithms: true,
+      agentForwarding: true,
+      x11Forwarding: true,
+      persistentSession: PersistentSession.values.last,
+      certificate: 'cert',
+      transport: HostTransport.values.last,
+      aiAccess: HostAiAccess.readOnly,
+    );
+
+    test('the sample sets every field a bare host leaves out', () {
+      const bare = Host(
+        id: 'fixed-id',
+        label: 'Home server',
+        hostname: 'example.com',
+        port: 2222,
+        username: 'dev',
+        authMethod: SshAuthMethod.privateKey,
+      );
+      final bareJson = bare.toJson();
+      final fullJson = full.toJson();
+      for (final key in bareJson.keys) {
+        if (const {'id', 'label', 'hostname', 'port', 'username', 'authMethod'}
+            .contains(key)) {
+          continue;
+        }
+        expect(fullJson[key], isNot(equals(bareJson[key])), reason: key);
+      }
+      expect(fullJson.keys.length, greaterThan(bareJson.keys.length + 10));
+    });
+
+    test('copyWith() with no arguments keeps everything', () {
+      expect(full.copyWith().toJson(), full.toJson());
+    });
+
+    test('withGroup, withJumpHost and withCertificate change only theirs', () {
+      expect(
+        full.withGroup('Other').toJson(),
+        {...full.toJson(), 'group': 'Other'},
+      );
+      expect(
+        full.withGroup(null).toJson(),
+        Map<String, dynamic>.of(full.toJson())..remove('group'),
+      );
+      expect(
+        full.withJumpHost('j2').toJson(),
+        {...full.toJson(), 'jumpHostId': 'j2'},
+      );
+      expect(
+        full.withJumpHost(null).toJson(),
+        Map<String, dynamic>.of(full.toJson())..remove('jumpHostId'),
+      );
+      expect(
+        full.withCertificate('c2').toJson(),
+        {...full.toJson(), 'certificate': 'c2'},
+      );
+      expect(
+        full.withCertificate(null).toJson(),
+        Map<String, dynamic>.of(full.toJson())..remove('certificate'),
+      );
+    });
+
+    test('fromJson(toJson()) loses nothing', () {
+      expect(Host.fromJson(full.toJson()).toJson(), full.toJson());
+    });
+  });
 }
