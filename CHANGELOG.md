@@ -3,6 +3,51 @@
 Releases before 1.4.5 are described on the
 [Releases](https://github.com/Dhiva-Labs/SecureShellGo/releases) page.
 
+## 1.7.0 - 2026-11-16
+
+The AI Bridge can now change a server, with your permission: every change needs your yes on a card in the app, except what you set up beforehand.
+
+### Added
+- Four tools that change a server, for an AI assistant you paired: `run_command` (one shell command, run by the account's own shell, up to 4096 characters, 60 seconds unless it asks for up to 300), `write_file` (one text file, up to 256 KiB, new or replacing), `service_action` (start, stop, restart or reload one systemd unit) and `run_on_hosts` (one command on 2 to 10 servers, at most 3 at a time, 60 seconds each).
+- A terminal an assistant can ask for: `open_terminal`, `send_input`, `read_screen` and `close_terminal`. It opens as a session tab you can watch, with a banner offering **Take over** and **Stop**. At most 2 are open at once, and one with no input or reads for 10 minutes is closed.
+- New per-server switches. **Share with AI assistants** (as before: read-only), and beneath it **Let the assistant request changes**, with **Allowed commands** and **Full control terminal** beneath that. All are off. They are in the host's edit screen and, as a settings button, on each row of **Shared hosts**, which also shows each server's level ("Read only", "Can request changes", "Can request changes and a terminal"). Switching on changes, or the terminal, asks you to confirm first.
+- The approval card, shown over whatever you are doing, one at a time: "Run this command?", "Create this file?", "Replace this file?", "Change a service?" or "Open a terminal for the assistant?". It shows which assistant asked, for which server, the command in full exactly as the shell will receive it, or the path, size, whether a file is replaced, and a preview or a diff, with a countdown. When a file's preview is not the whole change, a warning at the top of the card says so. Buttons: **Deny**, **Allow once**, and **Allow for N minutes** when you turned that on.
+- **Allowed commands**: commands that run on that server without a card when the assistant asks `run_command` for exactly that text on that server alone. No patterns, no partial matches, never for `run_on_hosts`; up to 50 per server, each shown in full. An entry is refused when you add it if it holds a line break, a control character, a space that is not a plain space, a character that changes the reading direction, an invisible or other format character, a private-use or unassigned code point, or a combining mark that can hide or change the character before it.
+- **Allow for a while** (Settings → AI Bridge; Off, 5, 15 or 60 minutes; off by default): adds a button to cards that lets that assistant make any change on that server, with any of the four change tools, without asking again until the time runs out. **Approvals in force** lists them with the time left and a **Stop now** each.
+- The activity log records how each change was allowed (allowed command, timed approval, once, for a while, denied, timed out, withdrawn), and says "Approved, but not run" with the reason for a change you allowed that was then refused or stopped before it ran. For a terminal it records what the assistant typed.
+- An assistant that cancels a request gets no reply; its card is taken away and its work on the server stopped (a file write that has already begun replacing the file finishes).
+
+### Security
+- Nothing changes a server without a person's yes in the app, except what you chose beforehand: a command on that server's **Allowed commands** list (an exact match of the text) or a time-limited approval you gave on a card. A command's text is never judged: there is no "looks safe".
+- Silence is a no: a card not answered in 2 minutes is denied. The card does not alert you or bring the app forward, so with the app in the background you will not see it and it is denied. A locked app shows no card and refuses; it does not queue. At most 8 cards wait at once and at most 3 from one assistant; more are refused straight away.
+- The card shows control characters, right-to-left and other direction overrides, invisible and other format characters, look-alike spaces, private-use and unassigned code points, and combining marks that could hide a character, as marked stand-ins with a legend, so the text you read is the text that runs. Deny has the focus (Enter and Space deny), Escape or Back denies, and the Allow buttons are disabled for the first second after a card appears or changes.
+- What you approve is what runs: the same text is shown, matched against the allowed list and run. A file is written to a temporary file with a random name and then renamed, and if the file changed on the server after you were asked, nothing is written. Before the rename a stopped write leaves the file as it was.
+- After you answer, the app checks again: the server must still be the same one (address, port, user name, connection type and which jump host it goes through), still allow this, and the bridge must still be on and the app unlocked. If you edited the server while the card was open, the change is not made, and the activity log says "Approved, but not run". Editing any of those also takes away that server's waiting cards, its timed approvals and its terminal.
+- Timed approvals are kept in memory only. They end when the time does, on **Stop now**, when you switch the bridge off, revoke the assistant, lock the app or restart it, and when the server is deleted, un-shared, stepped down to read-only or edited to point elsewhere. They never cover a terminal. Switching **Allow for a while** off ends them all.
+- A terminal always needs a card, every time. An approved terminal gives the assistant a live shell as the saved sign-in user on that server. It can type any command, including ones you never see on a card, read any file that user can read, and reach anything that server can reach, with no further questions. The blocked-path list does not apply inside a terminal, or to commands. You can watch it, take over by typing, or stop it at any time. It opens its own connection that never carries your SSH agent or X11 windows, runs no startup command, does not attach to tmux or screen and never uses Mosh. Switching the bridge off, locking the app, revoking the assistant, or deleting the server, un-sharing it, stepping it down, switching its terminal off or pointing it elsewhere closes one the assistant still drives.
+- No bridge connection ever carries your SSH agent or X11 forwarding, and the bridge no longer borrows a session you have open when that session or its saved host uses either; it opens its own connection. This closes a gap: once a session has asked for forwarding, the server keeps the agent for every later command on that connection.
+- A stopped command's process group gets TERM, then KILL 3 seconds later. Changes have 2 run slots of their own, separate from the 4 for reads.
+- Backups never carry allowed commands, the terminal switch or the **Allow for a while** setting. An imported server arrives with AI access off, no allowed commands and the terminal off, and importing keeps this device's own setting.
+- What a command or a terminal prints is sent by your AI client to its own provider, like anything else the assistant reads. A file write's preview is shown to you on the card only and is not sent to the assistant. SecureShell Go and Dhiva Labs receive nothing. **Limits:**
+  - The approval card does not alert you: with the app in the background it goes unseen and is denied after 2 minutes.
+  - `read_screen` removes only private-key blocks and secrets the app knows. A key can still be read in pieces or encoded, and anything else on the screen goes to the assistant.
+  - A program that moved itself into a session of its own (`setsid`) survives a stop. On a server without `setsid`, only the command's main process is stopped.
+  - A replaced file keeps its permissions and nothing else: its owner, access lists and other hard links are not kept.
+  - A file changed in the same second with the same size after you were asked is not noticed, and the change is made.
+  - A change can time out while waiting for a free slot, before it ran, and a stopped command may have done part of its work.
+  - A replacement is refused when the server reports neither the file's size nor its time.
+  - Editing a jump host's own entry is not treated as a change of the servers behind it.
+  - Allowed commands and timed approvals skip the card; that is what they are for.
+  - Text on a server, in a command's output or on a terminal screen can contain instructions aimed at the assistant; the card is what stops a change you did not intend.
+  - Commands are quoted for a fish login shell, but that has not been run against a real fish; nothing of this has been run on Windows yet; and a server needs `/bin/sh` for changes. The AI Bridge is not on macOS or Android.
+  - The translations of the new text were written by machine and have not been read by native speakers.
+
+### Changed
+- The assistant's skill, plugin and instructions say how to ask: read first, say what and why before asking, one change at a time, stop if denied, and never ask you to switch on Allowed commands, Allow for a while or the terminal.
+- "AI access (read-only)" is now called **Share with AI assistants**.
+- Turning a server back to read-only, or un-sharing it, keeps its allowed commands and terminal switch stored but unused; they return when you allow changes again, and switching changes back on lists those commands and asks again about the terminal.
+- The bridge-on explanation now says what can be allowed and that a terminal is a live shell.
+
 ## 1.6.0 - 2026-11-16
 
 The AI Bridge: let an AI assistant read from the servers you choose, read-only, without ever giving it a password or key.

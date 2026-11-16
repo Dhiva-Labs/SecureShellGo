@@ -223,7 +223,7 @@ AI Bridge
 - **Optional, off by default, no passwords or keys, blocked secret
   paths, call log, provider note** — `lib/services/bridge/` (policy, path
   guard, redactor, audit, tools), the 1.6.0 section of `CHANGELOG.md`,
-  `docs/changes/ai-bridge-changes.md` (1.7.0), `docs/privacy-policy.md`. "Stats, services, log tails, folders and text
+  `CHANGELOG.md` (1.7.0), `docs/privacy-policy.md`. "Stats, services, log tails, folders and text
   files, and search by file name" are the seven read tools in `bridge_tools.dart`
   (`list_hosts`, `server_stats`, `list_services`, `tail_log`, `list_dir`,
   `read_file`, `search_files`); "logged on this PC" is

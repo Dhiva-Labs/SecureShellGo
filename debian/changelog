@@ -1,3 +1,17 @@
+secureshellgo (1.7.0~noble1) noble; urgency=medium
+
+  * AI Bridge: an assistant you paired can now ask to change a server
+    (run a command, write a file, restart a service, open a terminal).
+    Every change needs your yes on a card in the app, except commands you
+    put on that server's "Allowed commands" list or a time-limited
+    approval you gave. All of it is off by default, per server.
+  * A terminal opened for an assistant is a session tab you can watch,
+    take over or stop.
+  * The activity log records how each change was allowed. The full list
+    is in CHANGELOG.md.
+
+ -- Dhiva Labs <dhivakar1010@gmail.com>  Mon, 16 Nov 2026 23:00:00 +0530
+
 secureshellgo (1.6.0~noble1) noble; urgency=medium
 
   * AI Bridge, on Linux and Windows and off by default: an AI assistant on
