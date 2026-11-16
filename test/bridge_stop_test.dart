@@ -156,13 +156,18 @@ void main() {
       final web = rig.serve(
         'web1',
         (_) => FakeExecSession(stdout: _probeOutput),
-        delay: const Duration(milliseconds: 300),
+        delay: const Duration(seconds: 3),
       );
+      // The channel takes 3 s to open and the call has 100 ms. The bound is
+      // well clear of both, so a slow runner cannot fail it, while a call
+      // that waited for the channel still would.
       final watch = Stopwatch()..start();
       final r = await rig.call('server_stats', {'host': 'web'});
-      expect(watch.elapsedMilliseconds, lessThan(280));
+      expect(watch.elapsedMilliseconds, lessThan(2000));
       expect(r.isError, true);
-      await Future<void>.delayed(const Duration(milliseconds: 400));
+      await Future<void>.delayed(
+        Duration(milliseconds: 3400 - watch.elapsedMilliseconds),
+      );
       expect(web.sessions.single.stdinClosed, true);
       expect(web.sessions.single.wasClosed, true);
     });
