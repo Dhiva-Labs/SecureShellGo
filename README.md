@@ -12,7 +12,7 @@ host-key verification at the core. The interface is translated into English,
 Simplified Chinese, Japanese, Brazilian Portuguese, Spanish, Russian, German,
 Korean and French.
 
-Latest release: **1.8.0**. Install options for each platform are
+Latest release: **1.8.1**. Install options for each platform are
 [below](#install): release downloads (APK, Linux, Windows, macOS), the Ubuntu
 PPA (`ppa:dhiva-labs/apps`) and the Snap Store (`sudo snap install secureshellgo`).
 
@@ -55,7 +55,7 @@ PPA (`ppa:dhiva-labs/apps`) and the Snap Store (`sudo snap install secureshellgo
 
 ## Status and limits
 
-- Version 1.8.0. The Android app is in testing and is distributed as an APK on
+- Version 1.8.1. The Android app is in testing and is distributed as an APK on
   the Releases page; it is not on Google Play. The Windows and Linux builds are
   built and started in CI, but haven't had the testing the Android app has.
 - Windows builds are zip downloads from Releases. Microsoft Store packaging

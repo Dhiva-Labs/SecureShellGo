@@ -18,6 +18,10 @@ import 'support/bridge_fakes.dart';
 import 'support/bridge_temp_dir.dart';
 
 class _MemoryStorage implements SecureStorageBackend {
+  /// How many reads there were: the storage must not be touched at all
+  /// while the assistant is off.
+  int reads = 0;
+
   final Map<String, String> data = {};
   bool failWrites = false;
 
@@ -30,7 +34,10 @@ class _MemoryStorage implements SecureStorageBackend {
   }
 
   @override
-  Future<String?> read(String key) async => data[key];
+  Future<String?> read(String key) async {
+    reads++;
+    return data[key];
+  }
 
   @override
   Future<void> delete(String key) async => data.remove(key);
@@ -173,6 +180,40 @@ void main() {
       settings = s;
       changes.add(s);
     }
+
+    test('while it is off the saved key is never read, not even at start',
+        () async {
+      storage.data[AssistantService.apiKeySecretNameFor(
+        AssistantProviderKind.anthropic,
+      )] = 'sk-abcdefghijkl';
+      await service.load();
+      expect(storage.reads, 0);
+      expect(service.hasApiKey, isFalse);
+      expect(learned, isEmpty);
+    });
+
+    test('switching it on reads the key then', () async {
+      storage.data[AssistantService.apiKeySecretNameFor(
+        AssistantProviderKind.anthropic,
+      )] = 'sk-abcdefghijkl';
+      await service.load();
+      final loaded = service.changes.firstWhere((_) => service.hasApiKey);
+      set(const AppSettings(assistantEnabled: true, assistantModel: 'm'));
+      await loaded;
+      expect(storage.reads, greaterThan(0));
+      expect(service.isConfigured, isTrue);
+      expect(learned, contains('sk-abcdefghijkl'));
+    });
+
+    test('a key saved while an earlier read is under way is the one kept',
+        () async {
+      set(const AppSettings(assistantEnabled: true, assistantModel: 'm'));
+      // The switch started a read; the save lands before it finishes.
+      await service.setApiKey('sk-newnewnewnew');
+      await service.load();
+      expect(service.hasApiKey, isTrue);
+      expect(service.isConfigured, isTrue);
+    });
 
     test('off and not configured by default', () async {
       await service.load();

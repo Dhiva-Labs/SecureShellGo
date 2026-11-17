@@ -92,6 +92,9 @@ class AssistantService {
   AssistantProviderKind? _keyKind;
   bool _keySealed = false;
 
+  /// Counts key changes, so a slow read cannot overwrite a newer key.
+  int _keyEpoch = 0;
+
   bool get _keyLoaded => _keyKind == _settings().assistantProvider;
 
   /// The switch in Settings. Off by default.
@@ -147,8 +150,24 @@ class AssistantService {
   /// anything: a locked store is reported by [configurationProblem], not
   /// prompted.
   Future<void> load() async {
+    // While the assistant is off its key is not read at all. Reading it
+    // touches the system keyring, and a start that does that crashes the
+    // app where the keyring cannot be reached (a snap whose password
+    // service is not connected); with the assistant off, starting the app
+    // must stay exactly as it was before the assistant existed.
+    if (!_settings().assistantEnabled) {
+      _keyEpoch++;
+      _apiKey = null;
+      _keySealed = false;
+      _keyKind = null;
+      _notify();
+      return;
+    }
     final kind = _settings().assistantProvider;
     final name = apiKeySecretNameFor(kind);
+    // A key saved or removed while this read is under way is newer than
+    // what the read will return, so the read's result is then dropped.
+    final epoch = ++_keyEpoch;
     String? key;
     var sealed = false;
     try {
@@ -159,6 +178,7 @@ class AssistantService {
     } catch (_) {
       key = null;
     }
+    if (epoch != _keyEpoch) return;
     _apiKey = key;
     _keySealed = sealed;
     _keyKind = kind;
@@ -190,6 +210,7 @@ class AssistantService {
     }
     final kind = _settings().assistantProvider;
     await _storage.write(apiKeySecretNameFor(kind), trimmed);
+    _keyEpoch++;
     _apiKey = trimmed;
     _keySealed = false;
     _keyKind = kind;
@@ -200,6 +221,7 @@ class AssistantService {
   Future<void> clearApiKey() async {
     final kind = _settings().assistantProvider;
     await _storage.delete(apiKeySecretNameFor(kind));
+    _keyEpoch++;
     _apiKey = null;
     _keySealed = false;
     _keyKind = kind;
@@ -284,7 +306,9 @@ class AssistantService {
     // arrives without an event. Stopping an idle conversation does nothing.
     if (!enabled) stopAll();
     // A switched provider uses its own key, which has to be read first.
-    if (_keyKind != null && _keyKind != s.assistantProvider) {
+    // Also the moment the assistant is switched on: nothing was read while
+    // it was off.
+    if (enabled && _keyKind != s.assistantProvider) {
       unawaited(load());
     }
     _notify();

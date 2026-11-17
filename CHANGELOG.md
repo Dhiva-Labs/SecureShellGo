@@ -3,6 +3,12 @@
 Releases before 1.4.5 are described on the
 [Releases](https://github.com/Dhiva-Labs/SecureShellGo/releases) page.
 
+## 1.8.1 - 2026-11-17
+
+### Fixed
+- The snap no longer stops at start when the system's password service is not connected to it. 1.8.0 read the built-in assistant's key from the keyring every time the app started, and where the keyring could not be reached that ended the app. The key is now read only while the built-in assistant is switched on.
+- A key saved while the app was still reading an earlier one is the one kept.
+
 ## 1.8.0 - 2026-11-17
 
 One access level per server, up to full control; long-running jobs; a desktop an assistant can see and use; a built-in assistant that works on the phone too; and approval cards answered from your phone.

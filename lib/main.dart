@@ -525,7 +525,9 @@ class _SecureShellGoAppState extends State<SecureShellGoApp> {
     _hostStore.ensureLoaded();
     // Reads the assistant's saved key (never asking for anything), which
     // also teaches the log scrubber the key before anything can log it.
-    unawaited(_assistant.load());
+    // After the settings are read: before that they say the assistant is
+    // off, and its key would be skipped.
+    unawaited(_settingsStore.ensureLoaded().then((_) => _assistant.load()));
     // Same reasoning as the lock below: the *loaded* settings, not the
     // defaults the store reads as before its first disk read completes,
     // otherwise a user on `aws`+light would get one frame of aurora dark on

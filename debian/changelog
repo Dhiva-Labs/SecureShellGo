@@ -1,3 +1,12 @@
+secureshellgo (1.8.1~noble1) noble; urgency=medium
+
+  * The built-in assistant's key is read from the keyring only while the
+    assistant is switched on, not at every start. In 1.8.0 that read
+    stopped the snap at start where the password service was not
+    connected.
+
+ -- Dhiva Labs <dhivakar1010@gmail.com>  Tue, 17 Nov 2026 10:00:00 +0530
+
 secureshellgo (1.8.0~noble1) noble; urgency=medium
 
   * AI access is one level per server: off, read only, ask before each
